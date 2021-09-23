@@ -477,26 +477,18 @@ def surrounding_pixel_cor(water_pixel_under_invest, water_center_pixel_list, sur
                     #         water_center_pixel_list_t_2.append(water_pixel_temp)
                     #         s3_e = time.time()
                     #         phase3_time += s3_e - s3_b
-
-                s1_b = time.time()
                 surrounding_all_list = surrounding_pixel_list[0, :, :].tolist()
                 surrounding_all_list.extend(surrounding_pixel_list[-1, :, :].tolist())
                 surrounding_all_list.extend(surrounding_pixel_list[:, 0, :].tolist())
                 surrounding_all_list.extend(surrounding_pixel_list[:, -1, :].tolist())
-                s1_e = time.time()
-                phase1_time += s1_e - s1_b
-                s2_b = time.time()
                 for i_ttttt in range(len(surrounding_all_list)):
                     s_temp = surrounding_all_list[i_ttttt]
                     if array[s_temp[0], s_temp[1]] == water_pixel_value:
                         surrounding_water_pixel_list_t.append(s_temp)
                     else:
                         surrounding_nan_water_pixel_list_t.append(s_temp)
-                s2_e = time.time()
-                phase2_time += s2_e - s2_b
             elif detection_method == 'FourP':
                 pass
-        s3_b = time.time()
         water_center_pixel_list.extend(water_center_pixel_list_t)
         water_center_pixel_list = np.unique(np.array(water_center_pixel_list), axis=0).tolist()
         if len(surrounding_water_pixel_list_t) != 0:
@@ -505,8 +497,6 @@ def surrounding_pixel_cor(water_pixel_under_invest, water_center_pixel_list, sur
         water_center_pixel_list.extend(surrounding_water_pixel_list)
         surrounding_nan_water_pixel_list.extend(surrounding_nan_water_pixel_list_t)
         surrounding_nan_water_pixel_list = np.unique(np.array(surrounding_nan_water_pixel_list), axis=0).tolist()
-        s3_e = time.time()
-        phase3_time += s3_e - s3_b
     return surrounding_water_pixel_list, surrounding_nan_water_pixel_list, water_center_pixel_list
 
 
@@ -1109,14 +1099,49 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
     # Fundamental para
     all_supported_vi_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC']
     if VI_list is None:
-        VI_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI']
+        VI_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC']
+    # Since FVC is index based on NDVI
     elif 'FVC' in VI_list and 'NDVI' not in VI_list:
         VI_list.append('FVC')
     elif not list_containing_check(VI_list, all_supported_vi_list):
         print('Sorry, Some VI are not supported or make sure all of them are in Capital Letter')
         sys.exit(-1)
+    # Create shapefile path
+    shp_file_path = root_path_f + 'study_area_shapefile\\'
+    create_folder(shp_file_path)
+    # Move all roi file into the new folder with specific sa name
+    file_name = ROI_mask_f.split('\\')[-1].split('.')[0]
+    file_path = ROI_mask_f.split(str(file_name))[0]
+    file_all = file_filter(file_path, [str(file_name)])
+    for ori_file in file_all:
+        shutil.copyfile(ori_file, shp_file_path + study_area + ori_file.split(str(file_name))[1])
+    # Create key dictionary file path
     key_dictionary_path = root_path_f + 'Landsat_key_dic\\'
     create_folder(key_dictionary_path)
+    # Create key dictionary
+    fundamental_dic = {}
+    if not os.path.exists(key_dictionary_path + 'fundamental_information_dic.npy'):
+        fundamental_dic['shpfile_path'] = root_path_f + 'study_area_shapefile\\'
+        fundamental_dic['all_vi'] = all_supported_vi_list
+        fundamental_dic['study_area'] = [study_area]
+        np.save(key_dictionary_path + 'fundamental_information_dic.npy', fundamental_dic)
+    else:
+        fundamental_dic = np.load(key_dictionary_path + 'fundamental_information_dic.npy', allow_pickle=True).item()
+        fundamental_dic['shpfile_path'] = root_path_f + 'study_area_shapefile\\'
+        if fundamental_dic['all_vi'] is None:
+            fundamental_dic['all_vi'] = all_supported_vi_list
+        else:
+            fundamental_dic['all_vi'] = fundamental_dic['all_vi'] + all_supported_vi_list
+            fundamental_dic['all_vi'] = np.unique(np.array(fundamental_dic['all_vi'])).tolist()
+
+        if fundamental_dic['study_area'] is None:
+            fundamental_dic['study_area'] = [study_area]
+        else:
+            fundamental_dic['study_area'] = fundamental_dic['study_area'] + [study_area]
+            fundamental_dic['study_area'] = np.unique(np.array(fundamental_dic['study_area'])).tolist()
+        np.save(key_dictionary_path + 'fundamental_information_dic.npy', fundamental_dic)
+
+    # Construct VI
     if vi_construction_para:
         # Remove all files which not meet the requirements
         eliminating_all_not_required_file(unzipped_file_path_f)
@@ -2265,7 +2290,7 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
                             VI_list_temp = phenology_fig_dic[vi + '_sdc'][y, x, :]
                             plt.ioff()
                             plt.rcParams["font.family"] = "Times New Roman"
-                            plt.figure(figsize=(10, 10))
+                            plt.figure(figsize=(6, 3.5))
                             ax = plt.axes((0.05, 0.05, 0.95, 0.95))
                             plt.title('Multiyear NDVI with dates')
                             plt.xlabel('DOY')
@@ -2603,9 +2628,9 @@ def visualize_study_area_demo(root_path_f, ori_tiff_file_path, date_temp, ROI_sh
 
     demo_illustration_t = demo_illustration
     if demo_illustration == 'overview':
-        demo_illustration_path = root_path_f + 'Landsat_inundated_curve\\' + study_area_name + '_overview\\overview_' + VI + '_'
+        demo_illustration_path = root_path_f + 'Landsat_phenology_curve\\' + study_area_name + '_overview\\overview_' + VI + '_'
     elif demo_illustration == 'annual':
-        demo_illustration_path = root_path_f + 'Landsat_inundated_curve\\' + study_area_name + '_overview\\annual_' + VI + '_'
+        demo_illustration_path = root_path_f + 'Landsat_phenology_curve\\' + study_area_name + '_annual\\annual_' + VI + '_'
     else:
         print('This function doesnot support the file yet!')
         return
@@ -2614,7 +2639,7 @@ def visualize_study_area_demo(root_path_f, ori_tiff_file_path, date_temp, ROI_sh
     demo_folder = root_path_f + 'Landsat_phenology_demo\\'
     sa_demo_folder = demo_folder + study_area_name + '\\'
     create_folder(sa_demo_folder)
-    ori_file = file_filter(ori_tiff_file_path, [str(date_temp)])
+    ori_file = file_filter(ori_tiff_file_path, [str(date_tezhendmp)])
     if len(ori_file) == 0:
         print('Please input the correct date!')
         sys.exit(-1)
@@ -2696,11 +2721,11 @@ def on_event_left_button_down(event, x, y, flags, param):
         cv2.putText(new_image, xy, (x, y), cv2.FONT_HERSHEY_PLAIN, 1.0, (0, 0, 0), thickness=1)
         try:
             img_temp = cv2.imread(demo_illustration_path + str(int(np.fix(x / scale_factor))) + '_' + str(int(np.fix(y / scale_factor))) + '.png')
-            img_temp = np.append(img_temp, 255 * np.ones([img_temp.shape[0], 50, img_temp.shape[2]]), axis=1)
+            # img_temp = np.append(img_temp, 255 * np.ones([img_temp.shape[0], 50, img_temp.shape[2]]), axis=1)
             hDC = win32gui.GetDC(0)
             monitor_wide = win32print.GetDeviceCaps(hDC, win32con.DESKTOPHORZRES)
             monitor_high = win32print.GetDeviceCaps(hDC, win32con.DESKTOPVERTRES)
-            scale_factor_illu = np.max(((monitor_high - 200) / img_temp.shape[0]), ((monitor_wide - new_image.shape[1] - 110) / img_temp.shape[1]))
+            scale_factor_illu = min((((monitor_high * 2 / 3) - 100) / (img_temp.shape[0])), ((((monitor_wide - new_image.shape[1] - 110) * 2 / 3) ) / (1.5 * img_temp.shape[1])))
             img_temp = cv2.resize(img_temp, (int(scale_factor_illu * img_temp.shape[1]), int(scale_factor_illu * img_temp.shape[0]))).astype(np.uint8)
             y_offset = int(110 + new_image.shape[1])
             cv2.moveWindow('illustration', y_offset, 100)
@@ -2736,7 +2761,7 @@ zz_thin_cloud = []
 nmz_thin_cloud = []
 nyz_thin_cloud = []
 study_area_list = np.array([['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\baishazhou.shp', 'bsz', bsz_thin_cloud, 'BSZ-2'], ['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\nanyangzhou.shp', 'nyz', nyz_thin_cloud, 'NYZ-3'], ['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\nanmenzhou.shp', 'nmz', nmz_thin_cloud, 'NMZ-2'], ['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\zhongzhou.shp', 'zz', zz_thin_cloud, 'ZZ-2']])
-# visualize_study_area_demo(root_path, unzipped_file_path, 20210102, study_area_list[0, 0], study_area_list[0, 1], demo_illustration='overview', VI='NDVI')
+# visualize_study_area_demo(root_path, unzipped_file_path, 20210102, study_area_list[0, 0], study_area_list[0, 1], demo_illustration='annual', VI='NDVI')
 
 for seq in range(study_area_list.shape[0]):
     sample_rs_table = pandas.read_excel(google_earth_sample_data_path + 'sample_metadata.xlsx', sheet_name=study_area_list[seq, 1] + '_GE_LANDSAT')
@@ -2747,12 +2772,12 @@ for seq in range(study_area_list.shape[0]):
     generate_landsat_vi(root_path, unzipped_file_path, file_metadata, vi_construction_para=True,
                         construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True,
                         clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False,
-                        construct_sdc_para=True, sdc_overwritten_para=False, VI_list=None,
+                        construct_sdc_para=True, sdc_overwritten_para=False, VI_list=['NDVI', 'OSAVI', 'MNDWI', 'EVI'],
                         ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_date_list=study_area_list[seq, 2], manual_remove_issue_data=True)
     landsat_vi2phenology_process(root_path, phenology_comparison_factor=False,
                                  inundation_data_overwritten_factor=False, inundated_pixel_phe_curve_factor=False,
                                  mndwi_threshold=0.25, VI_list_f=['NDVI', 'MNDWI'], Inundation_month_list=None, curve_fitting_algorithm='seven_para_logistic',
-                                 study_area=study_area_list[seq, 1], DEM_path=DEM_path, water_level_data_path=water_level_file_path, Year_range=[2000, 2020], cross_section=study_area_list[seq, 3], VEG_path=VEG_PATH, unzipped_file_path_f=unzipped_file_path, ROI_mask_f=study_area_list[seq, 0], file_metadata_f=file_metadata, inundation_mapping_accuracy_evaluation_factor=True, sample_data_path=google_earth_sample_data_path, sample_rs_link_list=sample_rs_table, phenology_overview_factor=False, phenology_individual_factor=True)
+                                 study_area=study_area_list[seq, 1], DEM_path=DEM_path, water_level_data_path=water_level_file_path, Year_range=[2000, 2020], cross_section=study_area_list[seq, 3], VEG_path=VEG_PATH, unzipped_file_path_f=unzipped_file_path, ROI_mask_f=study_area_list[seq, 0], file_metadata_f=file_metadata, inundation_mapping_accuracy_evaluation_factor=True, sample_data_path=google_earth_sample_data_path, sample_rs_link_list=sample_rs_table, phenology_overview_factor=True, phenology_individual_factor=True, surveyed_inundation_detection_factor=True)
 
 # pixel_limitation = cor_to_pixel([[775576.487, 3326499.324], [783860353.937, 3321687.841]], root_path + 'Landsat_clipped_NDVI\\')
 
