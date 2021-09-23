@@ -94,17 +94,17 @@ class Visulisation_gui(QMainWindow):
         self.sa_combobox.activated.connect(self.update_shp_infor)
 
     def show_demo(self):
-        if len(file_filter(self.orifile_path, ['.tif'])) == 0:
+        if len(file_filter(self.orifile_path, ['.TIF'])) == 0:
             self.caution_msg_box('Please double check the ori file path')
 
         if not os.path.exists(self.shpfile):
             self.caution_msg_box('The shapefile doesnot exists, please manually input!')
         else:
             if self.manual_input_date_Edit.text() != '':
-                if len(file_filter(self.orifile_path, [self.manual_input_date_Edit.text(), '.tif'], and_or_factor='and')) == 0:
+                if len(file_filter(self.orifile_path, [self.manual_input_date_Edit.text(), '.TIF'], and_or_factor='and')) == 0:
                     self.caution_msg_box('This is not a valid date! Try again!')
                 else:
-                    ori_file = file_filter(self.orifile_path, [self.manual_input_date_Edit.text(), '.tif'], and_or_factor='and')
+                    ori_file = file_filter(self.orifile_path, [self.manual_input_date_Edit.text(), '.TIF'], and_or_factor='and')
                     if 'LC08' in ori_file[0]:
                         rgb_dic = {'r': 'B4', 'g': 'B3', 'b': 'B2'}
                     elif 'LE07' in ori_file[0] or 'LT05' in ori_file[0]:
