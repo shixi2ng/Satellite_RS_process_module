@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 # 图片路径
-img = cv2.imread('E:\\A_Vegetation_Identification\\Vegetation_Sentinel2\\LC08_BSZ.png')
+img = cv2.imread('LC08_BSZ.png')
 a = []
 b = []
 image_scale_down = 0.5

@@ -793,7 +793,7 @@ def create_folder(path_name):
         print('Folder already exist  (' + path_name + ')')
 
 
-def file_filter(file_path_temp, containing_word_list, subfolder_detection=False, and_or_factor=None):
+def file_filter(file_path_temp, containing_word_list, subfolder_detection=False, and_or_factor=None, exclude_word_list=[]):
     if and_or_factor is None:
         and_or_factor = 'or'
     elif and_or_factor not in ['and', 'or']:
@@ -811,7 +811,16 @@ def file_filter(file_path_temp, containing_word_list, subfolder_detection=False,
             else:
                 for containing_word in containing_word_list:
                     if containing_word in file_path_temp + file:
-                        filter_list.append(file_path_temp + file)
+                        if exclude_word_list == []:
+                            filter_list.append(file_path_temp + file)
+                        else:
+                            exclude_factor = False
+                            for exclude_word in exclude_word_list:
+                                if exclude_word in file_path_temp + file:
+                                    exclude_factor = True
+                                    break
+                            if not exclude_factor:
+                                filter_list.append(file_path_temp + file)
                         break
         return filter_list
     elif and_or_factor == 'and':
@@ -820,12 +829,17 @@ def file_filter(file_path_temp, containing_word_list, subfolder_detection=False,
         for file in file_list:
             file_factor = True
             if os.path.isdir(file_path_temp + file) and subfolder_detection:
-                filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list, subfolder_detection=True, and_or_factor=and_or_factor)
+                filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list,
+                                               subfolder_detection=True, and_or_factor=and_or_factor)
                 if filter_list_temp != []:
                     filter_list.append(filter_list_temp)
             else:
                 for containing_word in containing_word_list:
                     if containing_word not in file_path_temp + file:
+                        file_factor = False
+                        break
+                for exclude_word in exclude_word_list:
+                    if exclude_word in file_path_temp + file:
                         file_factor = False
                         break
                 if file_factor:
@@ -1122,16 +1136,16 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
     fundamental_dic = {}
     if not os.path.exists(key_dictionary_path + 'fundamental_information_dic.npy'):
         fundamental_dic['shpfile_path'] = root_path_f + 'study_area_shapefile\\'
-        fundamental_dic['all_vi'] = all_supported_vi_list
+        fundamental_dic['all_vi'] = VI_list
         fundamental_dic['study_area'] = [study_area]
         np.save(key_dictionary_path + 'fundamental_information_dic.npy', fundamental_dic)
     else:
         fundamental_dic = np.load(key_dictionary_path + 'fundamental_information_dic.npy', allow_pickle=True).item()
         fundamental_dic['shpfile_path'] = root_path_f + 'study_area_shapefile\\'
         if fundamental_dic['all_vi'] is None:
-            fundamental_dic['all_vi'] = all_supported_vi_list
+            fundamental_dic['all_vi'] = VI_list
         else:
-            fundamental_dic['all_vi'] = fundamental_dic['all_vi'] + all_supported_vi_list
+            fundamental_dic['all_vi'] = fundamental_dic['all_vi'] + VI_list
             fundamental_dic['all_vi'] = np.unique(np.array(fundamental_dic['all_vi'])).tolist()
 
         if fundamental_dic['study_area'] is None:
@@ -1166,7 +1180,10 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 for VI in VI_list:
                     constructed_vi[VI + '_factor'] = not os.path.exists(constructed_vi[VI + '_path'] + str(filedate) + '_' + str(tile_num) + '_' + VI + '.TIF') or construction_overwritten_para
                     file_vacancy = file_vacancy or constructed_vi[VI + '_factor']
-                constructed_vi['Watermask_factor'] = not os.path.exists(constructed_vi['Watermask_path'] + str(filedate) + '_' + str(tile_num) + '_' + VI + '.TIF') or construction_overwritten_para
+                if constructed_vi['FVC_factor'] is True:
+                    constructed_vi['NDVI_factor'] = True
+                    constructed_vi['MNDWI_factor'] = True
+                constructed_vi['Watermask_factor'] = not os.path.exists(constructed_vi['Watermask_path'] + str(filedate) + '_' + str(tile_num) + '_watermask.TIF') or construction_overwritten_para
                 file_vacancy = file_vacancy or constructed_vi[VI + '_factor']
                 if file_vacancy:
                     if 'LE07' in i or 'LT05' in i:
@@ -1287,21 +1304,6 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             write_raster(RED_temp_ds, NDVI_temp_array, constructed_vi['NDVI_path'], str(filedate) + '_' + str(tile_num) + '_NDVI.TIF')
                         end_time = time.time()
                         print('Finished in ' + str(end_time - start_time) + ' s')
-                        if constructed_vi['FVC_factor']:
-                            if size_control_factor:
-                                NDVI_flatten = NDVI_temp_array.flattern()
-                                nan_pos = np.argwhere(NDVI_flatten == -32768)
-                                NDVI_flatten = np.sort(np.delete(NDVI_flatten, nan_pos))
-                                NDVI_soil = NDVI_flatten[int(np.round(NDVI_flatten.shape[0] * 0.02))]
-                                NDVI_veg = NDVI_flatten[int(np.round(NDVI_flatten.shape[0] * 0.98))]
-                                FVC_temp_array = copy.copy(NDVI_temp_array).astype(np.float)
-                                FVC_temp_array[FVC_temp_array >= NDVI_veg] = 10000
-                                FVC_temp_array[np.logical_and(FVC_temp_array <= NDVI_soil, FVC_temp_array != -32768)] = 0
-                                FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil, FVC_temp_array < NDVI_veg)] = 10000 * (FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil, FVC_temp_array < NDVI_veg)] - NDVI_soil) / (NDVI_veg - NDVI_soil)
-                                FVC_temp_array.astype(np.int16)
-                                write_raster(RED_temp_ds, FVC_temp_array, constructed_vi['FVC_path'], str(filedate) + '_' + str(tile_num) + '_FVC.TIF', raster_datatype=gdal.GDT_Int16)
-                            else:
-                                pass
                     if constructed_vi['OSAVI_factor']:
                         print('Start generating OSAVI file ' + i + ' (' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
                         start_time = time.time()
@@ -1349,6 +1351,30 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             write_raster(MIR_temp_ds, MNDWI_temp_array, constructed_vi['MNDWI_path'], str(filedate) + '_' + str(tile_num) + '_MNDWI.TIF', raster_datatype=gdal.GDT_Int16)
                         else:
                             write_raster(MIR_temp_ds, MNDWI_temp_array, constructed_vi['MNDWI_path'], str(filedate) + '_' + str(tile_num) + '_MNDWI.TIF')
+                        end_time = time.time()
+                        print('Finished in ' + str(end_time - start_time) + ' s')
+                    if constructed_vi['FVC_factor']:
+                        print('Start generating FVC file ' + i + ' (' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
+                        start_time = time.time()
+                        if size_control_factor:
+                            NDVI_temp_array[MNDWI_temp_array > 1000] = -32768
+                            NDVI_flatten = NDVI_temp_array.flatten()
+                            nan_pos = np.argwhere(NDVI_flatten == -32768)
+                            NDVI_flatten = np.sort(np.delete(NDVI_flatten, nan_pos))
+                            if NDVI_flatten.shape[0] == 0:
+                                write_raster(RED_temp_ds, NDVI_temp_array, constructed_vi['FVC_path'], str(filedate) + '_' + str(tile_num) + '_FVC.TIF', raster_datatype=gdal.GDT_Int16)
+                            else:
+                                NDVI_soil = NDVI_flatten[int(np.round(NDVI_flatten.shape[0] * 0.02))]
+                                NDVI_veg = NDVI_flatten[int(np.round(NDVI_flatten.shape[0] * 0.98))]
+                                FVC_temp_array = copy.copy(NDVI_temp_array).astype(np.float)
+                                FVC_temp_array[FVC_temp_array >= NDVI_veg] = 10000
+                                FVC_temp_array[np.logical_and(FVC_temp_array <= NDVI_soil, FVC_temp_array != -32768)] = 0
+                                FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil, FVC_temp_array < NDVI_veg)] = 10000 * (FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil, FVC_temp_array < NDVI_veg)] - NDVI_soil) / (NDVI_veg - NDVI_soil)
+                                FVC_temp_array[MNDWI_temp_array > 1000] = 0
+                                FVC_temp_array.astype(np.int16)
+                                write_raster(RED_temp_ds, FVC_temp_array, constructed_vi['FVC_path'], str(filedate) + '_' + str(tile_num) + '_FVC.TIF', raster_datatype=gdal.GDT_Int16)
+                        else:
+                            pass
                         end_time = time.time()
                         print('Finished in ' + str(end_time - start_time) + ' s')
                 else:
@@ -1404,27 +1430,6 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
             print('All ' + VI + ' files within the ' + study_area + ' are clipped.')
     else:
         print('VI clip was not implemented.')
-
-    if average_fvc_study_area_factor:
-        fvc_tif_file = file_filter(root_path + 'Landsat_' + study_area + '_VI\\FVC\\', ['.TIF'])
-        mndwi_tif_file = file_filter(root_path + 'Landsat_' + study_area + '_VI\\MNDWI\\', ['.TIF'])
-        fvc_list = []
-        for i in fvc_tif_file:
-            fvc_temp_ds = gdal.Open(i)
-            date = str(i[i.find('\FVC') + 5: i.find('\FVC') + 13])
-            for i_temp in mndwi_tif_file:
-                if date in i_temp:
-                    mndwi_temp_ds = gdal.Open(i_temp)
-            fvc_raster = fvc_temp_ds.GetRasterBand(1).ReadAsArray()
-            mndwi_raster = mndwi_temp_ds.GetRasterBand(1).ReadAsArray()
-            fvc_raster[mndwi_raster > 1000] = -32768
-            fvc_raster = fvc_raster.flatten()
-            nan_pos = np.argwhere(fvc_raster == -32768)
-            fvc_raster = np.delete(fvc_raster, nan_pos)
-            fvc_ave = np.nanmean(fvc_raster) / 10000
-            fvc_list.append([date, fvc_ave])
-        df = pandas.DataFrame(fvc_list, columns=['date', 'fvc_ave'])
-        df.to_excel(root_path + 'fvc_ave_table.xlsx')
 
     if construct_dc_para:
         # Create fundamental dictionary
@@ -1527,7 +1532,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 print('There are more than two datacube in the ' + VI + ' folder.')
                 sys.exit(-1)
 
-        sdc_vi['doy'] = []
+        sdc_vi_doy_temp = []
         for VI in VI_list:
             if sdc_overwritten_para or not os.path.exists(sdc_vi[VI + '_path'] + VI + '_sequenced_datacube.npy') or not os.path.exists(sdc_vi[VI + '_path'] + 'doy.npy'):
                 print('Start constructing ' + VI + ' sequenced datacube of the ' + study_area + '.')
@@ -1535,7 +1540,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 vi_date_cube_temp = np.load(sdc_vi['date_input'])
                 date_list = []
                 doy_list = []
-                if not sdc_vi['doy'] or not date_list:
+                if not sdc_vi_doy_temp or not date_list:
                     for i in vi_date_cube_temp:
                         date_temp = int(i)
                         if date_temp not in date_list:
@@ -1543,7 +1548,8 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                     for i in date_list:
                         doy_list.append(datetime.date(int(i // 10000), int((i % 10000) // 100),
                                                       int(i % 100)).timetuple().tm_yday + int(i // 10000) * 1000)
-                    sdc_vi['doy'] = doy_list
+                    sdc_vi_doy_temp = doy_list
+                    sdc_vi['doy'] = sdc_vi_doy_temp
 
                 if len(sdc_vi['doy']) != len(vi_date_cube_temp):
                     vi_data_cube_temp = np.load(sdc_vi[VI + '_input'])
@@ -1590,6 +1596,29 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
         np.save(key_dictionary_path + study_area + '_sdc_vi.npy', sdc_vi)
     else:
         print('Sequenced datacube construction was not implemented.')
+
+
+def entire_sa_da():
+    if average_fvc_study_area_factor:
+        fvc_tif_file = file_filter(root_path + 'Landsat_' + study_area + '_VI\\FVC\\', ['.TIF'])
+        mndwi_tif_file = file_filter(root_path + 'Landsat_' + study_area + '_VI\\MNDWI\\', ['.TIF'])
+        fvc_list = []
+        for i in fvc_tif_file:
+            fvc_temp_ds = gdal.Open(i)
+            date = str(i[i.find('\FVC') + 5: i.find('\FVC') + 13])
+            for i_temp in mndwi_tif_file:
+                if date in i_temp:
+                    mndwi_temp_ds = gdal.Open(i_temp)
+            fvc_raster = fvc_temp_ds.GetRasterBand(1).ReadAsArray()
+            mndwi_raster = mndwi_temp_ds.GetRasterBand(1).ReadAsArray()
+            fvc_raster[mndwi_raster > 1000] = -32768
+            fvc_raster = fvc_raster.flatten()
+            nan_pos = np.argwhere(fvc_raster == -32768)
+            fvc_raster = np.delete(fvc_raster, nan_pos)
+            fvc_ave = np.nanmean(fvc_raster) / 10000
+            fvc_list.append([date, fvc_ave])
+        df = pandas.DataFrame(fvc_list, columns=['date', 'fvc_ave'])
+        df.to_excel(root_path + 'fvc_ave_table.xlsx')
 
 
 def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, phenology_comparison_factor=True, inundation_data_overwritten_factor=False, inundated_pixel_phe_curve_factor=True, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, pixel_limitation_f=None, curve_fitting_algorithm=None, dem_fix_inundated_factor=True, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, initial_dem_fix_year_interval=1, phenology_overview_factor=False, landsat_detected_inundation_area=True, phenology_individual_factor=True, surveyed_inundation_detection_factor=False):
@@ -2738,46 +2767,6 @@ def on_event_left_button_down(event, x, y, flags, param):
 
 def phenology_monitor(demo_path, phenology_indicator):
     pass
-
-phase0_time = 0
-phase1_time = 0
-phase2_time = 0
-phase3_time = 0
-phase4_time = 0
-gdal.UseExceptions()
-np.seterr(divide='ignore', invalid='ignore')
-root_path = 'E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\Sample_123039\\'
-original_file_path = root_path + 'Landsat78_123039_L2\\'
-corrupted_file_path = root_path + 'Corrupted\\'
-unzipped_file_path = root_path + 'Landsat_Ori_TIFF\\'
-google_earth_sample_data_path = root_path + 'Google_Earth_Sample\\'
-DEM_path = 'E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\Sample_123039\\Auxiliary\\latest_version_dem2\\'
-VEG_PATH = 'E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\Sample_123039\\Auxiliary\\veg\\'
-water_level_file_path = 'E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\Sample_123039\\Water_level\\Water_level.xlsx'
-create_folder(unzipped_file_path)
-file_metadata = generate_landsat_metadata(original_file_path, unzipped_file_path, corrupted_file_path, root_path, unzipped_para=False)
-bsz_thin_cloud = ['20210110', '20200710', '20191121', '20191028', '20191004', '20190318', '20181017', '20180627', '20180611', '20180416', '20180408', '20180331', '20180211', '20171115', '20171107', '20170531', '20170320', '20170224', '20060306', '20060712', '20060610', '20061211', '20071003', '20080818', '20081005', '20090517', '20090805', '20091101', '20091219', '20100104', '20100309', '20100520', '20100621', '20100901', '20101206', '20110123', '20110208', '20110904', '20130707', '20130715', '20131104', '20150907', '20160824', '20000905', '20000921', '20011018', '20011103', '20011213', '20020106', '20020122', '20021021', '20030525', '20030602', '20031203', '20040527', '20040730', '20041026', '20041018', '20050114', '20050522', '20050530', '20050615', '20050623', '20050709', '20050725']
-zz_thin_cloud = []
-nmz_thin_cloud = []
-nyz_thin_cloud = []
-study_area_list = np.array([['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\baishazhou.shp', 'bsz', bsz_thin_cloud, 'BSZ-2'], ['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\nanyangzhou.shp', 'nyz', nyz_thin_cloud, 'NYZ-3'], ['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\nanmenzhou.shp', 'nmz', nmz_thin_cloud, 'NMZ-2'], ['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\zhongzhou.shp', 'zz', zz_thin_cloud, 'ZZ-2']])
-# visualize_study_area_demo(root_path, unzipped_file_path, 20210102, study_area_list[0, 0], study_area_list[0, 1], demo_illustration='annual', VI='NDVI')
-
-for seq in range(study_area_list.shape[0]):
-    sample_rs_table = pandas.read_excel(google_earth_sample_data_path + 'sample_metadata.xlsx', sheet_name=study_area_list[seq, 1] + '_GE_LANDSAT')
-    sample_rs_table = sample_rs_table[['GE', 'Landsat']]
-    sample_rs_table['GE'] = sample_rs_table['GE'].dt.year * 10000 + sample_rs_table['GE'].dt.month * 100 + sample_rs_table['GE'].dt.day
-    sample_rs_table['Landsat'] = sample_rs_table['Landsat'].dt.year * 10000 + sample_rs_table['Landsat'].dt.month * 100 + sample_rs_table['Landsat'].dt.day
-    sample_rs_table = np.array(sample_rs_table)
-    generate_landsat_vi(root_path, unzipped_file_path, file_metadata, vi_construction_para=True,
-                        construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True,
-                        clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False,
-                        construct_sdc_para=True, sdc_overwritten_para=False, VI_list=['NDVI', 'OSAVI', 'MNDWI', 'EVI'],
-                        ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_date_list=study_area_list[seq, 2], manual_remove_issue_data=True)
-    landsat_vi2phenology_process(root_path, phenology_comparison_factor=False,
-                                 inundation_data_overwritten_factor=False, inundated_pixel_phe_curve_factor=False,
-                                 mndwi_threshold=0.25, VI_list_f=['NDVI', 'MNDWI'], Inundation_month_list=None, curve_fitting_algorithm='seven_para_logistic',
-                                 study_area=study_area_list[seq, 1], DEM_path=DEM_path, water_level_data_path=water_level_file_path, Year_range=[2000, 2020], cross_section=study_area_list[seq, 3], VEG_path=VEG_PATH, unzipped_file_path_f=unzipped_file_path, ROI_mask_f=study_area_list[seq, 0], file_metadata_f=file_metadata, inundation_mapping_accuracy_evaluation_factor=True, sample_data_path=google_earth_sample_data_path, sample_rs_link_list=sample_rs_table, phenology_overview_factor=True, phenology_individual_factor=True, surveyed_inundation_detection_factor=True)
 
 # pixel_limitation = cor_to_pixel([[775576.487, 3326499.324], [783860353.937, 3321687.841]], root_path + 'Landsat_clipped_NDVI\\')
 
