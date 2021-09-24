@@ -41,7 +41,10 @@ class Visulisation_gui(QMainWindow):
         # Phenology-related attributes
         self.sdc_dic = {}
         self.vi_temp_dic = {}
-        self.doy_temp_dic = {}
+        self.doy_list = np.array([])
+        self.inundated_para = ''
+        self.doy = ''
+        self.vi_image = np.array([])
 
         self.update_root_path()
 
@@ -57,45 +60,132 @@ class Visulisation_gui(QMainWindow):
         self.actionUpdate_shpfile_path.triggered.connect(self.update_shpfile_path)
         # generate output connection
         self.try_Button.clicked.connect(self.input_date)
+        self.manual_input_date_Edit.returnPressed.connect(self.input_date)
         self.random_input_Button.clicked.connect(self.random_show_demo)
         self.sa_combobox.activated.connect(self.update_shp_infor)
         self.gamma_correction_button.clicked.connect(self.gamma_correction)
         self.gamma_para_spinbox.valueChanged.connect(self.gamma_para_update)
-        self.vi_combobox.activated.connect(self.input_vi_file)
+        self.vi_combobox.currentTextChanged.connect(self.update_vi_sa_dic)
+        self.inundated_combobox.currentTextChanged.connect(self.update_inundated_combobox_dic)
+        self.doy_line_box.returnPressed.connect(self.vi_display)
+        self.display_button.clicked.connect(self.vi_display)
+        self.rescale_button.clicked.connect(self.rescale)
 
-    def input_vi_file(self):
+    def vi_display(self):
+        doy_temp = self.doy_line_box.Text()
+        if len(doy_temp) == 7:
+            try:
+                doy_temp = int(doy_temp)
+            except:
+                self.caution_msg_box('Please input the doy in the format of YYYYDOY!')
+        elif(len(doy_temp)) == 8:
+            try:
+                doy_temp = int(Landsat_main_v1.date2doy(doy_temp))
+            except:
+                self.caution_msg_box('Please input the doy in the format of YYYYDOY!')
+        else:
+            self.caution_msg_box('Please input the doy in the format of YYYYDOY!')
+            return
+
+        self.doy_list = [int(i) for i in self.doy_list]
+        if doy_temp not in self.doy_list:
+            for i in range(200000):
+                if doy_temp - i in doy_list:
+                    self.doy = doy_temp - i
+                    break
+                elif doy_temp + i in doy_list:
+                    self.doy = doy_temp + i
+                    break
+            self.caution_msg_box('Caution the input doy is invalid, the nearest date ' + str(self.doy) + 'is replaced!')
+        else:
+            self.doy = str(doy_temp)
+        self.doy_line_box.setText(str(self.doy))
+        doy_pos = np.argwhere(self.doy_list == int(self.doy))
+        vi_temp = self.vi_temp_dic[:, :, doy_pos[0]]
+        self.vi_image = np.stack([vi_temp, vi_temp, vi_temp], axis=2)
+        if self.vi_image.dtype == np.float:
+            cv2.imwrite(self.sa_demo_folder + ''self.vi_image.astype(np.uint16)
+        elif self.vi_image.dtype == np.int16:
+            self.vi_image.astype()
+
+    def rescale(self):
+        pass
+
+    def default_factors(self):
+        self.vi_combobox.setCurrentText('None')
+        self.inundated_combobox.setCurrentText('None')
+
+    def update_inundated_combobox_dic(self):
+        self.inundated_para = self.inundated_combobox.currentText()
+
+    def update_vi_sa_dic(self):
         self.vi_current = self.vi_combobox.currentText()
         if self.vi_current != 'None':
             try:
                 if len(Landsat_main_v1.file_filter(self.keydic_path, ['.npy', 'sdc', self.sa_current], and_or_factor='and')) == 1:
                     self.sdc_dic = np.load(Landsat_main_v1.file_filter(self.keydic_path, ['.npy', 'sdc', self.sa_current], and_or_factor='and')[0], allow_pickle=True).item()
-                    self.vi_combobox.setcurrentText('None')
                     try:
-                        np.load(self.sdc_dic[self.vi_current + '_path'] + self.vi_current + '_sequenced_datacube.npy', allow_pickle=True)
+                        self.vi_temp_dic = np.load(self.sdc_dic[self.vi_current + '_path'] + self.vi_current + '_sequenced_datacube.npy', allow_pickle=True)
+                        self.update_doy_list()
                     except:
                         self.caution_msg_box('Please generate the ' + self.vi_current + ' sequenced datacube of the ' + self.sa_current + ' before visualization!')
-                        self.vi_combobox.setcurrentText('None')
+                        self.default_factors()
                 elif len(Landsat_main_v1.file_filter(self.keydic_path, ['.npy', 'sdc', self.sa_current], and_or_factor='and')) == 0:
                     self.caution_msg_box('Please generate the sdc datacube of the ' + self.sa_current + ' before visualization!')
-                    self.vi_combobox.setcurrentText('None')
+                    self.default_factors()
                 else:
                     self.caution_msg_box('There are more than two sdc dic in the key dictionary folder!')
-                    self.vi_combobox.setcurrentText('None')
+                    self.default_factors()
             except:
-                self.caution_msg_box('Unknown error occurred during input_vi_file')
-                self.vi_combobox.setcurrentText('None')
+                self.caution_msg_box('Unknown error occurred during update_vi_sa_dic')
+                self.default_factors()
 
-    def update_paramemter_box(self, bool_factor):
+    def update_vi_parameter_box(self, bool_factor):
         if bool_factor:
             self.gamma_para_spinbox.setEnabled(True)
             self.gamma_correction_button.setEnabled(True)
             self.VI_para_box.setEnabled(True)
-            if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current)])) == 0:
-                self.inundated_combobox.setEnable(False)
+            self.doy_line_box.setEnabled(False)
+            self.display_button.setEnabled(False)
+            self.rescale_button.setEnabled(False)
+            self.update_inundated_item()
+            self.default_factors()
         else:
             self.gamma_para_spinbox.setEnabled(False)
             self.gamma_correction_button.setEnabled(False)
             self.VI_para_box.setEnabled(False)
+
+    def update_inundated_item(self):
+        self.inundated_combobox.clear()
+        self.inundated_combobox.addItem('None')
+        if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current)])) == 0:
+            self.inundated_combobox.setEnable(False)
+        else:
+            if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current), 'local'])) != 0:
+                self.inundated_combobox.addItem('Local')
+            if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current), 'global'])) != 0:
+                self.inundated_combobox.addItem('Global')
+            if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current), 'surv'])) != 0:
+                self.inundated_combobox.addItem('Surveyed')
+            if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current), 'fina'])) != 0:
+                self.inundated_combobox.addItem('Final')
+            self.inundated_combobox.setCurrentText('None')
+            self.inundated_para = self.inundated_combobox.currentText()
+
+    def update_doy_list(self):
+        try:
+            self.doy_list = self.sdc_dic['doy']
+        except:
+            self.caution_msg_box('Unknown error occurred during doy list update!')
+            self.doy_line_box.setEnabled(False)
+
+        if self.doy_list == []:
+            self.caution_msg_box('Void doy list detected!')
+            self.doy_line_box.setEnabled(False)
+        else:
+            self.doy_line_box.setEnabled(True)
+            self.doy_line_box.setText(str(self.doy_list[0]))
+            self.doy = str(self.doy_list[0])
 
     def random_show_demo(self):
         i = random.randint(0, int(len(self.all_date)))
@@ -108,13 +198,13 @@ class Visulisation_gui(QMainWindow):
 
         if not os.path.exists(self.shpfile):
             self.caution_msg_box('The shapefile doesnot exists, please manually input!')
-            self.update_paramemter_box(False)
+            self.update_vi_parameter_box(False)
         else:
             if self.date != '':
                 if len(self.date) == 8:
                     if len(Landsat_main_v1.file_filter(self.orifile_path, [self.date, '.TIF'], and_or_factor='and')) == 0:
                         self.caution_msg_box('This is not a valid date! Try again!')
-                        self.update_paramemter_box(False)
+                        self.update_vi_parameter_box(False)
                     else:
                         self.sa_demo_folder = self.rootpath + '/Landsat_phenology_demo/' + str(self.sa_current) + '/'
                         Landsat_main_v1.create_folder(self.sa_demo_folder)
@@ -125,7 +215,7 @@ class Visulisation_gui(QMainWindow):
                             self.rgb_dic = {'r': 'B3', 'g': 'B2', 'b': 'B1'}
                         else:
                             self.caution_msg_box('Unkown error occured!')
-                            self.update_paramemter_box(False)
+                            self.update_vi_parameter_box(False)
                             return
                         r_ds = gdal.Open(Landsat_main_v1.file_filter(self.orifile_path, [self.date, self.rgb_dic['r'], '.TIF'], and_or_factor='and')[0])
                         g_ds = gdal.Open(Landsat_main_v1.file_filter(self.orifile_path, [self.date, self.rgb_dic['g'], '.TIF'], and_or_factor='and')[0])
@@ -149,13 +239,13 @@ class Visulisation_gui(QMainWindow):
                         self.demoscene.clear()
                         self.demoscene.addPixmap(QPixmap(self.sa_demo_folder + 'temp.png'))
                         self.sa_demo.setScene(self.demoscene)
-                        self.update_paramemter_box(True)
+                        self.update_vi_parameter_box(True)
                 else:
                     self.caution_msg_box('Please manual input the date in YYYYMMDD format!')
-                    self.update_paramemter_box(False)
+                    self.update_vi_parameter_box(False)
             else:
                 self.caution_msg_box('Please manual input the date of the demo!')
-                self.update_paramemter_box(False)
+                self.update_vi_parameter_box(False)
 
     def input_date(self):
         self.date = self.manual_input_date_Edit.text()

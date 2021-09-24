@@ -292,7 +292,7 @@
           <property name="font">
            <font>
             <family>Times New Roman</family>
-            <pointsize>12</pointsize>
+            <pointsize>14</pointsize>
            </font>
           </property>
           <property name="text">
@@ -351,7 +351,7 @@
           </property>
           <property name="font">
            <font>
-            <pointsize>12</pointsize>
+            <pointsize>14</pointsize>
            </font>
           </property>
           <property name="text">
@@ -390,9 +390,9 @@
     <property name="geometry">
      <rect>
       <x>20</x>
-      <y>550</y>
-      <width>310</width>
-      <height>141</height>
+      <y>549</y>
+      <width>311</width>
+      <height>91</height>
      </rect>
     </property>
     <property name="font">
@@ -406,127 +406,257 @@
     <property name="title">
      <string>VI-related Factors</string>
     </property>
-    <widget class="QWidget" name="layoutWidget">
+    <widget class="QComboBox" name="inundated_combobox">
      <property name="geometry">
       <rect>
-       <x>10</x>
+       <x>108</x>
+       <y>54</y>
+       <width>70</width>
+       <height>23</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="font">
+      <font>
+       <family>Times New Roman</family>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <item>
+      <property name="text">
+       <string>None</string>
+      </property>
+     </item>
+    </widget>
+    <widget class="QLabel" name="label_5">
+     <property name="geometry">
+      <rect>
+       <x>-26</x>
+       <y>51</y>
+       <width>170</width>
+       <height>29</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>126</width>
+       <height>0</height>
+      </size>
+     </property>
+     <property name="font">
+      <font>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>Inundated exclude</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_2">
+     <property name="geometry">
+      <rect>
+       <x>-10</x>
        <y>20</y>
-       <width>289</width>
-       <height>31</height>
+       <width>126</width>
+       <height>29</height>
       </rect>
      </property>
-     <layout class="QHBoxLayout" name="horizontalLayout_3">
-      <property name="spacing">
-       <number>19</number>
-      </property>
-      <item>
-       <widget class="QLabel" name="label_2">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>126</width>
-          <height>0</height>
-         </size>
-        </property>
-        <property name="font">
-         <font>
-          <pointsize>12</pointsize>
-         </font>
-        </property>
-        <property name="text">
-         <string> Vegetation Index</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignCenter</set>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QComboBox" name="vi_combobox">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="font">
-         <font>
-          <family>Times New Roman</family>
-          <pointsize>12</pointsize>
-         </font>
-        </property>
-        <item>
-         <property name="text">
-          <string>None</string>
-         </property>
-        </item>
-       </widget>
-      </item>
-     </layout>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>126</width>
+       <height>0</height>
+      </size>
+     </property>
+     <property name="font">
+      <font>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string> Phenology Index</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
     </widget>
-    <widget class="QWidget" name="layoutWidget_2">
+    <widget class="QComboBox" name="vi_combobox">
      <property name="geometry">
       <rect>
-       <x>10</x>
-       <y>60</y>
-       <width>289</width>
-       <height>31</height>
+       <x>108</x>
+       <y>23</y>
+       <width>70</width>
+       <height>23</height>
       </rect>
      </property>
-     <layout class="QHBoxLayout" name="inundated_layout">
-      <property name="spacing">
-       <number>19</number>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="font">
+      <font>
+       <family>Times New Roman</family>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <item>
+      <property name="text">
+       <string>None</string>
       </property>
-      <item>
-       <widget class="QLabel" name="label_5">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="minimumSize">
-         <size>
-          <width>126</width>
-          <height>0</height>
-         </size>
-        </property>
-        <property name="font">
-         <font>
-          <pointsize>12</pointsize>
-         </font>
-        </property>
-        <property name="text">
-         <string>Inundated exclude</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignCenter</set>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QComboBox" name="inundated_combobox">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="font">
-         <font>
-          <family>Times New Roman</family>
-          <pointsize>12</pointsize>
-         </font>
-        </property>
-       </widget>
-      </item>
-     </layout>
+     </item>
     </widget>
+    <widget class="QLabel" name="label_6">
+     <property name="geometry">
+      <rect>
+       <x>142</x>
+       <y>20</y>
+       <width>126</width>
+       <height>29</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>126</width>
+       <height>0</height>
+      </size>
+     </property>
+     <property name="font">
+      <font>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>DOY</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="display_button">
+     <property name="geometry">
+      <rect>
+       <x>186</x>
+       <y>53</y>
+       <width>55</width>
+       <height>25</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Maximum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>23</height>
+      </size>
+     </property>
+     <property name="font">
+      <font>
+       <family>Times New Roman</family>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>Display</string>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="rescale_button">
+     <property name="geometry">
+      <rect>
+       <x>245</x>
+       <y>53</y>
+       <width>55</width>
+       <height>25</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Maximum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>20</height>
+      </size>
+     </property>
+     <property name="font">
+      <font>
+       <family>Times New Roman</family>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>Rescale</string>
+     </property>
+    </widget>
+    <widget class="QLineEdit" name="doy_line_box">
+     <property name="geometry">
+      <rect>
+       <x>229</x>
+       <y>23</y>
+       <width>71</width>
+       <height>23</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>20</height>
+      </size>
+     </property>
+     <property name="text">
+      <string>20000000</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+    </widget>
+    <zorder>label_6</zorder>
+    <zorder>inundated_combobox</zorder>
+    <zorder>label_5</zorder>
+    <zorder>label_2</zorder>
+    <zorder>vi_combobox</zorder>
+    <zorder>display_button</zorder>
+    <zorder>rescale_button</zorder>
+    <zorder>doy_line_box</zorder>
    </widget>
    <widget class="QLabel" name="label_sa_demo_2">
     <property name="geometry">
@@ -570,7 +700,7 @@
       <x>340</x>
       <y>420</y>
       <width>131</width>
-      <height>55</height>
+      <height>51</height>
      </rect>
     </property>
     <property name="font">
@@ -615,7 +745,7 @@
     <property name="geometry">
      <rect>
       <x>340</x>
-      <y>485</y>
+      <y>530</y>
       <width>131</width>
       <height>55</height>
      </rect>
@@ -665,8 +795,8 @@
     </property>
     <property name="geometry">
      <rect>
-      <x>340</x>
-      <y>550</y>
+      <x>20</x>
+      <y>650</y>
       <width>131</width>
       <height>55</height>
      </rect>

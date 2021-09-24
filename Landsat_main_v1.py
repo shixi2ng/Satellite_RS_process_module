@@ -1361,7 +1361,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             NDVI_flatten = NDVI_temp_array.flatten()
                             nan_pos = np.argwhere(NDVI_flatten == -32768)
                             NDVI_flatten = np.sort(np.delete(NDVI_flatten, nan_pos))
-                            if NDVI_flatten.shape[0] == 0:
+                            if NDVI_flatten.shape[0] <= 50:
                                 write_raster(RED_temp_ds, NDVI_temp_array, constructed_vi['FVC_path'], str(filedate) + '_' + str(tile_num) + '_FVC.TIF', raster_datatype=gdal.GDT_Int16)
                             else:
                                 NDVI_soil = NDVI_flatten[int(np.round(NDVI_flatten.shape[0] * 0.02))]
@@ -1518,7 +1518,12 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
         except:
             print('Please make sure the datacube of the ' + study_area + ' dictionary was constructed!')
             sys.exit(-1)
-        sdc_vi = {}
+
+        if not os.path.exists(key_dictionary_path + study_area + '_sdc_vi.npy'):
+            sdc_vi = {}
+        else:
+            sdc_vi = np.load(key_dictionary_path + study_area + '_sdc_vi.npy', allow_pickle=True).item()
+
         sdc_vi_dc = {}
         for VI in VI_list:
             # Remove all files which not meet the requirements
@@ -1627,6 +1632,11 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
     # (2) Using the remaining data to fitting the vegetation growth curve
     # (3) Obtaining vegetation phenology information
     global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
+    phase0_time = 0
+    phase1_time = 0
+    phase2_time = 0
+    phase3_time = 0
+    phase4_time = 0
     # Check whether the VI data cube exists or not
     VI_sdc = {}
     VI_curve_fitting = {}

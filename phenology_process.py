@@ -31,11 +31,8 @@ from pyqtgraph.Qt import QtGui, QtCore
 import PyQt5
 import Landsat_main_v1
 
-phase0_time = 0
-phase1_time = 0
-phase2_time = 0
-phase3_time = 0
-phase4_time = 0
+
+
 gdal.UseExceptions()
 np.seterr(divide='ignore', invalid='ignore')
 root_path = 'E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\Sample_123039\\'
@@ -64,7 +61,7 @@ for seq in range(study_area_list.shape[0]):
     Landsat_main_v1.generate_landsat_vi(root_path, unzipped_file_path, file_metadata, vi_construction_para=True,
                         construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True,
                         clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False,
-                        construct_sdc_para=True, sdc_overwritten_para=False, VI_list=['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC'],
+                        construct_sdc_para=True, sdc_overwritten_para=False, VI_list=['NDVI', 'OSAVI', 'MNDWI', 'EVI'],
                         ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_date_list=study_area_list[seq, 2], manual_remove_issue_data=True)
     Landsat_main_v1.landsat_vi2phenology_process(root_path, phenology_comparison_factor=False,
                                  inundation_data_overwritten_factor=False, inundated_pixel_phe_curve_factor=False,
