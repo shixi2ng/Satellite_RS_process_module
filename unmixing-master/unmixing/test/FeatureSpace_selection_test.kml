@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8" ?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><Style id="default">
-<LineStyle><color>ff0000ff</color><width>3</width></LineStyle>
-<PolyStyle><color>000000ff</color><colorMode>normal</colorMode></PolyStyle>
-</Style><Placemark><description>335985.0,4656915.0</description><styleUrl>#default</styleUrl>
-<MultiGeometry><Point><coordinates>-82.981859,42.047182</coordinates></Point><Polygon><outerBoundaryIs><LinearRing><coordinates>-82.98204,42.04731,0 -82.98168,42.04732,0 -82.98167,42.04705,0 -82.98204,42.04704,0 -82.98204,42.04731,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry></Placemark><Placemark><description>233985.0,4632915.0</description><styleUrl>#default</styleUrl>
-<MultiGeometry><Point><coordinates>-84.202036,41.803482</coordinates></Point><Polygon><outerBoundaryIs><LinearRing><coordinates>-84.20222,41.80361,0 -84.20186,41.80362,0 -84.20185,41.80335,0 -84.20221,41.80334,0 -84.20222,41.80361,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry></Placemark></Document></kml>
