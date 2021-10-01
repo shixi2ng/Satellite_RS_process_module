@@ -9,8 +9,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1227</width>
-    <height>708</height>
+    <width>1360</width>
+    <height>711</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -34,34 +34,6 @@ background-color: rgb(236, 236, 236);
    <enum>QTabWidget::Rounded</enum>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <widget class="QGraphicsView" name="phenology_information_view">
-    <property name="geometry">
-     <rect>
-      <x>477</x>
-      <y>26</y>
-      <width>741</width>
-      <height>631</height>
-     </rect>
-    </property>
-    <property name="sizePolicy">
-     <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-      <horstretch>0</horstretch>
-      <verstretch>0</verstretch>
-     </sizepolicy>
-    </property>
-    <property name="cursor" stdset="0">
-     <cursorShape>ArrowCursor</cursorShape>
-    </property>
-    <property name="styleSheet">
-     <string notr="true">QGraphicsView{
-border-color: rgb(0, 0, 0);
-background-color: rgb(245, 245, 245)
-}</string>
-    </property>
-    <property name="sizeAdjustPolicy">
-     <enum>QAbstractScrollArea::AdjustToContents</enum>
-    </property>
-   </widget>
    <widget class="QLabel" name="label_sa_demo">
     <property name="geometry">
      <rect>
@@ -772,7 +744,7 @@ background-color: rgb(245, 245, 245)
      <rect>
       <x>477</x>
       <y>-4</y>
-      <width>741</width>
+      <width>871</width>
       <height>41</height>
      </rect>
     </property>
@@ -1114,6 +1086,11 @@ background-color: rgb(245, 245, 245)
        <string>TTF</string>
       </property>
      </item>
+     <item>
+      <property name="text">
+       <string>Preferred</string>
+      </property>
+     </item>
     </widget>
     <widget class="QPushButton" name="generate_button">
      <property name="enabled">
@@ -1152,14 +1129,14 @@ background-color: rgb(245, 245, 245)
    </widget>
    <widget class="QGroupBox" name="groupBox_4">
     <property name="enabled">
-     <bool>false</bool>
+     <bool>true</bool>
     </property>
     <property name="geometry">
      <rect>
       <x>337</x>
       <y>415</y>
       <width>131</width>
-      <height>181</height>
+      <height>91</height>
      </rect>
     </property>
     <property name="font">
@@ -1171,7 +1148,10 @@ background-color: rgb(245, 245, 245)
     <property name="title">
      <string>Output</string>
     </property>
-    <widget class="QPushButton" name="display_button_2">
+    <widget class="QPushButton" name="output_fig_button">
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
      <property name="geometry">
       <rect>
        <x>15</x>
@@ -1202,7 +1182,10 @@ background-color: rgb(245, 245, 245)
       <string>Output Figure</string>
      </property>
     </widget>
-    <widget class="QPushButton" name="display_button_3">
+    <widget class="QPushButton" name="output_data_button">
+     <property name="enabled">
+      <bool>false</bool>
+     </property>
      <property name="geometry">
       <rect>
        <x>15</x>
@@ -1290,22 +1273,186 @@ background-color: rgb(245, 245, 245)
      <set>Qt::AlignCenter</set>
     </property>
    </widget>
+   <widget class="QGroupBox" name="groupBox_5">
+    <property name="enabled">
+     <bool>false</bool>
+    </property>
+    <property name="geometry">
+     <rect>
+      <x>336</x>
+      <y>513</y>
+      <width>131</width>
+      <height>91</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Times New Roman</family>
+      <pointsize>14</pointsize>
+     </font>
+    </property>
+    <property name="title">
+     <string>Coordinate</string>
+    </property>
+    <widget class="QLineEdit" name="x_coordinate">
+     <property name="geometry">
+      <rect>
+       <x>50</x>
+       <y>24</y>
+       <width>71</width>
+       <height>23</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>20</height>
+      </size>
+     </property>
+     <property name="font">
+      <font>
+       <family>Times New Roman</family>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <property name="styleSheet">
+      <string notr="true"/>
+     </property>
+     <property name="text">
+      <string>0</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+    </widget>
+    <widget class="QLineEdit" name="y_coordinate">
+     <property name="geometry">
+      <rect>
+       <x>50</x>
+       <y>56</y>
+       <width>71</width>
+       <height>23</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>20</height>
+      </size>
+     </property>
+     <property name="font">
+      <font>
+       <family>Times New Roman</family>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <property name="styleSheet">
+      <string notr="true"/>
+     </property>
+     <property name="text">
+      <string>0</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_11">
+     <property name="geometry">
+      <rect>
+       <x>9</x>
+       <y>25</y>
+       <width>41</width>
+       <height>21</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>0</height>
+      </size>
+     </property>
+     <property name="font">
+      <font>
+       <family>Times New Roman</family>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>X</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_12">
+     <property name="geometry">
+      <rect>
+       <x>8</x>
+       <y>57</y>
+       <width>41</width>
+       <height>21</height>
+      </rect>
+     </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>0</height>
+      </size>
+     </property>
+     <property name="font">
+      <font>
+       <family>Times New Roman</family>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>Y</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+    </widget>
+   </widget>
    <zorder>label_sa_demo</zorder>
    <zorder>label_sa_demo_2</zorder>
    <zorder>VI_para_box</zorder>
    <zorder>Initialization_box</zorder>
-   <zorder>phenology_information_view</zorder>
    <zorder>phenology_factor_box</zorder>
    <zorder>groupBox_4</zorder>
    <zorder>label_13</zorder>
    <zorder>label_14</zorder>
+   <zorder>groupBox_5</zorder>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1227</width>
+     <width>1360</width>
      <height>18</height>
     </rect>
    </property>
