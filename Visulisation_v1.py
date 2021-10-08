@@ -299,6 +299,8 @@ class Visualisation_gui(QMainWindow):
         self.inundated_para = ''
         self.inundated_dic = {}
         self.inundated_map = np.array([])
+        self.inundated_dc = np.array([])
+        self.inundated_doy = np.array([])
         self.rescale_factor = False
         self.doy = np.nan
         self.ori_vi_image = np.array([]).astype(np.float64)
@@ -367,7 +369,7 @@ class Visualisation_gui(QMainWindow):
         self.actionUpdate_the_root_path.triggered.connect(self.update_root_path)
         self.actionUpdate_Key_dictionary_path.triggered.connect(self.update_key_dic_path)
         self.actionUpdate_Original_file_path.triggered.connect(self.update_ori_file_path)
-        self.actionUpdate_fundamental_dic.triggered.connect(self.update_fundatmental_dic)
+        self.actionUpdate_fundamental_dic.triggered.connect(self.update_fundamental_dic)
         self.actionUpdate_shpfile_path.triggered.connect(self.update_shpfile_path)
 
         # demo related connection
@@ -776,6 +778,13 @@ class Visualisation_gui(QMainWindow):
         if self.inundated_para != 'None' and self.inundated_para != '':
             try:
                 self.inundated_dic = np.load(Landsat_main_v1.file_filter(self.keydic_path, ['.npy', self.inundated_para, self.sa_current], and_or_factor='and')[0], allow_pickle=True).item()
+                self.inundated_dc = np.load(self.inundated_dic['inundated_dc_file'])
+                self.inundated_doy = np.load(self.inundated_dic['inundated_doy_file'])
+                if self.inundated_dc.shape[2] != self.inundated_doy.shape[0]:
+                    self.caution_msg_box('Consistency Error')
+                    self.inundated_dc = np.array([])
+                    self.inundated_doy = np.array([])
+                    self.inundated_dic = {}
             except:
                 self.caution_msg_box('Unknown error during updated inundated dic')
         else:
@@ -831,13 +840,21 @@ class Visualisation_gui(QMainWindow):
 
             if self.inundated_para != 'None' and self.inundated_dic != {}:
                 try:
-                    temp_ds = gdal.Open(Landsat_main_v1.file_filter(self.inundated_dic[self.inundated_para + '_' + self.sa_current], [str(self.doy)])[0])
-                    self.inundated_map = temp_ds.GetRasterBand(1).ReadAsArray()
-                    if self.inundated_map.shape[0] != 0:
+                    # temp_ds = gdal.Open(Landsat_main_v1.file_filter(self.inundated_dic[self.inundated_para + '_' + self.sa_current], [str(self.doy)])[0])
+                    # self.inundated_map = temp_ds.GetRasterBand(1).ReadAsArray()
+                    # if self.inundated_map.shape[0] != 0:
+                    #     if self.inundated_map.shape[0] == vi_temp.shape[0] and self.inundated_map.shape[1] == vi_temp.shape[1]:
+                    #         vi_temp[self.inundated_map > 0] = np.nan
+                    # else:
+                    #     vi_temp = vi_temp
+                    inundated_pos = np.argwhere(self.inundated_doy == self.doy)
+                    self.inundated_map = self.inundated_dc[:, :, inundated_pos[0]]
+                    if self.inundated_map.shape[0] == vi_temp.shape[0] and self.inundated_map.shape[1] == vi_temp.shape[1]:
                         if self.inundated_map.shape[0] == vi_temp.shape[0] and self.inundated_map.shape[1] == vi_temp.shape[1]:
                             vi_temp[self.inundated_map > 0] = np.nan
                     else:
                         vi_temp = vi_temp
+                        self.caution_msg_box('Inconsistency detected between vi and inundated image!')
                 except:
                     self.caution_msg_box('Unknown Error occurred during inundated map input!')
             elif self.inundated_para == 'None':
@@ -938,7 +955,7 @@ class Visualisation_gui(QMainWindow):
                         elif 'LE07' in ori_file[0] or 'LT05' in ori_file[0]:
                             self.rgb_dic = {'r': 'B3', 'g': 'B2', 'b': 'B1'}
                         else:
-                            self.caution_msg_box('Unkown error occured!')
+                            self.caution_msg_box('Unkown error occurred!')
                             self.update_sa_related_button(False)
                             return
                         r_ds = gdal.Open(Landsat_main_v1.file_filter(self.orifile_path, [self.date, self.rgb_dic['r'], '.TIF'], and_or_factor='and')[0])
@@ -1046,8 +1063,8 @@ class Visualisation_gui(QMainWindow):
             self.update_rt_related_button(False)
         else:
             self.levelfactor = 'root'
-            self.basic_information_retreival()
-            self.all_avaliable_date()
+            self.basic_information_retrieval()
+            self.all_available_date()
 
     def update_ori_file_path(self):
         try:
@@ -1061,7 +1078,7 @@ class Visualisation_gui(QMainWindow):
             self.caution_msg_box('Please double check the original tif file path')
             self.update_rt_related_button(False)
         else:
-            self.all_avaliable_date()
+            self.all_available_date()
 
     def update_key_dic_path(self):
         try:
@@ -1071,9 +1088,9 @@ class Visualisation_gui(QMainWindow):
             path_temp = 'C:\\'
         self.orifile_path = QFileDialog.getExistingDirectory(self, "Please manually update the key dictionary path", path_temp)
         self.levelfactor = 'dic_path'
-        self.basic_information_retreival()
+        self.basic_information_retrieval()
 
-    def update_fundatmental_dic(self):
+    def update_fundamental_dic(self):
         try:
             path.exists(self.keydic_path)
             path_temp = self.keydic_path
@@ -1087,9 +1104,9 @@ class Visualisation_gui(QMainWindow):
             self.update_rt_related_button(False)
         finally:
             self.levelfactor = 'dic'
-            self.basic_information_retreival()
+            self.basic_information_retrieval()
 
-    def all_avaliable_date(self):
+    def all_available_date(self):
         all_ori_filename = os.listdir(self.orifile_path)
         try:
             self.all_date = [i[17:25] for i in all_ori_filename if 'MTL.txt' in i]
@@ -1110,7 +1127,7 @@ class Visualisation_gui(QMainWindow):
             self.default_sa_related_factors()
             self.update_sa_related_button(False)
 
-    def basic_information_retreival(self):
+    def basic_information_retrieval(self):
         if self.levelfactor == 'root':
             try:
                 self.fundamental_dic = np.load(self.rootpath + '/Landsat_key_dic/fundamental_information_dic.npy', allow_pickle=True).item()
@@ -1131,7 +1148,7 @@ class Visualisation_gui(QMainWindow):
             self.query_information()
         self.enable_intialisation()
 
-    def enable_intialisation(self):
+    def enable_initialisation(self):
         if self.fundamental_dic is None:
             self.Initialization_box.setEnabled(False)
         else:
@@ -1158,11 +1175,11 @@ class Visualisation_gui(QMainWindow):
                 if len(Landsat_main_v1.file_filter(self.shpfile_path, [self.sa_current, '.shp'], and_or_factor='and', exclude_word_list=['.xml'])) == 1:
                     self.shpfile = Landsat_main_v1.file_filter(self.shpfile_path, [self.sa_current, '.shp'], and_or_factor='and', exclude_word_list=['.xml'])[0]
                 elif len(Landsat_main_v1.file_filter(self.shpfile_path, [self.sa_current, '.shp'], and_or_factor='and', exclude_word_list=['.xml'])) > 1:
-                    self.caution_msg_box('Unknown error occured!')
+                    self.caution_msg_box('Unknown error occurred!')
                 elif len(Landsat_main_v1.file_filter(self.shpfile_path, [self.sa_current, '.shp'], and_or_factor='and', exclude_word_list=['.xml'])) == 0:
-                    self.caution_msg_box('There has no requried shape file! Please manually input')
+                    self.caution_msg_box('There has no required shape file! Please manually input')
             except:
-                self.caution_msg_box('Unknown error occured!')
+                self.caution_msg_box('Unknown error occurred!')
         else:
             self.caution_msg_box('Lack essential information to retrieve the shp of study area, manual input or try again!')
 
@@ -1317,9 +1334,9 @@ class Visualisation_gui(QMainWindow):
                 self.inundated_combobox.addItem('local')
             if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current), 'global'])) != 0:
                 self.inundated_combobox.addItem('global')
-            if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current), 'surv'])) != 0:
-                self.inundated_combobox.addItem('surveyed')
-            if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current), 'fina'])) != 0:
+            if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current), 'survey'])) != 0:
+                self.inundated_combobox.addItem('survey')
+            if len(Landsat_main_v1.file_filter(self.keydic_path, ['inundat', str(self.sa_current), 'final'])) != 0:
                 self.inundated_combobox.addItem('final')
             self.inundated_combobox.setCurrentText('None')
             self.inundated_para = self.inundated_combobox.currentText()
