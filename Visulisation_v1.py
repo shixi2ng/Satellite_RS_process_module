@@ -17,6 +17,7 @@ import random
 import Landsat_main_v1
 from scipy.optimize import curve_fit
 import shutil
+import copy
 
 
 counter = 0
@@ -344,6 +345,7 @@ class Visualisation_gui(QMainWindow):
         self.r_square = np.nan
         self.curve_plot_x = np.array([])
         self.curve_plot_y = np.array([])
+        self.phenology_view_name = ''
 
         self.vi_sa_array_for_phenology_pixel = np.array([])
         self.phenology_window_height = self.phenology_information_view.geometry().height()
@@ -360,7 +362,7 @@ class Visualisation_gui(QMainWindow):
 
         self.update_root_path()
         self.show()
-        self.enable_intialisation()
+        self.enable_initialisation()
 
         # close
         self.actionclose.triggered.connect(exit)
@@ -398,6 +400,7 @@ class Visualisation_gui(QMainWindow):
         self.ra_domain_box.currentTextChanged.connect(self.pixel_change_generate_fig)
         self.phenology_view_box.currentTextChanged.connect(self.phenology_view_change_generate_fig)
         self.regression_box.currentTextChanged.connect(self.regression_change_generate_fig)
+        self.inundated_combobox.currentTextChanged.connect(self.inundated_change_generate_fig)
 
         # output connection
         self.output_fig_button.clicked.connect(self.output_figure)
@@ -430,6 +433,10 @@ class Visualisation_gui(QMainWindow):
 
     def regression_change_generate_fig(self):
         self.varied_factor = 'regression'
+        self.generate_fig_button()
+
+    def inundated_change_generate_fig(self):
+        self.varied_factor = 'inundated'
         self.generate_fig_button()
 
     def update_time_span_begin(self):
@@ -568,18 +575,28 @@ class Visualisation_gui(QMainWindow):
         if self.phenology_view_box.isEnabled() and self.begin_year != '' and self.end_year != '':
             if self.vi_temp_dic.shape[2] == len(self.doy_list):
                 # Preprocess inundated data
-                if self.inundated_dic != {} and not self.inundated_process_factor:
+                if self.inundated_dic != {}:
+                    # for i in range(len(self.doy_list)):
+                    #     if len(Landsat_main_v1.file_filter(self.inundated_dic[self.inundated_para + '_' + self.sa_current], [str(self.doy_list[i]), '.TIF'], and_or_factor='and', exclude_word_list=['.xml'])) != 0:
+                    #         temp_ds = gdal.Open(Landsat_main_v1.file_filter(self.inundated_dic[self.inundated_para + '_' + self.sa_current], [str(self.doy_list[i]), '.TIF'], and_or_factor='and', exclude_word_list=['.xml'])[0])
+                    #         temp_inundated_map = temp_ds.GetRasterBand(1).ReadAsArray()
+                    #         try:
+                    #             vi_temp = self.vi_sa_array_for_phenology[:, :, i].reshape([self.vi_sa_array_for_phenology.shape[0], self.vi_sa_array_for_phenology.shape[1]])
+                    #             vi_temp[temp_inundated_map > 0] = np.nan
+                    #             self.vi_sa_array_for_phenology[:, :, i] = vi_temp.reshape([self.vi_sa_array_for_phenology.shape[0], self.vi_sa_array_for_phenology.shape[1], 1])
+                    #         except:
+                    #             pass
+                    self.vi_sa_array_for_phenology = copy.copy(self.vi_temp_dic)
                     for i in range(len(self.doy_list)):
-                        if len(Landsat_main_v1.file_filter(self.inundated_dic[self.inundated_para + '_' + self.sa_current], [str(self.doy_list[i]), '.TIF'], and_or_factor='and', exclude_word_list=['.xml'])) != 0:
-                            temp_ds = gdal.Open(Landsat_main_v1.file_filter(self.inundated_dic[self.inundated_para + '_' + self.sa_current], [str(self.doy_list[i]), '.TIF'], and_or_factor='and', exclude_word_list=['.xml'])[0])
-                            temp_inundated_map = temp_ds.GetRasterBand(1).ReadAsArray()
-                            try:
-                                vi_temp = self.vi_sa_array_for_phenology[:, :, i].reshape([self.vi_sa_array_for_phenology.shape[0], self.vi_sa_array_for_phenology.shape[1]])
-                                vi_temp[temp_inundated_map > 0] = np.nan
-                                self.vi_sa_array_for_phenology[:, :, i] = vi_temp.reshape([self.vi_sa_array_for_phenology.shape[0], self.vi_sa_array_for_phenology.shape[1], 1])
-                            except:
-                                pass
-                    self.inundated_process_factor = True
+                        if int(self.doy_list[i]) in self.inundated_doy:
+                            pos_index = np.argwhere(self.inundated_doy == int(self.doy_list[i]))
+                            dc_temp = self.vi_sa_array_for_phenology[:, :, i]
+                            inundated_temp = self.inundated_dc[:, :, pos_index[0]].reshape([self.inundated_dc.shape[0], self.inundated_dc.shape[1]])
+                            dc_temp[inundated_temp > 0] = np.nan
+                            self.vi_sa_array_for_phenology[:, :, i] = dc_temp
+                    # self.inundated_process_factor = True
+                elif self.inundated_dic == {}:
+                    self.vi_sa_array_for_phenology = copy.copy(self.vi_temp_dic)
                 # Generate plot data
                 if self.varied_factor == 'year':
                     year_list_temp = np.array([int(self.doy_list[i]) // 1000 for i in range(len(self.doy_list))])
@@ -681,6 +698,7 @@ class Visualisation_gui(QMainWindow):
                 self.phenology_information_view.clear_scene()
                 self.phenology_information_view.setPhoto(QPixmap(self.sa_demo_folder + self.phenology_view_factor + '//' + str(self.vi_current) + '.png'))
                 self.output_phe_fig_path = self.sa_demo_folder + self.phenology_view_factor + '//' + str(self.vi_current) + '.png'
+                self.phenology_view_name = 'phenology'
             else:
                 self.caution_msg_box('There is no data within the defined range!')
                 return
@@ -700,8 +718,8 @@ class Visualisation_gui(QMainWindow):
             elif regression_type == 'SPLF':
                 VI_curve_fitting['CFM'] = 'SPL'
                 VI_curve_fitting['para_num'] = 7
-                VI_curve_fitting['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
-                VI_curve_fitting['para_boundary'] = ([0.08, 0.7, 100, 6.2, 301.6, 4.5, 0.0015], [0.12, 1.0, 115, 11.5, 321.5, 8.8, 0.0028])
+                VI_curve_fitting['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 280.4, 7.473, 0.00225]
+                VI_curve_fitting['para_boundary'] = ([0.08, 0.7, 100, 6.2, 260, 4.5, 0.0015], [0.20, 1.0, 130, 11.5, 300, 8.8, 0.0028])
                 curve_fitting_algorithm = seven_para_logistic_function
                 if x_data.shape[0] < VI_curve_fitting['para_num']:
                     return np.nan, x_fail_temp, y_fail_temp
@@ -825,7 +843,7 @@ class Visualisation_gui(QMainWindow):
         self.update_vi_display()
 
     def update_vi_display(self):
-        if np.isnan(float(self.doy)) or self.vi_current == 'None' or self.vi_temp_dic.shape[0] == 0:
+        if np.isnan(float(self.doy)) or self.vi_current == 'None' or self.vi_temp_dic.shape[0] == 0 or self.phenology_view_name == 'phenology':
             pass
         else:
             self.inundated_map = {}
@@ -881,6 +899,7 @@ class Visualisation_gui(QMainWindow):
                 else:
                     self.phenology_information_view.clear_scene()
                     self.phenology_information_view.setPhoto(QPixmap(self.sa_demo_folder + 'phenology_temp.png'))
+                    self.phenology_view_name = 'VI'
                     self.rescale_factor = False
                     self.update_rescale_button()
                     self.update_output_button()
@@ -902,6 +921,7 @@ class Visualisation_gui(QMainWindow):
         cv2.imwrite(self.sa_demo_folder + 'phenology_temp_rescaled.png', self.vi_demo_image)
         self.phenology_information_view.clear_scene()
         self.phenology_information_view.setPhoto(QPixmap(self.sa_demo_folder + 'phenology_temp_rescaled.png'))
+        self.phenology_view_name = 'VI'
         self.rescale_factor = True
         self.update_rescale_button()
 
@@ -1146,7 +1166,7 @@ class Visualisation_gui(QMainWindow):
 
         elif self.levelfactor == 'dic':
             self.query_information()
-        self.enable_intialisation()
+        self.enable_initialisation()
 
     def enable_initialisation(self):
         if self.fundamental_dic is None:
@@ -1207,14 +1227,14 @@ class Visualisation_gui(QMainWindow):
     def update_output_button(self):
         if self.phenology_information_view.phenology_scene.items() != []:
             self.output_fig_button.setEnabled(True)
-            self.output_visual_path = self.rootpath + 'visualisation_output//'
+            self.output_visual_path = self.rootpath + '//visualisation_output//'
             Landsat_main_v1.create_folder(self.output_visual_path)
         else:
             self.output_fig_button.setEnabled(False)
 
         if self.data_output_factor:
             self.output_data_button.setEnabled(True)
-            self.output_visual_path = self.rootpath + 'visualisation_output//'
+            self.output_visual_path = self.rootpath + '//visualisation_output//'
             Landsat_main_v1.create_folder(self.output_visual_path)
         else:
             self.output_data_button.setEnabled(False)
@@ -1345,7 +1365,7 @@ class Visualisation_gui(QMainWindow):
         self.year_list = []
         if self.sdc_dic != {}:
             try:
-                self.doy_list = self.sdc_dic['doy']
+                self.doy_list = np.load(self.sdc_dic[self.vi_current + '_path'] + 'doy.npy', allow_pickle=True).astype(int).tolist()
             except:
                 self.caution_msg_box('Unknown error occurred during doy list update!')
                 self.doy_line_box.setEnabled(False)
@@ -1385,9 +1405,13 @@ class Visualisation_gui(QMainWindow):
 
 
 def main():
-    QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
+    # os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+    # os.environ["QT_SCALE_FACTOR"] = "2"
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+    # QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     np.seterr(divide='ignore', invalid='ignore')
     app = QApplication(sys.argv)
+    # app.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling)
     initialise_window = InitialisingScreen()
     # window = Visualisation_gui()
     sys.exit(app.exec_())

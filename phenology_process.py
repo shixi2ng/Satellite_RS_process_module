@@ -63,7 +63,13 @@ for seq in range(study_area_list.shape[0]):
                         clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False,
                         construct_sdc_para=True, sdc_overwritten_para=False, VI_list=['NDVI', 'OSAVI', 'MNDWI', 'EVI'],
                         ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_date_list=study_area_list[seq, 2], manual_remove_issue_data=True)
-    Landsat_main_v1.landsat_inundation_detection(root_path, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0.25, VI_list_f=['NDVI', 'MNDWI'], Inundation_month_list=None, DEM_path=DEM_path, water_level_data_path=water_level_file_path, study_area=study_area_list[seq, 1], Year_range=[2000, 2020], cross_section=study_area_list[seq, 3], VEG_path=VEG_PATH, file_metadata_f=file_metadata, unzipped_file_path_f=unzipped_file_path, ROI_mask_f=study_area_list[seq, 0], local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=sample_rs_table, sample_data_path=google_earth_sample_data_path, dem_surveyed_date=None, landsat_detected_inundation_area=True, surveyed_inundation_detection_factor=True)
+    Landsat_main_v1.landsat_inundation_detection(root_path, sate_dem_inundation_factor=False,
+                                                 inundation_data_overwritten_factor=False,
+                                                 mndwi_threshold=0.25, VI_list_f=['NDVI', 'MNDWI'],
+                                                 Inundation_month_list=None, DEM_path=DEM_path,
+                                                 water_level_data_path=water_level_file_path,
+                                                 study_area=study_area_list[seq, 1], Year_range=[2000, 2020], cross_section=study_area_list[seq, 3], VEG_path=VEG_PATH, file_metadata_f=file_metadata, unzipped_file_path_f=unzipped_file_path, ROI_mask_f=study_area_list[seq, 0], local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=sample_rs_table, sample_data_path=google_earth_sample_data_path, dem_surveyed_date=None, landsat_detected_inundation_area=True, surveyed_inundation_detection_factor=True)
+    Landsat_main_v1.landsat_phenology_process(root_path, study_area_list[seq, 1], inundated_factor='local', VI_factor='OSAVI')
     # Landsat_main_v1.landsat_vi2phenology_process(root_path, phenology_comparison_factor=False,
     #                              inundation_data_overwritten_factor=False, inundated_pixel_phe_curve_factor=False,
     #                              mndwi_threshold=0.25, VI_list_f=['NDVI', 'MNDWI'], Inundation_month_list=None, curve_fitting_algorithm='seven_para_logistic',

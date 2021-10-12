@@ -32,8 +32,13 @@ import pyqtgraph as pg
 import pyqtgraph.exporters
 from pyqtgraph.Qt import QtGui, QtCore
 import PyQt5
-global all_supported_vi_list
+import subprocess
 all_supported_vi_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC']
+phase0_time, phase1_time, phase2_time, phase3_time, phase4_time = 0, 0, 0, 0, 0
+
+
+def download_landsat_data():
+    pass
 
 
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
@@ -45,9 +50,6 @@ def two_term_fourier(x, a0, a1, b1, a2, b2, w):
 
 
 def trim_axs(axs, N):
-    """
-    Reduce *axs* to *N* Axes. All further Axes are removed from the figure.
-    """
     axs = axs.flat
     for ax in axs[N:]:
         ax.remove()
@@ -84,7 +86,7 @@ def doy2date(self):
             i += 1
         return self
     else:
-        print('The doy2date method didnot support this data type')
+        print('The doy2date method did not support this data type')
         sys.exit(-1)
 
 
@@ -116,7 +118,7 @@ def date2doy(self):
             i += 1
         return self
     else:
-        print('The doy2date method didnot support this data type')
+        print('The doy2date method did not support this data type')
         sys.exit(-1)
 
 
@@ -134,11 +136,16 @@ def mostCommon(nd_array, indicator_array, nan_value=0):
     nd_list = nd_array.tolist()
     flatList = chain.from_iterable(nd_list)
     a = Counter(flatList)
+    res = np.nan
     for i in range(np.unique(nd_list).shape[0]):
-        if a.most_common(i + 1)[i][0] != nan_value and indicator_array[int(np.argwhere(nd_array==a.most_common(i + 1)[i][0])[0, 0]), int(np.argwhere(nd_array==a.most_common(i + 1)[i][0])[0, 1])] != 2:
+        if a.most_common(i + 1)[i][0] != nan_value and indicator_array[int(np.argwhere(nd_array == a.most_common(i + 1)[i][0])[0, 0]), int(np.argwhere(nd_array == a.most_common(i + 1)[i][0])[0, 1])] != 2:
             res = a.most_common(i + 1)[i][0]
             break
-    return res
+
+    if not np.isnan(res):
+        return res
+    else:
+        return None
 
 
 def confusion_matrix_2_raster(raster_predict, raster_real, nan_value=np.nan):
@@ -155,17 +162,6 @@ def confusion_matrix_2_raster(raster_predict, raster_real, nan_value=np.nan):
         for para_predict in unique_value_list:
             confusion_matrix[np.argwhere(unique_value_list == para_real)[0] + 1, np.argwhere(unique_value_list == para_predict)[0] + 1] = np.sum(np.logical_and(raster_real == para_real, raster_predict == para_predict))
     return confusion_matrix
-
-# class confusion_matrix_f(np.generic):
-#
-#     def __init__(self, shape):
-#         super().__init__(shape)
-#         if self.shape[0] != self.shape[1]:
-#             print('This is not a standard confusion matrix with same columns and rows!')
-#             sys.exit(-1)
-#         if np.dtype(self) != 'object':
-#             self.astype(np.object)
-#         self.error_exist = self[0, self.shape[0]] == 'Error'
 
 
 def generate_error_inf(self, reverse_type=True):
@@ -703,7 +699,7 @@ def complement_all_inundated_area(DEM_array_f, sole_temp_array_f, inundated_temp
                         inundated_temp_array_ff[water_pixel_list[i_temp1, 0], water_pixel_list[i_temp1, 1]] = 3
                 print('Successfully complement the ' + str(indi_temp) + 'inundated area!')
             elif inundated_indi_f == 255:
-                print('Some inconsistency error occured!')
+                print('Some inconsistency error occurred!')
                 sys.exit(-1)
     return inundated_temp_array_ff
 
@@ -960,11 +956,9 @@ def file_consistency_check(filepath_list_f, filename_filter_list, files_in_same_
 def neighbor_average_convolve2d(array, size=4):
     kernel = np.ones((2 * size + 1, 2 * size + 1))
     kernel[4, 4] = 0
-
     neighbor_sum = convolve2d(
         array, kernel, mode='same',
         boundary='fill', fillvalue=0)
-
     return neighbor_sum
 
 
@@ -1133,27 +1127,33 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
     # Fundamental para
     if VI_list is None:
         VI_list = all_supported_vi_list
+
     # Since FVC is index based on NDVI
     elif 'FVC' in VI_list and 'NDVI' not in VI_list:
         VI_list.append('FVC')
     elif not list_containing_check(VI_list, all_supported_vi_list):
         print('Sorry, Some VI are not supported or make sure all of them are in Capital Letter')
         sys.exit(-1)
+
     # Main coordinate system
     if main_coordinate_system is None:
         main_coordinate_system = 'EPSG:32649'
+
     # Create shapefile path
     shp_file_path = root_path_f + 'study_area_shapefile\\'
     create_folder(shp_file_path)
+
     # Move all roi file into the new folder with specific sa name
     file_name = ROI_mask_f.split('\\')[-1].split('.')[0]
     file_path = ROI_mask_f.split(str(file_name))[0]
     file_all = file_filter(file_path, [str(file_name)])
     for ori_file in file_all:
         shutil.copyfile(ori_file, shp_file_path + study_area + ori_file.split(str(file_name))[1])
+
     # Create key dictionary file path
     key_dictionary_path = root_path_f + 'Landsat_key_dic\\'
     create_folder(key_dictionary_path)
+
     # Create key dictionary
     fundamental_dic = {}
     if not os.path.exists(key_dictionary_path + 'fundamental_information_dic.npy'):
@@ -1193,6 +1193,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
             constructed_vi[VI + '_path'] = root_path_f + 'Landsat_constructed_index\\' + VI + '\\'
             constructed_vi[VI + '_factor'] = True
             create_folder(constructed_vi[VI + '_path'])
+
         # Generate VI and clip them by ROI
         for p in range(file_metadata_f.shape[0]):
             if file_metadata_f['Tier_Level'][p] == 'T1':
@@ -1201,12 +1202,12 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 tile_num = file_metadata_f['Tile_Num'][p]
                 file_vacancy = False
                 for VI in VI_list:
-                    constructed_vi[VI + '_factor'] = not os.path.exists(constructed_vi[VI + '_path'] + str(filedate) + '_' + str(tile_num) + '_' + VI + '.TIF') or construction_overwritten_para
+                    constructed_vi[VI + '_factor'] = not os.path.exists(str(constructed_vi[VI + '_path']) + str(filedate) + '_' + str(tile_num) + '_' + VI + '.TIF') or construction_overwritten_para
                     file_vacancy = file_vacancy or constructed_vi[VI + '_factor']
                 if constructed_vi['FVC_factor'] is True:
                     constructed_vi['NDVI_factor'] = True
                     constructed_vi['MNDWI_factor'] = True
-                constructed_vi['Watermask_factor'] = not os.path.exists(constructed_vi['Watermask_path'] + str(filedate) + '_' + str(tile_num) + '_watermask.TIF') or construction_overwritten_para
+                constructed_vi['Watermask_factor'] = not os.path.exists(str(constructed_vi['Watermask_path']) + str(filedate) + '_' + str(tile_num) + '_watermask.TIF') or construction_overwritten_para
                 file_vacancy = file_vacancy or constructed_vi[VI + '_factor']
                 if file_vacancy:
                     if 'LE07' in i or 'LT05' in i:
@@ -1436,7 +1437,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                     start_time = time.time()
                     ds_temp = gdal.Open(file_input)
                     if retrieve_srs(ds_temp) != main_coordinate_system:
-                        TEMP_warp = gdal.Warp(root_path_f + 'temp\\temp.tif', ds_temp, dstSRS=main_coordinate_system,
+                        TEMP_warp = gdal.Warp(root_path_f + 'temp.tif', ds_temp, dstSRS=main_coordinate_system,
                                               xRes=30, yRes=30, dstNodata=-32768)
                         gdal.Warp(clipped_vi[VI + '_path'] + file_input[file_input.find(VI + '\\') + 1 + len(VI): file_input.find('_' + VI + '.TIF')] + '_' + VI + '_' + study_area + '_clipped.TIF', TEMP_warp, cutlineDSName=ROI_mask_f, cropToCutline=True,
                                   dstNodata=-32768, xRes=30, yRes=30)
@@ -1447,6 +1448,17 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                     print('Finished in ' + str(end_time - start_time) + ' s.')
                 p += 1
             np.save(key_dictionary_path + study_area + '_vi.npy', clipped_vi)
+            if not os.path.exists(root_path_f + 'Landsat_key_dic\\' + study_area + '_map.npy'):
+                file_input = clipped_vi[VI + '_input'][0]
+                ds_temp = gdal.Open(file_input)
+                array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                array_temp[:, :] = 1
+                write_raster(ds_temp, array_temp, root_path_f, 'temp.TIF', raster_datatype=gdal.GDT_Int16)
+                ds_temp_n = gdal.Open(root_path_f + 'temp.TIF')
+                gdal.Warp(root_path_f + 'temp2.TIF', ds_temp_n, cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
+                ds_temp_sa_map = gdal.Open(root_path_f + 'temp2.TIF')
+                np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_map.npy', ds_temp_sa_map.GetRasterBand(1).ReadAsArray())
+            remove_all_file_and_folder(file_filter(root_path_f, ['temp', '.TIF'], and_or_factor='and'))
             print('All ' + VI + ' files within the ' + study_area + ' are clipped.')
     else:
         print('VI clip was not implemented.')
@@ -1524,7 +1536,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 print('Start writing ' + VI + ' datacube.')
                 start_time = time.time()
                 np.save(dc_vi[VI + '_path'] + 'date.npy', date_cube_temp.astype(np.uint32))
-                np.save(dc_vi[VI + '_path'] + VI + '_datacube.npy', data_cube_temp.astype(np.float16))
+                np.save(dc_vi[VI + '_path'] + str(VI) + '_datacube.npy', data_cube_temp.astype(np.float16))
                 end_time = time.time()
                 print('Finished in ' + str(end_time - start_time) + ' s')
 
@@ -1568,7 +1580,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
 
         sdc_vi_doy_temp = []
         for VI in VI_list:
-            if sdc_overwritten_para or not os.path.exists(sdc_vi[VI + '_path'] + VI + '_sequenced_datacube.npy') or not os.path.exists(sdc_vi[VI + '_path'] + 'doy.npy'):
+            if sdc_overwritten_para or not os.path.exists(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy') or not os.path.exists(str(sdc_vi[VI + '_path']) + 'doy.npy'):
                 print('Start constructing ' + VI + ' sequenced datacube of the ' + study_area + '.')
                 start_time = time.time()
                 vi_date_cube_temp = np.load(sdc_vi['date_input'])
@@ -1634,31 +1646,31 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
 
 def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False):
     global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
-    phase0_time = 0
-    phase1_time = 0
-    phase2_time = 0
-    phase3_time = 0
-    phase4_time = 0
     # Check whether the VI data cube exists or not
     sys.setrecursionlimit(1999999999)
+    if os.path.exists(root_path_f + 'Landsat_key_dic\\' + study_area + 'inundated_approach.npy'):
+        inundation_approach_dic = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + 'inundated_approach.npy')
+    else:
+        inundation_approach_dic = {'approach_list': []}
     VI_sdc = {}
+    # Check VI para
     if VI_list_f is None:
         VI_list_f = all_supported_vi_list
     elif not list_containing_check(VI_list_f, all_supported_vi_list):
         print('Sorry, Some VI are not supported or make sure all of them are in Capital Letter')
         sys.exit(-1)
-
+    # Check SA para
     if study_area is None:
         print('Please specify the study area name')
         sys.exit(-1)
-
+    # Check month para
     all_supported_month_list = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']
     if Inundation_month_list is None:
         Inundation_month_list = ['7', '8', '9', '10']
     elif not list_containing_check(Inundation_month_list, all_supported_month_list):
         print('Please double check the month list')
         sys.exit(-1)
-
+    # Check global local factor
     if global_local_factor is None:
         global_factor = True
         local_factor = True
@@ -1671,8 +1683,13 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
     else:
         print('Please input the correct global or local factor')
         sys.exit(-1)
-
+    # Input sa map
+    sa_map = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_map.npy')
+    # Input the sdc vi dic
     sdc_vi_f = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_sdc_vi.npy', allow_pickle=True).item()
+
+    # MAIN PROCESS
+    # INUNDATION DETECTION METHOD 1 SATE DEM
     if sate_dem_inundation_factor:
         if 'MNDWI' in VI_list_f and os.path.exists(sdc_vi_f['MNDWI_path'] + 'MNDWI_sequenced_datacube.npy') and os.path.exists(sdc_vi_f['MNDWI_path'] + 'doy.npy'):
             input_factor = False
@@ -1688,7 +1705,10 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             for year in year_range:
                 if inundation_data_overwritten_factor or not os.path.exists(sate_dem_inundated_dic['inundation_folder'] + str(year) + '_inundation_map.TIF'):
                     if input_factor is False:
-                        VI_sdc['MNDWI_sdc'] = np.load(sdc_vi_f['MNDWI_path'] + 'MNDWI_sequenced_datacube.npy')
+                        input_factor = True
+                        MNDWI_sdc = np.load(sdc_vi_f['MNDWI_path'] + 'MNDWI_sequenced_datacube.npy')
+                        VI_sdc['MNDWI_sdc'] = MNDWI_sdc
+
                     inundation_map_regular_month_temp = np.zeros((VI_sdc['MNDWI_sdc'].shape[0], VI_sdc['MNDWI_sdc'].shape[1]), dtype=np.uint8)
                     inundation_map_inundated_month_temp = np.zeros((VI_sdc['MNDWI_sdc'].shape[0], VI_sdc['MNDWI_sdc'].shape[1]), dtype=np.uint8)
                     for doy in VI_sdc['doy']:
@@ -1740,11 +1760,11 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                     inundated_temp_array = gdal_array.BandReadAsArray(inundated_temp_band).astype(np.uint8)
                     inundated_array_ttt = complement_all_inundated_area(DEM_array, sole_temp_array, inundated_temp_array)
                     write_raster(DEM_ds, inundated_array_ttt, sate_dem_inundated_dic['inundation_folder'], str(year) + '_sole_water_fixed.TIF')
+        inundation_approach_dic['approach_list'].append('sate_dem')
 
     elif not sate_dem_inundation_factor:
         print('Please mention the inundation statue will be generated via surveyed water level data!')
-        # The entire process was consisting of three different steps
-        # (1) Inundation area identification by using threshold from other bands
+        # INUNDATION DETECTION METHOD 2 global method
         if global_factor:
             if os.path.exists(root_path_f + 'Landsat_key_dic\\' + study_area + '_global_inundation_dic.npy'):
                 inundation_global_dic = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_global_inundation_dic.npy', allow_pickle=True).item()
@@ -1766,12 +1786,11 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                     tile_num = file_metadata_f['Tile_Num'][p]
                     if not os.path.exists(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF') or not os.path.exists(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF') or inundation_data_overwritten_factor:
                         start_time = time.time()
+                        # Input Raster
                         if 'LE07' in i or 'LT05' in i:
-                            # Input Raster
                             SWIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B7.TIF')
                             NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4.TIF')
                         elif 'LC08' in i:
-                            # Input Raster
                             SWIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B7.TIF')
                             NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5.TIF')
                         else:
@@ -1823,23 +1842,6 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         os.remove(band_path['SWIR2'] + 'temp.TIF')
 
             # Implement the global inundation detection method
-            sdc_vi_f = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_sdc_vi.npy', allow_pickle=True).item()
-            sdc_vi_f['doy'] = np.load(sdc_vi_f['MNDWI_path'] + 'doy.npy')
-            try:
-                MNDWI_sdc = np.load(sdc_vi_f['MNDWI_path'] + 'MNDWI_sequenced_datacube.npy')
-                doy_array = sdc_vi_f['doy']
-            except:
-                print('Please double check the MNDWI sequenced datacube availability')
-                sys.exit(-1)
-
-            date_temp = 0
-            while date_temp < doy_array.shape[0]:
-                if np.all(np.isnan(MNDWI_sdc[:, :, date_temp])) is True:
-                    doy_array = np.delete(doy_array, date_temp, axis=0)
-                    MNDWI_sdc = np.delete(MNDWI_sdc, date_temp, axis=2)
-                    date_temp -= 1
-                date_temp += 1
-
             MNDWI_filepath = root_path_f + 'Landsat_' + study_area + '_VI\\MNDWI\\'
             NIR_filepath = root_path_f + 'Landsat_' + study_area + '_VI\\NIR\\'
             SWIR2_filepath = root_path_f + 'Landsat_' + study_area + '_VI\\SWIR2\\'
@@ -1847,6 +1849,24 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             create_folder(inundation_global_dic['global_' + study_area])
             inundated_dc = np.array([])
             if not os.path.exists(inundation_global_dic['global_' + study_area] + 'doy.npy') or not os.path.exists(inundation_global_dic['global_' + study_area] + 'inundated_dc.npy'):
+                # Input the sdc vi array
+                sdc_vi_f = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_sdc_vi.npy', allow_pickle=True).item()
+                sdc_vi_f['doy'] = np.load(sdc_vi_f['MNDWI_path'] + 'doy.npy')
+                try:
+                    MNDWI_sdc = np.load(sdc_vi_f['MNDWI_path'] + 'MNDWI_sequenced_datacube.npy')
+                    doy_array = sdc_vi_f['doy']
+                except:
+                    print('Please double check the MNDWI sequenced datacube availability')
+                    sys.exit(-1)
+
+                date_temp = 0
+                while date_temp < doy_array.shape[0]:
+                    if np.all(np.isnan(MNDWI_sdc[:, :, date_temp])) is True:
+                        doy_array = np.delete(doy_array, date_temp, axis=0)
+                        MNDWI_sdc = np.delete(MNDWI_sdc, date_temp, axis=2)
+                        date_temp -= 1
+                    date_temp += 1
+
                 for doy in doy_array:
                     if not os.path.exists(inundation_global_dic['global_' + study_area] + 'individual_tif\\global_' + str(doy) + '.TIF') or inundation_data_overwritten_factor:
                         year_t = doy // 1000
@@ -1867,12 +1887,13 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                             for y_temp in range(MNDWI_array.shape[0]):
                                 for x_temp in range(MNDWI_array.shape[1]):
                                     if MNDWI_array[y_temp, x_temp] == -32768:
-                                        inundated_array[y_temp, x_temp] = -2
+                                        inundated_array[y_temp, x_temp] = -32768
                                     elif MNDWI_array[y_temp, x_temp] > -4000 and NIR_array[y_temp, x_temp] < 0.2 and SWIR2_array[y_temp, x_temp] < 0.1:
                                         inundated_array[y_temp, x_temp] = 1
                                     else:
                                         inundated_array[y_temp, x_temp] = 0
                         inundated_array = reassign_sole_pixel(inundated_array, Nan_value=-2, half_size_window=2)
+                        inundated_array[sa_map == -32768] = -32768
                         write_raster(NIR_file_ds, inundated_array, inundation_global_dic['global_' + study_area], 'individual_tif\\global_' + str(doy) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                     else:
                         inundated_ds = gdal.Open(inundation_global_dic['global_' + study_area] + 'individual_tif\\global_' + str(doy) + '.TIF')
@@ -1887,7 +1908,24 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 inundation_global_dic['inundated_dc_file'] = inundation_global_dic['global_' + study_area] + 'inundated_dc.npy'
                 np.save(inundation_global_dic['inundated_doy_file'], doy_array)
                 np.save(inundation_global_dic['inundated_dc_file'], inundated_dc)
+
+            # Create annual inundation map
+            inundation_global_dic['global_annual_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_global\\Annual\\'
+            create_folder(inundation_global_dic['global_annual_' + study_area])
+            inundated_dc = np.load(inundation_global_dic['inundated_dc_file'])
+            doy_array = np.load(inundation_global_dic['inundated_doy_file'])
+            year_array = np.unique(doy_array // 1000)
+            temp_ds = gdal.Open(file_filter(inundation_global_dic['global_' + study_area] + 'individual_tif\\', ['.TIF'])[0])
+            for year in year_array:
+                annual_inundated_map = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                annual_inundated_map[sa_map == -32768] = -32768
+                if not os.path.exists(inundation_global_dic['global_annual_' + study_area] + 'global_' + str(year) + '.TIF') or inundation_data_overwritten_factor:
+                    for doy_index in range(doy_array.shape[0]):
+                        if doy_array[doy_index] // 1000 == year and np.mod(doy_array[doy_index], 1000) >= 182:
+                            annual_inundated_map[inundated_dc[:, :, doy_index] > 0] = 1
+                    write_raster(temp_ds, annual_inundated_map, inundation_global_dic['global_annual_' + study_area], 'global_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
             np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_global_inundation_dic.npy', inundation_global_dic)
+            inundation_approach_dic['approach_list'].append('global')
 
         # (1') Inundation area identification by local method (DYNAMIC MNDWI THRESHOLD using time-series MNDWI calculated by Landsat ETM+ and TM)
         if local_factor:
@@ -1992,6 +2030,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         for i in pos_temp:
                             inundation_map[i[0], i[1]] = 1
                         inundation_map = reassign_sole_pixel(inundation_map, Nan_value=-2, half_size_window=2)
+                        inundation_map[np.isnan(sa_map)] = -32768
                         write_raster(ds_temp, inundation_map, inundation_local_dic['local_' + study_area], 'local_' + str(doy_array_temp[date_temp]) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                     else:
                         inundated_ds = gdal.Open(inundation_local_dic['local_' + study_area] + 'individual_tif\\local_' + str(doy_array_temp[date_temp]) + '.TIF')
@@ -2006,7 +2045,24 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 inundation_local_dic['inundated_dc_file'] = inundation_local_dic['local_' + study_area] + 'inundated_dc.npy'
                 np.save(inundation_local_dic['inundated_doy_file'], doy_array_temp)
                 np.save(inundation_local_dic['inundated_dc_file'], inundated_dc)
+
+            # Create annual inundation map
+            inundation_local_dic['local_annual_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_local\\Annual\\'
+            create_folder(inundation_local_dic['local_annual_' + study_area])
+            inundated_dc = np.load(inundation_local_dic['inundated_dc_file'])
+            doy_array = np.load(inundation_local_dic['inundated_doy_file'])
+            year_array = np.unique(doy_array // 1000)
+            temp_ds = gdal.Open(file_filter(inundation_local_dic['local_' + study_area] + 'individual_tif\\', ['.TIF'])[0])
+            for year in year_array:
+                annual_inundated_map = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                annual_inundated_map[sa_map == -32768] = -32768
+                if not os.path.exists(inundation_local_dic['local_annual_' + study_area] + 'local_' + str(year) + '.TIF') or inundation_data_overwritten_factor:
+                    for doy_index in range(doy_array.shape[0]):
+                        if doy_array[doy_index] // 1000 == year and 182 <= np.mod(doy_array[doy_index], 1000) <= 335:
+                            annual_inundated_map[inundated_dc[:, :, doy_index] > 0] = 1
+                    write_raster(temp_ds, annual_inundated_map, inundation_local_dic['local_annual_' + study_area], 'local_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
             np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_local_inundation_dic.npy', inundation_local_dic)
+            inundation_approach_dic['approach_list'].append('local')
 
         if inundation_mapping_accuracy_evaluation_factor is True:
             # Initial factor generation
@@ -2112,6 +2168,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                     else:
                         if not os.path.exists(inundation_dic['final_' + study_area] + 'individual_tif\\' + str(date_ff[0]) + '.TIF'):
                             inundated_area_mapping = identify_all_inundated_area(inundation_raster, inundated_pixel_indicator=1, nanvalue_pixel_indicator=-2, surrounding_pixel_identification_factor=True, input_detection_method='EightP')
+                            inundated_area_mapping[sa_map == -32768] = -32768
                             write_raster(inundation_ds, inundated_area_mapping, inundation_dic['final_' + study_area] + 'individual_tif\\', str(date_ff[0]) + '.TIF')
                         else:
                             inundated_area_mapping_ds = gdal.Open(inundation_dic['final_' + study_area] + 'individual_tif\\' + str(date_ff[0]) + '.TIF')
@@ -2123,7 +2180,24 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 inundation_dic['inundated_dc_file'] = inundation_dic['final_' + study_area] + 'inundated_dc.npy'
                 np.save(inundation_dic['inundated_dc_file'], inundated_area_cube)
                 np.save(inundation_dic['inundated_doy_file'], date_array)
+
+            # Create the annual inundation map
+            inundation_dic['final_annual_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_final\\Annual\\'
+            create_folder(inundation_dic['final_annual_' + study_area])
+            inundated_dc = np.load(inundation_dic['inundated_dc_file'])
+            doy_array = np.load(inundation_dic['inundated_doy_file'])
+            year_array = np.unique(doy_array // 1000)
+            temp_ds = gdal.Open(file_filter(inundation_dic['final_' + study_area] + 'individual_tif\\', ['.TIF'])[0])
+            for year in year_array:
+                annual_inundated_map = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                if not os.path.exists(inundation_dic['final_annual_' + study_area] + 'final_' + str(year) + '.TIF') or inundation_data_overwritten_factor:
+                    for doy_index in range(doy_array.shape[0]):
+                        if doy_array[doy_index] // 1000 == year and 182 <= np.mod(doy_array[doy_index], 1000) <= 335:
+                            annual_inundated_map[inundated_dc[:, :, doy_index] > 0] = 1
+                    annual_inundated_map[sa_map == -32768] = -32768
+                    write_raster(temp_ds, annual_inundated_map, inundation_dic['final_annual_' + study_area], 'final_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
             np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_final_inundation_dic.npy', inundation_dic)
+            inundation_approach_dic['approach_list'].append('final')
 
             inundated_area_cube = np.load(inundation_dic['inundated_dc_file'])
             date_array = np.load(inundation_dic['inundated_doy_file'])
@@ -2231,6 +2305,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         np.save(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\inundation_date.npy', inundation_date_array)
                         np.save(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\inundation_detection_cube.npy', inundation_detection_cube)
                         yearly_inundation_condition = np.sum(inundation_detection_cube, axis=2)
+                        yearly_inundation_condition[sa_map == -32768] = -32768
                         write_raster(DEM_ds, yearly_inundation_condition, survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\', 'yearly_inundation_condition.TIF', raster_datatype=gdal.GDT_UInt16)
                     else:
                         inundation_date_array = np.load(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\inundation_date.npy')
@@ -2249,16 +2324,246 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 survey_inundation_dic['inundated_dc_file'] = survey_inundation_dic['surveyed_' + study_area] + 'inundated_dc.npy'
                 np.save(survey_inundation_dic['inundated_dc_file'], inundated_dc)
                 np.save(survey_inundation_dic['inundated_doy_file'], inundated_doy)
+
+            survey_inundation_dic['surveyed_annual_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_survey\\Annual\\'
+            create_folder(survey_inundation_dic['surveyed_annual_' + study_area])
+            doy_array = np.load(survey_inundation_dic['inundated_doy_file'])
+            year_array = np.unique(doy_array // 1000)
+            for year in year_array:
+                temp_ds = gdal.Open(file_filter(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\', ['.TIF'])[0])
+                temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
+                annual_inundated_map = np.zeros([temp_array.shape[0], temp_array.shape[1]])
+                if not os.path.exists(survey_inundation_dic['surveyed_annual_' + study_area] + 'survey_' + str(year) + '.TIF') or inundation_data_overwritten_factor:
+                    annual_inundated_map[temp_array > 0] = 1
+                    annual_inundated_map[sa_map == -32768] = -32768
+                    write_raster(temp_ds, annual_inundated_map, survey_inundation_dic['surveyed_annual_' + study_area], 'survey_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
             np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_survey_inundation_dic.npy', survey_inundation_dic)
+            inundation_approach_dic['approach_list'].append('survey')
+    inundation_list_temp = np.unique(np.array(inundation_approach_dic['approach_list']))
+    inundation_approach_dic['approach_list'] = inundation_list_temp.tolist()
+    np.save(root_path_f + 'Landsat_key_dic\\' + str(study_area) + '_inundation_approach_list.npy', inundation_approach_dic)
+
+
+def landsat_phenology_process(root_path_f, study_area, inundated_factor=None, VI_factor=None):
+    # Input vi list
+    p1_time, p2_time, p3_time = 0, 0, 0
+    vi_list = np.load(root_path_f + 'Landsat_key_dic\\fundamental_information_dic.npy', allow_pickle=True).item()
+    if vi_list['all_vi'] == []:
+        print('There has no vi file!')
+        sys.exit(-1)
+    vi_list = vi_list['all_vi']
+    # Reassign inundated factor
+    if VI_factor is None:
+        print('Will use default VI file!')
+        VI_factor = vi_list[0]
+    elif VI_factor not in vi_list:
+        print('The input VI factor is invalid and will use default VI file!')
+        VI_factor = vi_list[0]
+    # Input the vi dic
+    vi_dic = np.load(file_filter(root_path_f + 'Landsat_key_dic\\', ['.npy', 'sdc', study_area], and_or_factor='and')[0], allow_pickle=True).item()
+    vi_sdc = np.load(file_filter(vi_dic[VI_factor + '_path'], ['datacube.npy'])[0])
+    vi_doy = np.load(file_filter(vi_dic[VI_factor + '_path'], ['.npy', 'doy'], and_or_factor='and')[0]).astype(np.int)
+
+    # Input the inundated dc
+    inundation_approach_dic = np.load(root_path_f + 'Landsat_key_dic\\' + str(study_area) + 'inundation_approach_list.npy', allow_pickle=True).item()
+    if inundation_approach_dic['approach_list'] == []:
+        print('There has no inundated file!')
+        sys.exit(-1)
+
+    # Reassign inundated factor
+    if inundated_factor is None:
+        print('Will use default inundated file!')
+        inundated_factor = inundation_approach_dic['approach_list'][0]
+    elif inundated_factor not in inundation_approach_dic['approach_list']:
+        print('The input inundated factor is invalid and will use default inundated file!')
+        inundated_factor = inundation_approach_dic['approach_list'][0]
+    # Input inundated dic
+    inundated_dic = np.load(file_filter(root_path_f + 'Landsat_key_dic\\', ['.npy', study_area, inundated_factor], and_or_factor='and')[0], allow_pickle=True).item()
+    inundated_sdc = np.load(inundated_dic['inundated_dc_file']).astype(np.float)
+    inundated_doy = np.load(inundated_dic['inundated_doy_file']).astype(np.int)
+
+    # Correct the inundated dc
+    if inundated_sdc.shape[0] != vi_sdc.shape[0] or inundated_sdc.shape[1] != vi_sdc.shape[1]:
+        print('Consistency error in phenology process')
+        sys.exit(-1)
+    else:
+        sa_map = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_map.npy')
+
+    # Preprocess the vi dc
+    for inundated_doy_index in range(inundated_doy.shape[0]):
+        vi_doy_index = np.argwhere(vi_doy == inundated_doy[inundated_doy_index])
+        if vi_doy_index.size == 1:
+            vi_array_temp = vi_sdc[:, :, vi_doy_index[0]].reshape([vi_sdc.shape[0], vi_sdc.shape[1]])
+            inundated_array_temp = inundated_sdc[:, :, inundated_doy_index].reshape([inundated_sdc.shape[0], inundated_sdc.shape[1]])
+            vi_array_temp[inundated_array_temp > 0] = np.nan
+            vi_array_temp[vi_array_temp <= 0] = np.nan
+            vi_sdc[:, :, vi_doy_index[0]] = vi_array_temp.reshape([vi_sdc.shape[0], vi_sdc.shape[1], 1])
+        else:
+            print('Inundated dc has doy can not be found in vi dc')
+            sys.exit(-1)
+
+    # Process the phenology
+    annual_inundated_path = inundated_dic['local_annual_' + study_area]
+    year_list = [int(i[i.find('.TIF') - 4: i.find('.TIF')]) for i in file_filter(annual_inundated_path, ['.TIF'])]
+    phenology_year_dic = {}
+    phenology_year_vi_dc = []
+    phenology_year_doy = []
+    for i in range(1, len(year_list)):
+        current_year_inundated_temp_ds = gdal.Open(file_filter(annual_inundated_path, ['.TIF', str(year_list[i])], and_or_factor='and')[0])
+        current_year_inundated_temp_array = current_year_inundated_temp_ds.GetRasterBand(1).ReadAsArray()
+        last_year_inundated_temp_ds = gdal.Open(file_filter(annual_inundated_path, ['.TIF', str(year_list[i - 1])], and_or_factor='and')[0])
+        last_year_inundated_temp_array = last_year_inundated_temp_ds.GetRasterBand(1).ReadAsArray()
+        phenology_year_temp = np.zeros([current_year_inundated_temp_array.shape[0], current_year_inundated_temp_array.shape[1], 2])
+        annual_phenology_year_dc = np.zeros([vi_sdc.shape[0], vi_sdc.shape[1], 366]) * np.nan
+        annual_phenology_year_doy = np.linspace(1, 366, 366) + year_list[i] * 1000
+        doy_init = np.min(np.argwhere(inundated_doy//1000 == year_list[i]))
+        doy_init_f = np.min(np.argwhere(inundated_doy//1000 == year_list[i - 1]))
+        for y_temp in range(vi_sdc.shape[0]):
+            for x_temp in range(vi_sdc.shape[1]):
+                # Obtain the doy beg and end for current year
+                doy_end_current = np.nan
+                doy_beg_current = np.nan
+                if sa_map[y_temp, x_temp] == -32768:
+                    phenology_year_temp[y_temp, x_temp, 0] = doy_beg_current
+                    phenology_year_temp[y_temp, x_temp, 1] = doy_end_current
+                else:
+                    if current_year_inundated_temp_array[y_temp, x_temp] > 0:
+                        # Determine the doy_end_current
+                        time_s = time.time()
+                        doy_end_factor = False
+                        doy_index = doy_init
+                        while doy_index < inundated_doy.shape[0]:
+                            if int(inundated_doy[doy_index] // 1000) == year_list[i] and inundated_sdc[y_temp, x_temp, doy_index] == 1 and 335 >= np.mod(inundated_doy[doy_index], 1000) >= 182:
+                                doy_end_current = inundated_doy[doy_index]
+                                doy_end_factor = True
+                                break
+                            elif int(inundated_doy[doy_index] // 1000) > year_list[i]:
+                                doy_end_current = year_list[i] * 1000 + 366
+                                doy_beg_current = year_list[i] * 1000
+                                break
+                            doy_index += 1
+
+                        # check the doy index
+                        if doy_index == 0:
+                            print('Unknown error during phenology processing doy_end_current generation!')
+                            sys.exit(-1)
+                        p1_time = p1_time + time.time() - time_s
+
+                        # Determine the doy_beg_current
+                        time_s = time.time()
+                        if doy_end_factor:
+                            if last_year_inundated_temp_array[y_temp, x_temp] > 0:
+                                while doy_index <= inundated_doy.shape[0]:
+                                    if int(inundated_doy[doy_index - 1] // 1000) == year_list[i - 1] and inundated_sdc[y_temp, x_temp, doy_index - 1] == 1:
+                                        break
+                                    doy_index -= 1
+                                if doy_index == inundated_doy.shape[0]:
+                                    print('Unknown error during phenology processing doy_beg_current generation!')
+                                    sys.exit(-1)
+                                else:
+                                    doy_beg_current = inundated_doy[doy_index]
+                                # Make sure doy beg temp < doy end temp - 1000
+                                if doy_beg_current < doy_end_current - 1000 or np.isnan(doy_beg_current):
+                                    doy_beg_current = doy_end_current - 1000
+                            elif last_year_inundated_temp_array[y_temp, x_temp] == 0:
+                                doy_beg_current = doy_end_current - 1000
+                        p2_time = p2_time + time.time() - time_s
+                    elif current_year_inundated_temp_array[y_temp, x_temp] == 0:
+                        doy_end_current = year_list[i] * 1000 + 366
+                        doy_beg_current = year_list[i] * 1000
+                    time_s = time.time()
+
+                    # Construct phenology_year_vi_dc
+                    doy_f = doy_init_f
+                    while doy_f <= inundated_doy.shape[0] - 1:
+                        if doy_end_current > inundated_doy[doy_f] > doy_beg_current:
+                            doy_index_f = np.argwhere(vi_doy == inundated_doy[doy_f])
+                            doy_temp = int(np.mod(inundated_doy[doy_f], 1000))
+                            if not np.isnan(vi_sdc[y_temp, x_temp, doy_index_f[0][0]]):
+                                annual_phenology_year_dc[y_temp, x_temp, doy_temp - 1] = vi_sdc[y_temp, x_temp, doy_index_f[0][0]]
+                        elif inundated_doy[doy_f] > doy_end_current:
+                            break
+                        doy_f = doy_f + 1
+                    p3_time = p3_time + time.time() - time_s
+
+        doy_index_t = 0
+        while doy_index_t < annual_phenology_year_doy.shape[0]:
+            if np.isnan(annual_phenology_year_dc[:, :, doy_index_t]).all():
+                annual_phenology_year_dc = np.delete(annual_phenology_year_dc, doy_index_t, axis=2)
+                annual_phenology_year_doy = np.delete(annual_phenology_year_doy, doy_index_t, axis=0)
+                doy_index_t -= 1
+            doy_index_t += 1
+
+        if phenology_year_vi_dc == []:
+            phenology_year_vi_dc = copy.copy(annual_phenology_year_dc)
+        else:
+            phenology_year_vi_dc = np.append(phenology_year_vi_dc, annual_phenology_year_dc, axis=2)
+
+        if phenology_year_doy == []:
+            phenology_year_doy = copy.copy(annual_phenology_year_doy)
+        else:
+            phenology_year_doy = np.append(phenology_year_doy, annual_phenology_year_doy, axis=0)
+
+        # Consistency check
+        if phenology_year_vi_dc.shape[2] != phenology_year_doy.shape[0]:
+            print('consistency error')
+            sys.exit(-1)
+        phenology_year_dic[str(year_list[i]) + '_phenology_year_beg_end'] = phenology_year_temp
+
+    # Save dic and phenology dc
+    if phenology_year_vi_dc != [] and phenology_year_doy != []:
+        phenology_year_sa_path = root_path_f + 'Landsat_' + study_area + '_pheyear_datacube//'
+        create_folder(phenology_year_sa_path)
+        phenology_year_sa_vi_path = phenology_year_sa_path + str(VI_factor) + '_pheyear_dc//'
+        create_folder(phenology_year_sa_vi_path)
+
+        # Update the fundamental dic
+        if not os.path.exists(root_path_f + 'Landsat_key_dic//fundamental_information_dic.npy'):
+            print('Please generate fundamental dic before further process')
+            sys.exit(-1)
+        fundamental_information_dic = np.load(root_path_f + 'Landsat_key_dic//fundamental_information_dic.npy', allow_pickle=True).item()
+        if 'pheyear_' + str(VI_factor) not in fundamental_information_dic['all_vi']:
+            fundamental_information_dic['all_vi'].append('pheyear_' + str(VI_factor))
+        np.save(root_path_f + 'Landsat_key_dic//fundamental_information_dic.npy', fundamental_information_dic)
+
+        # Update the sa vi dc dic
+        if not os.path.exists(root_path_f + 'Landsat_key_dic//' + str(study_area) + '_sdc_vi.npy'):
+            print('Please generate fundamental dic before further process')
+            sys.exit(-1)
+        vi_sdc_dic = np.load(root_path_f + 'Landsat_key_dic//' + str(study_area) + '_sdc_vi.npy', allow_pickle=True).item()
+        vi_sdc_dic['pheyear_' + str(VI_factor) + '_path'] = phenology_year_sa_vi_path
+
+        # Save the dic
+        np.save(phenology_year_sa_path + str(VI_factor) + '_pheyear_dc//pheyear_' + str(VI_factor) + '_sequenced_datacube.npy', phenology_year_vi_dc)
+        np.save(phenology_year_sa_path + str(VI_factor) + '_pheyear_dc//doy.npy', phenology_year_doy)
+        np.save(root_path_f + 'Landsat_key_dic//' + str(study_area) + '_sdc_vi.npy', vi_sdc_dic)
 
 
 def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, phenology_comparison_factor=True, inundation_data_overwritten_factor=False, inundated_pixel_phe_curve_factor=True, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, pixel_limitation_f=None, curve_fitting_algorithm=None, dem_fix_inundated_factor=True, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, initial_dem_fix_year_interval=1, phenology_overview_factor=False, landsat_detected_inundation_area=True, phenology_individual_factor=True, surveyed_inundation_detection_factor=False):
+    global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
     # so, this is the Curve fitting Version 1, Generally it is used to implement two basic functions:
     # (1) Find the inundated pixel by introducing MNDWI with an appropriate threshold and remove it.
     # (2) Using the remaining data to fitting the vegetation growth curve
     # (3) Obtaining vegetation phenology information
 
     #Input all required data in figure plot
+    all_supported_curve_fitting_method = ['seven_para_logistic', 'two_term_fourier']
+    if curve_fitting_algorithm is None or curve_fitting_algorithm == 'seven_para_logistic':
+        VI_curve_fitting['CFM'] = 'SPL'
+        VI_curve_fitting['para_num'] = 7
+        VI_curve_fitting['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
+        VI_curve_fitting['para_boundary'] = ([0.08, 0.7, 100, 6.2, 301.6, 4.5, 0.0015], [0.12, 1.0, 115, 11.5, 321.5, 8.8, 0.0028])
+        curve_fitting_algorithm = seven_para_logistic_function
+    elif curve_fitting_algorithm == 'two_term_fourier':
+        curve_fitting_algorithm = two_term_fourier
+        VI_curve_fitting['CFM'] = 'TTF'
+        VI_curve_fitting['para_num'] = 6
+        VI_curve_fitting['para_ori'] = [0, 0, 0, 0, 0, 0.017]
+        VI_curve_fitting['para_boundary'] = ([0, -0.5, -0.5, -0.05, -0.05, 0.015], [1, 0.5, 0.5, 0.05, 0.05, 0.019])
+    elif curve_fitting_algorithm not in all_supported_curve_fitting_method:
+        print('Please double check the curve fitting method')
+        sys.exit(-1)
+
     if phenology_overview_factor or phenology_individual_factor or phenology_comparison_factor:
         phenology_fig_dic = {'phenology_veg_map': root_path_f + 'Landsat_phenology_curve\\'}
         doy_factor = False
@@ -2502,6 +2807,7 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
                             print('Successfully export the file ' + '(annual_' + str(vi) + '_' + str(x) + '_' + str(y) + ') consuming ' + str(phase0_time) + ' seconds.')
                             # win.close()
                             phase4_time += time.time() - phase4_s
+
     if phenology_comparison_factor is True:
         doy_factor = False
         try:
@@ -2671,7 +2977,6 @@ def normalize_and_gamma_correction(data_array, p_gamma=1.52):
         b_max = np.sort(np.unique(data_array[:, :, 2]))[-2]
         b_min = np.sort(np.unique(data_array[:, :, 2]))[0]
         data_array[:, :, 0] = 65536 * (data_array[:, :, 0] - r_min) / (r_max - r_min)
-        data_array[:, :, 1] = 65536 * (data_array[:, :, 1] - g_min) / (g_max - g_min)
         data_array[:, :, 2] = 65536 * (data_array[:, :, 2] - b_min) / (b_max - b_min)
         data_array[data_array >= 65536] = 65536
         data_array = (65536 * ((data_array / 65536) ** (1 / p_gamma))).astype(np.uint16)
@@ -2680,8 +2985,7 @@ def normalize_and_gamma_correction(data_array, p_gamma=1.52):
 
 
 def visualize_study_area_demo(root_path_f, ori_tiff_file_path, date_temp, ROI_shpfile, study_area_name, demo_illustration=None, VI=None):
-    global scale_factor, new_image, study_area_t, demo_illustration_path, demo_illustration_t
-
+    global all_supported_vi_list
     all_supported_vi_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC']
     if VI not in all_supported_vi_list:
         print('This function doesnt support')
