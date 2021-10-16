@@ -10,14 +10,19 @@
     <x>0</x>
     <y>0</y>
     <width>1360</width>
-    <height>711</height>
+    <height>733</height>
    </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+   <sizepolicy hsizetype="Ignored" vsizetype="Ignored">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
+  </property>
+  <property name="font">
+   <font>
+    <stylestrategy>PreferAntialias</stylestrategy>
+   </font>
   </property>
   <property name="windowTitle">
    <string>Phe Inform Visulisation v0.01.1</string>
@@ -38,13 +43,13 @@ background-color: rgb(236, 236, 236);
     <property name="geometry">
      <rect>
       <x>17</x>
-      <y>-4</y>
+      <y>6</y>
       <width>451</width>
-      <height>41</height>
+      <height>21</height>
      </rect>
     </property>
     <property name="sizePolicy">
-     <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+     <sizepolicy hsizetype="Ignored" vsizetype="Ignored">
       <horstretch>0</horstretch>
       <verstretch>0</verstretch>
      </sizepolicy>
@@ -399,7 +404,7 @@ background-color: rgb(236, 236, 236);
       </rect>
      </property>
      <property name="sizePolicy">
-      <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+      <sizepolicy hsizetype="Ignored" vsizetype="Ignored">
        <horstretch>0</horstretch>
        <verstretch>0</verstretch>
       </sizepolicy>
@@ -415,6 +420,9 @@ background-color: rgb(236, 236, 236);
        <family>Times New Roman</family>
        <pointsize>12</pointsize>
       </font>
+     </property>
+     <property name="focusPolicy">
+      <enum>Qt::WheelFocus</enum>
      </property>
      <property name="text">
       <string>γ correction</string>

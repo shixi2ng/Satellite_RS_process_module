@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtGui import *
 from PyQt5 import uic
 import numpy as np
-import pandas
+import pandas as pd
 import os
 import gdal
 import cv2
@@ -604,7 +604,7 @@ class Visualisation_gui(QMainWindow):
                         pos_min = np.min(np.argwhere(year_list_temp == int(self.begin_year)))
                         pos_max = np.max(np.argwhere(year_list_temp == int(self.end_year)))
                         self.doy_array_for_phenology = np.array(self.doy_list)[pos_min: pos_max + 1]
-                        self.vi_sa_array_for_phenology = self.vi_temp_dic[:, :, pos_min: pos_max + 1]
+                        self.vi_sa_array_for_phenology = self.vi_sa_array_for_phenology[:, :, pos_min: pos_max + 1]
                     except:
                         self.caution_msg_box('The year range is invalid')
             else:
@@ -627,9 +627,9 @@ class Visualisation_gui(QMainWindow):
                                     year_pos_min = np.min(np.argwhere(year_list_temp == year))
                                     year_pos_max = np.max(np.argwhere(year_list_temp == year))
                                     self.phenology_plot_y = vi_entire_temp[year_pos_min: year_pos_max + 1]
-                                    np.append(self.output_y_data, self.phenology_plot_y)
+                                    self.output_y_data = np.append(self.output_y_data, self.phenology_plot_y)
                                     self.phenology_plot_x = np.mod(self.doy_array_for_phenology[year_pos_min: year_pos_max + 1], 1000)
-                                    np.append(self.output_x_data, self.doy_array_for_phenology[year_pos_min: year_pos_max + 1])
+                                    self.output_x_data = np.append(self.output_x_data, self.doy_array_for_phenology[year_pos_min: year_pos_max + 1])
                                     self.output_x_id = 'YEAR + DOY'
                                     self.output_y_id = 'Entire SA Annual ' + self.vi_current
                                     self.phe_dic['scatterplot_temp_' + str(year)].setData(self.phenology_plot_x, self.phenology_plot_y)
@@ -663,9 +663,9 @@ class Visualisation_gui(QMainWindow):
                                         year_pos_min = np.min(np.argwhere(year_list_temp == year))
                                         year_pos_max = np.max(np.argwhere(year_list_temp == year))
                                         self.phenology_plot_y = self.vi_sa_array_for_phenology_pixel[year_pos_min: year_pos_max + 1]
-                                        np.append(self.output_y_data, self.phenology_plot_y)
+                                        self.output_y_data = np.append(self.output_y_data, self.phenology_plot_y)
                                         self.phenology_plot_x = np.mod(self.doy_array_for_phenology[year_pos_min: year_pos_max + 1], 1000)
-                                        np.append(self.output_x_data, self.doy_array_for_phenology[year_pos_min: year_pos_max + 1])
+                                        self.output_x_data = np.append(self.output_x_data, self.doy_array_for_phenology[year_pos_min: year_pos_max + 1])
                                         self.output_x_id = 'YEAR + DOY'
                                         self.output_y_id = 'Pixel ' + str(self.demo_pos_x) + ' ' + str(self.demo_pos_y) + ' Annual ' + self.vi_current
                                         self.phe_dic['scatterplot_temp_' + str(year)].setData(self.phenology_plot_x, self.phenology_plot_y)
@@ -719,7 +719,7 @@ class Visualisation_gui(QMainWindow):
                 VI_curve_fitting['CFM'] = 'SPL'
                 VI_curve_fitting['para_num'] = 7
                 VI_curve_fitting['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 280.4, 7.473, 0.00225]
-                VI_curve_fitting['para_boundary'] = ([0.08, 0.7, 100, 6.2, 260, 4.5, 0.0015], [0.20, 1.0, 130, 11.5, 300, 8.8, 0.0028])
+                VI_curve_fitting['para_boundary'] = ([0.08, 0.7, 90, 6.2, 260, 4.5, 0.0015], [0.20, 1.0, 110, 11.5, 330, 8.8, 0.0028])
                 curve_fitting_algorithm = seven_para_logistic_function
                 if x_data.shape[0] < VI_curve_fitting['para_num']:
                     return np.nan, x_fail_temp, y_fail_temp
@@ -1255,8 +1255,13 @@ class Visualisation_gui(QMainWindow):
                     self.caution_msg_box('Unknown error occurred during the output!')
 
     def output_data(self):
-        if self.data_output_factor:
-            self.output = pd.DataFrame()
+        try:
+            if self.data_output_factor:
+                self.output = pd.DataFrame(np.array([self.output_x_data, self.output_y_data]))
+                self.output.to_excel(self.output_visual_path + 'data.xlsx')
+            self.caution_msg_box('Succeed!')
+        except:
+            self.caution_msg_box('Failed!')
 
     # Section 6 Update and default the button
     def default_rt_related_factors(self):
@@ -1407,6 +1412,7 @@ class Visualisation_gui(QMainWindow):
 def main():
     # os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
     # os.environ["QT_SCALE_FACTOR"] = "2"
+    os.environ["QT_FONT_DPI"] = "144"
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
     # QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     np.seterr(divide='ignore', invalid='ignore')
