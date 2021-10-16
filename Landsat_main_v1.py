@@ -1,5 +1,3 @@
-from abc import ABC
-
 import gdal
 import pandas as pd
 from osgeo import gdal_array, osr
