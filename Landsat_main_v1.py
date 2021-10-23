@@ -434,16 +434,16 @@ def data_composition(file_path, time_coverage=None, composition_strategy=None, f
     date_list = []
     doy_list = []
     for i in file_list:
-        for length in range(len(i) - 8):
+        for length in range(len(i)):
             try:
-                date_temp = int(i[length, length + 8])
+                date_temp = int(i[length: length + 8])
                 date_list.append(date_temp)
                 break
             except:
                 pass
 
             try:
-                doy_temp = int(i[length, length + 7])
+                doy_temp = int(i[length: length + 7])
                 doy_list.append(doy_temp)
                 break
             except:
@@ -487,12 +487,12 @@ def data_composition(file_path, time_coverage=None, composition_strategy=None, f
                     file_directory['temp_ds_' + str(file_num)] = gdal.Open(file_list[re_doy_index[file_num]])
                     file_temp_array = file_directory['temp_ds_' + str(file_num)].GetRasterBand(1).ReadAsArray()
                     if file_num == 0:
-                        file_temp_cube = file_temp_array.reshape[file_temp_array.shape[0], file_temp_array.shape[1], 1]
+                        file_temp_cube = file_temp_array.reshape(file_temp_array.shape[0], file_temp_array.shape[1], 1)
                     else:
-                        file_temp_cube = np.concatenate(file_temp_cube, file_temp_array.reshape[file_temp_array.shape[0], file_temp_array.shape[1], 1], axis=2)
+                        file_temp_cube = np.concatenate((file_temp_cube, file_temp_array.reshape(file_temp_array.shape[0], file_temp_array.shape[1], 1)), axis=2)
                 file_output = np.ones([file_temp_cube.shape[0], file_temp_cube.shape[1]]) * nan_value
                 for y in range(file_temp_cube.shape[0]):
-                    for x in range(file_temp_cube.shapep[1]):
+                    for x in range(file_temp_cube.shape[1]):
                         temp_set = file_temp_cube[y, x, :].flatten()
                         temp = nan_value
                         if composition_strategy == 'first':
@@ -511,7 +511,10 @@ def data_composition(file_path, time_coverage=None, composition_strategy=None, f
                                     break
                                 set_index -= 1
                         file_output[y, x] = temp
-                write_raster(file_directory['temp_ds_0'], file_output, composition_output_folder, 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF', raster_datatype=gdal.GDT_UInt16)
+                write_raster(file_directory['temp_ds_0'], file_output, composition_output_folder, 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+            elif len(re_doy_index) == 1:
+                shutil.copyfile(file_list[re_doy_index[0]], composition_output_folder + 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF')
+            itr += 1
 
 
 def surrounding_max_half_window(array, cor, water_pixel_v=1):
@@ -1562,8 +1565,8 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 ds_temp = gdal.Open(file_input)
                 array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
                 array_temp[:, :] = 1
-                write_raster(ds_temp, array_temp, root_path_f, 'temp.TIF', raster_datatype=gdal.GDT_Int16)
-                ds_temp_n = gdal.Open(root_path_f + 'temp.TIF')
+                write_raster(ds_temp, array_temp, root_path_f, 'temp_sa.TIF', raster_datatype=gdal.GDT_Int16)
+                ds_temp_n = gdal.Open(root_path_f + 'temp_sa.TIF')
                 gdal.Warp(root_path_f + 'temp2.TIF', ds_temp_n, cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
                 ds_temp_sa_map = gdal.Open(root_path_f + 'temp2.TIF')
                 np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_map.npy', ds_temp_sa_map.GetRasterBand(1).ReadAsArray())
@@ -1753,7 +1756,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
         print('Sequenced datacube construction was not implemented.')
 
 
-def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None):
+def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None):
     global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
     # Determine the global indicator
     default_global_threshold = [0.123, -0.5, 0.2, 0.1]
@@ -1991,6 +1994,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         date_temp -= 1
                     date_temp += 1
 
+                create_folder(inundation_global_dic['global_' + study_area] + 'individual_tif\\')
                 for doy in doy_array:
                     if not os.path.exists(inundation_global_dic['global_' + study_area] + 'individual_tif\\global_' + str(doy) + '.TIF') or inundation_data_overwritten_factor:
                         year_t = doy // 1000
@@ -2018,7 +2022,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                                         inundated_array[y_temp, x_temp] = 1
                                     else:
                                         inundated_array[y_temp, x_temp] = 0
-                        inundated_array = reassign_sole_pixel(inundated_array, Nan_value=-2, half_size_window=2)
+                        inundated_array = reassign_sole_pixel(inundated_array, Nan_value=-32768, half_size_window=2)
                         inundated_array[sa_map == -32768] = -32768
                         write_raster(NIR_file_ds, inundated_array, inundation_global_dic['global_' + study_area], 'individual_tif\\global_' + str(doy) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                     else:
