@@ -592,7 +592,7 @@ class Visualisation_gui(QMainWindow):
                             pos_index = np.argwhere(self.inundated_doy == int(self.doy_list[i]))
                             dc_temp = self.vi_sa_array_for_phenology[:, :, i]
                             inundated_temp = self.inundated_dc[:, :, pos_index[0]].reshape([self.inundated_dc.shape[0], self.inundated_dc.shape[1]])
-                            dc_temp[inundated_temp > 0] = np.nan
+                            dc_temp[inundated_temp != 0] = np.nan
                             self.vi_sa_array_for_phenology[:, :, i] = dc_temp
                     # self.inundated_process_factor = True
                 elif self.inundated_dic == {}:
@@ -618,7 +618,7 @@ class Visualisation_gui(QMainWindow):
         if self.phenology_view_box.isEnabled() and self.begin_year != '' and self.end_year != '':
             if self.doy_array_for_phenology.shape[0] != 0:
                 if self.ra_domain == 'Entire SA':
-                    vi_entire_temp = np.nanmean(np.nanmean(self.vi_sa_array_for_phenology, axis=0), axis=0)
+                    vi_entire_temp = np.nanmean(self.vi_sa_array_for_phenology, axis=(0, 1))
                     if self.phenology_view_factor == 'Annual':
                         year_list_temp = np.array([int(self.doy_array_for_phenology[i]) // 1000 for i in range(len(self.doy_array_for_phenology))])
                         for year in self.year_range:

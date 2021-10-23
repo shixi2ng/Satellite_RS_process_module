@@ -403,6 +403,119 @@ def dataset2array(ds_temp, Band_factor=True):
     return temp_array
 
 
+def data_composition(file_path, time_coverage=None, composition_strategy=None, file_format=None, nan_value=np.nan):
+    # Determine the time range
+    all_time_coverage = ['month', 'week', 'year']
+    if time_coverage is None:
+        time_coverage = 'month'
+    elif time_coverage not in all_time_coverage:
+        print('Please choose a supported time coverage')
+        sys.exit(-1)
+
+    # Determine the composition strategy
+    all_supported_composition_strategy = ['first', 'last', 'mean']
+    if composition_strategy is None:
+        composition_strategy = 'first'
+    elif composition_strategy not in all_supported_composition_strategy:
+        print('Please choose a supported composition strategy!')
+        sys.exit(-1)
+
+    # Determine the file format
+    if file_format is None:
+        file_format = '.TIF'
+
+    # Determine the file list
+    file_list = file_filter(file_path, [file_format])
+    if len(file_list) == 0:
+        print('Please input the correct file format!')
+        sys.exit(-1)
+
+    # Create the composition output folder
+    composition_output_folder = file_path + 'composition_output\\'
+    create_folder(composition_output_folder)
+    date_list = []
+    doy_list = []
+    for i in file_list:
+        for length in range(len(i) - 8):
+            try:
+                date_temp = int(i[length, length + 8])
+                date_list.append(date_temp)
+                break
+            except:
+                pass
+
+            try:
+                doy_temp = int(i[length, length + 7])
+                doy_list.append(doy_temp)
+                break
+            except:
+                pass
+    if len(doy_list) == len(date_list) == len(file_list):
+        doy_list = date2doy(date_list)
+    elif len(date_list) == len(file_list):
+        doy_list = date2doy(date_list)
+    elif len(doy_list) == len(file_list):
+        pass
+    else:
+        print('Consistency error occurred during data composition!')
+        sys.exit(-1)
+
+    # Create composite band
+    year_list = np.unique(np.array(doy_list) // 1000)
+    if time_coverage == 'month':
+        division = 365 / 12
+        iteration = 12
+    elif time_coverage == 'year':
+        division = 366
+        iteration = 1
+    elif time_coverage == 'week':
+        division = 365 / 52
+        iteration = 52
+    else:
+        print('Unknown error occurred!')
+        sys.exit(-1)
+
+    for year in year_list:
+        itr = 1
+        while itr <= iteration:
+            doy_range = [year * 1000 + (itr - 1) * division, year * 1000 + itr * division]
+            re_doy_index = []
+            for doy_index in range(len(doy_list)):
+                if doy_range[0] <= doy_list[doy_index] <= doy_range[1]:
+                    re_doy_index.append(doy_index)
+            if len(re_date_list) >= 2:
+                file_directory = {}
+                for file_num in range(len(re_date_list)):
+                    file_directory['temp_ds_' + str(file_num)] = gdal.Open(file_list[re_date_list[file_num]])
+                    file_temp_array = file_directory['temp_ds_' + str(file_num)].GetRasterBand(1).ReadAsArray()
+                    if file_num == 0:
+                        file_temp_cube = file_temp_array.reshape[file_temp_array.shape[0], file_temp_array.shape[1], 1]
+                    else:
+                        file_temp_cube = np.concatenate(file_temp_cube, file_temp_array.reshape[file_temp_array.shape[0], file_temp_array.shape[1], 1], axis=2)
+                file_output = np.ones([file_temp_cube.shape[0], file_temp_cube.shape[1]]) * nan_value
+                for y in range(file_temp_cube.shape[0]):
+                    for x in range(file_temp_cube.shapep[1]):
+                        temp_set = file_temp_cube[y, x, :].flatten()
+                        temp = nan_value
+                        if composition_strategy == 'first':
+                            for set_index in range(temp_set.shape[0]):
+                                if temp_set[set_inedx] != nan_value:
+                                    temp = temp_set[set_index]
+                                    break
+                        elif composition_strategy == 'mean':
+                            if not (temp_set == nan_value).all:
+                                temp = np.nanmean(temp_set)
+                        elif composition_strategy == 'last':
+                            set_index = temp_set.shape[0] - 1
+                            while set_index >= 0:
+                                if temp_set[set_index] != nan_value:
+                                    temp = temp_set[set_index]
+                                    break
+                                set_index -= 1
+                        file_output[y, x] = temp
+                write_raster(file_directory['temp_ds_0'], file_output, composition_output_folder, 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF', raster_datatype=gdal.GDT_UInt16)
+
+
 def surrounding_max_half_window(array, cor, water_pixel_v=1):
     for i_tt in range(1, min(array.shape[0], array.shape[1])):
         if cor[0] - i_tt < 0:
@@ -1121,7 +1234,7 @@ def generate_landsat_metadata(original_file_path_f, unzipped_file_path_f, corrup
     return File_metadata
 
 
-def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_construction_para=True, construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True, clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False, construct_sdc_para=True, sdc_overwritten_para=False, VI_list=None, ROI_mask_f=None, study_area=None, size_control_factor=True, manual_remove_issue_data=False, manual_remove_date_list=None, main_coordinate_system=None, average_fvc_study_area_factor=False, **kwargs):
+def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_construction_para=True, construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True, clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False, construct_sdc_para=True, sdc_overwritten_para=False, VI_list=None, ROI_mask_f=None, study_area=None, size_control_factor=True, manual_remove_issue_data=False, manual_remove_date_list=None, main_coordinate_system=None, **kwargs):
     # Fundamental para
     if VI_list is None:
         VI_list = all_supported_vi_list
@@ -1153,7 +1266,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
     create_folder(key_dictionary_path)
 
     # Create key dictionary
-    fundamental_dic = {}
+    fundamental_dic = {'resize_factor': size_control_factor}
     if not os.path.exists(key_dictionary_path + 'fundamental_information_dic.npy'):
         fundamental_dic['shpfile_path'] = root_path_f + 'study_area_shapefile\\'
         fundamental_dic['all_vi'] = VI_list
@@ -1521,12 +1634,12 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             data_cube_temp = np.delete(data_cube_temp, i_temp, 2)
                             i_temp -= 1
                         i_temp += 1
+
+                    if manual_remove_date_list_temp:
+                        print('Some manual input date is not properly removed')
+                        sys.exit(-1)
                 elif manual_remove_issue_data is True and manual_remove_date_list is None:
                     print('Please input the issue date list')
-                    sys.exit(-1)
-
-                if manual_remove_date_list_temp:
-                    print('Some manual input date is not properly removed')
                     sys.exit(-1)
 
                 print('Finished in ' + str(end_time - start_time) + ' s.')
@@ -1642,8 +1755,23 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
         print('Sequenced datacube construction was not implemented.')
 
 
-def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False):
+def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None):
     global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
+    # Determine the global indicator
+    default_global_threshold = [0.123, -0.5, 0.2, 0.1]
+    if global_threshold is None:
+        global_threshold = default_global_threshold
+    elif type(global_threshold) != list:
+        print('Please input the global threshold as a list with four number in it')
+        sys.exit(-1)
+    elif len(global_threshold) != 4:
+        print('Please input the global threshold as a list with four number in it')
+        sys.exit(-1)
+    fundamental_key_dic = np.load(root_path_f + 'Landsat_key_dic\\fundamental_information_dic.npy', allow_pickle=True).item()
+    if fundamental_key_dic['resize_factor']:
+        global_threshold[0] = global_threshold[0] * 10000
+        global_threshold[1] = global_threshold[1] * 10000
+
     # Check whether the VI data cube exists or not
     sys.setrecursionlimit(1999999999)
     if os.path.exists(root_path_f + 'Landsat_key_dic\\' + study_area + 'inundated_approach.npy'):
@@ -1886,7 +2014,9 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                                 for x_temp in range(MNDWI_array.shape[1]):
                                     if MNDWI_array[y_temp, x_temp] == -32768:
                                         inundated_array[y_temp, x_temp] = -32768
-                                    elif MNDWI_array[y_temp, x_temp] > -4000 and NIR_array[y_temp, x_temp] < 0.2 and SWIR2_array[y_temp, x_temp] < 0.1:
+                                    elif MNDWI_array[y_temp, x_temp] > global_threshold[0]:
+                                        inundated_array[y_temp, x_temp] = 1
+                                    elif MNDWI_array[y_temp, x_temp] > global_threshold[1] and NIR_array[y_temp, x_temp] < global_threshold[2] and SWIR2_array[y_temp, x_temp] < global_threshold[3]:
                                         inundated_array[y_temp, x_temp] = 1
                                     else:
                                         inundated_array[y_temp, x_temp] = 0

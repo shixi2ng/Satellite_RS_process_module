@@ -69,7 +69,8 @@ for seq in range(study_area_list.shape[0]):
                                                  Inundation_month_list=None, DEM_path=DEM_path,
                                                  water_level_data_path=water_level_file_path,
                                                  study_area=study_area_list[seq, 1], Year_range=[2000, 2020], cross_section=study_area_list[seq, 3], VEG_path=VEG_PATH, file_metadata_f=file_metadata, unzipped_file_path_f=unzipped_file_path, ROI_mask_f=study_area_list[seq, 0], local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=sample_rs_table, sample_data_path=google_earth_sample_data_path, dem_surveyed_date=None, landsat_detected_inundation_area=True, surveyed_inundation_detection_factor=True)
-    Landsat_main_v1.phenology_year_vi_construction(root_path, study_area_list[seq, 1], inundated_factor='global', VI_factor='OSAVI')
+    Landsat_main_v1.phenology_year_vi_construction(root_path, study_area_list[seq, 1], inundated_factor='local', VI_factor='EVI')
+    Landsat_main_v1.phenology_year_vi_construction(root_path, study_area_list[seq, 1], inundated_factor='local', VI_factor='NDVI')
     Landsat_main_v1.VI_curve_fitting(root_path, 'pheyear_OSAVI', study_area_list[seq, 1], curve_fitting_algorithm='seven_para_logistic')
     Landsat_main_v1.phenology_metrics_generation(root_path, 'pheyear_OSAVI', study_area_list[seq, 1], phenology_index=['annual_ave_VI', 'flood_ave_VI', 'unflood_ave_VI', 'max_VI', 'max_VI_doy', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'], curve_fitting_algorithm='seven_para_logistic')
     Landsat_main_v1.quantify_vegetation_variation(root_path, 'pheyear_OSAVI', study_area_list[seq, 1], ['annual_ave_VI', 'flood_ave_VI', 'unflood_ave_VI', 'max_VI', 'max_VI_doy', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'], 'seven_para_logistic', quantify_strategy=['percentile', 'abs_value'])
