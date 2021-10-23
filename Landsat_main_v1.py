@@ -15,7 +15,6 @@ from datetime import date
 import rasterio
 import math
 import copy
-import seaborn as sns
 from scipy.optimize import curve_fit
 from scipy.signal import convolve2d
 import time
@@ -25,7 +24,6 @@ import glob
 import cv2
 from win32.lib import win32con
 import win32api, win32gui, win32print
-from sklearn.metrics import confusion_matrix
 import pyqtgraph as pg
 import pyqtgraph.exporters
 from pyqtgraph.Qt import QtGui, QtCore
@@ -483,10 +481,10 @@ def data_composition(file_path, time_coverage=None, composition_strategy=None, f
             for doy_index in range(len(doy_list)):
                 if doy_range[0] <= doy_list[doy_index] <= doy_range[1]:
                     re_doy_index.append(doy_index)
-            if len(re_date_list) >= 2:
+            if len(re_doy_index) >= 2:
                 file_directory = {}
-                for file_num in range(len(re_date_list)):
-                    file_directory['temp_ds_' + str(file_num)] = gdal.Open(file_list[re_date_list[file_num]])
+                for file_num in range(len(re_doy_index)):
+                    file_directory['temp_ds_' + str(file_num)] = gdal.Open(file_list[re_doy_index[file_num]])
                     file_temp_array = file_directory['temp_ds_' + str(file_num)].GetRasterBand(1).ReadAsArray()
                     if file_num == 0:
                         file_temp_cube = file_temp_array.reshape[file_temp_array.shape[0], file_temp_array.shape[1], 1]
@@ -499,7 +497,7 @@ def data_composition(file_path, time_coverage=None, composition_strategy=None, f
                         temp = nan_value
                         if composition_strategy == 'first':
                             for set_index in range(temp_set.shape[0]):
-                                if temp_set[set_inedx] != nan_value:
+                                if temp_set[set_index] != nan_value:
                                     temp = temp_set[set_index]
                                     break
                         elif composition_strategy == 'mean':
@@ -2540,7 +2538,7 @@ def VI_curve_fitting(root_path_f, vi, sa, inundated_factor=None, curve_fitting_a
         pass
     else:
         try:
-            inundated_dic = np.load(file_filter(root_path_f + 'Landsat_key_dic\\', ['.npy', study_area, inundated_factor], and_or_factor='and')[0], allow_pickle=True).item()
+            inundated_dic = np.load(file_filter(root_path_f + 'Landsat_key_dic\\', ['.npy', sa, inundated_factor], and_or_factor='and')[0], allow_pickle=True).item()
             inundated_dc = np.load(inundated_dic['inundated_dc_file']).astype(np.float)
             inundated_doy = np.load(inundated_dic['inundated_doy_file']).astype(np.int)
         except:
@@ -3030,6 +3028,7 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
 
     #Input all required data in figure plot
     all_supported_curve_fitting_method = ['seven_para_logistic', 'two_term_fourier']
+    VI_sdc = {}
     VI_curve_fitting = {}
     if curve_fitting_algorithm is None or curve_fitting_algorithm == 'seven_para_logistic':
         VI_curve_fitting['CFM'] = 'SPL'
@@ -3467,125 +3466,9 @@ def normalize_and_gamma_correction(data_array, p_gamma=1.52):
     return data_array
 
 
-def visualize_study_area_demo(root_path_f, ori_tiff_file_path, date_temp, ROI_shpfile, study_area_name, demo_illustration=None, VI=None):
-    global all_supported_vi_list
-    all_supported_vi_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC']
-    if VI not in all_supported_vi_list:
-        print('This function doesnt support')
-        return
-
-    demo_illustration_t = demo_illustration
-    if demo_illustration == 'overview':
-        demo_illustration_path = root_path_f + 'Landsat_phenology_curve\\' + study_area_name + '_overview\\overview_' + VI + '_'
-    elif demo_illustration == 'annual':
-        demo_illustration_path = root_path_f + 'Landsat_phenology_curve\\' + study_area_name + '_annual\\annual_' + VI + '_'
-    else:
-        print('This function doesnot support the file yet!')
-        return
-
-    study_area_t = study_area_name
-    demo_folder = root_path_f + 'Landsat_phenology_demo\\'
-    sa_demo_folder = demo_folder + study_area_name + '\\'
-    create_folder(sa_demo_folder)
-    ori_file = file_filter(ori_tiff_file_path, [str(date_tezhendmp)])
-    if len(ori_file) == 0:
-        print('Please input the correct date!')
-        sys.exit(-1)
-    elif 'LC08' in ori_file[0]:
-        rgb_dic = {'r': 'B4', 'g': 'B3', 'b': 'B2'}
-    elif 'LE07' in ori_file[0] or 'LT05' in ori_file[0]:
-        rgb_dic = {'r': 'B3', 'g': 'B2', 'b': 'B1'}
-    else:
-        print('Undefined error occurred!')
-        sys.exit(-1)
-
-    # Open r g b database
-    r_ds = gdal.Open(file_filter(ori_tiff_file_path, [str(date_temp), rgb_dic['r']])[0])
-    g_ds = gdal.Open(file_filter(ori_tiff_file_path, [str(date_temp), rgb_dic['g']])[0])
-    b_ds = gdal.Open(file_filter(ori_tiff_file_path, [str(date_temp), rgb_dic['b']])[0])
-    gdal.Warp(sa_demo_folder + 'r_' + study_area_name + '.TIF', r_ds, cutlineDSName=ROI_shpfile, cropToCutline=True, dstNodata=65536, xRes=30, yRes=30)
-    gdal.Warp(sa_demo_folder + 'g_' + study_area_name + '.TIF', g_ds, cutlineDSName=ROI_shpfile, cropToCutline=True, dstNodata=65536, xRes=30, yRes=30)
-    gdal.Warp(sa_demo_folder + 'b_' + study_area_name + '.TIF', b_ds, cutlineDSName=ROI_shpfile, cropToCutline=True, dstNodata=65536, xRes=30, yRes=30)
-    r_sa_ds = gdal.Open(sa_demo_folder + 'r_' + study_area_name + '.TIF')
-    g_sa_ds = gdal.Open(sa_demo_folder + 'g_' + study_area_name + '.TIF')
-    b_sa_ds = gdal.Open(sa_demo_folder + 'b_' + study_area_name + '.TIF')
-    r_sa_raster = r_sa_ds.GetRasterBand(1).ReadAsArray()
-    g_sa_raster = g_sa_ds.GetRasterBand(1).ReadAsArray()
-    b_sa_raster = b_sa_ds.GetRasterBand(1).ReadAsArray()
-    hDC = win32gui.GetDC(0)
-    monitor_wide = win32print.GetDeviceCaps(hDC, win32con.DESKTOPHORZRES)
-    monitor_high = win32print.GetDeviceCaps(hDC, win32con.DESKTOPVERTRES)
-    if demo_illustration == 'overview':
-        scale_factor = min(np.floor(monitor_wide * 2 / (3 * r_sa_raster.shape[1])), np.floor(monitor_high * 2 / (3 * r_sa_raster.shape[0])))
-    elif demo_illustration == 'annual':
-        scale_factor = min(np.floor(monitor_wide * 1 / (2 * r_sa_raster.shape[1])), np.floor(monitor_high * 1 / (2 * r_sa_raster.shape[0])))
-
-    if r_sa_raster.shape[0] == g_sa_raster.shape[0] and r_sa_raster.shape[0] == b_sa_raster.shape[0] and r_sa_raster.shape[1] == g_sa_raster.shape[1] and r_sa_raster.shape[1] == b_sa_raster.shape[1]:
-        new_image = np.zeros([r_sa_raster.shape[0], r_sa_raster.shape[1], 3], dtype=np.float)
-        new_image[:, :, 0] = r_sa_raster
-        new_image[:, :, 1] = g_sa_raster
-        new_image[:, :, 2] = b_sa_raster
-        new_image = normalize_and_gamma_correction(new_image, p_gamma=1.52)
-        new_image = cv2.resize(new_image, (int(r_sa_raster.shape[1] * scale_factor), int(r_sa_raster.shape[0] * scale_factor)))
-        # new_image = cv2.normalize(new_image, None, alpha=0, beta=65536, norm_type=cv2.NORM_MINMAX).astype(np.uint16)
-        # new_image[new_image >= 65536] = 65536
-        # new_image = cv2.resize(new_image, (int(r_sa_raster.shape[1] * scale_factor), int(r_sa_raster.shape[0] * scale_factor)))
-        # new_image = cv2.normalize(new_image, None, alpha=0, beta=65536, norm_type=cv2.NORM_MINMAX).astype(np.uint16)
-        # new_image = int(new_image * 65536)
-        x_cor = []
-        y_cor = []
-        try:
-            print('The demo begin!')
-            cv2.namedWindow(study_area_name + "_demo")
-            cv2.setMouseCallback(study_area_name + "_demo", on_event_left_button_down)
-            cv2.moveWindow(study_area_name + "_demo", 100, 100)
-            cv2.imshow(study_area_name + "_demo", new_image)
-            cv2.waitKey(0)
-            print('This is the multiyear NDVI in ' + study_area_name + 'with the coordinate of (' + x_cor[0] + ', ' + y_cor[0] + ')')
-        except:
-            print('The demo end!')
-
-
-def on_event_left_button_down(event, x, y, flags, param):
-    if event == cv2.EVENT_LBUTTONDOWN and demo_illustration_t == 'overview':
-        xy = "%d,%d" % (x, y)
-        cv2.circle(new_image, (x, y), 1, (0, 0, 255), thickness=-1)
-        cv2.putText(new_image, xy, (x, y), cv2.FONT_HERSHEY_PLAIN, 1.0, (0, 0, 0), thickness=1)
-        try:
-            img_temp = cv2.imread(demo_illustration_path + str(int(np.fix(x / scale_factor))) + '_' + str(int(np.fix(y / scale_factor))) + '.png')
-            img_temp = np.append(img_temp, 255 * np.ones([img_temp.shape[0], 50, img_temp.shape[2]]), axis=1)
-            scale_factor_illu = new_image.shape[0] / img_temp.shape[0]
-            img_temp = cv2.resize(img_temp, (int(scale_factor_illu * img_temp.shape[1]), int(scale_factor_illu * img_temp.shape[0]))).astype(np.uint8)
-            y_offset = int(110 + new_image.shape[1])
-            cv2.moveWindow('illustration', y_offset, 100)
-            cv2.imshow('illustration', img_temp)
-        except:
-            print('No figure')
-        cv2.imshow(study_area_t + "_demo", new_image)
-        print('This is the multiyear NDVI in ' + study_area_t + 'with the coordinate of (' + str(int(np.fix(x / scale_factor))) + ', ' + str(int(np.fix(y / scale_factor))) + ')')
-    elif event == cv2.EVENT_LBUTTONDOWN and demo_illustration_t == 'annual':
-        xy = "%d,%d" % (x, y)
-        cv2.circle(new_image, (x, y), 1, (0, 0, 255), thickness=-1)
-        cv2.putText(new_image, xy, (x, y), cv2.FONT_HERSHEY_PLAIN, 1.0, (0, 0, 0), thickness=1)
-        try:
-            img_temp = cv2.imread(demo_illustration_path + str(int(np.fix(x / scale_factor))) + '_' + str(int(np.fix(y / scale_factor))) + '.png')
-            # img_temp = np.append(img_temp, 255 * np.ones([img_temp.shape[0], 50, img_temp.shape[2]]), axis=1)
-            hDC = win32gui.GetDC(0)
-            monitor_wide = win32print.GetDeviceCaps(hDC, win32con.DESKTOPHORZRES)
-            monitor_high = win32print.GetDeviceCaps(hDC, win32con.DESKTOPVERTRES)
-            scale_factor_illu = min((((monitor_high * 2 / 3) - 100) / (img_temp.shape[0])), ((((monitor_wide - new_image.shape[1] - 110) * 2 / 3) ) / (1.5 * img_temp.shape[1])))
-            img_temp = cv2.resize(img_temp, (int(scale_factor_illu * img_temp.shape[1]), int(scale_factor_illu * img_temp.shape[0]))).astype(np.uint8)
-            y_offset = int(110 + new_image.shape[1])
-            cv2.moveWindow('illustration', y_offset, 100)
-            cv2.imshow('illustration', img_temp)
-        except:
-            print('No figure')
-        cv2.imshow(study_area_t + "_demo", new_image)
-        print('This is the annual NDVI in ' + study_area_t + 'with the coordinate of (' + str(int(np.fix(x / scale_factor))) + ', ' + str(int(np.fix(y / scale_factor))) + ')')
-
-
 def phenology_monitor(demo_path, phenology_indicator):
     pass
+
 
 # pixel_limitation = cor_to_pixel([[775576.487, 3326499.324], [783860353.937, 3321687.841]], root_path + 'Landsat_clipped_NDVI\\')
 
