@@ -1236,6 +1236,29 @@ def generate_landsat_metadata(original_file_path_f, unzipped_file_path_f, corrup
 
 
 def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_construction_para=True, construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True, clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False, construct_sdc_para=True, sdc_overwritten_para=False, VI_list=None, ROI_mask_f=None, study_area=None, size_control_factor=True, manual_remove_issue_data=False, manual_remove_date_list=None, main_coordinate_system=None, **kwargs):
+    """
+
+    :param root_path_f:
+    :param unzipped_file_path_f:
+    :param file_metadata_f:
+    :param vi_construction_para:
+    :param construction_overwritten_para:
+    :param cloud_removal_para:
+    :param vi_clipped_para:
+    :param clipped_overwritten_para:
+    :param construct_dc_para:
+    :param dc_overwritten_para:
+    :param construct_sdc_para:
+    :param sdc_overwritten_para:
+    :param VI_list:
+    :param ROI_mask_f:
+    :param study_area:
+    :param size_control_factor:
+    :param manual_remove_issue_data:
+    :param manual_remove_date_list:
+    :param main_coordinate_system:
+    :param kwargs:
+    """
     # Fundamental para
     if VI_list is None:
         VI_list = all_supported_vi_list
@@ -1267,14 +1290,16 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
     create_folder(key_dictionary_path)
 
     # Create key dictionary
-    fundamental_dic = {'resize_factor': size_control_factor}
+    fundamental_dic = {}
     if not os.path.exists(key_dictionary_path + 'fundamental_information_dic.npy'):
+        fundamental_dicp['resize_factor'] = size_control_factor
         fundamental_dic['shpfile_path'] = root_path_f + 'study_area_shapefile\\'
         fundamental_dic['all_vi'] = VI_list
         fundamental_dic['study_area'] = [study_area]
         np.save(key_dictionary_path + 'fundamental_information_dic.npy', fundamental_dic)
     else:
         fundamental_dic = np.load(key_dictionary_path + 'fundamental_information_dic.npy', allow_pickle=True).item()
+        fundamental_dic['resize_factor'] = size_control_factor
         fundamental_dic['shpfile_path'] = root_path_f + 'study_area_shapefile\\'
         if fundamental_dic['all_vi'] is None:
             fundamental_dic['all_vi'] = VI_list
@@ -1757,6 +1782,34 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
 
 
 def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None):
+    """
+
+    :param root_path_f:
+    :param sate_dem_inundation_factor:
+    :param inundation_data_overwritten_factor:
+    :param mndwi_threshold:
+    :param VI_list_f:
+    :param Inundation_month_list:
+    :param DEM_path:
+    :param water_level_data_path:
+    :param study_area:
+    :param Year_range:
+    :param cross_section:
+    :param VEG_path:
+    :param file_metadata_f:
+    :param unzipped_file_path_f:
+    :param ROI_mask_f:
+    :param local_std_fig_construction:
+    :param global_local_factor:
+    :param std_num:
+    :param inundation_mapping_accuracy_evaluation_factor:
+    :param sample_rs_link_list:
+    :param sample_data_path:
+    :param dem_surveyed_date:
+    :param landsat_detected_inundation_area:
+    :param surveyed_inundation_detection_factor:
+    :param global_threshold:
+    """
     global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
     # Determine the global indicator
     default_global_threshold = [0.123, -0.5, 0.2, 0.1]
@@ -2498,6 +2551,14 @@ def vi_dc_inundation_elimination(vi_dc, vi_doy, inundated_dc, inundated_doy):
 
 
 def VI_curve_fitting(root_path_f, vi, sa, inundated_factor=None, curve_fitting_algorithm=None):
+    """
+
+    :param root_path_f:
+    :param vi:
+    :param sa:
+    :param inundated_factor:
+    :param curve_fitting_algorithm:
+    """
     # check vi
     all_vi_list = np.load(root_path_f + 'Landsat_key_dic\\fundamental_information_dic.npy', allow_pickle=True).item()['all_vi']
     if vi not in all_vi_list:
@@ -2595,6 +2656,14 @@ def VI_curve_fitting(root_path_f, vi, sa, inundated_factor=None, curve_fitting_a
 
 
 def phenology_metrics_generation(root_path_f, vi, sa, phenology_index=None, curve_fitting_algorithm=None):
+    """
+
+    :param root_path_f:
+    :param vi:
+    :param sa:
+    :param phenology_index:
+    :param curve_fitting_algorithm:
+    """
     # save all phenology metrics into the fundamental dictionary
     phenology_index_all = ['annual_ave_VI', 'flood_ave_VI', 'unflood_ave_VI', 'max_VI', 'max_VI_doy', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI']
     if not os.path.exists(root_path_f + 'Landsat_key_dic\\fundamental_information_dic.npy'):
@@ -2720,8 +2789,10 @@ def phenology_metrics_generation(root_path_f, vi, sa, phenology_index=None, curv
                     max_index = np.argmax(annual_phe, axis=2)
                     for y_temp_temp in range(phe_temp.shape[0]):
                         for x_temp_temp in range(phe_temp.shape[1]):
+                            drop_index = int(annual_para[y_temp_temp, x_temp_temp, 4] - 3 * annual_para[y_temp_temp:, x_temp_temp, 5])
                             phe_temp[y_temp_temp, x_temp_temp, 0: max_index[y_temp_temp, x_temp_temp]] = np.nan
-                    phe_temp[phe_temp < 0.3] = np.nan
+                            if drop_index > 0:
+                                phe_temp[y_temp_temp, x_temp_temp, drop_index: 365] = np.nan
                     phe_metrics = np.nanmean(phe_temp, axis=2)
                 phe_metrics = phe_metrics.astype(np.float)
                 phe_metrics[sa_map == -32768] = np.nan
@@ -2730,6 +2801,15 @@ def phenology_metrics_generation(root_path_f, vi, sa, phenology_index=None, curv
 
 
 def quantify_vegetation_variation(root_path_f, vi, sa, phenology_index, curve_fitting_algorithm, quantify_strategy=None):
+    """
+
+    :param root_path_f:
+    :param vi:
+    :param sa:
+    :param phenology_index:
+    :param curve_fitting_algorithm:
+    :param quantify_strategy:
+    """
     # Input fundamental dic
     fundamental_dic = np.load(root_path_f + 'Landsat_key_dic//fundamental_information_dic.npy', allow_pickle=True).item()
     if os.path.exists(root_path_f + 'Landsat_key_dic\\' + sa + '_phenology_metrics.npy'):
@@ -2822,11 +2902,21 @@ def quantify_vegetation_variation(root_path_f, vi, sa, phenology_index, curve_fi
                     veg_variation_array = (current_year_array - last_year_array) / last_year_array
                 elif quantify_st == 'abs_value':
                     veg_variation_array = current_year_array - last_year_array
-                write_raster(last_year_ds, veg_variation_array, phenology_metrics_inform_dic[phenology_index_temp + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'], str(int(year - 1)) + '_' + str(int(year)) + '_veg_variation.TIF')
+                else:
+                    print('systematic error!')
+                    sys.exit(-1)
+                write_raster(last_year_ds, veg_variation_array, phenology_metrics_inform_dic[phenology_index_temp + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'], phenology_index_temp + '_' + str(int(year - 1)) + '_' + str(int(year)) + '_veg_variation.TIF')
     np.save(root_path_f + 'Landsat_key_dic\\' + sa + '_veg_variation.npy', phenology_metrics_inform_dic)
 
 
 def phenology_year_vi_construction(root_path_f, study_area, inundated_factor=None, VI_factor=None):
+    """
+
+    :param root_path_f:
+    :param study_area:
+    :param inundated_factor:
+    :param VI_factor:
+    """
     # Input vi list
     p1_time, p2_time, p3_time = 0, 0, 0
     vi_list = np.load(root_path_f + 'Landsat_key_dic\\fundamental_information_dic.npy', allow_pickle=True).item()
