@@ -1566,11 +1566,13 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
                 array_temp[:, :] = 1
                 write_raster(ds_temp, array_temp, root_path_f, 'temp_sa.TIF', raster_datatype=gdal.GDT_Int16)
+                if retrieve_srs(ds_temp) != main_coordinate_system:
+                    gdal.Warp(root_path_f + 'temp_sa.TIF', root_path_f + 'temp_sa.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
                 gdal.Warp(root_path_f + 'temp2.TIF', root_path_f + 'temp_sa.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
                 ds_sa_temp = gdal.Open(root_path_f + 'temp2.TIF')
                 ds_sa_array = ds_sa_temp.GetRasterBand(1).ReadAsArray()
                 ds_sa_array[:, :] = 1
-                write_raster(ds_temp, array_temp, root_path_f, 'temp_sa2.TIF', raster_datatype=gdal.GDT_Int16)
+                write_raster(ds_sa_temp, array_temp, root_path_f, 'temp_sa2.TIF', raster_datatype=gdal.GDT_Int16)
                 gdal.Warp(root_path_f + 'temp3.TIF', root_path_f + 'temp_sa2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
                 ds_temp_sa_map = gdal.Open(root_path_f + 'temp3.TIF')
                 np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_map.npy', ds_temp_sa_map.GetRasterBand(1).ReadAsArray())
@@ -1966,11 +1968,22 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         SWIR_temp_array = SWIR_temp_array * QI_temp_array
                         NIR_temp_array = NIR_temp_array * QI_temp_array
                         write_raster(NIR_temp_ds, NIR_temp_array, band_path['NIR'], 'temp.TIF', raster_datatype=gdal.GDT_Float32)
-                        gdal.Warp(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR'] + 'temp.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
+                        if main_coordinate_system is not None and retrieve_srs(NIR_temp_ds) != main_coordinate_system:
+                            gdal.Warp(band_path['NIR'] + 'temp2.TIF', band_path['NIR'] + 'temp.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
+                            gdal.Warp(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR'] + 'temp2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
+                        else:
+                            gdal.Warp(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR'] + 'temp.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
+
                         write_raster(SWIR_temp_ds, SWIR_temp_array, band_path['SWIR2'], 'temp.TIF', raster_datatype=gdal.GDT_Float32)
-                        gdal.Warp(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF', band_path['SWIR2'] + 'temp.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True,dstNodata=np.nan, xRes=30, yRes=30)
+                        if main_coordinate_system is not None and retrieve_srs(SWIR_temp_ds) != main_coordinate_system:
+                            gdal.Warp(band_path['SWIR2'] + 'temp2.TIF', band_path['SWIR2'] + 'temp.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
+                            gdal.Warp(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF', band_path['SWIR2'] + 'temp2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
+                        else:
+                            gdal.Warp(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF', band_path['SWIR2'] + 'temp.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True,dstNodata=np.nan, xRes=30, yRes=30)
                         os.remove(band_path['NIR'] + 'temp.TIF')
                         os.remove(band_path['SWIR2'] + 'temp.TIF')
+                        os.remove(band_path['NIR'] + 'temp2.TIF')
+                        os.remove(band_path['SWIR2'] + 'temp2.TIF')
 
             # Implement the global inundation detection method
             MNDWI_filepath = root_path_f + 'Landsat_' + study_area + '_VI\\MNDWI\\'
