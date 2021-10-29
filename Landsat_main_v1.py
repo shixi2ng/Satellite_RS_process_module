@@ -1566,9 +1566,13 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
                 array_temp[:, :] = 1
                 write_raster(ds_temp, array_temp, root_path_f, 'temp_sa.TIF', raster_datatype=gdal.GDT_Int16)
-                ds_temp_n = gdal.Open(root_path_f + 'temp_sa.TIF')
-                gdal.Warp(root_path_f + 'temp2.TIF', ds_temp_n, cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
-                ds_temp_sa_map = gdal.Open(root_path_f + 'temp2.TIF')
+                gdal.Warp(root_path_f + 'temp2.TIF', root_path_f + 'temp_sa.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
+                ds_sa_temp = gdal.Open(root_path_f + 'temp2.TIF')
+                ds_sa_array = ds_sa_temp.GetRasterBand(1).ReadAsArray()
+                ds_sa_array[:, :] = 1
+                write_raster(ds_temp, array_temp, root_path_f, 'temp_sa2.TIF', raster_datatype=gdal.GDT_Int16)
+                gdal.Warp(root_path_f + 'temp3.TIF', root_path_f + 'temp_sa2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
+                ds_temp_sa_map = gdal.Open(root_path_f + 'temp3.TIF')
                 np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_map.npy', ds_temp_sa_map.GetRasterBand(1).ReadAsArray())
             remove_all_file_and_folder(file_filter(root_path_f, ['temp', '.TIF'], and_or_factor='and'))
             print('All ' + VI + ' files within the ' + study_area + ' are clipped.')
@@ -1756,7 +1760,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
         print('Sequenced datacube construction was not implemented.')
 
 
-def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None):
+def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None, main_coordinate_system=None):
     global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
     # Determine the global indicator
     default_global_threshold = [0.123, -0.5, 0.2, 0.1]
