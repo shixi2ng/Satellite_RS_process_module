@@ -551,6 +551,10 @@ def composition(re_doy_index, doy_list, file_list, nan_value, composition_strate
                                 if temp_set[set_index] != nan_value:
                                     temp = temp_set[set_index]
                                     break
+                        elif composition_strategy == 'max':
+                            temp = np.nanmax(temp_set)
+                        elif composition_strategy == 'min':
+                            temp = np.nanmin(temp_set)
                         file_output[y, x] = temp
                 write_raster(file_directory['temp_ds_0'], file_output, composition_output_folder, 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
         elif len(re_doy_index) == 1:
@@ -604,7 +608,7 @@ def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_cov
             monsoon_end = int(user_defined_monsoon[1])
 
     # Determine the composition strategy
-    all_supported_composition_strategy = ['first', 'last', 'mean', 'dry_wet_ratio_sequenced']
+    all_supported_composition_strategy = ['first', 'last', 'mean', 'dry_wet_ratio_sequenced', 'max']
     if composition_strategy is None:
         composition_strategy = 'first'
     elif composition_strategy not in all_supported_composition_strategy:
