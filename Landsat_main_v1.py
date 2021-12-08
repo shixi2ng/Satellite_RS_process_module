@@ -567,7 +567,7 @@ def composition(re_doy_index, doy_list, file_list, nan_value, composition_strate
                 shutil.copyfile(file_list[re_doy_index[0]], composition_output_folder + 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF')
 
 
-def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_coverage=None, composition_strategy=None, file_format=None, nan_value=-32768, user_defined_monsoon=None, inundated_indicator=None):
+def data_composition(file_path, metadata_path, time_coverage=None, composition_strategy=None, file_format=None, nan_value=-32768, user_defined_monsoon=None, inundated_indicator=None, dry_wet_ratio_threshold=None, Landsat7_influence=False):
     # Determine the time range
     all_time_coverage = ['month', 'year', 'monsoon']
     if time_coverage is None:
@@ -616,8 +616,12 @@ def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_cov
         sys.exit(-1)
     elif composition_strategy == 'dry_wet_ratio_sequenced' and time_coverage != 'monsoon':
         composition_strategy = 'first'
+        if dry_wet_ratio_threshold is None:
+            dry_wet_ratio_threshold = 0.95
     elif composition_strategy != 'dry_wet_ratio_sequenced' and time_coverage == 'monsoon':
         composition_strategy = 'dry_wet_ratio_sequenced'
+        if dry_wet_ratio_threshold is None:
+            dry_wet_ratio_threshold = 0.95
 
     # Determine the file format
     if file_format is None:
@@ -667,13 +671,13 @@ def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_cov
                 for doy_index in range(len(doy_list)):
                     if doy_list[doy_index] // 1000 == year and datetime.date.fromordinal(datetime.date(int(year), 1, 1).toordinal() + np.mod(doy_list[doy_index], 1000) - 1).month == month:
                         re_doy_index.append(doy_index)
-                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, month, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path)
+                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, month, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path, Landsat_7_influence=Landsat7_influence)
         elif time_coverage == 'year':
             re_doy_index = []
             for doy_index in range(len(doy_list)):
                 if doy_list[doy_index] // 1000 == year:
                     re_doy_index.append(doy_index)
-                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, year, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path)
+                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, year, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path, Landsat_7_influence=Landsat7_influence)
         elif time_coverage == 'monsoon':
             for i in ['wet', 'dry']:
                 re_doy_index = []
@@ -685,7 +689,7 @@ def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_cov
                     for doy_index in range(len(doy_list)):
                         if doy_list[doy_index] // 1000 == year and (monsoon_beg > datetime.date.fromordinal(datetime.date(int(year), 1, 1).toordinal() + np.mod(doy_list[doy_index], 1000) - 1).month or monsoon_end < datetime.date.fromordinal(datetime.date(int(year), 1, 1).toordinal() + np.mod(doy_list[doy_index], 1000) - 1).month):
                             re_doy_index.append(doy_index)
-                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, i, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path)
+                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, i, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path, Landsat_7_influence=Landsat7_influence)
         else:
             print('Unknown error occurred!')
             sys.exit(-1)
