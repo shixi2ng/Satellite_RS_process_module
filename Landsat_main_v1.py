@@ -686,6 +686,7 @@ def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_cov
         else:
             print('Unknown error occurred!')
             sys.exit(-1)
+            pass
 
 
 def surrounding_max_half_window(array, cor, water_pixel_v=1):
