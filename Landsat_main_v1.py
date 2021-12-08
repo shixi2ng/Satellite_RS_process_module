@@ -379,6 +379,8 @@ def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=No
     driver.Register()
     gt = ori_ds.GetGeoTransform()
     proj = ori_ds.GetProjection()
+    if os.path.exists(file_path_f + file_name_f):
+        os.remove(file_path_f + file_name_f)
     outds = driver.Create(file_path_f + file_name_f, xsize=new_array.shape[1], ysize=new_array.shape[0],
                           bands=1, eType=raster_datatype)
     outds.SetGeoTransform(gt)
@@ -400,39 +402,11 @@ def dataset2array(ds_temp, Band_factor=True):
     return temp_array
 
 
-def data_composition(file_path, time_coverage=None, composition_strategy=None, file_format=None, nan_value=np.nan):
-    # Determine the time range
-    all_time_coverage = ['month', 'week', 'year']
-    if time_coverage is None:
-        time_coverage = 'month'
-    elif time_coverage not in all_time_coverage:
-        print('Please choose a supported time coverage')
-        sys.exit(-1)
-
-    # Determine the composition strategy
-    all_supported_composition_strategy = ['first', 'last', 'mean']
-    if composition_strategy is None:
-        composition_strategy = 'first'
-    elif composition_strategy not in all_supported_composition_strategy:
-        print('Please choose a supported composition strategy!')
-        sys.exit(-1)
-
-    # Determine the file format
-    if file_format is None:
-        file_format = '.TIF'
-
-    # Determine the file list
-    file_list = file_filter(file_path, [file_format])
-    if len(file_list) == 0:
-        print('Please input the correct file format!')
-        sys.exit(-1)
-
-    # Create the composition output folder
-    composition_output_folder = file_path + 'composition_output\\'
-    create_folder(composition_output_folder)
+def generate_dry_wet_ratio(path, inundated_value, nan_inundated_value):
+    file_path = file_filter(path, ['.TIF'])
     date_list = []
     doy_list = []
-    for i in file_list:
+    for i in file_path:
         for length in range(len(i)):
             try:
                 date_temp = int(i[length: length + 8])
@@ -447,48 +421,110 @@ def data_composition(file_path, time_coverage=None, composition_strategy=None, f
                 break
             except:
                 pass
-    if len(doy_list) == len(date_list) == len(file_list):
+    if len(doy_list) == len(date_list) == len(file_path):
         doy_list = date2doy(date_list)
-    elif len(date_list) == len(file_list):
+    elif len(date_list) == len(file_path):
         doy_list = date2doy(date_list)
-    elif len(doy_list) == len(file_list):
+    elif len(doy_list) == len(file_path):
         pass
     else:
         print('Consistency error occurred during data composition!')
         sys.exit(-1)
+    date_list = doy2date(doy_list)
+    dry_ratio_list = []
+    wet_ratio_list = []
+    dry_wet_ratio_list = []
+    for i in file_path:
+        ds_temp = gdal.Open(i)
+        array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+        array_temp[array_temp == inundated_value] = 1
+        array_temp[array_temp == nan_inundated_value] = 2
+        all_pixel = np.count_nonzero(array_temp == 1) + np.count_nonzero(array_temp == 2)
+        if all_pixel != 0:
+            dry_ratio_list.append(np.count_nonzero(array_temp == 2) / all_pixel)
+            wet_ratio_list.append(np.count_nonzero(array_temp == 1) / all_pixel)
+        else:
+            dry_ratio_list.append(np.nan)
+            wet_ratio_list.append(np.nan)
 
-    # Create composite band
-    year_list = np.unique(np.array(doy_list) // 1000)
-    if time_coverage == 'month':
-        division = 365 / 12
-        iteration = 12
-    elif time_coverage == 'year':
-        division = 366
-        iteration = 1
-    elif time_coverage == 'week':
-        division = 365 / 52
-        iteration = 52
-    else:
-        print('Unknown error occurred!')
+        if np.count_nonzero(array_temp == 1) != 0:
+            dry_wet_ratio_list.append(np.count_nonzero(array_temp == 2) / np.count_nonzero(array_temp == 1))
+        else:
+            dry_wet_ratio_list.append(np.nan)
+    dic_temp = {'file path': file_path, 'date': date_list, 'dry_ratio':dry_ratio_list, 'wet_ratio': wet_ratio_list, 'dry_wet_ratio': dry_wet_ratio_list}
+    df_temp = pandas.DataFrame(dic_temp)
+    df_temp.to_excel(path + 'dry_wet_ratio.xlsx')
+
+
+def composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, itr, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold, Landsat_7_influence=True, metadata_file_path=None):
+    if Landsat_7_influence and metadata_file_path is None:
+        print('Please input the metadata file path!')
         sys.exit(-1)
+    if not os.path.exists(composition_output_folder + 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF'):
+        if len(re_doy_index) >= 2:
+            file_directory = {}
+            for file_num in range(len(re_doy_index)):
+                file_directory['temp_ds_' + str(file_num)] = gdal.Open(file_list[re_doy_index[file_num]])
+                file_temp_array = file_directory['temp_ds_' + str(file_num)].GetRasterBand(1).ReadAsArray()
+                if file_num == 0:
+                    file_temp_cube = file_temp_array.reshape(file_temp_array.shape[0], file_temp_array.shape[1], 1)
+                else:
+                    file_temp_cube = np.concatenate((file_temp_cube, file_temp_array.reshape(file_temp_array.shape[0], file_temp_array.shape[1], 1)), axis=2)
+            sequenced_doy_list = []
+            for i in range(len(re_doy_index)):
+                sequenced_doy_list.append(doy_list[re_doy_index[i]])
+            sequenced_doy_array = np.array(sequenced_doy_list)
+            if composition_strategy == 'dry_wet_ratio_sequenced':
+                file_temp_temp_cube = copy.copy(file_temp_cube)
+                file_temp_temp_cube[file_temp_temp_cube == inundated_value] = 1
+                file_temp_temp_cube[file_temp_temp_cube == nan_inundated_value] = 2
+                dry_wet_ratio_cube = np.count_nonzero(file_temp_temp_cube == 1, axis=(0, 1)) / (np.count_nonzero(file_temp_temp_cube == 2, axis=(0, 1)) + np.count_nonzero(file_temp_temp_cube == 1, axis=(0, 1)))
+                i_t = 0
+                while i_t < dry_wet_ratio_cube.shape[0]:
+                    if dry_wet_ratio_cube[i_t] > dry_wet_ratio_threshold[1] or dry_wet_ratio_cube[i_t] < dry_wet_ratio_threshold[0]:
+                        dry_wet_ratio_cube = np.delete(dry_wet_ratio_cube, i_t, axis=0)
+                        file_temp_cube = np.delete(file_temp_cube, i_t, axis=2)
+                        sequenced_doy_array = np.delete(sequenced_doy_array, i_t, axis=0)
+                        i_t -= 1
+                    i_t += 1
+                file_temp_temp_cube = copy.copy(file_temp_cube)
+                sequenced_doy_array_temp = copy.copy(sequenced_doy_array)
+                if itr == 'dry':
+                    for i in range(dry_wet_ratio_cube.shape[0]):
+                        max_pos = np.argmax(dry_wet_ratio_cube)
+                        file_temp_temp_cube[:, :, -1 * (i + 1)] = file_temp_cube[:, :, max_pos]
+                        sequenced_doy_array_temp[-1 * (i + 1)] = sequenced_doy_array_temp[max_pos]
+                        dry_wet_ratio_cube[max_pos] = -1
+                elif itr == 'wet':
+                    for i in range(dry_wet_ratio_cube.shape[0]):
+                        max_pos = np.argmax(dry_wet_ratio_cube)
+                        file_temp_temp_cube[:, :, i] = file_temp_cube[:, :, max_pos]
+                        sequenced_doy_array_temp[i] = sequenced_doy_array_temp[max_pos]
+                        dry_wet_ratio_cube[max_pos] = -1
+                file_temp_cube = copy.copy(file_temp_temp_cube)
+                sequenced_doy_array = copy.copy(sequenced_doy_array_temp)
 
-    for year in year_list:
-        itr = 1
-        while itr <= iteration:
-            doy_range = [year * 1000 + (itr - 1) * division, year * 1000 + itr * division]
-            re_doy_index = []
-            for doy_index in range(len(doy_list)):
-                if doy_range[0] <= doy_list[doy_index] <= doy_range[1]:
-                    re_doy_index.append(doy_index)
-            if len(re_doy_index) >= 2:
-                file_directory = {}
-                for file_num in range(len(re_doy_index)):
-                    file_directory['temp_ds_' + str(file_num)] = gdal.Open(file_list[re_doy_index[file_num]])
-                    file_temp_array = file_directory['temp_ds_' + str(file_num)].GetRasterBand(1).ReadAsArray()
-                    if file_num == 0:
-                        file_temp_cube = file_temp_array.reshape(file_temp_array.shape[0], file_temp_array.shape[1], 1)
-                    else:
-                        file_temp_cube = np.concatenate((file_temp_cube, file_temp_array.reshape(file_temp_array.shape[0], file_temp_array.shape[1], 1)), axis=2)
+            if Landsat_7_influence:
+                metadata = pd.read_excel(metadata_file_path, engine='openpyxl')
+                metadata_array = np.array([metadata['Date'], metadata['Data_Type']])
+                i = 0
+                Landsat_7_cube = None
+                while i < sequenced_doy_array.shape[0]:
+                    pos_temp = np.argwhere(metadata_array[0, :] == doy2date(sequenced_doy_array[i]))
+                    pos_temp = pos_temp.flatten()[0]
+                    if metadata_array[1, pos_temp] == 'LE07_L2SP':
+                        if Landsat_7_cube is None:
+                            Landsat_7_cube = file_temp_cube[:, :, i].reshape([file_temp_cube.shape[0], file_temp_cube.shape[1], 1])
+                        else:
+                            Landsat_7_cube = np.concatenate((Landsat_7_cube, file_temp_cube[:, :, i].reshape([file_temp_cube.shape[0], file_temp_cube.shape[1], 1])), axis=2)
+                        file_temp_cube = np.delete(file_temp_cube, i, axis=2)
+                        sequenced_doy_array = np.delete(sequenced_doy_array, i, axis=0)
+                        i -= 1
+                    i += 1
+                if Landsat_7_cube is not None:
+                    file_temp_cube = np.concatenate((file_temp_cube, Landsat_7_cube), axis=2)
+
+            if file_temp_cube != []:
                 file_output = np.ones([file_temp_cube.shape[0], file_temp_cube.shape[1]]) * nan_value
                 for y in range(file_temp_cube.shape[0]):
                     for x in range(file_temp_cube.shape[1]):
@@ -509,11 +545,146 @@ def data_composition(file_path, time_coverage=None, composition_strategy=None, f
                                     temp = temp_set[set_index]
                                     break
                                 set_index -= 1
+                        elif composition_strategy == 'dry_wet_ratio_sequenced':
+                            for set_index in range(temp_set.shape[0]):
+                                if temp_set[set_index] != nan_value:
+                                    temp = temp_set[set_index]
+                                    break
                         file_output[y, x] = temp
                 write_raster(file_directory['temp_ds_0'], file_output, composition_output_folder, 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
-            elif len(re_doy_index) == 1:
+        elif len(re_doy_index) == 1:
+            file_ds = gdal.Open(file_list[re_doy_index[0]])
+            file_array = file_ds.GetRasterBand(1).ReadAsArray()
+            file_array[file_array == inundated_value] = 1
+            file_array[file_array == nan_inundated_value] = 2
+            dry_wet_ratio = np.count_nonzero(file_array == 1, axis=(0, 1)) / (np.count_nonzero(file_array == 2, axis=(0, 1)) + np.count_nonzero(file_array == 1, axis=(0, 1)))
+            if 0.5 <= dry_wet_ratio <= 0.95:
                 shutil.copyfile(file_list[re_doy_index[0]], composition_output_folder + 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF')
-            itr += 1
+
+
+def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_coverage=None, composition_strategy=None, file_format=None, nan_value=-32768, user_defined_monsoon=None, inundated_indicator=None):
+    # Determine the time range
+    all_time_coverage = ['month', 'year', 'monsoon']
+    if time_coverage is None:
+        time_coverage = 'month'
+    elif time_coverage not in all_time_coverage:
+        print('Please choose a supported time coverage')
+        sys.exit(-1)
+
+    # Determine the inundated indicator
+    if inundated_indicator is None:
+        inundated_value = 1
+        nan_inundated_value = 0
+    elif type(inundated_indicator) != list or len(inundated_indicator) != 2:
+        print('Please double check the datatype of the inundated_indicator!')
+        sys.exit(-1)
+    else:
+        inundated_value = inundated_indicator[0]
+        nan_inundated_value = inundated_indicator[1]
+
+    # Determine the monsoon
+    # doy_list_beg = [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335]
+    # doy_list_end = [31, 59, 90, 120, 151, 181, 212, 243, 273, ]
+    if time_coverage != 'monsoon':
+        if user_defined_monsoon is not None:
+            print('The time coverage is not monsoon')
+    else:
+        if user_defined_monsoon is None:
+            monsoon_beg = 6
+            monsoon_end = 10
+        elif type(user_defined_monsoon) != list or len(user_defined_monsoon) != 2 or (type(user_defined_monsoon[0]) != float and type(user_defined_monsoon[0]) != int) or (type(user_defined_monsoon[1]) != float and type(user_defined_monsoon[1]) != int):
+            print('Please double check the datatype of the user defined monsoon!')
+            sys.exit(-1)
+        elif user_defined_monsoon[0] < 1 or user_defined_monsoon[0] > 12 or user_defined_monsoon[1] < 1 or user_defined_monsoon[1] > 12 or user_defined_monsoon[0] > user_defined_monsoon[1]:
+            monsoon_beg = 6
+            monsoon_end = 10
+        else:
+            monsoon_beg = int(user_defined_monsoon[0])
+            monsoon_end = int(user_defined_monsoon[1])
+
+    # Determine the composition strategy
+    all_supported_composition_strategy = ['first', 'last', 'mean', 'dry_wet_ratio_sequenced']
+    if composition_strategy is None:
+        composition_strategy = 'first'
+    elif composition_strategy not in all_supported_composition_strategy:
+        print('Please choose a supported composition strategy!')
+        sys.exit(-1)
+    elif composition_strategy == 'dry_wet_ratio_sequenced' and time_coverage != 'monsoon':
+        composition_strategy = 'first'
+    elif composition_strategy != 'dry_wet_ratio_sequenced' and time_coverage == 'monsoon':
+        composition_strategy = 'dry_wet_ratio_sequenced'
+
+    # Determine the file format
+    if file_format is None:
+        file_format = '.TIF'
+    # Determine the file list
+    file_list = file_filter(file_path, [file_format])
+    if len(file_list) == 0:
+        print('Please input the correct file format!')
+        sys.exit(-1)
+
+    # Create the composition output folder
+    create_folder(file_path + 'composition_output\\')
+    composition_output_folder = file_path + 'composition_output\\' + time_coverage + '\\'
+    create_folder(composition_output_folder)
+    date_list = []
+    doy_list = []
+    for i in file_list:
+        for length in range(len(i)):
+            try:
+                date_temp = int(i[length: length + 8])
+                date_list.append(date_temp)
+                break
+            except:
+                pass
+            try:
+                doy_temp = int(i[length: length + 7])
+                doy_list.append(doy_temp)
+                break
+            except:
+                pass
+    if len(doy_list) == len(date_list) == len(file_list):
+        doy_list = date2doy(date_list)
+    elif len(date_list) == len(file_list):
+        doy_list = date2doy(date_list)
+    elif len(doy_list) == len(file_list):
+	@@ -656,39 +458,63 @@
+        print('Consistency error occurred during data composition!')
+        sys.exit(-1)
+
+    doy_list = np.sort(np.array(doy_list))
+    doy_list = doy_list.tolist()
+    # Create composite band
+    year_list = np.unique(np.array(doy_list) // 1000)
+    for year in year_list:
+        if time_coverage == 'month':
+            for month in range(1, 13):
+                re_doy_index = []
+                for doy_index in range(len(doy_list)):
+                    if doy_list[doy_index] // 1000 == year and datetime.date.fromordinal(datetime.date(int(year), 1, 1).toordinal() + np.mod(doy_list[doy_index], 1000) - 1).month == month:
+                        re_doy_index.append(doy_index)
+                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, month, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path)
+        elif time_coverage == 'year':
+            re_doy_index = []
+            for doy_index in range(len(doy_list)):
+                if doy_list[doy_index] // 1000 == year:
+                    re_doy_index.append(doy_index)
+                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, year, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path)
+        elif time_coverage == 'monsoon':
+            for i in ['wet', 'dry']:
+                re_doy_index = []
+                if i == 'wet':
+                    for doy_index in range(len(doy_list)):
+                        if doy_list[doy_index] // 1000 == year and monsoon_beg <= datetime.date.fromordinal(datetime.date(int(year), 1, 1).toordinal() + np.mod(doy_list[doy_index], 1000) - 1).month <= monsoon_end:
+                            re_doy_index.append(doy_index)
+                elif i == 'dry':
+                    for doy_index in range(len(doy_list)):
+                        if doy_list[doy_index] // 1000 == year and (monsoon_beg > datetime.date.fromordinal(datetime.date(int(year), 1, 1).toordinal() + np.mod(doy_list[doy_index], 1000) - 1).month or monsoon_end < datetime.date.fromordinal(datetime.date(int(year), 1, 1).toordinal() + np.mod(doy_list[doy_index], 1000) - 1).month):
+                            re_doy_index.append(doy_index)
+                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, i, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path)
+        else:
+            print('Unknown error occurred!')
+            sys.exit(-1)
 
 
 def surrounding_max_half_window(array, cor, water_pixel_v=1):
