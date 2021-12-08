@@ -563,7 +563,7 @@ def composition(re_doy_index, doy_list, file_list, nan_value, composition_strate
                 shutil.copyfile(file_list[re_doy_index[0]], composition_output_folder + 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF')
 
 
-def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_coverage=None, composition_strategy=None, file_format=None, nan_value=np.nan, user_defined_monsoon=None, inundated_indicator=None):
+def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_coverage=None, composition_strategy=None, file_format=None, nan_value=-32768, user_defined_monsoon=None, inundated_indicator=None):
     # Determine the time range
     all_time_coverage = ['month', 'year', 'monsoon']
     if time_coverage is None:
@@ -2706,7 +2706,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             inundation_approach_dic['approach_list'].append('survey')
     inundation_list_temp = np.unique(np.array(inundation_approach_dic['approach_list']))
     inundation_approach_dic['approach_list'] = inundation_list_temp.tolist()
-    np.save(root_path_f + 'Landsat_key_dic\\' + str(study_area) + '_inundation_approach_list.npy', inundation_approach_dic)
+    np.save(root_path_f + 'Landsat_key_dic\\' + str(study_area) + '_inundated_approach.npy', inundation_approach_dic)
 
 
 def vi_dc_inundation_elimination(vi_dc, vi_doy, inundated_dc, inundated_doy):
