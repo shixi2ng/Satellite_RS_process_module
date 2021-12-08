@@ -2,7 +2,7 @@ import gdal
 from osgeo import gdal_array,osr
 import sys
 import collections
-import pandas
+import pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
@@ -49,7 +49,7 @@ def retrieve_srs(ds_temp):
 
 
 def excel2water_level_array(excel_file_path, Year_range, shoal_name):
-    excel_temp = pandas.read_excel(excel_file_path)
+    excel_temp = pd.read_excel(excel_file_path)
     excel_temp.sort_values(by=['Year', 'Month', 'Day'], ascending=True, inplace=True)
     start_year = min(Year_range)
     end_year = max(Year_range)
@@ -804,12 +804,12 @@ def generate_landsat_metadata(original_file_path_f, unzipped_file_path_f, corrup
             Corrupted_Tier_level.append(i[i.find('_T') + 1: i.find('_T') + 3])
             create_folder(corrupted_file_path_f)
             shutil.move(i, corrupted_file_path_f + i[i.find('L2S') - 5:])
-    File_metadata = pandas.DataFrame(
+    File_metadata = pd.DataFrame(
         {'File_Path': File_path, 'FileID': FileID, 'Data_Type': Data_type, 'Tile_Num': Tile, 'Date': Date, 'Tier_Level': Tier_level})
     File_metadata.to_excel(root_path_f + 'Metadata.xlsx')
     if os.path.exists(root_path_f + 'Corrupted_data.xlsx'):
         corrupted_filename_list = file_filter(corrupted_file_path_f, filter_name)
-        if pandas.read_excel(root_path_f + 'Corrupted_data.xlsx').shape[0] != len(corrupted_filename_list):
+        if pd.read_excel(root_path_f + 'Corrupted_data.xlsx').shape[0] != len(corrupted_filename_list):
             for i in corrupted_filename_list:
                 Corrupted_FileID, Corrupted_Data_type, Corrupted_Tile, Corrupted_Date, Corrupted_Tier_level = ([] for i in range(5))
                 if 'LE07' in i:
@@ -826,10 +826,10 @@ def generate_landsat_metadata(original_file_path_f, unzipped_file_path_f, corrup
                 Corrupted_Tile.append(i[i.find('L2S') + 5: i.find('L2S') + 11])
                 Corrupted_Date.append(i[i.find('L2S') + 12: i.find('L2S') + 20])
                 Corrupted_Tier_level.append(i[i.find('_T') + 1: i.find('_T') + 3])
-            Corrupted_File_metadata = pandas.DataFrame({'FileID': Corrupted_FileID, 'Data_Type': Corrupted_Data_type, 'Tile_Num': Corrupted_Tile, 'Date': Corrupted_Date, 'Tier_Level': Corrupted_Tier_level})
+            Corrupted_File_metadata = pd.DataFrame({'FileID': Corrupted_FileID, 'Data_Type': Corrupted_Data_type, 'Tile_Num': Corrupted_Tile, 'Date': Corrupted_Date, 'Tier_Level': Corrupted_Tier_level})
             Corrupted_File_metadata.to_excel(root_path_f + 'Corrupted_data.xlsx')
     elif len(Corrupted_FileID) != 0:
-        Corrupted_File_metadata = pandas.DataFrame(
+        Corrupted_File_metadata = pd.DataFrame(
             {'FileID': Corrupted_FileID, 'Data_Type': Corrupted_Data_type, 'Tile_Num': Corrupted_Tile, 'Date': Corrupted_Date, 'Tier_Level': Corrupted_Tier_level})
         Corrupted_File_metadata.to_excel(root_path_f + 'Corrupted_data.xlsx')
     return File_metadata

@@ -3,7 +3,6 @@ import pandas as pd
 from osgeo import gdal_array, osr
 import sys
 import collections
-import pandas
 import numpy as np
 import matplotlib.pyplot as plt
 import os
@@ -184,7 +183,7 @@ def generate_error_inf(self, reverse_type=True):
 
 
 def xlsx_save(self, output_path):
-    temp_df = pandas.DataFrame(self)
+    temp_df = pd.DataFrame(self)
     temp_df.to_excel(output_path, index=False)
 
 
@@ -196,7 +195,7 @@ def retrieve_srs(ds_temp):
 
 
 def excel2water_level_array(excel_file_path, Year_range, shoal_name):
-    excel_temp = pandas.read_excel(excel_file_path)
+    excel_temp = pd.read_excel(excel_file_path)
     excel_temp.sort_values(by=['Year', 'Month', 'Day'], ascending=True, inplace=True)
     start_year = min(Year_range)
     end_year = max(Year_range)
@@ -935,7 +934,8 @@ def file_filter(file_path_temp, containing_word_list, subfolder_detection=False,
             if os.path.isdir(file_path_temp + file) and subfolder_detection:
                 filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list, subfolder_detection=True, and_or_factor=and_or_factor)
                 if filter_list_temp != []:
-                    filter_list.append(filter_list_temp)
+                    for subfolder_file in filter_list_temp:
+                        filter_list.append(subfolder_file)
             else:
                 for containing_word in containing_word_list:
                     if containing_word in file_path_temp + file:
@@ -960,7 +960,8 @@ def file_filter(file_path_temp, containing_word_list, subfolder_detection=False,
                 filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list,
                                                subfolder_detection=True, and_or_factor=and_or_factor)
                 if filter_list_temp != []:
-                    filter_list.append(filter_list_temp)
+                    for subfolder_file in filter_list_temp:
+                        filter_list.append(subfolder_file)
             else:
                 for containing_word in containing_word_list:
                     if containing_word not in file_path_temp + file:
@@ -1214,12 +1215,12 @@ def generate_landsat_metadata(original_file_path_f, unzipped_file_path_f, corrup
             Corrupted_Tier_level.append(i[i.find('_T') + 1: i.find('_T') + 3])
             create_folder(corrupted_file_path_f)
             shutil.move(i, corrupted_file_path_f + i[i.find('L2S') - 5:])
-    File_metadata = pandas.DataFrame(
+    File_metadata = pd.DataFrame(
         {'File_Path': File_path, 'FileID': FileID, 'Data_Type': Data_type, 'Tile_Num': Tile, 'Date': Date, 'Tier_Level': Tier_level})
     File_metadata.to_excel(root_path_f + 'Metadata.xlsx')
     if os.path.exists(root_path_f + 'Corrupted_data.xlsx'):
         corrupted_filename_list = file_filter(corrupted_file_path_f, filter_name)
-        if pandas.read_excel(root_path_f + 'Corrupted_data.xlsx').shape[0] != len(corrupted_filename_list):
+        if pd.read_excel(root_path_f + 'Corrupted_data.xlsx').shape[0] != len(corrupted_filename_list):
             for i in corrupted_filename_list:
                 Corrupted_FileID, Corrupted_Data_type, Corrupted_Tile, Corrupted_Date, Corrupted_Tier_level = ([] for i in range(5))
                 if 'LE07' in i:
@@ -1236,10 +1237,10 @@ def generate_landsat_metadata(original_file_path_f, unzipped_file_path_f, corrup
                 Corrupted_Tile.append(i[i.find('L2S') + 5: i.find('L2S') + 11])
                 Corrupted_Date.append(i[i.find('L2S') + 12: i.find('L2S') + 20])
                 Corrupted_Tier_level.append(i[i.find('_T') + 1: i.find('_T') + 3])
-            Corrupted_File_metadata = pandas.DataFrame({'FileID': Corrupted_FileID, 'Data_Type': Corrupted_Data_type, 'Tile_Num': Corrupted_Tile, 'Date': Corrupted_Date, 'Tier_Level': Corrupted_Tier_level})
+            Corrupted_File_metadata = pd.DataFrame({'FileID': Corrupted_FileID, 'Data_Type': Corrupted_Data_type, 'Tile_Num': Corrupted_Tile, 'Date': Corrupted_Date, 'Tier_Level': Corrupted_Tier_level})
             Corrupted_File_metadata.to_excel(root_path_f + 'Corrupted_data.xlsx')
     elif len(Corrupted_FileID) != 0:
-        Corrupted_File_metadata = pandas.DataFrame(
+        Corrupted_File_metadata = pd.DataFrame(
             {'FileID': Corrupted_FileID, 'Data_Type': Corrupted_Data_type, 'Tile_Num': Corrupted_Tile, 'Date': Corrupted_Date, 'Tier_Level': Corrupted_Tier_level})
         Corrupted_File_metadata.to_excel(root_path_f + 'Corrupted_data.xlsx')
     return File_metadata
@@ -1586,8 +1587,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                     if retrieve_srs(ds_temp) != main_coordinate_system:
                         TEMP_warp = gdal.Warp(root_path_f + 'temp.tif', ds_temp, dstSRS=main_coordinate_system,
                                               xRes=30, yRes=30, dstNodata=-32768)
-                        gdal.Warp(clipped_vi[VI + '_path'] + file_input[file_input.find(VI + '\\') + 1 + len(VI): file_input.find('_' + VI + '.TIF')] + '_' + VI + '_' + study_area + '_clipped.TIF', TEMP_warp, cutlineDSName=ROI_mask_f, cropToCutline=True,
-                                  dstNodata=-32768, xRes=30, yRes=30)
+                        gdal.Warp(clipped_vi[VI + '_path'] + file_input[file_input.find(VI + '\\') + 1 + len(VI): file_input.find('_' + VI + '.TIF')] + '_' + VI + '_' + study_area + '_clipped.TIF', TEMP_warpsa_vv_folder)
                     else:
                         gdal.Warp(clipped_vi[VI + '_path'] + file_input[file_input.find(VI + '\\') + 1 + len(VI): file_input.find('_' + VI + '.TIF')] + '_' + VI + '_' + study_area + '_clipped.TIF', ds_temp, cutlineDSName=ROI_mask_f, cropToCutline=True,
                                   dstNodata=-32768, xRes=30, yRes=30)
@@ -2319,7 +2319,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                                 local_initial_factor = False
                             elif local_initial_factor is False:
                                 confusion_matrix_local_sum_temp[1:, 1:] = confusion_matrix_local_sum_temp[1:, 1:] + confusion_matrix_temp[1:, 1:]
-                            # confusion_pandas = pandas.crosstab(pandas.Series(sample_all_temp_raster, name='Actual'), pandas.Series(landsat_local_temp_raster, name='Predict'))
+                            # confusion_pd = pd.crosstab(pd.Series(sample_all_temp_raster, name='Actual'), pd.Series(landsat_local_temp_raster, name='Predict'))
                         if global_factor:
                             global_inundation_dic = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_global_inundation_dic.npy', allow_pickle=True).item()
                             landsat_global_temp_ds = gdal.Open(global_inundation_dic['global_' + study_area] + 'individual_tif\\global_' + str(landsat_doy) + '.TIF')
@@ -2613,7 +2613,7 @@ def VI_curve_fitting(root_path_f, vi, sa, inundated_factor=None, curve_fitting_a
         VI_curve_fitting_dic['CFM'] = 'SPL'
         VI_curve_fitting_dic['para_num'] = 7
         VI_curve_fitting_dic['initial_para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
-        VI_curve_fitting_dic['initial_para_boundary'] = ([0, 0.3, 0, 0, 180, 0, 0], [0.5, 1, 180, 20, 330, 10, 0.01])
+        VI_curve_fitting_dic['initial_para_boundary'] = ([0, 0.3, 0, 3, 180, 3, 0.00001], [0.5, 1, 180, 17, 330, 17, 0.01])
         VI_curve_fitting_dic['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
         VI_curve_fitting_dic['para_boundary'] = ([0.08, 0.7, 90, 6.2, 285, 4.5, 0.0015], [0.20, 1.0, 130, 11.5, 330, 8.8, 0.0028])
         curve_fitting_algorithm = seven_para_logistic_function
@@ -2652,69 +2652,170 @@ def VI_curve_fitting(root_path_f, vi, sa, inundated_factor=None, curve_fitting_a
         cf_inform_dic[str(sa) + '_' + str(vi) + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'] = output_path
 
     # Generate the initial parameter
-    doy_all = np.mod(doy_dc, 1000)
-    for y_t in range(vi_dc.shape[0]):
-        for x_t in range(vi_dc.shape[1]):
-            vi_all = vi_dc[y_t, x_t, :].flatten()
-            paras, extras = curve_fit(curve_fitting_algorithm, doy_all, vi_all, maxfev=500000, p0=VI_curve_fitting_dic['inital_para_ori'], bounds=VI_curve_fitting_dic['initial_para_boundary'])
-            VI_curve_fitting_dic[str(x_t) + '_' + str(y_t) + '_para_ori'] = paras
-            vi_dormancy = []
-            doy_dormancy = []
-            vi_senescence = []
-            doy_senescence = []
-            vi_max = []
-            doy_max = []
-            doy_index_max = np.argmax(curve_fitting_algorithm(np.linspace(0,366,365), paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]))[0]
-            # Generate the parameter boundary
-            senescence_t = paras[4] - 4 * paras[5]
-            for doy_index in range(len(doy_all)):
-                if 0 < doy_all[doy_index] < paras[2] or paras[4] < doy_all[doy_index] < 366:
-                    vi_dormancy.append(vi_all[doy_index])
-                    doy_dormancy.append(doy_all[doy_index])
-                if doy_index_max - 5 < doy_all[doy_index] < doy_index_max + 5:
-                    vi_max.append(vi_all[doy_index])
-                    doy_max.append(doy_all[doy_index])
-                if senescence_t - 5 < doy_all[doy_index] < senescence_t + 5:
-                    vi_senescence.append(vi_all[doy_index])
-                    doy_senescence.append(doy_all[doy_index])
+    if not os.path.exists(output_path + 'para_boundary.npy'):
+        doy_all_s = np.mod(doy_dc, 1000)
+        for y_t in range(vi_dc.shape[0]):
+            for x_t in range(vi_dc.shape[1]):
+                if sa_map[y_t, x_t] != -32768:
+                    vi_all = vi_dc[y_t, x_t, :].flatten()
+                    doy_all = copy.copy(doy_all_s)
+                    vi_index = 0
+                    while vi_index < vi_all.shape[0]:
+                        if np.isnan(vi_all[vi_index]):
+                            vi_all = np.delete(vi_all, vi_index)
+                            doy_all = np.delete(doy_all, vi_index)
+                            vi_index -= 1
+                        vi_index += 1
+                    if doy_all.shape[0] >= 7:
+                        paras, extras = curve_fit(curve_fitting_algorithm, doy_all, vi_all, maxfev=500000, p0=VI_curve_fitting_dic['initial_para_ori'], bounds=VI_curve_fitting_dic['initial_para_boundary'])
+                        VI_curve_fitting_dic[str(x_t) + '_' + str(y_t) + '_para_ori'] = paras
+                        vi_dormancy = []
+                        doy_dormancy = []
+                        vi_max = []
+                        doy_max = []
+                        doy_index_max = np.argmax(curve_fitting_algorithm(np.linspace(0,366,365), paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]))
+                        # Generate the parameter boundary
+                        senescence_t = paras[4] - 4 * paras[5]
+                        for doy_index in range(doy_all.shape[0]):
+                            if 0 < doy_all[doy_index] < paras[2] or paras[4] < doy_all[doy_index] < 366:
+                                vi_dormancy.append(vi_all[doy_index])
+                                doy_dormancy.append(doy_all[doy_index])
+                            if doy_index_max - 5 < doy_all[doy_index] < doy_index_max + 5:
+                                vi_max.append(vi_all[doy_index])
+                                doy_max.append(doy_all[doy_index])
 
-            vi_dormancy_sort = np.sort(vi_dormancy)
-            vi_max_sort = np.sort(vi_max)
-            paras1_max = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.95))]
-            paras1_min = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.05))]
-            paras2_max = vi_max[-1] - paras1_min
-            paras2_min = vi_max[0] - paras1_max
-            paras3_max = 0
-            for doy_index in range(len(doy_all)):
-                if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] < 180:
-                    paras3_max = max(float(paras3_max), doy_all[doy_index])
-            paras3_max = max(paras3_max, paras[2])
-            paras3_min = 180
-            for doy_index in range(len(doy_all)):
-                if vi_all[doy_index] > paras1_max:
-                    paras3_min = min(paras3_min, doy_all[doy_index])
-            paras3_min = min(paras[2], paras3_min)
-            paras3_max = max(paras3_max, paras[2])
-            paras5_max = 0
-            for doy_index in range(len(doy_all)):
-                if vi_all[doy_index] > paras1_max:
-                    paras5_max = max(paras5_max, doy_all[doy_index])
-            paras5_max = max(paras5_max, paras[4])
-            paras5_min = 365
-            for doy_index in range(len(doy_all)):
-                if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] > 180:
-                    paras5_min = min(paras5_min, doy_all[doy_index])
-            paras5_min = min(paras5_min, paras[4])
-            paras4_max = (np.nanmax(doy_max) - paras3_min) / 4
-            paras4_min = (np.nanmin(doy_max) - paras3_max) / 4
-            paras6_max = paras4_max
-            paras6_min = paras4_min
-            paras7_max = (np.nanmax(vi_max) - np.nanmin(vi_senescence)) / (
-                        doy_senescence[np.argmin(vi_senescence)] - doy_max[np.argmax(vi_max)])
-            paras7_min = (np.nanmin(vi_max) - np.nanmax(vi_senescence)) / (
-                        doy_senescence[np.argmax(vi_senescence)] - doy_max[np.argmin(vi_max)])
-            VI_curve_fitting_dic['para_boundary_' + str(y_t) + '_' + str(x_t)] = ([paras1_min, paras2_min, paras3_min, paras4_min, paras5_min, paras6_min, paras7_min], [paras1_max, paras2_max,  paras3_max,  paras4_max,  paras5_max,  paras6_max,  paras7_max])
-            VI_curve_fitting_dic['para_ori_' + str(y_t) + '_' + str(x_t)] = [paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]]
+                        if vi_max == []:
+                            vi_max = [np.max(vi_all)]
+                            doy_max = [doy_all[np.argmax(vi_all)]]
+
+                        itr = 5
+                        while itr < 10:
+                            doy_senescence = []
+                            vi_senescence = []
+                            for doy_index in range(doy_all.shape[0]):
+                                if senescence_t - itr < doy_all[doy_index] < senescence_t + itr:
+                                    vi_senescence.append(vi_all[doy_index])
+                                    doy_senescence.append(doy_all[doy_index])
+                            if doy_senescence != [] and vi_senescence != []:
+                                break
+                            else:
+                                itr += 1
+
+                        # [0, 0.3, 0, 0, 180, 0, 0], [0.5, 1, 180, 20, 330, 10, 0.01]
+                        # define the para1
+                        if vi_dormancy != []:
+                            vi_dormancy_sort = np.sort(vi_dormancy)
+                            vi_max_sort = np.sort(vi_max)
+                            paras1_max = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.95))]
+                            paras1_min = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.05))]
+                            paras1_max = min(paras1_max, 0.5)
+                            paras1_min = max(paras1_min, 0)
+                        else:
+                            paras1_max = 0.5
+                            paras1_min = 0
+                        # define the para2
+                        paras2_max = vi_max[-1] - paras1_min
+                        paras2_min = vi_max[0] - paras1_max
+                        if paras2_min < 0.2:
+                            paras2_min = 0.2
+                        if paras2_max > 0.7 or paras2_max < 0.2:
+                            paras2_max = 0.7
+                        # define the para3
+                        paras3_max = 0
+                        for doy_index in range(len(doy_all)):
+                            if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] < 180:
+                                paras3_max = max(float(paras3_max), doy_all[doy_index])
+
+                        paras3_min = 180
+                        for doy_index in range(len(doy_all)):
+                            if vi_all[doy_index] > paras1_max:
+                                paras3_min = min(paras3_min, doy_all[doy_index])
+
+                        if paras3_min > paras[2] or paras3_min < paras[2] - 15:
+                            paras3_min = paras[2] - 15
+
+                        if paras3_max < paras[2] or paras3_max > paras[2] + 15:
+                            paras3_max = paras[2] + 15
+
+                        # define the para5
+                        paras5_max = 0
+                        for doy_index in range(len(doy_all)):
+                            if vi_all[doy_index] > paras1_max:
+                                paras5_max = max(paras5_max, doy_all[doy_index])
+                        paras5_min = 365
+                        for doy_index in range(len(doy_all)):
+                            if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] > 180:
+                                paras5_min = min(paras5_min, doy_all[doy_index])
+                        if paras5_min > paras[4] or paras5_min < paras[4] - 15:
+                            paras5_min = paras[4] - 15
+
+                        if paras5_max < paras[4] or paras5_max > paras[4] + 15:
+                            paras5_max = paras[4] + 15
+
+                        # define the para 4
+                        if len(doy_max) != 1:
+                            paras4_max = (np.nanmax(doy_max) - paras3_min) / 4
+                            paras4_min = (np.nanmin(doy_max) - paras3_max) / 4
+                        else:
+                            paras4_max = (np.nanmax(doy_max) + 5 - paras3_min) / 4
+                            paras4_min = (np.nanmin(doy_max) - 5 - paras3_max) / 4
+                        paras4_min = max(3, paras4_min)
+                        paras4_max = min(17, paras4_max)
+                        if paras4_min > 17:
+                            paras4_min = 3
+                        if paras4_max < 3:
+                            paras4_max = 17
+                        paras6_max = paras4_max
+                        paras6_min = paras4_min
+                        if doy_senescence == [] or vi_senescence == []:
+                            paras7_max = 0.01
+                            paras7_min = 0.00001
+                        else:
+                            paras7_max = (np.nanmax(vi_max) - np.nanmin(vi_senescence)) / (doy_senescence[np.argmin(vi_senescence)] - doy_max[np.argmax(vi_max)])
+                            paras7_min = (np.nanmin(vi_max) - np.nanmax(vi_senescence)) / (doy_senescence[np.argmax(vi_senescence)] - doy_max[np.argmin(vi_max)])
+                        if np.isnan(paras7_min):
+                            paras7_min = 0.00001
+                        if np.isnan(paras7_max):
+                            paras7_max = 0.01
+                        paras7_max = min(paras7_max, 0.01)
+                        paras7_min = max(paras7_min, 0.00001)
+                        if paras7_max < 0.00001:
+                            paras7_max = 0.01
+                        if paras7_min > 0.01:
+                            paras7_min = 0.00001
+                        if paras1_min > paras[0]:
+                            paras1_min = paras[0] - 0.01
+                        if paras1_max < paras[0]:
+                            paras1_max = paras[0] + 0.01
+                        if paras2_min > paras[1]:
+                            paras2_min = paras[1] - 0.01
+                        if paras2_max < paras[1]:
+                            paras2_max = paras[1] + 0.01
+                        if paras3_min > paras[2]:
+                            paras3_min = paras[2] - 1
+                        if paras3_max < paras[2]:
+                            paras3_max = paras[2] + 1
+                        if paras4_min > paras[3]:
+                            paras4_min = paras[3] - 0.1
+                        if paras4_max < paras[3]:
+                            paras4_max = paras[3] + 0.1
+                        if paras5_min > paras[4]:
+                            paras5_min = paras[4] - 1
+                        if paras5_max < paras[4]:
+                            paras5_max = paras[4] + 1
+                        if paras6_min > paras[5]:
+                            paras6_min = paras[5] - 0.5
+                        if paras6_max < paras[5]:
+                            paras6_max = paras[5] + 0.5
+                        if paras7_min > paras[6]:
+                            paras7_min = paras[6] - 0.00001
+                        if paras7_max < paras[6]:
+                            paras7_max = paras[6] + 0.00001
+                        VI_curve_fitting_dic['para_boundary_' + str(y_t) + '_' + str(x_t)] = ([paras1_min, paras2_min, paras3_min, paras4_min, paras5_min, paras6_min, paras7_min], [paras1_max, paras2_max,  paras3_max,  paras4_max,  paras5_max,  paras6_max,  paras7_max])
+                        VI_curve_fitting_dic['para_ori_' + str(y_t) + '_' + str(x_t)] = [paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]]
+        np.save(output_path + 'para_boundary.npy', VI_curve_fitting_dic)
+    else:
+        VI_curve_fitting_dic = np.load(output_path + 'para_boundary.npy', allow_pickle=True).item()
 
     # Generate the year list
     if not os.path.exists(output_path + 'annual_cf_para.npy') or not os.path.exists(output_path + 'year.npy'):
@@ -2735,10 +2836,13 @@ def VI_curve_fitting(root_path_f, vi, sa, inundated_factor=None, curve_fitting_a
                         vi_temp = np.delete(vi_temp, nan_index)
                         doy_temp = np.delete(annual_doy, nan_index)
                         if np.sum(~np.isnan(vi_temp)) >= VI_curve_fitting_dic['para_num']:
-                            paras, extras = curve_fit(curve_fitting_algorithm, doy_temp, vi_temp, maxfev=5000, p0=VI_curve_fitting_dic['para_ori_' + str(y_temp) + '_' + str(x_temp)], bounds=VI_curve_fitting_dic['para_boundary_' + str(y_temp) + '_' + str(x_temp)])
-                            predicted_y_data = curve_fitting_algorithm(doy_temp, paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6])
-                            R_square = (1 - np.sum((predicted_y_data - vi_temp) ** 2) / np.sum((vi_temp - np.mean(vi_temp)) ** 2))
-                            annual_para_dc[y_temp, x_temp, :] = np.append(paras, R_square)
+                            try:
+                                paras, extras = curve_fit(curve_fitting_algorithm, doy_temp, vi_temp, maxfev=50000, p0=VI_curve_fitting_dic['para_ori_' + str(y_temp) + '_' + str(x_temp)], bounds=VI_curve_fitting_dic['para_boundary_' + str(y_temp) + '_' + str(x_temp)])
+                                predicted_y_data = curve_fitting_algorithm(doy_temp, paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6])
+                                R_square = (1 - np.sum((predicted_y_data - vi_temp) ** 2) / np.sum((vi_temp - np.mean(vi_temp)) ** 2))
+                                annual_para_dc[y_temp, x_temp, :] = np.append(paras, R_square)
+                            except:
+                                pass
                         else:
                             annual_para_dc[y_temp, x_temp, :] = np.nan
                     else:
@@ -2751,7 +2855,6 @@ def VI_curve_fitting(root_path_f, vi, sa, inundated_factor=None, curve_fitting_a
 
 def phenology_metrics_generation(root_path_f, vi, sa, phenology_index=None, curve_fitting_algorithm=None):
     """
-
     :param root_path_f:
     :param vi:
     :param sa:
@@ -2883,10 +2986,13 @@ def phenology_metrics_generation(root_path_f, vi, sa, phenology_index=None, curv
                     max_index = np.argmax(annual_phe, axis=2)
                     for y_temp_temp in range(phe_temp.shape[0]):
                         for x_temp_temp in range(phe_temp.shape[1]):
-                            drop_index = int(annual_para[y_temp_temp, x_temp_temp, 4] - 3 * annual_para[y_temp_temp:, x_temp_temp, 5])
-                            phe_temp[y_temp_temp, x_temp_temp, 0: max_index[y_temp_temp, x_temp_temp]] = np.nan
-                            if drop_index > 0:
-                                phe_temp[y_temp_temp, x_temp_temp, drop_index: 365] = np.nan
+                            try:
+                                drop_index = int(annual_para[y_temp_temp, x_temp_temp, 4] - 3 * annual_para[y_temp_temp, x_temp_temp, 5])
+                                phe_temp[y_temp_temp, x_temp_temp, 0: max_index[y_temp_temp, x_temp_temp]] = np.nan
+                                if drop_index > 0:
+                                    phe_temp[y_temp_temp, x_temp_temp, drop_index: 365] = np.nan
+                            except:
+                                phe_temp[y_temp_temp, x_temp_temp, :] = np.nan
                     phe_metrics = np.nanmean(phe_temp, axis=2)
                 phe_metrics = phe_metrics.astype(np.float)
                 phe_metrics[sa_map == -32768] = np.nan
