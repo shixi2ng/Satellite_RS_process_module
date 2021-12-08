@@ -649,7 +649,6 @@ def data_composition(file_path, dry_wet_ratio_threshold, metadata_path, time_cov
     elif len(date_list) == len(file_list):
         doy_list = date2doy(date_list)
     elif len(doy_list) == len(file_list):
-	@@ -656,39 +458,63 @@
         print('Consistency error occurred during data composition!')
         sys.exit(-1)
 
