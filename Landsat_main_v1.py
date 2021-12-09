@@ -1685,7 +1685,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                                 FVC_temp_array[FVC_temp_array >= NDVI_veg] = 10000
                                 FVC_temp_array[np.logical_and(FVC_temp_array <= NDVI_soil, FVC_temp_array != -32768)] = 0
                                 FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil, FVC_temp_array < NDVI_veg)] = 10000 * (FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil, FVC_temp_array < NDVI_veg)] - NDVI_soil) / (NDVI_veg - NDVI_soil)
-                                FVC_temp_array[MNDWI_temp_array > 1000] = 0
+                                FVC_temp_array[MNDWI_temp_array > 1000] = -32768
                                 FVC_temp_array.astype(np.int16)
                                 write_raster(RED_temp_ds, FVC_temp_array, constructed_vi['FVC_path'], str(filedate) + '_' + str(tile_num) + '_FVC.TIF', raster_datatype=gdal.GDT_Int16)
                         else:
