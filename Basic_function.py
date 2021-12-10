@@ -164,7 +164,7 @@ def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=No
     if os.path.exists(file_path_f + file_name_f):
         os.remove(file_path_f + file_name_f)
     outds = driver.Create(file_path_f + file_name_f, xsize=new_array.shape[1], ysize=new_array.shape[0],
-                          bands=1, eType=raster_datatype)
+                          bands=1, eType=raster_datatype, options=['COMPRESS=LZW'])
     outds.SetGeoTransform(gt)
     outds.SetProjection(proj)
     outband = outds.GetRasterBand(1)
