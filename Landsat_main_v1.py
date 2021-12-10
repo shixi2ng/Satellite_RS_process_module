@@ -1096,6 +1096,7 @@ def create_folder(path_name):
             os.makedirs(path_name)
         except:
             print('Something went wrong during creating new folder')
+            sys.exit(-1)
     else:
         print('Folder already exist  (' + path_name + ')')
 

@@ -32,7 +32,6 @@ import PyQt5
 import Landsat_main_v1
 
 
-
 gdal.UseExceptions()
 np.seterr(divide='ignore', invalid='ignore')
 root_path = 'E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\Sample_123039\\'

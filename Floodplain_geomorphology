@@ -1,0 +1,87 @@
+import gdal
+import os
+import numpy as np
+import pandas as pd
+import Basic_function as bf
+import Landsat_main_v1
+import copy
+import rasterio
+import rasterio.features
+import geopandas as gp
+
+
+def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nanvalue_indicator, implement_sole_array=True, extract_max_area=True, output_sole_area=True, overwritten_factor=True):
+    # Checke the filepath
+    ds_folder = bf.check_file_path(ds_folder)
+
+    # Create ouput folder
+    bf.create_folder(ds_folder)
+    bf.create_folder()
+
+    # Generate file list
+    try:
+        gdal.Open(inundation_file)
+        inundation_filelist = [inundation_file]
+    except:
+        inundation_filelist = bf.file_filter(inundation_file, containing_word_list=['.tif', '.TIF'], exclude_word_list=['.xml'], subfolder_detection=True)
+
+    # Generate date list
+    date_list = []
+    for filename in inundation_filelist:
+        for length in range(len(filename)):
+            try:
+                date_temp = int(filename[length: length + 8])
+                date_list.append(date_temp)
+                break
+            except:
+                pass
+            try:
+                doy_temp = int(filename[length: length + 7])
+                date_list.append(doy_temp)
+                break
+            except:
+                pass
+    date_list = bf.doy2date(date_list)
+
+    # Generate floodplain boundary
+    i = 0
+    for file in inundation_filelist:
+        src_temp = rasterio.open(file)
+        raster_temp = src_temp.read(1)
+        # Extract individual floodplain
+        if implement_sole_array:
+            sole_floodplain_temp = Landsat_main_v1.identify_all_inundated_area(raster_temp, inundated_pixel_indicator=land_indicator, nanvalue_pixel_indicator=nanvalue_indicator)
+        else:
+            sole_floodplain_temp = raster_temp
+            output_sole_area = False
+
+        # Output sole area
+        if output_sole_area:
+            sole_area_ds = ds_folder + 'individual_floodplain\\'
+            bf.create_folder(sole_area_ds)
+            if overwritten_factor or not os.path.exists(sole_area_ds + date_list[i] + '_individual_area.tif'):
+                ds_temp = gdal.Open(file)
+                bf.write_raster(ds_temp, sole_floodplain_temp, sole_area_ds, date_list[i] + '_individual_area.tif', raster_datatype=gdal.GDT_Int32)
+
+        # Polygonize
+        sole_value = np.unique(sole_floodplain_temp.flatten())
+        sole_value = np.delete(sole_value, np.argwhere(sole_value == 0))
+        floodplain_temp = copy.copy(sole_floodplain_temp)
+        floodplain_temp.astype(np.float)
+
+        if extract_max_area is True:
+            sole_value_num = []
+            for each_sole_value in sole_value:
+                sole_value_num.append(np.sum(sole_floodplain_temp[sole_floodplain_temp == each_sole_value]))
+            sole_value_num = np.array(sole_value_num)
+            max_sole_value = sole_value[np.argmax(sole_value_num)]
+            floodplain_temp[floodplain_temp != max_sole_value] = np.nan
+        else:
+            floodplain_temp[floodplain_temp <= 0] = np.nan
+
+        shp_dic = ({'properties': {'raster_val': 'area_' + str(v)}, 'geometry': s} for i, (s, v) in enumerate(rasterio.features.shapes(floodplain_temp, transform=src_temp.transform)))
+        shp_list = list(shp_dic)
+        gd_polygonised_raster = gp.GeoDataFrame.from_features(shp_list)
+        gd_polygonised_raster = gd_polygonised_raster.set_crs(src_temp.read_crs().to_string())
+        gd_polygonised_raster = gd_polygonised_raster.simplify(100)
+
