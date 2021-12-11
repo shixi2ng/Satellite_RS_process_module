@@ -2158,10 +2158,13 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                             gdal.Warp(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF', band_path['SWIR2'] + 'temp2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
                         else:
                             gdal.Warp(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF', band_path['SWIR2'] + 'temp.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True,dstNodata=np.nan, xRes=30, yRes=30)
-                        os.remove(band_path['NIR'] + 'temp.TIF')
-                        os.remove(band_path['SWIR2'] + 'temp.TIF')
-                        os.remove(band_path['NIR'] + 'temp2.TIF')
-                        os.remove(band_path['SWIR2'] + 'temp2.TIF')
+                        try:
+                            os.remove(band_path['NIR'] + 'temp.TIF')
+                            os.remove(band_path['SWIR2'] + 'temp.TIF')
+                            os.remove(band_path['NIR'] + 'temp2.TIF')
+                            os.remove(band_path['SWIR2'] + 'temp2.TIF')
+                        except:
+                            pass
 
             # Implement the global inundation detection method
             MNDWI_filepath = root_path_f + 'Landsat_' + study_area + '_VI\\MNDWI\\'
