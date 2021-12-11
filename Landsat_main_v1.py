@@ -759,9 +759,7 @@ def surrounding_pixel_cor(water_pixel_under_invest, water_center_pixel_list, sur
                     x_max = water_pixel_under_invest[i][1] + i_tt + 1
 
                 array_temp = array[y_min: y_max, x_min: x_max]
-                array_temp[array_temp != water_pixel_value] = 0
-                array_temp[array_temp == water_pixel_value] = 1
-                if np.sum(array_temp) != (y_max - y_min) * (x_max - x_min):
+                if np.sum(array_temp[array_temp == water_pixel_value]) != (y_max - y_min) * (x_max - x_min):
                     break
 
             surrounding_pixel_list = np.zeros([y_max - y_min, x_max - x_min, 2], dtype=np.int64)
@@ -830,7 +828,7 @@ def detect_sole_inundated_area(array, water_pixel_list, around_water_pixel_list,
     if conditional_factor is False:
         y_max = array.shape[0]
         x_max = array.shape[1]
-        around_water_pixel_list, around_nanwater_pixel_list, water_pixel_list = surrounding_pixel_cor(around_water_pixel_list, water_pixel_list, around_nanwater_pixel_list, array, x_max, y_max, detection_method=detection_method)
+        around_water_pixel_list, around_nanwater_pixel_list, water_pixel_list = surrounding_pixel_cor(around_water_pixel_list, water_pixel_list, around_nanwater_pixel_list, array, x_max, y_max, detection_method=detection_method,water_pixel_value=water_pixel_value)
         conditional_factor = len(around_water_pixel_list) == 0
         array_sole_area = detect_sole_inundated_area(array, water_pixel_list, around_water_pixel_list, around_nanwater_pixel_list, conditional_factor=conditional_factor,
                                                      water_pixel_value=water_pixel_value,

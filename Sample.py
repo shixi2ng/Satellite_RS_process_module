@@ -30,16 +30,31 @@ import pyqtgraph.exporters
 from pyqtgraph.Qt import QtGui, QtCore
 import PyQt5
 import Landsat_main_v1
+import floodplain_geomorph as fg
 gdal.UseExceptions()
 np.seterr(divide='ignore', invalid='ignore')
+
+
+inundation_file = 'E:\\A_Vegetation_Identification\\z_test\\ori_inundated\\'
+ds_folder = 'E:\\A_Vegetation_Identification\\z_test\\'
+land_indicator = 0
+nanvalue_indicator = -2
+studyarea = 'BSZ'
+curve_smooth_method = ['Chaikin', 'Simplify', 'Buffer']
+c_itr = 4
+simplify_t = 30
+buffer_size = 60
+fg.generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nanvalue_indicator, studyarea, implement_sole_array=True,
+                                extract_max_area=True, overwritten_factor=True, curve_smooth_method=curve_smooth_method,
+                                Chaikin_itr=c_itr, simplify_tolerance=simplify_t, buffer_size=buffer_size)
 
 
 ###                Section User defined                      ###
 ################################################################
 #项目根目录(注意所有路径名里面的\不得为单个，必须使用\\，否则会报错，其次每个路径必须以\\结尾)
-root_path = 'E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\Sample_123039\\'
+root_path = 'E:\\DEMO\\'
 #原始压缩文件路径
-original_file_path = root_path + 'Landsat78_123039_L2\\'
+original_file_path = root_path + 'zipfile\\'
 #默认有问题压缩文件转移到的路径（不需要改）
 corrupted_file_path = root_path + 'Corrupted\\'
 #解压以后的影像（默认不需要改）
@@ -48,15 +63,13 @@ unzipped_file_path = root_path + 'Landsat_Ori_TIFF\\'
 unzipped_indicator = True
 # 研究区域的基本信息
 # 每一行第一个单引号内的为研究区域的shp文件， 第二个单引号内为研究区域的名字
-study_area_list = np.array([['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\baishazhou.shp', 'bsz'],
-                            ['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\nanyangzhou.shp', 'nyz'],
-                            ['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\nanmenzhou.shp', 'nmz'],
-                            ['E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\studyarea_shp\\zhongzhou.shp', 'zz']])
+study_area_list = np.array([['E:\\DEMO\\studyarea_shpfile\\NYZ.shp', 'NYZ']])
 # 需要构建的指数(可以填写 'NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC'; 可以选择多个)
-constructed_VI = ['NDVI', 'OSAVI', 'MNDWI', 'EVI']
+constructed_VI = ['MNDWI']
 # global方法提取水体 (四个数分别对应我给你门的公式里的四个阈值)
 waterbody_extraction_method = 'global'
 global_thr = [0.123, -0.5, 0.2, 0.1]
+defined_coordinate_system = 'EPSG:32649'
 
 
 ###                     Main Process                         ###
@@ -70,7 +83,7 @@ for seq in range(study_area_list.shape[0]):
                         construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True,
                         clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False,
                         construct_sdc_para=True, sdc_overwritten_para=False, VI_list=constructed_VI,
-                        ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_issue_data=False)
+                        ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_issue_data=False, main_coordinate_system=defined_coordinate_system)
     Landsat_main_v1.landsat_inundation_detection(root_path, sate_dem_inundation_factor=False,
                                                  inundation_data_overwritten_factor=False,
                                                  VI_list_f=['NDVI', 'MNDWI'],

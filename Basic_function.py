@@ -173,3 +173,16 @@ def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=No
     outband.FlushCache()
     outband = None
     outds = None
+
+
+def list_compare(list1, list2):
+    if type(list1) != list or type(list2) != list:
+        print('The input is not a list!')
+        sys.exit(-1)
+    else:
+        list_in = [i for i in list1 if i in list2]
+        list_out = [i for i in list1 if i not in list2]
+        if list_out != []:
+            for i in list_out:
+                print(str(i) + 'is not supported!')
+        return list_in
