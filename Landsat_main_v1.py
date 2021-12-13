@@ -1940,7 +1940,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
         print('Sequenced datacube construction was not implemented.')
 
 
-def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None, main_coordinate_system=None):
+def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None, main_coordinate_system=None, cloud_removal_para=False):
     global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
     # Determine the global indicator
     default_global_threshold = [0.123, -0.5, 0.2, 0.1]
@@ -2143,8 +2143,9 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         NIR_temp_array[NIR_temp_array > 1] = 1
                         SWIR_temp_array[SWIR_temp_array < 0] = 0
                         NIR_temp_array[NIR_temp_array < 0] = 0
-                        SWIR_temp_array = SWIR_temp_array * QI_temp_array
-                        NIR_temp_array = NIR_temp_array * QI_temp_array
+                        if cloud_removal_para:
+                            SWIR_temp_array = SWIR_temp_array * QI_temp_array
+                            NIR_temp_array = NIR_temp_array * QI_temp_array
                         write_raster(NIR_temp_ds, NIR_temp_array, band_path['NIR'], 'temp.TIF', raster_datatype=gdal.GDT_Float32)
                         if main_coordinate_system is not None and retrieve_srs(NIR_temp_ds) != main_coordinate_system:
                             gdal.Warp(band_path['NIR'] + 'temp2.TIF', band_path['NIR'] + 'temp.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
@@ -2212,7 +2213,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                             inundated_array = np.zeros([MNDWI_array.shape[0], MNDWI_array.shape[1]]).astype(np.int16)
                             for y_temp in range(MNDWI_array.shape[0]):
                                 for x_temp in range(MNDWI_array.shape[1]):
-                                    if MNDWI_array[y_temp, x_temp] == -32768:
+                                    if MNDWI_array[y_temp, x_temp] == -32768 or np.isnan(NIR_array[y_temp, x_temp]) or np.isnan(SWIR2_array[y_temp, x_temp]):
                                         inundated_array[y_temp, x_temp] = -32768
                                     elif MNDWI_array[y_temp, x_temp] > global_threshold[0]:
                                         inundated_array[y_temp, x_temp] = 1
