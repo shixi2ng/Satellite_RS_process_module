@@ -160,6 +160,32 @@ def confusion_matrix_2_raster(raster_predict, raster_real, nan_value=np.nan):
     return confusion_matrix
 
 
+def fill_landsat7_gap(ori_tif):
+    src = rasterio.open(ori_tif)
+    raster_temp = src.read(1)
+    mask_temp = copy.copy(raster_temp)
+    mask_temp[mask_temp != 0] = 1
+    mask_result = np.zeros_like(mask_temp).astype(np.uint8)
+    if not os.path.exists(ori_tif.split('.TIF')[0] + '_MASK.TIF'):
+        for y in range(mask_temp.shape[0]):
+            for x in range(mask_temp.shape[1]):
+                if mask_temp[y, x] == 0:
+                    if np.sum(mask_temp[max(y - 10, 0): y, x]) > 0 and np.sum(mask_temp[y: min(mask_temp.shape[0] - 1, y + 10), x]) > 0:
+                        mask_result[y, x] = 1
+        with rasterio.open(ori_tif.split('.TIF')[0] + '_MASK.TIF', 'w', driver='GTiff',
+                      height=src.shape[0], width=src.shape[1], count=1,
+                      dtype=rasterio.uint8, crs=src.crs, transform=src.transform) as out:
+            out.write(mask_result, 1)
+    else:
+        ds_temp2 = gdal.Open(ori_tif.split('.TIF')[0] + '_MASK.TIF')
+        mask_result = ds_temp2.GetRasterBand(1).ReadAsArray()
+    gap_filled = cv2.inpaint(raster_temp, mask_result, 3, cv2.INPAINT_TELEA)
+    with rasterio.open(ori_tif.split('.TIF')[0] + '_SLC.TIF', 'w', driver='GTiff',
+                       height=src.shape[0], width=src.shape[1], count=1,
+                       dtype=rasterio.uint16, crs=src.crs, transform=src.transform) as out_slc:
+        out_slc.write(gap_filled, 1)
+
+
 def generate_error_inf(self, reverse_type=True):
     if self[0, self.shape[0] - 1] == 'Error':
         return self
@@ -1413,7 +1439,7 @@ def generate_landsat_metadata(original_file_path_f, unzipped_file_path_f, corrup
     return File_metadata
 
 
-def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_construction_para=True, construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True, clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False, construct_sdc_para=True, sdc_overwritten_para=False, VI_list=None, ROI_mask_f=None, study_area=None, size_control_factor=True, manual_remove_issue_data=False, manual_remove_date_list=None, main_coordinate_system=None, **kwargs):
+def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_construction_para=True, construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True, clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False, construct_sdc_para=True, sdc_overwritten_para=False, VI_list=None, ROI_mask_f=None, study_area=None, size_control_factor=True, manual_remove_issue_data=False, manual_remove_date_list=None, main_coordinate_system=None, scan_line_correction=False, **kwargs):
     # Fundamental para
     if VI_list is None:
         VI_list = all_supported_vi_list
@@ -1472,7 +1498,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
         # Remove all files which not meet the requirements
         eliminating_all_not_required_file(unzipped_file_path_f)
         # File consistency check
-        file_consistency_check([unzipped_file_path_f], ['B1.', 'B2', 'B3', 'B4', 'B5', 'B6', 'QA_PIXEL'])
+        file_consistency_check([unzipped_file_path_f], ['B1.', 'B2.', 'B3.', 'B4.', 'B5.', 'B6.', 'QA_PIXEL'])
         # Create fundamental information dictionary
         constructed_vi = {'Watermask_path': root_path_f + 'Landsat_constructed_index\\Watermask\\',
                           'resize_factor': size_control_factor, 'cloud_removal_factor': cloud_removal_para}
@@ -1500,10 +1526,50 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 constructed_vi['Watermask_factor'] = not os.path.exists(str(constructed_vi['Watermask_path']) + str(filedate) + '_' + str(tile_num) + '_watermask.TIF') or construction_overwritten_para
                 file_vacancy = file_vacancy or constructed_vi[VI + '_factor']
                 if file_vacancy:
-                    if 'LE07' in i or 'LT05' in i:
+                    if 'LE07' in i:
                         # Input Raster
                         if (constructed_vi['NDVI_factor'] or constructed_vi['OSAVI_factor']) and not constructed_vi['EVI_factor']:
                             print('Start processing Red and NIR band of the ' + i + ' file(' + str(p+1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
+                            if scan_line_correction:
+                                if not os.path.exists(unzipped_file_path_f + i + '_SR_B3_SLC.TIF') or not os.path.exists(unzipped_file_path_f + i + '_SR_B4_SLC.TIF'):
+                                    fill_landsat7_gap(unzipped_file_path_f + i + '_SR_B3.TIF')
+                                    fill_landsat7_gap(unzipped_file_path_f + i + '_SR_B4.TIF')
+                                RED_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B3_SLC.TIF')
+                                NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4_SLC.TIF')
+                            else:
+                                RED_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B3.TIF')
+                                NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4.TIF')
+                        elif constructed_vi['EVI_factor']:
+                            print('Start processing Red, Blue and NIR band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
+                            if scan_line_correction:
+                                if not os.path.exists(unzipped_file_path_f + i + '_SR_B3_SLC.TIF') or not os.path.exists(unzipped_file_path_f + i + '_SR_B4_SLC.TIF') or not os.path.exists(unzipped_file_path_f + i + '_SR_B1_SLC.TIF'):
+                                    fill_landsat7_gap(unzipped_file_path_f + i + '_SR_B3.TIF')
+                                    fill_landsat7_gap(unzipped_file_path_f + i + '_SR_B4.TIF')
+                                    fill_landsat7_gap(unzipped_file_path_f + i + '_SR_B1.TIF')
+                                RED_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B3_SLC.TIF')
+                                NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4_SLC.TIF')
+                                BLUE_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B1_SLC.TIF')
+                            else:
+                                RED_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B3.TIF')
+                                NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4.TIF')
+                                BLUE_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B1.TIF')
+
+                        if constructed_vi['MNDWI_factor']:
+                            print('Start processing Green and MIR band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
+                            if scan_line_correction:
+                                if not os.path.exists(unzipped_file_path_f + i + '_SR_B5_SLC.TIF') or not os.path.exists(unzipped_file_path_f + i + '_SR_B2_SLC.TIF'):
+                                    fill_landsat7_gap(unzipped_file_path_f + i + '_SR_B5.TIF')
+                                    fill_landsat7_gap(unzipped_file_path_f + i + '_SR_B2.TIF')
+                                MIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5_SLC.TIF')
+                                GREEN_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B2_SLC.TIF')
+                            else:
+                                MIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5.TIF')
+                                GREEN_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B2.TIF')
+
+                    elif 'LT05' in i:
+                        # Input Raster
+                        if (constructed_vi['NDVI_factor'] or constructed_vi['OSAVI_factor']) and not constructed_vi['EVI_factor']:
+                            print('Start processing Red and NIR band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
                             RED_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B3.TIF')
                             NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4.TIF')
                         elif constructed_vi['EVI_factor']:

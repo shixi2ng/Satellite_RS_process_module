@@ -61,7 +61,7 @@ for seq in range(study_area_list.shape[0]):
                         construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True,
                         clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False,
                         construct_sdc_para=True, sdc_overwritten_para=False, VI_list=['NDVI', 'OSAVI', 'MNDWI', 'EVI'],
-                        ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_date_list=study_area_list[seq, 2], manual_remove_issue_data=True)
+                        ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_date_list=study_area_list[seq, 2], manual_remove_issue_data=True, scan_line_correction=True)
     Landsat_main_v1.landsat_inundation_detection(root_path, sate_dem_inundation_factor=False,
                                                  inundation_data_overwritten_factor=False,
                                                  mndwi_threshold=0.25, VI_list_f=['NDVI', 'MNDWI'],

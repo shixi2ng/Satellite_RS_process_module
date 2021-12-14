@@ -34,19 +34,19 @@ import floodplain_geomorph as fg
 gdal.UseExceptions()
 np.seterr(divide='ignore', invalid='ignore')
 
-
-inundation_file = 'E:\\A_Vegetation_Identification\\z_test\\ori_inundated\\'
-ds_folder = 'E:\\A_Vegetation_Identification\\z_test\\'
-land_indicator = 0
-nanvalue_indicator = -2
-studyarea = 'BSZ'
-curve_smooth_method = ['Chaikin', 'Simplify', 'Buffer']
-c_itr = 4
-simplify_t = 30
-buffer_size = 60
-fg.generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nanvalue_indicator, studyarea, implement_sole_array=True,
-                                extract_max_area=True, overwritten_factor=True, curve_smooth_method=curve_smooth_method,
-                                Chaikin_itr=c_itr, simplify_tolerance=simplify_t, buffer_size=buffer_size)
+#
+# inundation_file = 'E:\\A_Vegetation_Identification\\z_test\\ori_inundated\\'
+# ds_folder = 'E:\\A_Vegetation_Identification\\z_test\\'
+# land_indicator = 0
+# nanvalue_indicator = -2
+# studyarea = 'BSZ'
+# curve_smooth_method = ['Chaikin', 'Simplify', 'Buffer']
+# c_itr = 4
+# simplify_t = 30
+# buffer_size = 60
+# fg.generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nanvalue_indicator, studyarea, implement_sole_array=True,
+#                                 extract_max_area=True, overwritten_factor=True, curve_smooth_method=curve_smooth_method,
+#                                 Chaikin_itr=c_itr, simplify_tolerance=simplify_t, buffer_size=buffer_size)
 
 
 ###                Section User defined                      ###
@@ -83,7 +83,7 @@ for seq in range(study_area_list.shape[0]):
                         construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True,
                         clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False,
                         construct_sdc_para=True, sdc_overwritten_para=False, VI_list=constructed_VI,
-                        ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_issue_data=False, main_coordinate_system=defined_coordinate_system)
+                        ROI_mask_f=study_area_list[seq, 0], study_area=study_area_list[seq, 1], manual_remove_issue_data=False, main_coordinate_system=defined_coordinate_system, scan_line_correction=True)
     Landsat_main_v1.landsat_inundation_detection(root_path, sate_dem_inundation_factor=False,
                                                  inundation_data_overwritten_factor=False,
                                                  VI_list_f=['NDVI', 'MNDWI'],
