@@ -35,8 +35,6 @@ gdal.UseExceptions()
 np.seterr(divide='ignore', invalid='ignore')
 
 
-
-
 ###                Section User defined                      ###
 ################################################################
 #项目根目录(注意所有路径名里面的\不得为单个，必须使用\\，否则会报错，其次每个路径必须以\\结尾)
@@ -60,7 +58,7 @@ waterbody_extraction_method = 'global'
 global_thr = [0.123, -0.5, 0.2, 0.1]
 defined_coordinate_system = 'EPSG:32649'
 
-#
+# 矢量化参数
 land_indicator = 0
 nanvalue_indicator = -2
 curve_smooth_method = ['Chaikin', 'Simplify', 'Buffer']
