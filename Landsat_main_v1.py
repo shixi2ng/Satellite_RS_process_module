@@ -170,20 +170,28 @@ def fill_landsat7_gap(ori_tif):
         for y in range(mask_temp.shape[0]):
             for x in range(mask_temp.shape[1]):
                 if mask_temp[y, x] == 0:
-                    if np.sum(mask_temp[max(y - 10, 0): y, x]) > 0 and np.sum(mask_temp[y: min(mask_temp.shape[0] - 1, y + 10), x]) > 0:
+                    if np.sum(mask_temp[max(y - 10, 0): y, x]) == 0 or np.sum(mask_temp[y: min(mask_temp.shape[0] - 1, y + 10), x]) == 0:
                         mask_result[y, x] = 1
         with rasterio.open(ori_tif.split('.TIF')[0] + '_MASK.TIF', 'w', driver='GTiff',
                       height=src.shape[0], width=src.shape[1], count=1,
                       dtype=rasterio.uint8, crs=src.crs, transform=src.transform) as out:
             out.write(mask_result, 1)
-    else:
-        ds_temp2 = gdal.Open(ori_tif.split('.TIF')[0] + '_MASK.TIF')
-        mask_result = ds_temp2.GetRasterBand(1).ReadAsArray()
-    gap_filled = cv2.inpaint(raster_temp, mask_result, 3, cv2.INPAINT_TELEA)
-    with rasterio.open(ori_tif.split('.TIF')[0] + '_SLC.TIF', 'w', driver='GTiff',
-                       height=src.shape[0], width=src.shape[1], count=1,
-                       dtype=rasterio.uint16, crs=src.crs, transform=src.transform) as out_slc:
-        out_slc.write(gap_filled, 1)
+
+    ds_temp = gdal.Open(ori_tif)
+    ds_temp2 = gdal.Open(ori_tif.split('.TIF')[0] + '_MASK.TIF')
+    mask_result = ds_temp2.GetRasterBand(1)
+    driver_tiff = gdal.GetDriverByName("GTiff")
+    gap_filled = driver_tiff.CreateCopy(ori_tif.split('.TIF')[0] + '_SLC.TIF', ds_temp, strict=0)
+    raster_temp = gap_filled.GetRasterBand(1)
+    gdal.FillNodata(raster_temp, mask_result, 10, 2)
+    gap_filled = None
+    ds_temp = None
+    ds_temp2 = None
+    #gap_filled = cv2.inpaint(raster_temp, mask_result, 3, cv2.INPAINT_TELEA)
+    # with rasterio.open(ori_tif.split('.TIF')[0] + '_SLC.TIF', 'w', driver='GTiff',
+    #                    height=src.shape[0], width=src.shape[1], count=1,
+    #                    dtype=rasterio.uint16, crs=src.crs, transform=src.transform) as out_slc:
+    #     out_slc.write(gap_filled, 1)
 
 
 def generate_error_inf(self, reverse_type=True):

@@ -34,19 +34,7 @@ import floodplain_geomorph as fg
 gdal.UseExceptions()
 np.seterr(divide='ignore', invalid='ignore')
 
-#
-# inundation_file = 'E:\\A_Vegetation_Identification\\z_test\\ori_inundated\\'
-# ds_folder = 'E:\\A_Vegetation_Identification\\z_test\\'
-# land_indicator = 0
-# nanvalue_indicator = -2
-# studyarea = 'BSZ'
-# curve_smooth_method = ['Chaikin', 'Simplify', 'Buffer']
-# c_itr = 4
-# simplify_t = 30
-# buffer_size = 60
-# fg.generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nanvalue_indicator, studyarea, implement_sole_array=True,
-#                                 extract_max_area=True, overwritten_factor=True, curve_smooth_method=curve_smooth_method,
-#                                 Chaikin_itr=c_itr, simplify_tolerance=simplify_t, buffer_size=buffer_size)
+
 
 
 ###                Section User defined                      ###
@@ -62,14 +50,23 @@ unzipped_file_path = root_path + 'Landsat_Ori_TIFF\\'
 #是否解压文件(False 不解压； True 解压；解压只需要解压一遍即可，第二次运行代码的时候改成False)
 unzipped_indicator = True
 # 研究区域的基本信息
-# 每一行第一个单引号内的为研究区域的shp文件， 第二个单引号内为研究区域的名字
-study_area_list = np.array([['E:\\DEMO\\studyarea_shpfile\\NYZ.shp', 'NYZ']])
+# 每一行第一个单引号内的为研究区域的shp文件， 第二个单引号内为研究区域的名字 第三列为原始淹没tif数据路径 第四列为shp输出路径
+study_area_list = np.array([['E:\\DEMO\\studyarea_shpfile\\NYZ.shp', 'NYZ', 'E:\\A_Vegetation_Identification\\Inundation_condition\\studyarea_global\\Individual_tif\\', 'E:\\A_Vegetation_Identification\\Inundation_condition\\studyarea_global\\'],
+                            ['E:\\DEMO\\studyarea_shpfile\\NYZ.shp', 'NYZ', 'E:\\A_Vegetation_Identification\\z_test\\ori_inundated\\']])
 # 需要构建的指数(可以填写 'NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC'; 可以选择多个)
 constructed_VI = ['MNDWI']
 # global方法提取水体 (四个数分别对应我给你门的公式里的四个阈值)
 waterbody_extraction_method = 'global'
 global_thr = [0.123, -0.5, 0.2, 0.1]
 defined_coordinate_system = 'EPSG:32649'
+
+#
+land_indicator = 0
+nanvalue_indicator = -2
+curve_smooth_method = ['Chaikin', 'Simplify', 'Buffer']
+c_itr = 4
+simplify_t = 30
+buffer_size = 60
 
 
 ###                     Main Process                         ###
@@ -92,3 +89,6 @@ for seq in range(study_area_list.shape[0]):
                                                  ROI_mask_f=study_area_list[seq, 0],
                                                  global_local_factor=waterbody_extraction_method,
                                                  global_threshold=global_thr)
+    fg.generate_floodplain_boundary(study_area_list[seq, 2], study_area_list[seq, 3], land_indicator, nanvalue_indicator, study_area_list[seq, 1], implement_sole_array=True,
+                                extract_max_area=True, overwritten_factor=True, curve_smooth_method=curve_smooth_method,
+                                Chaikin_itr=c_itr, simplify_tolerance=simplify_t, buffer_size=buffer_size)
