@@ -23,7 +23,7 @@ def chaikin_curve_smooth(coords, refinement_itr=5):
     return coords
 
 
-def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nanvalue_indicator, studyarea, implement_sole_array=True, extract_max_area=True, overwritten_factor=True, curve_smooth_method=[], Chaikin_itr=None, simplify_tolerance=None, buffer_size=None):
+def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, water_indicator, nanvalue_indicator, studyarea, implement_sole_array=True, extract_max_area=True, overwritten_factor=True, curve_smooth_method=[], Chaikin_itr=None, simplify_tolerance=None, buffer_size=None, fix_sliver_para=True, sliver_max_size=None):
     # Checke the filepath
     ds_folder = bf.check_file_path(ds_folder)
 
@@ -33,6 +33,10 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nan
 
     if curve_smooth_method == []:
         print('Please double check if the method is supported')
+        sys.exit(-1)
+
+    if fix_sliver_para and type(sliver_max_size) != int:
+        print('Please define the maximum size of the sliver')
         sys.exit(-1)
 
     if 'Chaikin' in curve_smooth_method or 'Buffer_Chaikin' in curve_smooth_method:
@@ -87,10 +91,13 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nan
     length_dic = {}
     area_dic['Date'] = date_list
     length_dic['Date'] = date_list
+    raster_area_para = True
     # Generate floodplain boundary
     for method_temp in curve_smooth_method:
         area_dic[method_temp + '_' + studyarea + '_area'] = []
         length_dic[method_temp + '_' + studyarea + '_length'] = []
+        if raster_area_para:
+            area_dic['Original_raster_area'] = []
         output_folder_specified4method = output_polygon_folder + method_temp + '\\'
         bf.create_folder(output_folder_specified4method)
         i = 0
@@ -98,6 +105,12 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nan
             src_temp = rasterio.open(file)
             raster_temp = src_temp.read(1)
             # Extract individual floodplain
+            if fix_sliver_para:
+                sole_waterextent_temp = Landsat_main_v1.identify_all_inundated_area(raster_temp, inundated_pixel_indicator=water_indicator, nanvalue_pixel_indicator=nanvalue_indicator)
+                sole_water_value = np.unique(sole_waterextent_temp.flatten())
+                for i in sole_water_value:
+                    if np.sum(sole_waterextent_temp == i) <= sliver_max_size:
+                        raster_temp[sole_waterextent_temp == i] = land_indicator
             if implement_sole_array:
                 sole_area_ds = ds_folder + 'individual_floodplain\\'
                 bf.create_folder(sole_area_ds)
@@ -125,6 +138,8 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nan
                     sole_value_num = np.array(sole_value_num)
                     max_sole_value = sole_value[np.argmax(sole_value_num)]
                     floodplain_temp[floodplain_temp != max_sole_value] = np.nan
+                    if raster_area_para:
+                        area_dic['Original_raster_area'].append(np.sum(floodplain_temp == max_sole_value) * 900)
                 else:
                     floodplain_temp[floodplain_temp != land_indicator] = np.nan
 
@@ -158,7 +173,10 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, nan
             else:
                 area_dic[method_temp + '_' + studyarea + '_area'].append('NaN')
                 length_dic[method_temp + '_' + studyarea + '_length'].append('NaN')
+                if raster_area_para:
+                    area_dic['Original_raster_area'].append('NaN')
             i += 1
+        raster_area_para = False
     area_pd = pd.DataFrame.from_dict(area_dic)
     length_pd = pd.DataFrame.from_dict(length_dic)
     area_pd.to_excel(output_polygon_folder + 'area_info.xlsx')

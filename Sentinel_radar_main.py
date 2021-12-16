@@ -181,8 +181,8 @@ def generate_process_s1_dc(sa_vv_filepath, root_path, study_area_name='BSZ', pro
             ds_temp = gdal.Open(file)
             if not os.path.exists(inundation_folder + 'local_' + str(doy) + '.TIF'):
                 array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                array_temp[array_temp > 0] = 1
-                array_temp[array_temp <= 0] = 0
+                array_temp[array_temp > 0.7] = 1
+                array_temp[array_temp <= 0.7] = 0
                 array_temp[np.isnan(array_temp)] = -2
                 Landsat_main_v1.write_raster(ds_temp, array_temp, inundation_folder, 'local_' + str(doy) + '.TIF', raster_datatype=gdal.GDT_Int16)
 
