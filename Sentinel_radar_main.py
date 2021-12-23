@@ -70,7 +70,7 @@ def extract_vv_file(unzipped_file_path, original_vv_file):
 
 
 def extract_by_shp(original_vv_file, root_path, studyarea_shp, study_area_name='BSZ'):
-    vv_file = Landsat_main_v1.file_filter(original_vv_file, ['VV.tif'])
+    vv_file = Landsat_main_v1.file_filter(original_vv_file, ['VV.tif'], exclude_word_list=['.xml', '.sl'])
     sa_vv_folder = root_path + study_area_name + '_VV_tiffile\\'
     Landsat_main_v1.create_folder(sa_vv_folder)
     for i in vv_file:
@@ -184,16 +184,16 @@ def generate_process_s1_dc(sa_vv_filepath, root_path, study_area_name='BSZ', pro
                 array_temp[array_temp > 0.7] = 1
                 array_temp[array_temp <= 0.7] = 0
                 array_temp[np.isnan(array_temp)] = -2
-                Landsat_main_v1.write_raster(ds_temp, array_temp, inundation_folder, 'local_' + str(doy) + '.TIF', raster_datatype=gdal.GDT_Int16)
+                Landsat_main_v1.write_raster(ds_temp, array_temp, inundation_folder, 'local_' + str(doy) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
 
 
-root_path_f = 'G:\\Sentinel_1_GRD\\Sample_bsz\\'
+root_path_f = 'E:\\A_Vegetation_Identification\\Wuhan_Sentinel_1_Original\\Sentinel_1_GRD\\Sample_bsz\\'
 original_file_path_f = root_path_f + 'Original_zipfile\\'
 unzipped_file_path_f = root_path_f + 'Original_tiffile\\'
 corrupted_file_path_f = root_path_f + 'Corrupted_zipfile\\'
 original_vv_file_f = root_path_f + 'Original_VV_tiffile\\'
 studyarea_shp_f = root_path_f + 'shpfile\\baishazhou.shp'
-# S1_metadata = generate_sentinel1_metadata(original_file_path_f, unzipped_file_path_f, corrupted_file_path_f, root_path_f, unzipped_para=True)
-# extract_vv_file(unzipped_file_path_f, original_vv_file_f)
+S1_metadata = generate_sentinel1_metadata(original_file_path_f, unzipped_file_path_f, corrupted_file_path_f, root_path_f, unzipped_para=False)
+extract_vv_file(unzipped_file_path_f, original_vv_file_f)
 extract_by_shp(original_vv_file_f, root_path_f, studyarea_shp_f, study_area_name='BSZ')
 generate_process_s1_dc(root_path_f + 'BSZ_VV_tiffile\\', root_path_f, study_area_name='BSZ', process_strategy='NDFI', monsoon_month=[6, 10])

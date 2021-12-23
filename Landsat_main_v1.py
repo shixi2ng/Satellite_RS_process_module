@@ -3099,7 +3099,7 @@ def quantify_vegetation_variation(root_path_f, vi, sa, phenology_index, curve_fi
     np.save(root_path_f + 'Landsat_key_dic\\' + sa + '_veg_variation.npy', phenology_metrics_inform_dic)
 
 
-def phenology_year_vi_construction(root_path_f, study_area, inundated_factor=None, VI_factor=None):
+def phenology_year_vi_construction(root_path_f, study_area, inundated_factor=None, VI_factor=None, Radar_supplement=False, Radar_folder=[], ):
     # Input vi list
     p1_time, p2_time, p3_time = 0, 0, 0
     vi_list = np.load(root_path_f + 'Landsat_key_dic\\fundamental_information_dic.npy', allow_pickle=True).item()
@@ -3107,6 +3107,7 @@ def phenology_year_vi_construction(root_path_f, study_area, inundated_factor=Non
         print('There has no vi file!')
         sys.exit(-1)
     vi_list = vi_list['all_vi']
+
     # Reassign inundated factor
     if VI_factor is None:
         print('Will use default VI file!')
@@ -3114,6 +3115,7 @@ def phenology_year_vi_construction(root_path_f, study_area, inundated_factor=Non
     elif VI_factor not in vi_list:
         print('The input VI factor is invalid and will use default VI file!')
         VI_factor = vi_list[0]
+
     # Input the vi dic
     vi_dic = np.load(file_filter(root_path_f + 'Landsat_key_dic\\', ['.npy', 'sdc', study_area], and_or_factor='and')[0], allow_pickle=True).item()
     vi_sdc = np.load(file_filter(vi_dic[VI_factor + '_path'], ['datacube.npy'])[0])

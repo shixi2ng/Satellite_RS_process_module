@@ -108,9 +108,9 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
             if fix_sliver_para:
                 sole_waterextent_temp = Landsat_main_v1.identify_all_inundated_area(raster_temp, inundated_pixel_indicator=water_indicator, nanvalue_pixel_indicator=nanvalue_indicator)
                 sole_water_value = np.unique(sole_waterextent_temp.flatten())
-                for i in sole_water_value:
-                    if np.sum(sole_waterextent_temp == i) <= sliver_max_size:
-                        raster_temp[sole_waterextent_temp == i] = land_indicator
+                for t in sole_water_value:
+                    if np.sum(sole_waterextent_temp == t) <= sliver_max_size:
+                        raster_temp[sole_waterextent_temp == t] = land_indicator
             if implement_sole_array:
                 sole_area_ds = ds_folder + 'individual_floodplain\\'
                 bf.create_folder(sole_area_ds)

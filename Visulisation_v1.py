@@ -1088,7 +1088,7 @@ class Visualisation_gui(QMainWindow):
 
     def update_ori_file_path(self):
         try:
-            path.exists(self.rootpath)
+            os.path.exists(self.rootpath)
             path_temp = self.rootpath
         except:
             path_temp = 'C:\\'
@@ -1102,7 +1102,7 @@ class Visualisation_gui(QMainWindow):
 
     def update_key_dic_path(self):
         try:
-            path.exists(self.rootpath)
+            os.path.exists(self.rootpath)
             path_temp = self.rootpath
         except:
             path_temp = 'C:\\'
@@ -1112,7 +1112,7 @@ class Visualisation_gui(QMainWindow):
 
     def update_fundamental_dic(self):
         try:
-            path.exists(self.keydic_path)
+            os.path.exists(self.keydic_path)
             path_temp = self.keydic_path
         except:
             path_temp = 'C:\\'
@@ -1192,7 +1192,7 @@ class Visualisation_gui(QMainWindow):
     def get_shp(self):
         if self.shpfile_path != '' and self.sa_current != []:
             try:
-                if len(Landsat_main_v1.file_filter(self.shpfile_path, [self.sa_current, '.shp'], and_or_factor='and', exclude_word_list=['.xml'])) == 1:
+                if len(Landsat_main_v1.file_filter(self.shpfile_path, [self.sa_current, '.shp'], and_or_factor='and', exclude_word_list=['.xml', '.sr'])) == 1:
                     self.shpfile = Landsat_main_v1.file_filter(self.shpfile_path, [self.sa_current, '.shp'], and_or_factor='and', exclude_word_list=['.xml'])[0]
                 elif len(Landsat_main_v1.file_filter(self.shpfile_path, [self.sa_current, '.shp'], and_or_factor='and', exclude_word_list=['.xml'])) > 1:
                     self.caution_msg_box('Unknown error occurred!')
