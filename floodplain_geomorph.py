@@ -130,7 +130,7 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
             sole_value = np.delete(sole_value, np.argwhere(sole_value == 0))
             floodplain_temp = copy.copy(sole_floodplain_temp).astype(np.float32)
 
-            if sole_value != []:
+            if sole_value.shape[0] != 0:
                 if extract_max_area is True:
                     sole_value_num = []
                     for each_sole_value in sole_value:
