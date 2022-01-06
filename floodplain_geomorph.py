@@ -28,7 +28,7 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
     ds_folder = bf.check_file_path(ds_folder)
 
     # Check method supportability
-    all_support_polygonize_method = ['Chaikin', 'Simplify', 'Buffer', 'Buffer_Chaikin']
+    all_support_polygonize_method = ['Chaikin', 'Simplify', 'Buffer', 'Buffer_Simplify', 'Original']
     curve_smooth_method = bf.list_compare(curve_smooth_method, all_support_polygonize_method)
 
     if curve_smooth_method == []:
@@ -39,17 +39,17 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
         print('Please define the maximum size of the sliver')
         sys.exit(-1)
 
-    if 'Chaikin' in curve_smooth_method or 'Buffer_Chaikin' in curve_smooth_method:
+    if 'Chaikin' in curve_smooth_method:
         if Chaikin_itr is None or type(Chaikin_itr) != int:
             print('Please double check if the Chaikin iteration input correctly')
             sys.exit(-1)
 
-    if 'Buffer' in curve_smooth_method or 'Buffer_Chaikin' in curve_smooth_method:
+    if 'Buffer' in curve_smooth_method or 'Buffer_Simplify' in curve_smooth_method:
         if buffer_size is None or type(buffer_size) != int:
             print('Please double check if the BUFFER SIZE input correctly')
             sys.exit(-1)
 
-    if 'Simplify' in curve_smooth_method:
+    if 'Simplify' in curve_smooth_method or 'Buffer_Simplify' in curve_smooth_method:
         if simplify_tolerance is None or type(buffer_size) != int:
             print('Please double check if the BUFFER SIZE input correctly')
             sys.exit(-1)
@@ -155,14 +155,17 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
                             gd_polygonised_raster = gp.GeoDataFrame.from_features(shp_list)
                     elif method_temp == 'Simplify':
                         gd_polygonised_raster = gp.GeoDataFrame.from_features(shp_list)
-                        gd_polygonised_raster = gd_polygonised_raster.buffer(100, join_style=1).buffer(-1 * 100, join_style=1)
+                        #gd_polygonised_raster = gd_polygonised_raster.buffer(100, join_style=1).buffer(-1 * 100, join_style=1)
                         gd_polygonised_raster = gd_polygonised_raster.simplify(simplify_tolerance, preserve_topology=True)
                     elif method_temp == 'Buffer':
                         gd_polygonised_raster = gp.GeoDataFrame.from_features(shp_list)
                         gd_polygonised_raster = gd_polygonised_raster.buffer(buffer_size, join_style=1).buffer(-1 * buffer_size, join_style=1)
-                    elif method_temp == 'Buffer_Chaikin':
+                    elif method_temp == 'Buffer_Simplify':
                         gd_polygonised_raster = gp.GeoDataFrame.from_features(shp_list)
                         gd_polygonised_raster = gd_polygonised_raster.buffer(buffer_size, join_style=1).buffer(-1 * buffer_size, join_style=1)
+                        gd_polygonised_raster = gd_polygonised_raster.simplify(simplify_tolerance, preserve_topology=True)
+                    elif method_temp == 'Original':
+                        gd_polygonised_raster = gp.GeoDataFrame.from_features(shp_list)
                     else:
                         print('Method not supported!')
                         sys.exit(-1)
