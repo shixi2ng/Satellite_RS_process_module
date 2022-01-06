@@ -25,7 +25,7 @@ def chaikin_curve_smooth(coords, refinement_itr=5):
 
 def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, water_indicator, nanvalue_indicator, studyarea, implement_sole_array=True, extract_max_area=True, overwritten_factor=True, curve_smooth_method=[], Chaikin_itr=None, simplify_tolerance=None, buffer_size=None, fix_sliver_para=True, sliver_max_size=None):
     # Checke the filepath
-    ds_folder = bf.check_file_path(ds_folder)
+    # ds_folder = bf.check_file_path(ds_folder)
 
     # Check method supportability
     all_support_polygonize_method = ['Chaikin', 'Simplify', 'Buffer', 'Buffer_Simplify', 'Original']

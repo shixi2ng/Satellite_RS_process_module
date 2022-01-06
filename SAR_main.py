@@ -7,6 +7,7 @@ import pandas as pd
 import gdal
 import numpy as np
 import operator
+import snappy
 
 
 def generate_sentinel1_metadata(original_file_path_f, unzipped_file_path_f, corrupted_file_path_f, root_path_f, unzipped_para=False):
@@ -19,44 +20,71 @@ def generate_sentinel1_metadata(original_file_path_f, unzipped_file_path_f, corr
     :return:
     """
     #timer_
-    filter_name = ['.zip']
+    filter_name = ['.zip', '.E1', '.E2']
     filename_list = Landsat_main_v1.file_filter(original_file_path_f, filter_name)
-    File_path, FileID, Data_type, Beam, Date, Polarization, Corrupted_FileID, Corrupted_Data_type, Corrupted_Tile, Corrupted_Date, Corrupted_Tier_level = ([] for i in range(11))
+    Sensor_type, File_path, FileID, Data_type, Beam, Date, Polarization, Corrupted_sensor_type, Corrupted_FileID, Corrupted_Data_type, Corrupted_Beam, Corrupted_Date, Polarization = ([] for i in range(13))
 
     for i in filename_list:
-        try:
-            unzipped_file = zipfile.ZipFile(i)
-            if unzipped_para:
-                Landsat_main_v1.create_folder(unzipped_file_path_f)
-                unzipped_file.extractall(path=unzipped_file_path_f)
-            unzipped_file.close()
+        if '.zip' in i and ('S1A' in i or 'S1B' in i):
+            try:
+                unzipped_file = zipfile.ZipFile(i)
+                if unzipped_para:
+                    Landsat_main_v1.create_folder(unzipped_file_path_f + 'Sentinel_1')
+                    unzipped_file.extractall(path=unzipped_file_path_f + 'Sentinel_1')
+                unzipped_file.close()
 
-            if 'S1A' in i:
-                Data_type.append(i[i.find('S1A'): i.find('S1A') + 3])
-                FileID.append(i[i.find('S1A'): i.find('.zip')])
-                Beam.append(i[i.find('S1A') + 4: i.find('S1A') + 6])
-                Date.append(i[i.find('S1A') + 7: i.find('S1A') + 15])
-            elif 'S1B' in i:
-                Data_type.append(i[i.find('S1B'): i.find('S1A') + 3])
-                FileID.append(i[i.find('S1B'): i.find('.zip')])
-                Beam.append(i[i.find('S1B') + 4: i.find('S1B') + 6])
-                Date.append(i[i.find('S1B') + 7: i.find('S1B') + 15])
-            else:
-                print('The Original Tiff files are not belonging to Sentinel1')
-            if 'DV' in i:
-                Polarization.append('VV_VH')
-            elif 'SV' in i:
-                Polarization.append('VV')
-            else:
-                print('Not supported file')
-            File_path.append(i)
-        except:
-            Landsat_main_v1.create_folder(corrupted_file_path_f)
-            shutil.copyfile(i, corrupted_file_path_f + i[i.find('S1A') - 4:])
+                if 'S1A' in i:
+                    Data_type.append(i[i.find('S1A'): i.find('S1A') + 3])
+                    FileID.append(i[i.find('S1A'): i.find('.zip')])
+                    Beam.append(i[i.find('S1A') + 4: i.find('S1A') + 6])
+                    Date.append(i[i.find('S1A') + 7: i.find('S1A') + 15])
+                elif 'S1B' in i:
+                    Data_type.append(i[i.find('S1B'): i.find('S1B') + 3])
+                    FileID.append(i[i.find('S1B'): i.find('.zip')])
+                    Beam.append(i[i.find('S1B') + 4: i.find('S1B') + 6])
+                    Date.append(i[i.find('S1B') + 7: i.find('S1B') + 15])
+                else:
+                    print('The Original Tiff files are not belonging to Sentinel1')
+
+                if 'DV' in i:
+                    Polarization.append('VV_VH')
+                elif 'SV' in i:
+                    Polarization.append('VV')
+                else:
+                    print('Not supported file')
+                File_path.append(i)
+
+            except:
+                Landsat_main_v1.create_folder(corrupted_file_path_f + 'Sentinel_1')
+                shutil.copyfile(i, corrupted_file_path_f + 'Sentinel_1' + i[i.find('S1') - 3:])
+        elif '.zip' in i and 'ALPSR' in i:
+            try:
+                if unzipped_para:
+                    Landsat_main_v1.create_folder(unzipped_file_path_f + 'ALOS_PALSAR')
+
+                if 'ALPSR' in i:
+
+                    Data_type.append(i[i.find('S1A'): i.find('S1A') + 3])
+                    FileID.append(i[i.find('S1A'): i.find('.zip')])
+                    Beam.append(i[i.find('S1A') + 4: i.find('S1A') + 6])
+                    Date.append(i[i.find('S1A') + 7: i.find('S1A') + 15])
+
+                else:
+                    print('The Original Tiff files are not belonging to Sentinel1')
+
+            except:
+                Landsat_main_v1.create_folder(corrupted_file_path_f + 'ALOS_PALSAR')
+                shutil.copyfile(i, corrupted_file_path_f + 'ALOS_PALSAR' + i[i.find('ALPSR') - 6:])
+
     File_metadata = pd.DataFrame(
         {'File_Path': File_path, 'FileID': FileID, 'Data_Type': Data_type, 'Beam_mode': Beam, 'Date': Date, 'Polarization': Polarization})
     File_metadata.to_excel(root_path_f + 'Metadata.xlsx')
     return File_metadata
+
+
+def process_sar_data(sar_file):
+    temp_S2file = snappy.ProductIO.readProduct(temp_S2file_path)
+
 
 
 def extract_vv_file(unzipped_file_path, original_vv_file):
@@ -79,7 +107,7 @@ def extract_by_shp(original_vv_file, root_path, studyarea_shp, study_area_name='
         gdal.Warp(sa_vv_folder + str(i[i.find('S1_'): i.find('S1_') + 14]) + '_' + study_area_name + '.tif', ds_temp, cutlineDSName=studyarea_shp, cropToCutline=True, dstNodata=np.nan, xRes=xres, yRes=-yres)
 
 
-def generate_process_s1_dc(sa_vv_filepath, root_path, study_area_name='BSZ', process_strategy='NDFI', monsoon_month=[6, 10], generate_inundation_map_factor=True):
+def generate_process_sar_dc(sa_vv_filepath, root_path, study_area_name='BSZ', process_strategy='NDFI', monsoon_month=[6, 10], generate_inundation_map_factor=True):
     # Create datacube folder
     sa_vv_dc_folder = root_path + study_area_name + '_VV_datacube\\'
     Landsat_main_v1.create_folder(sa_vv_dc_folder)
