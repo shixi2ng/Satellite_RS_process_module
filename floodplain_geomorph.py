@@ -23,13 +23,26 @@ def chaikin_curve_smooth(coords, refinement_itr=5):
     return coords
 
 
-def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, water_indicator, nanvalue_indicator, studyarea, implement_sole_array=True, extract_max_area=True, overwritten_factor=True, curve_smooth_method=[], Chaikin_itr=None, simplify_tolerance=None, buffer_size=None, fix_sliver_para=True, sliver_max_size=None):
+def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, water_indicator, nanvalue_indicator, studyarea, indi_pixel_num_threshold=None, implement_sole_array=True, extract_method=True, overwritten_factor=True, curve_smooth_method=[], Chaikin_itr=None, simplify_tolerance=None, buffer_size=None, fix_sliver_para=True, sliver_max_size=None):
     # Checke the filepath
     # ds_folder = bf.check_file_path(ds_folder)
 
     # Check method supportability
     all_support_polygonize_method = ['Chaikin', 'Simplify', 'Buffer', 'Buffer_Simplify', 'Original']
     curve_smooth_method = bf.list_compare(curve_smooth_method, all_support_polygonize_method)
+
+    all_supported_method = ['max_area', 'area_threshold']
+    if extract_method == 'max_area':
+        pass
+    elif extract_method == 'area_threshold':
+        if indi_pixel_num_threshold is None or not (type(indi_pixel_num_threshold) == float and type(indi_pixel_num_threshold) == int):
+            indi_pixel_num_threshold = 100
+            print('THe indi_pixel_num_threshold was set as a default value 100')
+        else:
+            pass
+    elif extract_method not in all_supported_method:
+        print('Please verify the extract method!')
+        sys.exit(-1)
 
     if curve_smooth_method == []:
         print('Please double check if the method is supported')
@@ -125,13 +138,30 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
                     sole_floodplain_temp = sole_floodplain_ds_temp.GetRasterBand(1).ReadAsArray()
             else:
                 sole_floodplain_temp = raster_temp
+
             # Polygonize
             sole_value = np.unique(sole_floodplain_temp.flatten())
             sole_value = np.delete(sole_value, np.argwhere(sole_value == 0))
-            floodplain_temp = copy.copy(sole_floodplain_temp).astype(np.float32)
 
             if sole_value.shape[0] != 0:
-                if extract_max_area is True:
+                if extract_method == 'area_threshold':
+                    floodplain_temp = copy.copy(sole_floodplain_temp).astype(np.float32) * np.nan
+                    sole_value_num = []
+                    for each_sole_value in sole_value:
+                        sole_value_num.append(np.sum(sole_floodplain_temp == each_sole_value))
+                    sole_value_num = np.array(sole_value_num)
+                    i_temp_temp = 1
+                    floodplain_area = 0
+                    for indi_sole_value_num in sole_value_num:
+                        if indi_sole_value_num >= indi_pixel_num_threshold:
+                            corresponding_sole_value = sole_value[np.argmax(indi_sole_value_num)]
+                            floodplain_temp[sole_floodplain_temp == corresponding_sole_value] = i_temp_temp
+                            i_temp_temp += 1
+                            floodplain_area = floodplain_area + np.sum(sole_floodplain_temp == corresponding_sole_value) * 900
+                    if raster_area_para:
+                        area_dic['Original_raster_area'].append(floodplain_area)
+                elif extract_method == 'max_area':
+                    floodplain_temp = copy.copy(sole_floodplain_temp).astype(np.float32)
                     sole_value_num = []
                     for each_sole_value in sole_value:
                         sole_value_num.append(np.sum(sole_floodplain_temp[sole_floodplain_temp == each_sole_value]))
