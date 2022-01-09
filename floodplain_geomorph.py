@@ -35,7 +35,7 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
     if extract_method == 'max_area':
         pass
     elif extract_method == 'area_threshold':
-        if indi_pixel_num_threshold is None or not (type(indi_pixel_num_threshold) == float and type(indi_pixel_num_threshold) == int):
+        if indi_pixel_num_threshold is None or not (type(indi_pixel_num_threshold) == float or type(indi_pixel_num_threshold) == int):
             indi_pixel_num_threshold = 100
             print('THe indi_pixel_num_threshold was set as a default value 100')
         else:
