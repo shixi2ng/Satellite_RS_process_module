@@ -150,11 +150,11 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
                     for each_sole_value in sole_value:
                         sole_value_num.append(np.sum(sole_floodplain_temp == each_sole_value))
                     sole_value_num = np.array(sole_value_num)
-                    i_temp_temp = 1
                     floodplain_area = 0
+                    i_temp_temp = 1
                     for indi_sole_value_num in sole_value_num:
                         if indi_sole_value_num >= indi_pixel_num_threshold:
-                            corresponding_sole_value = sole_value[np.argmax(indi_sole_value_num)]
+                            corresponding_sole_value = sole_value[np.argwhere(sole_value_num == indi_sole_value_num)[0][0]]
                             floodplain_temp[sole_floodplain_temp == corresponding_sole_value] = i_temp_temp
                             i_temp_temp += 1
                             floodplain_area = floodplain_area + np.sum(sole_floodplain_temp == corresponding_sole_value) * 900
