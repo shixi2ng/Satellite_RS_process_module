@@ -23,7 +23,7 @@ def chaikin_curve_smooth(coords, refinement_itr=5):
     return coords
 
 
-def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, water_indicator, nanvalue_indicator, studyarea, indi_pixel_num_threshold=None, implement_sole_array=True, extract_method=True, overwritten_factor=True, curve_smooth_method=[], Chaikin_itr=None, simplify_tolerance=None, buffer_size=None, fix_sliver_para=True, sliver_max_size=None):
+def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, water_indicator, nanvalue_indicator, studyarea, extract_method=True, indi_pixel_num_threshold=None, implement_sole_array=True, overwritten_factor=True, curve_smooth_method=[], Chaikin_itr=None, simplify_tolerance=None, buffer_size=None, fix_sliver_para=True, sliver_max_size=None):
     # Checke the filepath
     # ds_folder = bf.check_file_path(ds_folder)
 
