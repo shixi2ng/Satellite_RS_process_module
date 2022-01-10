@@ -199,8 +199,8 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
                     else:
                         print('Method not supported!')
                         sys.exit(-1)
-                    area_dic[method_temp + '_' + studyarea + '_area'].append(list(gd_polygonised_raster.area)[0])
-                    length_dic[method_temp + '_' + studyarea + '_length'].append(list(gd_polygonised_raster.length)[0])
+                    area_dic[method_temp + '_' + studyarea + '_area'].append(np.sum(np.array(list(gd_polygonised_raster.area))))
+                    length_dic[method_temp + '_' + studyarea + '_length'].append(np.sum(np.array(list(gd_polygonised_raster.length))))
                     gd_polygonised_raster = gd_polygonised_raster.set_crs(src_temp.read_crs().to_string())
                     gd_polygonised_raster.to_file(output_folder_specified4method + str(date_list[i]) + '_' + studyarea + '.shp')
             else:
