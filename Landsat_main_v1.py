@@ -2277,6 +2277,9 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                             NIR_temp_array = NIR_temp_array * QI_temp_array
                         write_raster(NIR_temp_ds, NIR_temp_array, band_path['NIR'], str(filedate) + '_' + str(tile_num) + '_NIR.TIF', raster_datatype=gdal.GDT_Float32)
                         write_raster(SWIR_temp_ds, SWIR_temp_array, band_path['SWIR2'], str(filedate) + '_' + str(tile_num) + '_SWIR2.TIF', raster_datatype=gdal.GDT_Float32)
+                    else:
+                        NIR_temp_ds = gdal.Open(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_NIR.TIF')
+                        SWIRE_temp_ds = gdal.Open(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_SWIR2.TIF')
 
                     if not os.path.exists(band_path['NIR_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF') or not os.path.exists(band_path['SWIR2_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF') or inundation_data_overwritten_factor:
                         if main_coordinate_system is not None and retrieve_srs(NIR_temp_ds) != main_coordinate_system:
@@ -2487,15 +2490,15 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         mndwi_temp = np.delete(mndwi_temp, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 300)))
                         all_dry_sum = mndwi_temp.shape[0]
                         mndwi_temp = np.delete(mndwi_temp, np.argwhere(mndwi_temp > 0.2))
-                        if mndwi_temp.shape[0] < 5:
-                            threshold_array[y_temp, x_temp] = np.nan
-                        elif mndwi_temp.shape[0] < 0.5 * all_dry_sum:
+                        if mndwi_temp.shape[0] < 0.25 * all_dry_sum:
                             threshold_array[y_temp, x_temp] = -1
+                        elif mndwi_temp.shape[0] < 5:
+                            threshold_array[y_temp, x_temp] = np.nan
                         else:
                             mndwi_temp_std = np.nanstd(mndwi_temp)
                             mndwi_ave = np.mean(mndwi_temp)
                             threshold_array[y_temp, x_temp] = mndwi_ave + std_num * mndwi_temp_std
-                threshold_array[threshold_array < -0.50] = np.nan
+                # threshold_array[threshold_array < -0.50] = np.nan
                 threshold_array[threshold_array > 0.2] = 0.2
                 write_raster(ds_temp, threshold_array, inundation_local_dic['local_threshold_map_' + study_area], 'threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
 
