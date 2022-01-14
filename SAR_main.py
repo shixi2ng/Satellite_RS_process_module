@@ -172,6 +172,7 @@ def generate_process_sar_dc(sa_vv_filepath, root_path, study_area_name='BSZ', pr
             monsoon_cube[monsoon_cube > 1] = np.nan
             dry_cube[dry_cube > 1] = np.nan
             dry_ref = np.mean(dry_cube, axis=2)
+            dry_min = np.min(dry_cube, axis=2)
             file_seq = 0
             ds_temp = gdal.Open(sa_vv_file[0])
             for monsoon_date_temp in monsoon_date:
@@ -182,7 +183,7 @@ def generate_process_sar_dc(sa_vv_filepath, root_path, study_area_name='BSZ', pr
                             if np.isnan(array_temp[y, x]) or np.isnan(dry_ref[y, x]):
                                 array_temp[y, x] = np.nan
                             else:
-                                array_temp[y, x] = min(array_temp[y, x], dry_ref[y, x])
+                                array_temp[y, x] = min(array_temp[y, x], dry_min[y, x])
                     NDFI = (dry_ref - array_temp) / (dry_ref + array_temp)
                     Landsat_main_v1.write_raster(ds_temp, NDFI, NDFI_folder, str(monsoon_date_temp) + '_NDFI.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
                 if not os.path.exists(NDFVI_folder + str(monsoon_date_temp) + '_NDFVI.tif'):
@@ -224,4 +225,4 @@ studyarea_shp_f = root_path_f + 'shpfile\\baishazhou.shp'
 S1_metadata = generate_sentinel1_metadata(original_file_path_f, unzipped_file_path_f, corrupted_file_path_f, root_path_f, unzipped_para=False)
 extract_vv_file(unzipped_file_path_f, original_vv_file_f)
 extract_by_shp(original_vv_file_f, root_path_f, studyarea_shp_f, study_area_name='BSZ')
-generate_process_s1_dc(root_path_f + 'BSZ_VV_tiffile\\', root_path_f, study_area_name='BSZ', process_strategy='NDFI', monsoon_month=[6, 10])
+generate_process_sar_dc(root_path_f + 'BSZ_VV_tiffile\\', root_path_f, study_area_name='BSZ', process_strategy='NDFI', monsoon_month=[6, 10])

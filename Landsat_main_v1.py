@@ -29,7 +29,7 @@ import pyqtgraph.exporters
 from pyqtgraph.Qt import QtGui, QtCore
 import PyQt5
 import subprocess
-all_supported_vi_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC']
+all_supported_vi_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC', 'AWEI']
 phase0_time, phase1_time, phase2_time, phase3_time, phase4_time = 0, 0, 0, 0, 0
 
 
@@ -1547,6 +1547,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             else:
                                 RED_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B3.TIF')
                                 NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4.TIF')
+
                         elif constructed_vi['EVI_factor']:
                             print('Start processing Red, Blue and NIR band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
                             if scan_line_correction:
@@ -1562,7 +1563,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                                 NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4.TIF')
                                 BLUE_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B1.TIF')
 
-                        if constructed_vi['MNDWI_factor']:
+                        if constructed_vi['MNDWI_factor'] and not constructed_vi['AWEI_factor']:
                             print('Start processing Green and MIR band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
                             if scan_line_correction:
                                 if not os.path.exists(unzipped_file_path_f + i + '_SR_B5_SLC.TIF') or not os.path.exists(unzipped_file_path_f + i + '_SR_B2_SLC.TIF'):
@@ -1573,6 +1574,21 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             else:
                                 MIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5.TIF')
                                 GREEN_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B2.TIF')
+                        elif constructed_vi['AWEI_factor']:
+                            print('Start processing Green NIR SWIR and MIR2 band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
+                            if scan_line_correction:
+                                if not os.path.exists(
+                                        unzipped_file_path_f + i + '_SR_B5_SLC.TIF') or not os.path.exists(
+                                        unzipped_file_path_f + i + '_SR_B2_SLC.TIF'):
+                                    fill_landsat7_gap(unzipped_file_path_f + i + '_SR_B5.TIF')
+                                    fill_landsat7_gap(unzipped_file_path_f + i + '_SR_B2.TIF')
+                                MIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5_SLC.TIF')
+                                GREEN_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B2_SLC.TIF')
+                            else:
+                                MIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5.TIF')
+                                GREEN_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B2.TIF')
+                                MIR2_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B7.TIF')
+                                NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4.TIF')
 
                     elif 'LT05' in i:
                         # Input Raster
@@ -1585,11 +1601,16 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             RED_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B3.TIF')
                             NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4.TIF')
                             BLUE_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B1.TIF')
-
-                        if constructed_vi['MNDWI_factor']:
+                        if constructed_vi['MNDWI_factor'] and not constructed_vi['AWEI_factor']:
                             print('Start processing Green and MIR band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
                             MIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5.TIF')
                             GREEN_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B2.TIF')
+                        elif constructed_vi['AWEI_factor']:
+                            print('Start processing Green NIR SWIR and MIR2 band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
+                            MIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5.TIF')
+                            GREEN_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B2.TIF')
+                            MIR2_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B7.TIF')
+                            NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B4.TIF')
 
                     elif 'LC08' in i:
                         # Input Raster
@@ -1603,10 +1624,16 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5.TIF')
                             BLUE_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B2.TIF')
 
-                        if constructed_vi['MNDWI_factor']:
+                        if constructed_vi['MNDWI_factor'] and not constructed_vi['AWEI_factor']:
                             print('Start processing Green and MIR band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
                             MIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B6.TIF')
                             GREEN_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B3.TIF')
+                        elif constructed_vi['AWEI_factor']:
+                            print('Start processing Green NIR SWIR and MIR2 band of the ' + i + ' file(' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
+                            MIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B6.TIF')
+                            GREEN_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B3.TIF')
+                            MIR2_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B7.TIF')
+                            NIR_temp_ds = gdal.Open(unzipped_file_path_f + i + '_SR_B5.TIF')
                     else:
                         print('The Original Tiff files are not belonging to Landsat 7 or 8')
                     QI_temp_ds = gdal.Open(unzipped_file_path_f + i + '_QA_PIXEL.TIF')
@@ -1617,7 +1644,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                         NIR_temp_array = dataset2array(NIR_temp_ds)
                         NIR_temp_array[NIR_temp_array < 0] = 0
                         RED_temp_array[RED_temp_array < 0] = 0
-                    if constructed_vi['MNDWI_factor']:
+                    if constructed_vi['MNDWI_factor'] or constructed_vi['AWEI_factor']:
                         GREEN_temp_array = dataset2array(GREEN_temp_ds)
                         MIR_temp_array = dataset2array(MIR_temp_ds)
                         MIR_temp_array[MIR_temp_array < 0] = 0
@@ -1625,6 +1652,11 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                     if constructed_vi['EVI_factor']:
                         BLUE_temp_array = dataset2array(BLUE_temp_ds)
                         BLUE_temp_array[BLUE_temp_array < 0] = 0
+                    if constructed_vi['AWEI_factor']:
+                        NIR_temp_array = dataset2array(NIR_temp_ds)
+                        MIR2_temp_array = dataset2array(MIR2_temp_ds)
+                        MIR2_temp_array[MIR2_temp_array < 0] = 0
+                        NIR_temp_array[NIR_temp_array < 0] = 0
                     # Process QI array
                     QI_temp_array = dataset2array(QI_temp_ds, Band_factor=False)
                     QI_temp_array[QI_temp_array == 1] = np.nan
@@ -1690,6 +1722,23 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             write_raster(RED_temp_ds, NDVI_temp_array, constructed_vi['NDVI_path'], str(filedate) + '_' + str(tile_num) + '_NDVI.TIF', raster_datatype=gdal.GDT_Int16)
                         else:
                             write_raster(RED_temp_ds, NDVI_temp_array, constructed_vi['NDVI_path'], str(filedate) + '_' + str(tile_num) + '_NDVI.TIF')
+                        end_time = time.time()
+                        print('Finished in ' + str(end_time - start_time) + ' s')
+                    if constructed_vi['AWEI_factor']:
+                        print('Start generating AWEI file ' + i + ' (' + str(p + 1) + ' of ' + str(file_metadata_f.shape[0]) + ')')
+                        start_time = time.time()
+                        AWEI_temp_array = 4 * (GREEN_temp_array - MIR_temp_array) - (0.25 * NIR_temp_array + 2.75 * MIR2_temp_array)
+                        AWEI_temp_array[AWEI_temp_array > 3.2] = 3.2
+                        AWEI_temp_array[AWEI_temp_array < -3.2] = -3.2
+                        if cloud_removal_para:
+                            AWEI_temp_array = AWEI_temp_array * QI_temp_array
+                        if size_control_factor:
+                            AWEI_temp_array = AWEI_temp_array * 10000
+                            AWEI_temp_array[np.isnan(AWEI_temp_array)] = -32768
+                            AWEI_temp_array = AWEI_temp_array.astype(np.int16)
+                            write_raster(RED_temp_ds, AWEI_temp_array, constructed_vi['AWEI_path'], str(filedate) + '_' + str(tile_num) + '_AWEI.TIF', raster_datatype=gdal.GDT_Int16)
+                        else:
+                            write_raster(RED_temp_ds, AWEI_temp_array, constructed_vi['AWEI_path'], str(filedate) + '_' + str(tile_num) + '_AWEI.TIF')
                         end_time = time.time()
                         print('Finished in ' + str(end_time - start_time) + ' s')
                     if constructed_vi['OSAVI_factor']:
@@ -1817,10 +1866,13 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 ds_temp = gdal.Open(file_input)
                 array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
                 array_temp[:, :] = 1
+                remove_all_file_and_folder(file_filter(root_path_f, ['temp', '.TIF'], and_or_factor='and'))
                 write_raster(ds_temp, array_temp, root_path_f, 'temp_sa.TIF', raster_datatype=gdal.GDT_Int16)
                 if retrieve_srs(ds_temp) != main_coordinate_system:
-                    gdal.Warp(root_path_f + 'temp_sa.TIF', root_path_f + 'temp_sa.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
-                gdal.Warp(root_path_f + 'temp2.TIF', root_path_f + 'temp_sa.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
+                    gdal.Warp(root_path_f + 'temp_sa2.TIF', root_path_f + 'temp_sa.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
+                    gdal.Warp(root_path_f + 'temp2.TIF', root_path_f + 'temp_sa2.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
+                else:
+                    gdal.Warp(root_path_f + 'temp2.TIF', root_path_f + 'temp_sa.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
                 ds_sa_temp = gdal.Open(root_path_f + 'temp2.TIF')
                 ds_sa_array = ds_sa_temp.GetRasterBand(1).ReadAsArray()
                 ds_sa_array[:, :] = 1
@@ -1855,7 +1907,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
             dc_vi[VI + '_input'] = file_filter(clipped_vi[VI + '_path'], [VI])
             create_folder(dc_vi[VI + '_path'])
         # File consistency check
-        file_consistency_check(VI_clipped_path_temp, VI_list, files_in_same_folder=False)
+        # file_consistency_check(clipped_vi[VI + '_path'], VI_list, files_in_same_folder=False)
         for VI in VI_list:
             if dc_overwritten_para or not os.path.exists(dc_vi[VI + '_path'] + VI + '_datacube.npy') or not os.path.exists(dc_vi[VI + '_path'] + 'date.npy'):
                 print('Start processing ' + VI + ' datacube of the ' + study_area + '.')
@@ -2059,6 +2111,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
     if global_local_factor is None:
         global_factor = True
         local_factor = True
+        AWEI_factor = True
     elif global_local_factor == 'global':
         global_factor = True
         local_factor = False
@@ -2162,14 +2215,15 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             band_list = ['NIR', 'SWIR2']
             band_path = {}
             for band in band_list:
-                band_path[band] = root_path_f + 'Landsat_' + study_area + '_VI\\' + str(band) + '\\'
+                band_path[band] = root_path_f + 'Landsat_constructed_index\\' + str(band) + '\\'
+                band_path[band + '_sa'] = root_path_f + 'Landsat_' + study_area + '_VI\\' + str(band) + '\\'
                 create_folder(band_path[band])
             for p in range(file_metadata_f.shape[0]):
                 if file_metadata_f['Tier_Level'][p] == 'T1':
                     i = file_metadata_f['FileID'][p]
                     filedate = file_metadata_f['Date'][p]
                     tile_num = file_metadata_f['Tile_Num'][p]
-                    if not os.path.exists(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF') or not os.path.exists(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF') or inundation_data_overwritten_factor:
+                    if not os.path.exists(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_NIR.TIF') or not os.path.exists(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_SWIR2.TIF') or inundation_data_overwritten_factor:
                         start_time = time.time()
                         # Input Raster
                         if 'LE07' in i or 'LT05' in i:
@@ -2220,24 +2274,26 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         if cloud_removal_para:
                             SWIR_temp_array = SWIR_temp_array * QI_temp_array
                             NIR_temp_array = NIR_temp_array * QI_temp_array
-                        write_raster(NIR_temp_ds, NIR_temp_array, band_path['NIR'], 'temp.TIF', raster_datatype=gdal.GDT_Float32)
-                        if main_coordinate_system is not None and retrieve_srs(NIR_temp_ds) != main_coordinate_system:
-                            gdal.Warp(band_path['NIR'] + 'temp2.TIF', band_path['NIR'] + 'temp.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
-                            gdal.Warp(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR'] + 'temp2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
-                        else:
-                            gdal.Warp(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR'] + 'temp.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
+                        write_raster(NIR_temp_ds, NIR_temp_array, band_path['NIR'], str(filedate) + '_' + str(tile_num) + '_NIR.TIF', raster_datatype=gdal.GDT_Float32)
+                        write_raster(SWIR_temp_ds, SWIR_temp_array, band_path['SWIR2'], str(filedate) + '_' + str(tile_num) + '_SWIR2.TIF', raster_datatype=gdal.GDT_Float32)
 
-                        write_raster(SWIR_temp_ds, SWIR_temp_array, band_path['SWIR2'], 'temp.TIF', raster_datatype=gdal.GDT_Float32)
-                        if main_coordinate_system is not None and retrieve_srs(SWIR_temp_ds) != main_coordinate_system:
-                            gdal.Warp(band_path['SWIR2'] + 'temp2.TIF', band_path['SWIR2'] + 'temp.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
-                            gdal.Warp(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF', band_path['SWIR2'] + 'temp2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
+                    if not os.path.exists(band_path['NIR_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF') or not os.path.exists(band_path['SWIR2_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF') or inundation_data_overwritten_factor:
+                        if main_coordinate_system is not None and retrieve_srs(NIR_temp_ds) != main_coordinate_system:
+                            gdal.Warp(band_path['NIR_sa'] + 'temp2.TIF', band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_NIR.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
+                            gdal.Warp(band_path['NIR_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR_sa'] + 'temp2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
                         else:
-                            gdal.Warp(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF', band_path['SWIR2'] + 'temp.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True,dstNodata=np.nan, xRes=30, yRes=30)
+                            gdal.Warp(band_path['NIR_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_NIR.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
+
+                        if main_coordinate_system is not None and retrieve_srs(SWIR_temp_ds) != main_coordinate_system:
+                            gdal.Warp(band_path['SWIR2_sa'] + 'temp2.TIF', band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_SWIR2.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
+                            gdal.Warp(band_path['SWIR2_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF', band_path['SWIR2_sa'] + 'temp2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
+                        else:
+                            gdal.Warp(band_path['SWIR2_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF', band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_SWIR2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True,dstNodata=np.nan, xRes=30, yRes=30)
                         try:
-                            os.remove(band_path['NIR'] + 'temp.TIF')
-                            os.remove(band_path['SWIR2'] + 'temp.TIF')
-                            os.remove(band_path['NIR'] + 'temp2.TIF')
-                            os.remove(band_path['SWIR2'] + 'temp2.TIF')
+                            os.remove(band_path['NIR_sa'] + 'temp.TIF')
+                            os.remove(band_path['SWIR2_sa'] + 'temp.TIF')
+                            os.remove(band_path['NIR_sa'] + 'temp2.TIF')
+                            os.remove(band_path['SWIR2_sa'] + 'temp2.TIF')
                         except:
                             pass
 
@@ -2288,7 +2344,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                             for y_temp in range(MNDWI_array.shape[0]):
                                 for x_temp in range(MNDWI_array.shape[1]):
                                     if MNDWI_array[y_temp, x_temp] == -32768 or np.isnan(NIR_array[y_temp, x_temp]) or np.isnan(SWIR2_array[y_temp, x_temp]):
-                                        inundated_array[y_temp, x_temp] = -32768
+                                        inundated_array[y_temp, x_temp] = -2
                                     elif MNDWI_array[y_temp, x_temp] > global_threshold[0]:
                                         inundated_array[y_temp, x_temp] = 1
                                     elif MNDWI_array[y_temp, x_temp] > global_threshold[1] and NIR_array[y_temp, x_temp] < global_threshold[2] and SWIR2_array[y_temp, x_temp] < global_threshold[3]:
@@ -2296,7 +2352,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                                     else:
                                         inundated_array[y_temp, x_temp] = 0
                         inundated_array = reassign_sole_pixel(inundated_array, Nan_value=-32768, half_size_window=2)
-                        inundated_array[sa_map == -32768] = -32768
+                        inundated_array[sa_map == -32768] = -2
                         write_raster(NIR_file_ds, inundated_array, inundation_global_dic['global_' + study_area], 'individual_tif\\global_' + str(doy) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                     else:
                         inundated_ds = gdal.Open(inundation_global_dic['global_' + study_area] + 'individual_tif\\global_' + str(doy) + '.TIF')
@@ -2330,6 +2386,34 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_global_inundation_dic.npy', inundation_global_dic)
             inundation_approach_dic['approach_list'].append('global')
 
+        if AWEI_factor:
+            if os.path.exists(root_path_f + 'Landsat_key_dic\\' + study_area + '_AWEI_inundation_dic.npy'):
+                inundation_AWEI_dic = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_AWEI_inundation_dic.npy', allow_pickle=True).item()
+            else:
+                inundation_AWEI_dic = {}
+            # Generate the inundation condition
+            try:
+                all_filename = file_filter(root_path_f + 'Landsat_' + study_area + '_VI\\AWEI\\', '.TIF')
+                ds_temp = gdal.Open(all_filename[0])
+                sdc_vi_f = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_sdc_vi.npy', allow_pickle=True).item()
+                sdc_vi_f['doy'] = np.load(sdc_vi_f['AWEI_path'] + 'doy.npy')
+                AWEI_sdc = np.load(sdc_vi_f['AWEI_path'] + 'AWEI_sequenced_datacube.npy')
+                doy_array = sdc_vi_f['doy']
+            except:
+                print('Please double check the AWEI sequenced datacube availability')
+                sys.exit(-1)
+            inundation_AWEI_dic['AWEI_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_AWEI\\'
+            create_folder(inundation_AWEI_dic['AWEI_' + study_area])
+            create_folder(inundation_AWEI_dic['AWEI_' + study_area] + 'individual_tif\\')
+            for doy in range(AWEI_sdc.shape[2]):
+                if not os.path.exists(inundation_AWEI_dic['AWEI_' + study_area] + 'individual_tif\\AWEI_' + str(doy_array[doy]) + '.TIF'):
+                    AWEI_temp = AWEI_sdc[:, :, doy]
+                    AWEI_temp[AWEI_temp >= 0] = 1
+                    AWEI_temp[AWEI_temp < 0] = 0
+                    AWEI_temp[np.isnan(AWEI_temp)] = -2
+                    write_raster(ds_temp, AWEI_temp, inundation_AWEI_dic['AWEI_' + study_area] + 'individual_tif\\', 'AWEI_' + str(doy_array[doy]) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+            np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_AWEI_inundation_dic.npy', inundation_AWEI_dic)
+            inundation_approach_dic['approach_list'].append('AWEI')
         # (1') Inundation area identification by local method (DYNAMIC MNDWI THRESHOLD using time-series MNDWI calculated by Landsat ETM+ and TM)
         if local_factor:
             if os.path.exists(root_path_f + 'Landsat_key_dic\\' + study_area + '_local_inundation_dic.npy'):
@@ -2399,22 +2483,26 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         mndwi_temp = np.concatenate(MNDWI_sdc_temp[y_temp, x_temp, :], axis=None)
                         doy_array_pixel = np.delete(doy_array_pixel, np.argwhere(np.isnan(mndwi_temp) == 1))
                         mndwi_temp = np.delete(mndwi_temp, np.argwhere(np.isnan(mndwi_temp) == 1))
-                        mndwi_temp = np.delete(mndwi_temp, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 285)))
-                        mndwi_temp = np.delete(mndwi_temp, np.argwhere(mndwi_temp > 0))
-                        if mndwi_temp.shape[0] < 10:
+                        mndwi_temp = np.delete(mndwi_temp, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 300)))
+                        all_dry_sum = mndwi_temp.shape[0]
+                        mndwi_temp = np.delete(mndwi_temp, np.argwhere(mndwi_temp > 0.2))
+                        if mndwi_temp.shape[0] < 5:
                             threshold_array[y_temp, x_temp] = np.nan
+                        elif mndwi_temp.shape[0] < 0.5 * all_dry_sum:
+                            threshold_array[y_temp, x_temp] = -1
                         else:
                             mndwi_temp_std = np.nanstd(mndwi_temp)
                             mndwi_ave = np.mean(mndwi_temp)
                             threshold_array[y_temp, x_temp] = mndwi_ave + std_num * mndwi_temp_std
                 threshold_array[threshold_array < -0.50] = np.nan
-                threshold_array[threshold_array > 0] = 0
+                threshold_array[threshold_array > 0.2] = 0.2
                 write_raster(ds_temp, threshold_array, inundation_local_dic['local_threshold_map_' + study_area], 'threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
 
             doy_array_temp = copy.copy(doy_array)
             MNDWI_sdc_temp = copy.copy(MNDWI_sdc)
             inundation_local_dic['local_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_local\\'
             create_folder(inundation_local_dic['local_' + study_area])
+            create_folder(inundation_local_dic['local_' + study_area] + 'individual_tif\\')
             inundated_dc = np.array([])
             local_threshold_ds = gdal.Open(inundation_local_dic['local_threshold_map_' + study_area] + 'threshold_map.TIF')
             local_threshold = local_threshold_ds.GetRasterBand(1).ReadAsArray().astype(np.float)
@@ -2434,7 +2522,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                             inundation_map[i[0], i[1]] = 1
                         inundation_map = reassign_sole_pixel(inundation_map, Nan_value=-2, half_size_window=2)
                         inundation_map[np.isnan(sa_map)] = -32768
-                        write_raster(ds_temp, inundation_map, inundation_local_dic['local_' + study_area], 'local_' + str(doy_array_temp[date_temp]) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+                        write_raster(ds_temp, inundation_map, inundation_local_dic['local_' + study_area] + 'individual_tif\\', 'local_' + str(doy_array_temp[date_temp]) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                     else:
                         inundated_ds = gdal.Open(inundation_local_dic['local_' + study_area] + 'individual_tif\\local_' + str(doy_array_temp[date_temp]) + '.TIF')
                         inundation_map = inundated_ds.GetRasterBand(1).ReadAsArray()
@@ -2488,29 +2576,45 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 sample_datelist = np.unique(np.array([i[i.find('\\output\\') + 8: i.find('\\output\\') + 16] for i in sample_all]).astype(np.int))
                 global_initial_factor = True
                 local_initial_factor = True
+                AWEI_initial_factor = True
                 for sample_date in sample_datelist:
                     pos = np.argwhere(sample_rs_link_list == sample_date)
                     if pos.shape[0] == 0:
                         print('Please make sure all the sample are in the metadata file!')
-                        sys.exit(-1)
                     else:
-                        sample_all_ds = gdal.Open(sample_data_path + study_area + '\\output\\' + str(sample_date) + '_all.tif')
-                        sample_water_ds = gdal.Open(sample_data_path + study_area + '\\output\\' + str(sample_date) + '_water.tif')
+                        local_inundation_dic = np.load(
+                            root_path_f + 'Landsat_key_dic\\' + study_area + '_local_inundation_dic.npy',
+                            allow_pickle=True).item()
+                        gdal.Warp(local_inundation_dic['local_' + study_area] + str(sample_date) + '_all.TIF', sample_data_path + study_area + '\\output\\' + str(sample_date) + '_all.tif', cutlineDSName=ROI_mask_f, cropToCutline=True, xRes=30, yRes=30)
+                        gdal.Warp(local_inundation_dic['local_' + study_area] + str(sample_date) + '_water.TIF',
+                                  sample_data_path + study_area + '\\output\\' + str(sample_date) + '_water.tif',
+                                  cutlineDSName=ROI_mask_f, cropToCutline=True, xRes=30, yRes=30)
+                        sample_all_ds = gdal.Open(local_inundation_dic['local_' + study_area] + str(sample_date) + '_all.TIF')
+                        sample_water_ds = gdal.Open(local_inundation_dic['local_' + study_area] + str(sample_date) + '_water.TIF')
                         sample_all_temp_raster = sample_all_ds.GetRasterBand(1).ReadAsArray().astype(np.int16)
                         sample_water_temp_raster = sample_water_ds.GetRasterBand(1).ReadAsArray().astype(np.int16)
                         landsat_doy = sample_rs_link_list[pos[0][0], 1] // 10000 * 1000 + datetime.date(sample_rs_link_list[pos[0][0], 1] // 10000, np.mod(sample_rs_link_list[pos[0][0], 1], 10000) // 100, np.mod(sample_rs_link_list[pos[0][0], 1], 100)).toordinal() - datetime.date(sample_rs_link_list[pos[0][0], 1] // 10000, 1, 1).toordinal() + 1
                         sample_all_temp_raster[sample_all_temp_raster != 0] = -2
+                        sample_all_temp_raster[np.isnan(sample_all_temp_raster)] = -2
                         sample_all_temp_raster[sample_water_temp_raster == 0] = 1
+                        sample_all_temp_raster_1 = copy.copy(sample_all_temp_raster).astype(np.float)
+                        sample_all_temp_raster_1[sample_all_temp_raster_1 == -2] = np.nan
                         if local_factor:
-                            local_inundation_dic = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_local_inundation_dic.npy', allow_pickle=True).item()
                             landsat_local_temp_ds = gdal.Open(local_inundation_dic['local_' + study_area] + 'individual_tif\\local_' + str(landsat_doy) + '.TIF')
                             landsat_local_temp_raster = landsat_local_temp_ds.GetRasterBand(1).ReadAsArray()
                             confusion_matrix_temp = confusion_matrix_2_raster(landsat_local_temp_raster, sample_all_temp_raster, nan_value=-2)
                             confusion_dic[study_area + '_local_' + str(sample_date)] = confusion_matrix_temp
+                            landsat_local_temp_raster = landsat_local_temp_raster.astype(np.float)
+                            landsat_local_temp_raster[landsat_local_temp_raster == -2] = np.nan
+                            local_error_distribution = landsat_local_temp_raster - sample_all_temp_raster_1
+                            local_error_distribution[np.isnan(local_error_distribution)] = 0
+                            local_error_distribution[local_error_distribution != 0] = 1
                             if local_initial_factor is True:
                                 confusion_matrix_local_sum_temp = confusion_matrix_temp
                                 local_initial_factor = False
+                                local_error_distribution_sum = local_error_distribution
                             elif local_initial_factor is False:
+                                local_error_distribution_sum = local_error_distribution_sum + local_error_distribution
                                 confusion_matrix_local_sum_temp[1:, 1:] = confusion_matrix_local_sum_temp[1:, 1:] + confusion_matrix_temp[1:, 1:]
                             # confusion_pandas = pandas.crosstab(pandas.Series(sample_all_temp_raster, name='Actual'), pandas.Series(landsat_local_temp_raster, name='Predict'))
                         if global_factor:
@@ -2519,17 +2623,52 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                             landsat_global_temp_raster = landsat_global_temp_ds.GetRasterBand(1).ReadAsArray()
                             confusion_matrix_temp = confusion_matrix_2_raster(landsat_global_temp_raster, sample_all_temp_raster, nan_value=-2)
                             confusion_dic[study_area + '_global_' + str(sample_date)] = confusion_matrix_temp
+                            landsat_global_temp_raster = landsat_global_temp_raster.astype(np.float)
+                            landsat_global_temp_raster[landsat_global_temp_raster == -2] = np.nan
+                            global_error_distribution = landsat_global_temp_raster - sample_all_temp_raster_1
+                            global_error_distribution[np.isnan(global_error_distribution)] = 0
+                            global_error_distribution[global_error_distribution != 0] = 1
                             if global_initial_factor is True:
                                 confusion_matrix_global_sum_temp = confusion_matrix_temp
                                 global_initial_factor = False
+                                global_error_distribution_sum = global_error_distribution
                             elif global_initial_factor is False:
+                                global_error_distribution_sum = global_error_distribution_sum + global_error_distribution
                                 confusion_matrix_global_sum_temp[1:, 1:] = confusion_matrix_global_sum_temp[1:, 1:] + confusion_matrix_temp[1:, 1:]
+                        if AWEI_factor:
+                            AWEI_inundation_dic = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_AWEI_inundation_dic.npy', allow_pickle=True).item()
+                            landsat_AWEI_temp_ds = gdal.Open(AWEI_inundation_dic['AWEI_' + study_area] + 'individual_tif\\AWEI_' + str(landsat_doy) + '.TIF')
+                            landsat_AWEI_temp_raster = landsat_AWEI_temp_ds.GetRasterBand(1).ReadAsArray()
+                            confusion_matrix_temp = confusion_matrix_2_raster(landsat_AWEI_temp_raster, sample_all_temp_raster, nan_value=-2)
+                            confusion_dic[study_area + '_AWEI_' + str(sample_date)] = confusion_matrix_temp
+                            landsat_AWEI_temp_raster = landsat_AWEI_temp_raster.astype(np.float)
+                            landsat_AWEI_temp_raster[landsat_AWEI_temp_raster == -2] = np.nan
+                            AWEI_error_distribution = landsat_AWEI_temp_raster - sample_all_temp_raster_1
+                            AWEI_error_distribution[np.isnan(AWEI_error_distribution)] = 0
+                            AWEI_error_distribution[AWEI_error_distribution != 0] = 1
+                            if AWEI_initial_factor is True:
+                                confusion_matrix_AWEI_sum_temp = confusion_matrix_temp
+                                AWEI_initial_factor = False
+                                AWEI_error_distribution_sum = AWEI_error_distribution
+                            elif AWEI_initial_factor is False:
+                                AWEI_error_distribution_sum = AWEI_error_distribution_sum + AWEI_error_distribution
+                                confusion_matrix_AWEI_sum_temp[1:, 1:] = confusion_matrix_AWEI_sum_temp[1:, 1:] + confusion_matrix_temp[1:, 1:]
                 confusion_matrix_global_sum_temp = generate_error_inf(confusion_matrix_global_sum_temp)
+                confusion_matrix_AWEI_sum_temp = generate_error_inf(confusion_matrix_AWEI_sum_temp)
                 confusion_matrix_local_sum_temp = generate_error_inf(confusion_matrix_local_sum_temp)
+                confusion_dic['AWEI_acc'] = float(confusion_matrix_AWEI_sum_temp[
+                                                        confusion_matrix_AWEI_sum_temp.shape[0] - 1,
+                                                        confusion_matrix_AWEI_sum_temp.shape[1] - 1][0:-1])
                 confusion_dic['global_acc'] = float(confusion_matrix_global_sum_temp[confusion_matrix_global_sum_temp.shape[0] - 1, confusion_matrix_global_sum_temp.shape[1] - 1][0:-1])
                 confusion_dic['local_acc'] = float(confusion_matrix_local_sum_temp[confusion_matrix_local_sum_temp.shape[0] - 1, confusion_matrix_local_sum_temp.shape[1] - 1][0:-1])
                 xlsx_save(confusion_matrix_global_sum_temp, root_path_f + 'Landsat_Inundation_Condition\\global_' + study_area + '.xlsx')
                 xlsx_save(confusion_matrix_local_sum_temp, root_path_f + 'Landsat_Inundation_Condition\\local_' + study_area + '.xlsx')
+                xlsx_save(confusion_matrix_AWEI_sum_temp, root_path_f + 'Landsat_Inundation_Condition\\AWEI_' + study_area + '.xlsx')
+                write_raster(sample_all_ds, AWEI_error_distribution_sum, root_path_f + 'Landsat_Inundation_Condition\\', str(study_area) + '_Error_dis_AWEI.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+                write_raster(sample_all_ds, global_error_distribution_sum, root_path_f + 'Landsat_Inundation_Condition\\',
+                             str(study_area) + '_Error_dis_global.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+                write_raster(sample_all_ds, local_error_distribution_sum, root_path_f + 'Landsat_Inundation_Condition\\',
+                             str(study_area) + '_Error_dis_local.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                 np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_inundation_acc_dic.npy', confusion_dic)
 
         if landsat_detected_inundation_area is True:
