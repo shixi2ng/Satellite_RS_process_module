@@ -2279,7 +2279,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         write_raster(SWIR_temp_ds, SWIR_temp_array, band_path['SWIR2'], str(filedate) + '_' + str(tile_num) + '_SWIR2.TIF', raster_datatype=gdal.GDT_Float32)
                     else:
                         NIR_temp_ds = gdal.Open(band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_NIR.TIF')
-                        SWIRE_temp_ds = gdal.Open(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_SWIR2.TIF')
+                        SWIR_temp_ds = gdal.Open(band_path['SWIR2'] + str(filedate) + '_' + str(tile_num) + '_SWIR2.TIF')
 
                     if not os.path.exists(band_path['NIR_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF') or not os.path.exists(band_path['SWIR2_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF') or inundation_data_overwritten_factor:
                         if main_coordinate_system is not None and retrieve_srs(NIR_temp_ds) != main_coordinate_system:
