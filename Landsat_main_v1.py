@@ -2115,9 +2115,15 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
     elif global_local_factor == 'global':
         global_factor = True
         local_factor = False
+        AWEI_factor = False
     elif global_local_factor == 'local':
         global_factor = True
         local_factor = False
+        AWEI_factor = False
+    elif global_local_factor == 'AWEI':
+        global_factor = False
+        local_factor = False
+        AWEI_factor = True
     else:
         print('Please input the correct global or local factor')
         sys.exit(-1)
