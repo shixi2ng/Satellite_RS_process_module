@@ -2079,7 +2079,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
         print('Please input the global threshold as a list with four number in it')
         sys.exit(-1)
     fundamental_key_dic = np.load(root_path_f + 'Landsat_key_dic\\fundamental_information_dic.npy', allow_pickle=True).item()
-    if fundamental_key_dic['resize_factor']:
+    if fundamental_key_dic['resize_factor'] and global_threshold[0] < 1 and global_threshold[1] < 1:
         global_threshold[0] = global_threshold[0] * 10000
         global_threshold[1] = global_threshold[1] * 10000
 
@@ -2115,9 +2115,15 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
     elif global_local_factor == 'global':
         global_factor = True
         local_factor = False
+        AWEI_factor = False
     elif global_local_factor == 'local':
         global_factor = True
         local_factor = False
+        AWEI_factor = False
+    elif global_local_factor == 'AWEI':
+        global_factor = False
+        local_factor = False
+        AWEI_factor = True
     else:
         print('Please input the correct global or local factor')
         sys.exit(-1)
@@ -2490,7 +2496,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         mndwi_temp = np.delete(mndwi_temp, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 300)))
                         all_dry_sum = mndwi_temp.shape[0]
                         mndwi_temp = np.delete(mndwi_temp, np.argwhere(mndwi_temp > 0.2))
-                        if mndwi_temp.shape[0] < 0.25 * all_dry_sum:
+                        if mndwi_temp.shape[0] < 0.10 * all_dry_sum:
                             threshold_array[y_temp, x_temp] = -1
                         elif mndwi_temp.shape[0] < 5:
                             threshold_array[y_temp, x_temp] = np.nan
