@@ -2218,6 +2218,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 band_path[band] = root_path_f + 'Landsat_constructed_index\\' + str(band) + '\\'
                 band_path[band + '_sa'] = root_path_f + 'Landsat_' + study_area + '_VI\\' + str(band) + '\\'
                 create_folder(band_path[band])
+                create_folder(band_path[band + '_sa'])
             for p in range(file_metadata_f.shape[0]):
                 if file_metadata_f['Tier_Level'][p] == 'T1':
                     i = file_metadata_f['FileID'][p]
@@ -2351,7 +2352,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                                         inundated_array[y_temp, x_temp] = 1
                                     else:
                                         inundated_array[y_temp, x_temp] = 0
-                        inundated_array = reassign_sole_pixel(inundated_array, Nan_value=-32768, half_size_window=2)
+                        # inundated_array = reassign_sole_pixel(inundated_array, Nan_value=-32768, half_size_window=2)
                         inundated_array[sa_map == -32768] = -2
                         write_raster(NIR_file_ds, inundated_array, inundation_global_dic['global_' + study_area], 'individual_tif\\global_' + str(doy) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                     else:
