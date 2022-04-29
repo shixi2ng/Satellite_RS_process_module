@@ -1209,7 +1209,7 @@ class Visualisation_gui(QMainWindow):
             path_temp = self.rootpath
         except:
             path_temp = 'C:\\'
-        self.shpfile = QFileDialog.getOpenFileUrl(self, "Please select the shape file of " + str(self.sa_current), path_temp, "shp files (*.shp)")
+        self.shpfile = QFileDialog.getExistingDirectory(self, "Please select the shape file of " + str(self.sa_current), path_temp)
         self.show_demo()
 
     def update_shp_infor(self):
