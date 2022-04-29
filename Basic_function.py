@@ -3,6 +3,138 @@ import sys
 import numpy as np
 import datetime
 import gdal
+from osgeo import gdal_array, osr
+import shutil
+
+
+def file2raster(filename):
+    try:
+        ds_temp = gdal.Open(filename)
+        raster_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+    except:
+        print('Unknown error occurred during file2raster')
+        sys.exit(-1)
+    return raster_temp
+
+
+def obtain_date_in_file_name(filepath):
+    path_check(filepath)
+    date = 0
+    for i in range(len(filepath)):
+        try:
+            date = int(filepath[i: i+8])
+            break
+        except:
+            pass
+    if date == 0:
+        print('No date obtained in file')
+        sys.exit(-1)
+    else:
+        return date
+
+
+def remove_all_file_and_folder(filter_list):
+    for file in filter_list:
+        if os.path.isdir(str(file)):
+            try:
+                shutil.rmtree(file)
+            except:
+                print('folder cannot be removed')
+        elif os.path.isfile(str(file)):
+            try:
+                os.remove(file)
+            except:
+                print('file cannot be removed')
+        else:
+            print('Something went wrong during the file removal')
+
+
+
+def retrieve_srs(ds_temp):
+    proj = osr.SpatialReference(wkt=ds_temp.GetProjection())
+    srs_temp = proj.GetAttrValue('AUTHORITY', 1)
+    srs_temp = 'EPSG:' + str(srs_temp)
+    return srs_temp
+
+
+def path_check(path):
+    try:
+        statue = os.path.exists(path)
+        if statue:
+            pass
+        else:
+            print("Invalid path")
+            sys.exit(-1)
+    except:
+        print("Invalid path")
+        sys.exit(-1)
+
+
+def extract_by_mask(filepath, shpfile, output_path, coordinate=None, xRes=None, yRes=None):
+    path_check(filepath)
+    path_check(shpfile)
+    path_check(output_path)
+    try:
+        if not os.path.exists(output_path + filepath[filepath.rindex('\\')+1:filepath.rindex('.')] + '_' + shpfile[shpfile.rindex('\\')+1: shpfile.rindex('.')] + '.tif'):
+            print('-----------------------Start extraction ----------------------------------')
+            ds = gdal.Open(filepath)
+            transform = ds.GetGeoTransform()
+
+            if xRes is None:
+                xRes = transform[1]
+            elif type(xRes) is not int:
+                print('please input valid Xres!')
+
+            if yRes is None:
+                yRes = -transform[5]
+            elif type(yRes) is not int:
+                print('please input valid Xres!')
+
+            if retrieve_srs(ds) != coordinate and coordinate is not None:
+                TEMP_warp = gdal.Warp(output_path + 'temp.tif', ds, dstSRS=coordinate, xRes=xRes, yRes=yRes)
+                ds = gdal.Open(output_path + 'temp.tif')
+            gdal.Warp(output_path + filepath[filepath.rindex('\\')+1:filepath.rindex('.')] + '_' + shpfile[shpfile.rindex('\\')+1: shpfile.rindex('.')] + '.tif', ds, cutlineDSName=shpfile, cropToCutline=True, xRes=xRes, yRes=yRes)
+            print('Successfully extract ' + filepath[filepath.rindex('\\')+1:filepath.rindex('.')] + '_' + shpfile[shpfile.rindex('\\')+1: shpfile.rindex('.')])
+            print('-----------------------End extraction ----------------------------------')
+    except:
+        print('Unknown error process the tif file')
+    remove_all_file_and_folder(file_filter(output_path, ['temp', '.TIF'], and_or_factor='and'))
+
+
+def query_with_cor(dataset, xcord, ycord, half_width=0, srcnanvalue=np.nan, dstnanvalue=np.nan, raster=None):
+    if type(half_width) != int:
+        print('Please input an int half width!')
+        sys.exit(-1)
+
+    cols = dataset.RasterXSize
+    rows = dataset.RasterYSize
+
+    transform = dataset.GetGeoTransform()
+
+    xOrigin = transform[0]
+    yOrigin = transform[3]
+    pixelWidth = transform[1]
+    pixelHeight = -transform[5]
+
+    if raster is None:
+        raster = dataset.GetRasterBand(1).ReadAsArray()
+        raster = raster.astype(np.float)
+        raster[raster == srcnanvalue] = np.nan
+
+    if xOrigin < xcord < xOrigin + cols * pixelWidth and yOrigin - rows * pixelHeight < ycord < yOrigin:
+        col = np.floor((xcord - xOrigin) / pixelWidth)
+        row = np.floor((yOrigin - ycord) / pixelHeight)
+        col_min = int(max(col - half_width, 0))
+        row_min = int(max(row - half_width, 0))
+        col_max = int(min(col + half_width, cols)) + 1
+        row_max = int(min(row + half_width, rows)) + 1
+        if np.isnan(raster[row_min:row_max, col_min:col_max]).all():
+            return dstnanvalue
+        else:
+            return np.nanmean(raster[row_min:row_max, col_min:col_max])
+    else:
+        print('The coordinate out of range!')
+        return dstnanvalue
 
 
 def doy2date(self):
