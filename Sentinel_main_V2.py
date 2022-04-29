@@ -21,6 +21,15 @@ from scipy import ndimage
 global Sentinel2_metadata, mndwi_threshold, VI_dic
 
 
+# Input Snappy data style
+snappy.GPF.getDefaultInstance().getOperatorSpiRegistry().loadOperatorSpis()
+HashMap = snappy.jpy.get_type('java.util.HashMap')
+WriteOp = snappy.jpy.get_type('org.esa.snap.core.gpf.common.WriteOp')
+BandDescriptor = snappy.jpy.get_type('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor')
+np.seterr(divide='ignore', invalid='ignore')
+
+
+
 def zip_file_filter(file_name_list):
     zip_file = []
     for file in file_name_list:
@@ -208,8 +217,8 @@ def cor_to_pixel(two_corner_coordinate, study_area_example_file_path):
     return pixel_limitation_f
 
 
-def generate_vi_file(VI_list_f, i, output_path_f, metadata_size_f, overwritten_para):
-    all_supported_vi_list = ['QI', 'NDVI', 'NDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI', 'NDVI_RE', 'NDVI_2', 'NDVI_RE2']
+def generate_vi_file(VI_list_f, i, output_path_f, metadata_size_f, overwritten_para, Sentinel2_metadata):
+    all_supported_vi_list = ['QI', 'all_band', 'NDVI', 'NDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI', 'NDVI_RE', 'NDVI_2', 'NDVI_RE2']
     containing_result = list_containing_check(VI_list_f, all_supported_vi_list)
     if type(VI_list_f) == list and containing_result:
         temp_file_factor = False
@@ -230,6 +239,23 @@ def generate_vi_file(VI_list_f, i, output_path_f, metadata_size_f, overwritten_p
                 write_subset_band(temp_S2file_resample, 'quality_scene_classification', QI_output_path_f, QI_file_name)
                 end_temp = time.time()
                 print('Finish processing QI data in ' + str(end_temp - start_temp))
+
+            elif (VI == 'all_band' and overwritten_para) or (VI == 'all_band' and not overwritten_para and 0 in [os.path.exists(
+                    output_path_f + 'Sentinel2_L2A_output\\all_band\\' + str(Sentinel2_metadata.iat[i, 5]) + '_' + str(Sentinel2_metadata.iat[i, 4]) + str(Sentinel2_metadata.iat[i, 2]) + '_' + str(Sentinel2_metadata.iat[i, 4]) + '_' + str(q) + '.tif') for q in ['B1', 'B11', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B12', 'B9']]):
+                if not temp_file_factor:
+                    temp_S2file_path = Sentinel2_metadata.iat[i, 1]
+                    temp_S2file = snappy.ProductIO.readProduct(temp_S2file_path)
+                    (temp_S2file_resample, temp_width, temp_height, ul_Pos, ur_Pos, lr_Pos, ll_Pos) = s2_resample(temp_S2file)
+                    temp_file_factor = True
+                start_temp = time.time()
+                print('Start processing all band data (' + str(i + 1) + ' of ' + str(metadata_size_f) + ')')
+                all_band_output_path_f = output_path_f + 'Sentinel2_L2A_output\\all_band\\'
+                create_folder(all_band_output_path_f)
+                for band in ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B11', 'B12']:
+                    all_band_file_name = str(Sentinel2_metadata.iat[i, 5]) + '_' + str(Sentinel2_metadata.iat[i, 4]) + str(Sentinel2_metadata.iat[i, 2]) + '_' + str(Sentinel2_metadata.iat[i, 4]) + '_' + str(band) + '.tif'
+                    write_subset_band(temp_S2file_resample, band, all_band_output_path_f, all_band_file_name)
+                end_temp = time.time()
+                print('Finish processing all band data in ' + str(end_temp - start_temp))
 
             elif (VI == 'NDVI' and overwritten_para) or (VI == 'NDVI' and not overwritten_para and not os.path.exists(
                     output_path_f + 'Sentinel2_L2A_output\\NDVI\\' + str(Sentinel2_metadata.iat[i, 2]) + '_' + str(
@@ -1133,149 +1159,161 @@ def curve_fitting(l2a_output_path_f, VI_list_f, study_area_f, pixel_limitation_f
         sys.exit(-1)
 
 
-# Create Output folder
-file_path = 'E:\\A_Vegetation_Identification\\Wuhan_Sentinel_L2_Original\\aria2\\'
-output_path = 'E:\\A_Vegetation_Identification\\Wuhan_Sentinel_L2_Original\\'
-l2a_output_path = output_path + 'Sentinel2_L2A_output\\'
-QI_output_path = output_path + 'Sentinel2_L2A_output\\QI\\'
-create_folder(l2a_output_path)
-create_folder(QI_output_path)
+def generate_S2_metadata(file_path, output_path):
+    # Remove all the duplicated data
+    dup_data = file_filter(file_path, ['.1.zip'])
+    for dup in dup_data:
+        os.remove(dup)
 
-# Code built-in parameters Configuration
-overwritten_para_vis = False
-overwritten_para_clipped = False
-overwritten_para_cloud = True
-overwritten_para_datacube = True
-overwritten_para_sequenced_datacube = True
-
-# Remove all the duplicated data
-dup_data = file_filter(file_path, ['.1.zip'])
-for dup in dup_data:
-    os.remove(dup)
-
-# Input the file and generate the metadata
-files_name = os.listdir(file_path)
-file_exist = os.path.exists(output_path + 'Metadata.xlsx')
-if file_exist:
-    file_num_correct = pandas.read_excel(output_path + 'Metadata.xlsx').shape[0]
-else:
-    file_num_correct = 0
-
-if not file_exist or file_num_correct != len(zip_file_filter(files_name)):
-    sentinel2_filename = zip_file_filter(files_name)
-    print(sentinel2_filename)
-    corrupted_ori_file, corrupted_file_date, product_path, product_name, sensing_date, orbit_num, tile_num, width, height = (
-        [] for i in range(9))
-    corrupted_factor = 0
-    for sentinel_image in sentinel2_filename:
-        try:
-            unzip_file = zipfile.ZipFile(file_path + sentinel_image)
-            unzip_file.close()
-            product_path.append(file_path + sentinel_image)
-            sensing_date.append(sentinel_image[sentinel_image.find('_20') + 1: sentinel_image.find('_20') + 9])
-            orbit_num.append(sentinel_image[sentinel_image.find('_R') + 2: sentinel_image.find('_R') + 5])
-            tile_num.append(sentinel_image[sentinel_image.find('_T') + 2: sentinel_image.find('_T') + 7])
-        # print(file_information)
-        except:
-            if (not os.path.exists(output_path + 'Corrupted_S2_file')) and corrupted_factor == 0:
-                os.makedirs(output_path + 'Corrupted_S2_file')
-                corrupted_factor = 1
-            print(f'This file is corrupted ' + sentinel_image)
-            corrupted_ori_file.append(sentinel_image)
-            corrupted_file_date.append(sentinel_image[sentinel_image.find('_20') + 1: sentinel_image.find('_20') + 9])
-            shutil.move(file_path + sentinel_image, output_path + 'Corrupted_S2_file\\' + sentinel_image)
-
-    Corrupted_data = pandas.DataFrame(
-        {'Corrupted_file_name': corrupted_ori_file, 'File_Date': corrupted_file_date})
-    if not os.path.exists(output_path + 'Corrupted_data.xlsx'):
-        Corrupted_data.to_excel(output_path + 'Corrupted_data.xlsx')
+    # Input the file and generate the metadata
+    files_name = os.listdir(file_path)
+    file_exist = os.path.exists(output_path + 'Metadata.xlsx')
+    if file_exist:
+        file_num_correct = pandas.read_excel(output_path + 'Metadata.xlsx').shape[0]
     else:
-        Corrupted_data_old_version = pandas.read_excel(output_path + 'Corrupted_data.xlsx')
-        Corrupted_data_old_version.append(Corrupted_data, ignore_index=True)
-        Corrupted_data_old_version.drop_duplicates()
-        Corrupted_data_old_version.to_excel(output_path + 'Corrupted_data.xlsx')
+        file_num_correct = 0
 
-    Sentinel2_metadata = pandas.DataFrame(
-        {'Product_Path': product_path, 'Sensing_Date': sensing_date, 'Orbit_Num': orbit_num,
-         'Tile_Num': tile_num})
-    Sentinel2_metadata.to_excel(output_path + 'Metadata.xlsx')
-    Sentinel2_metadata = pandas.read_excel(output_path + 'Metadata.xlsx')
-else:
-    Sentinel2_metadata = pandas.read_excel(output_path + 'Metadata.xlsx')
+    if not file_exist or file_num_correct != len(zip_file_filter(files_name)):
+        sentinel2_filename = zip_file_filter(files_name)
+        print(sentinel2_filename)
+        corrupted_ori_file, corrupted_file_date, product_path, product_name, sensor_type, sensing_date, orbit_num, tile_num, width, height = (
+            [] for i in range(10))
+        corrupted_factor = 0
+        for sentinel_image in sentinel2_filename:
+            try:
+                unzip_file = zipfile.ZipFile(file_path + sentinel_image)
+                unzip_file.close()
+                product_path.append(file_path + sentinel_image)
+                sensing_date.append(sentinel_image[sentinel_image.find('_20') + 1: sentinel_image.find('_20') + 9])
+                orbit_num.append(sentinel_image[sentinel_image.find('_R') + 2: sentinel_image.find('_R') + 5])
+                tile_num.append(sentinel_image[sentinel_image.find('_T') + 2: sentinel_image.find('_T') + 7])
+                sensor_type.append(sentinel_image[sentinel_image.find('\\S2') + 1: sentinel_image.find('\\S2') + 4])
+            # print(file_information)
+            except:
+                if (not os.path.exists(output_path + 'Corrupted_S2_file')) and corrupted_factor == 0:
+                    os.makedirs(output_path + 'Corrupted_S2_file')
+                    corrupted_factor = 1
+                print(f'This file is corrupted ' + sentinel_image)
+                corrupted_ori_file.append(sentinel_image)
+                corrupted_file_date.append(
+                    sentinel_image[sentinel_image.find('_20') + 1: sentinel_image.find('_20') + 9])
+                shutil.move(file_path + sentinel_image, output_path + 'Corrupted_S2_file\\' + sentinel_image)
 
-metadata_size = Sentinel2_metadata.shape[0]
-print(Sentinel2_metadata)
-Sentinel2_metadata.sort_values(by=['Sensing_Date'], ascending=True)
+        Corrupted_data = pandas.DataFrame(
+            {'Corrupted_file_name': corrupted_ori_file, 'File_Date': corrupted_file_date})
+        if not os.path.exists(output_path + 'Corrupted_data.xlsx'):
+            Corrupted_data.to_excel(output_path + 'Corrupted_data.xlsx')
+        else:
+            Corrupted_data_old_version = pandas.read_excel(output_path + 'Corrupted_data.xlsx')
+            Corrupted_data_old_version.append(Corrupted_data, ignore_index=True)
+            Corrupted_data_old_version.drop_duplicates()
+            Corrupted_data_old_version.to_excel(output_path + 'Corrupted_data.xlsx')
 
-# Check the corrupted file metadata
-corrupted_files_name = os.listdir(output_path + 'Corrupted_S2_file\\')
-corrupted_file_exist = os.path.exists(output_path + 'Corrupted_data.xlsx')
-if corrupted_file_exist:
-    corrupted_file_num = pandas.read_excel(output_path + 'Corrupted_data.xlsx').shape[0]
-else:
-    corrupted_file_num = 0
+        Sentinel2_metadata = pandas.DataFrame(
+            {'Product_Path': product_path, 'Sensing_Date': sensing_date, 'Orbit_Num': orbit_num,
+             'Tile_Num': tile_num, 'Sensor_Type': sensor_type})
+        Sentinel2_metadata.to_excel(output_path + 'Metadata.xlsx')
+        Sentinel2_metadata = pandas.read_excel(output_path + 'Metadata.xlsx')
+    else:
+        Sentinel2_metadata = pandas.read_excel(output_path + 'Metadata.xlsx')
 
-if not file_exist or file_num_correct != len(zip_file_filter(corrupted_files_name)):
-    corrupted_filepath, corrupted_file_date = ([] for i in range(2))
-    for corrupted_file in corrupted_files_name:
-        corrupted_filepath.append(corrupted_file)
-        corrupted_file_date.append(corrupted_file[corrupted_file.find('_20') + 1: corrupted_file.find('_20') + 9])
-    Corrupted_data = pandas.DataFrame(
-        {'Corrupted_file_name': corrupted_filepath, 'File_Date': corrupted_file_date})
+    metadata_size = Sentinel2_metadata.shape[0]
+    print(Sentinel2_metadata)
+    Sentinel2_metadata.sort_values(by=['Sensing_Date'], ascending=True)
+
+    # Check the corrupted file metadata
+    corrupted_files_name = os.listdir(output_path + 'Corrupted_S2_file\\')
+    corrupted_file_exist = os.path.exists(output_path + 'Corrupted_data.xlsx')
+    if corrupted_file_exist:
+        corrupted_file_num = pandas.read_excel(output_path + 'Corrupted_data.xlsx').shape[0]
+    else:
+        corrupted_file_num = 0
+
+    if not file_exist or file_num_correct != len(zip_file_filter(corrupted_files_name)):
+        corrupted_filepath, corrupted_file_date = ([] for i in range(2))
+        for corrupted_file in corrupted_files_name:
+            corrupted_filepath.append(corrupted_file)
+            corrupted_file_date.append(corrupted_file[corrupted_file.find('_20') + 1: corrupted_file.find('_20') + 9])
+        Corrupted_data = pandas.DataFrame(
+            {'Corrupted_file_name': corrupted_filepath, 'File_Date': corrupted_file_date})
+        Corrupted_data.to_excel(output_path + 'Corrupted_data.xlsx')
+
+    # Delete duplicated files information
+    for file_name in Corrupted_data['Corrupted_file_name']:
+        for file_name_temp in Sentinel2_metadata['Product_Path']:
+            if file_name in file_name_temp:
+                Corrupted_data = Corrupted_data[Corrupted_data['Corrupted_file_name'] != file_name]
+    Corrupted_data.drop_duplicates()
     Corrupted_data.to_excel(output_path + 'Corrupted_data.xlsx')
+    return Sentinel2_metadata
 
-# Delete duplicated files information
-for file_name in Corrupted_data['Corrupted_file_name']:
-    for file_name_temp in Sentinel2_metadata['Product_Path']:
-        if file_name in file_name_temp:
-            Corrupted_data = Corrupted_data[Corrupted_data['Corrupted_file_name'] != file_name]
-Corrupted_data.drop_duplicates()
-Corrupted_data.to_excel(output_path + 'Corrupted_data.xlsx')
 
-# Input Snappy data style
-snappy.GPF.getDefaultInstance().getOperatorSpiRegistry().loadOperatorSpis()
-HashMap = snappy.jpy.get_type('java.util.HashMap')
-WriteOp = snappy.jpy.get_type('org.esa.snap.core.gpf.common.WriteOp')
-BandDescriptor = snappy.jpy.get_type('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor')
-np.seterr(divide='ignore', invalid='ignore')
+if __name__ == '__main__':
+    # Create Output folder
+    file_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\Original_Zipfile\\'
+    output_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\'
+    l2a_output_path = output_path + 'Sentinel2_L2A_output\\'
+    QI_output_path = output_path + 'Sentinel2_L2A_output\\QI\\'
+    create_folder(l2a_output_path)
+    create_folder(QI_output_path)
 
-# Generate VIs in GEOtiff format
-i = 0
-VI_list = ['EVI', 'EVI2', 'OSAVI', 'NDVI_RE', 'NDVI_2', 'NDVI_RE2']
-while i < metadata_size:
-    generate_vi_file(VI_list, i, output_path, metadata_size, overwritten_para_vis)
-    try:
-        cache_output_path = 'C:\\Users\\sx199\\.snap\\var\\cache\\s2tbx\\l2a-reader\\8.0.4\\'
-        cache_path = [cache_output_path + temp for temp in os.listdir(cache_output_path)]
-        remove_all_file_and_folder(cache_path)
-    except:
-        print('process occupied')
-    i += 1
+    # Code built-in parameters Configuration
+    overwritten_para_vis = False
+    overwritten_para_clipped = False
+    overwritten_para_cloud = True
+    overwritten_para_datacube = True
+    overwritten_para_sequenced_datacube = True
 
-# this allows GDAL to throw Python Exceptions
-gdal.UseExceptions()
-mask_path = 'E:\\A_Vegetation_Identification\\Wuhan_Sentinel_L2_Original\\Arcmap\\shp\\Huxianzhou.shp'
-# Check VI file consistency
-check_vi_file_consistency(l2a_output_path, VI_list)
-study_area = mask_path[mask_path.find('\\shp\\') + 5: mask_path.find('.shp')]
-specific_name_list = ['clipped', 'cloud_free', 'data_cube', 'sequenced_data_cube']
-# Process files
-VI_list = ['QI', 'NDVI', 'NDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI', 'NDVI_RE', 'NDVI_2', 'NDVI_RE2']
-vi_process(l2a_output_path, VI_list, study_area, specific_name_list, overwritten_para_clipped, overwritten_para_cloud, overwritten_para_datacube, overwritten_para_sequenced_datacube)
+    Sentinel2_metadata = generate_S2_metadata(file_path, output_path)
 
-# Inundated detection
+    # Input Snappy data style
+    snappy.GPF.getDefaultInstance().getOperatorSpiRegistry().loadOperatorSpis()
+    HashMap = snappy.jpy.get_type('java.util.HashMap')
+    WriteOp = snappy.jpy.get_type('org.esa.snap.core.gpf.common.WriteOp')
+    BandDescriptor = snappy.jpy.get_type('org.esa.snap.core.gpf.common.BandMathsOp$BandDescriptor')
+    np.seterr(divide='ignore', invalid='ignore')
 
-# Spectral unmixing
+    # Generate VIs in GEOtiff format
+    i = 0
+    VI_list = ['NDVI', 'NDWI']
+    metadata_size = Sentinel2_metadata.shape[0]
+    while i < metadata_size:
+        generate_vi_file(VI_list, i, l2a_output_path, metadata_size, overwritten_para_vis, Sentinel2_metadata)
+        try:
+            cache_output_path = 'C:\\Users\\sx199\\.snap\\var\\cache\\s2tbx\\l2a-reader\\8.0.7\\'
+            cache_path = [cache_output_path + temp for temp in os.listdir(cache_output_path)]
+            remove_all_file_and_folder(cache_path)
+        except:
+            print('process occupied')
+        i += 1
 
-# Curve fitting
-mndwi_threshold = -0.15
-fig_path = l2a_output_path + 'Fig\\'
-pixel_limitation = cor_to_pixel([[778602.523, 3322698.324], [782466.937, 3325489.535]], l2a_output_path + 'NDVI_' + study_area + '\\cloud_free\\')
-curve_fitting(l2a_output_path, VI_list, study_area, pixel_limitation, fig_path, mndwi_threshold)
-# Generate Figure
-# NDWI_DATA_CUBE = np.load(NDWI_data_cube_path + 'data_cube_inorder.npy')
-# NDVI_DATA_CUBE = np.load(NDVI_data_cube_path + 'data_cube_inorder.npy')
-# DOY_LIST = np.load(NDVI_data_cube_path + 'doy_list.npy')
-# fig_path = output_path + 'Sentinel2_L2A_output\\Fig\\'
-# create_folder(fig_path)
-# create_NDWI_NDVI_CURVE(NDWI_DATA_CUBE, NDVI_DATA_CUBE, DOY_LIST, fig_path)
+    # # this allows GDAL to throw Python Exceptions
+    # gdal.UseExceptions()
+    # mask_path = 'E:\\A_Vegetation_Identification\\Wuhan_Sentinel_L2_Original\\Arcmap\\shp\\Huxianzhou.shp'
+    # # Check VI file consistency
+    # check_vi_file_consistency(l2a_output_path, VI_list)
+    # study_area = mask_path[mask_path.find('\\shp\\') + 5: mask_path.find('.shp')]
+    # specific_name_list = ['clipped', 'cloud_free', 'data_cube', 'sequenced_data_cube']
+    # # Process files
+    # VI_list = ['NDVI', 'NDWI']
+    # vi_process(l2a_output_path, VI_list, study_area, specific_name_list, overwritten_para_clipped,
+    #            overwritten_para_cloud, overwritten_para_datacube, overwritten_para_sequenced_datacube)
+
+    # Inundated detection
+
+    # Spectral unmixing
+
+    # Curve fitting
+    # mndwi_threshold = -0.15
+    # fig_path = l2a_output_path + 'Fig\\'
+    # pixel_limitation = cor_to_pixel([[778602.523, 3322698.324], [782466.937, 3325489.535]],
+    #                                 l2a_output_path + 'NDVI_' + study_area + '\\cloud_free\\')
+    # curve_fitting(l2a_output_path, VI_list, study_area, pixel_limitation, fig_path, mndwi_threshold)
+    # Generate Figure
+    # NDWI_DATA_CUBE = np.load(NDWI_data_cube_path + 'data_cube_inorder.npy')
+    # NDVI_DATA_CUBE = np.load(NDVI_data_cube_path + 'data_cube_inorder.npy')
+    # DOY_LIST = np.load(NDVI_data_cube_path + 'doy_list.npy')
+    # fig_path = output_path + 'Sentinel2_L2A_output\\Fig\\'
+    # create_folder(fig_path)
+    # create_NDWI_NDVI_CURVE(NDWI_DATA_CUBE, NDVI_DATA_CUBE, DOY_LIST, fig_path)
+
