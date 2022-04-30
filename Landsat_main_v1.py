@@ -29,6 +29,10 @@ import pyqtgraph.exporters
 from pyqtgraph.Qt import QtGui, QtCore
 import PyQt5
 import subprocess
+import Basic_function as bf
+from gdalconst import *
+
+
 all_supported_vi_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC', 'AWEI']
 phase0_time, phase1_time, phase2_time, phase3_time, phase4_time = 0, 0, 0, 0, 0
 
@@ -162,34 +166,97 @@ def confusion_matrix_2_raster(raster_predict, raster_real, nan_value=np.nan):
     return confusion_matrix
 
 
-def fill_landsat7_gap(ori_tif):
-    src = rasterio.open(ori_tif)
-    raster_temp = src.read(1)
-    mask_temp = copy.copy(raster_temp)
-    mask_temp[mask_temp != 0] = 1
-    mask_result = np.zeros_like(mask_temp).astype(np.uint8)
-    if not os.path.exists(ori_tif.split('.TIF')[0] + '_MASK.TIF'):
-        for y in range(mask_temp.shape[0]):
-            for x in range(mask_temp.shape[1]):
-                if mask_temp[y, x] == 0:
-                    if np.sum(mask_temp[max(y - 10, 0): y, x]) == 0 or np.sum(mask_temp[y: min(mask_temp.shape[0] - 1, y + 10), x]) == 0:
-                        mask_result[y, x] = 1
-        with rasterio.open(ori_tif.split('.TIF')[0] + '_MASK.TIF', 'w', driver='GTiff',
-                      height=src.shape[0], width=src.shape[1], count=1,
-                      dtype=rasterio.uint8, crs=src.crs, transform=src.transform) as out:
-            out.write(mask_result, 1)
+def fill_landsat7_gap(ori_tif, mask_tif='Landsat7_default'):
+    # Get the boundary
+    driver = gdal.GetDriverByName('GTiff')
+    if mask_tif == 'Landsat7_default':
+        gap_mask_file = ori_tif.split('_02_T')[0] + '_gap_mask.TIF'
+        if not os.path.exists(gap_mask_file):
+            ori_ds = gdal.Open(ori_tif)
+            ori_array = bf.file2raster(ori_tif)
 
-    ds_temp = gdal.Open(ori_tif)
-    ds_temp2 = gdal.Open(ori_tif.split('.TIF')[0] + '_MASK.TIF')
-    mask_result = ds_temp2.GetRasterBand(1)
-    driver_tiff = gdal.GetDriverByName("GTiff")
-    gap_filled = driver_tiff.CreateCopy(ori_tif.split('.TIF')[0] + '_SLC.TIF', ds_temp, strict=0)
-    raster_temp = gap_filled.GetRasterBand(1)
-    gdal.FillNodata(raster_temp, mask_result, 10, 2)
-    gap_filled = None
-    ds_temp = None
-    ds_temp2 = None
-    #gap_filled = cv2.inpaint(raster_temp, mask_result, 3, cv2.INPAINT_TELEA)
+            row_min = 0
+            row_max = ori_array.shape[0]
+            for row in range(ori_array.shape[0] - 1):
+                row_state = ori_array[row, :] == 0
+                next_row_state = ori_array[row + 1, :] == 0
+                if row_state.all() == 1 and next_row_state.all() == 0:
+                    row_min = max(row_min, row + 1)
+                elif row_state.all() == 0 and next_row_state.all() == 1:
+                    row_max = min(row_max, row)
+            row_min_column_pos = int(np.mean(np.argwhere(ori_array[row_min,:] != 0)))
+            row_max_column_pos = int(np.mean(np.argwhere(ori_array[row_max,:] != 0)))
+
+            col_min = 0
+            col_max = ori_array.shape[1]
+            for col in range(ori_array.shape[1] - 1):
+                col_state = ori_array[:, col] == 0
+                next_col_state = ori_array[:, col + 1] == 0
+                if col_state.all() == 1 and next_col_state.all() == 0:
+                    col_min = max(col_min, col + 1)
+                elif col_state.all() == 0 and next_col_state.all() == 1:
+                    col_max = min(col_max, col)
+            col_min_row_pos = int(np.mean(np.argwhere(ori_array[:, col_min] != 0)))
+            col_max_row_pos = int(np.mean(np.argwhere(ori_array[:, col_max] != 0)))
+            ul_slope = (row_min - col_min_row_pos) / (row_min_column_pos - col_min)
+            ul_offset = row_min - row_min_column_pos * ul_slope
+            ur_slope = (col_max_row_pos - row_min) / (col_max - row_min_column_pos)
+            ur_offset = row_min - row_min_column_pos * ur_slope
+            ll_slope = (row_max - col_min_row_pos) / (row_max_column_pos - col_min)
+            ll_offset = row_max - row_max_column_pos * ll_slope
+            lr_slope = (col_max_row_pos - row_max) / (col_max - row_max_column_pos)
+            lr_offset = row_max - row_max_column_pos * lr_slope
+
+            array_mask = np.ones_like(ori_array)
+            for col in range(array_mask.shape[1]):
+                for row in range(array_mask.shape[0]):
+                    if row - ul_slope * col > ul_offset:
+                        if row - ur_slope * col > ur_offset:
+                            if row - ll_slope * col < ll_offset:
+                                if row - lr_slope * col < lr_offset:
+                                    array_mask[row, col] = 0
+            array_mask[ori_array != 0] = 1
+            write_raster(ori_ds, array_mask, gap_mask_file, '', raster_datatype=gdal.GDT_Int16, nodatavalue=0)
+            ori_ds = None
+        ori_ds = gdal.Open(ori_tif)
+        dst_ds = driver.CreateCopy(ori_tif.split('.TIF')[0] + "_SLC.TIF", ori_ds, strict=0)
+        mask_ds = gdal.Open(gap_mask_file)
+        mask_band = mask_ds.GetRasterBand(1)
+        dst_band = dst_ds.GetRasterBand(1)
+        gdal.FillNodata(targetBand=dst_band, maskBand=mask_band, maxSearchDist=14, smoothingIterations=0)
+        ori_ds = None
+        mask_ds = None
+        dst_ds = None
+
+    #
+    #
+    # src = rasterio.open(ori_tif)
+    # raster_temp = src.read(1)
+    # mask_temp = copy.copy(raster_temp)
+    # mask_temp[mask_temp != 0] = 1
+    # mask_result = np.zeros_like(mask_temp).astype(np.uint8)
+    # if not os.path.exists(ori_tif.split('.TIF')[0] + '_MASK.TIF'):
+    #     for y in range(mask_temp.shape[0]):
+    #         for x in range(mask_temp.shape[1]):
+    #             if mask_temp[y, x] == 0:
+    #                 if np.sum(mask_temp[max(y - 10, 0): y, x]) == 0 or np.sum(mask_temp[y: min(mask_temp.shape[0] - 1, y + 10), x]) == 0:
+    #                     mask_result[y, x] = 1
+    #     with rasterio.open(ori_tif.split('.TIF')[0] + '_MASK.TIF', 'w', driver='GTiff',
+    #                   height=src.shape[0], width=src.shape[1], count=1,
+    #                   dtype=rasterio.uint8, crs=src.crs, transform=src.transform) as out:
+    #         out.write(mask_result, 1)
+    #
+    # ds_temp = gdal.Open(ori_tif)
+    # ds_temp2 = gdal.Open(ori_tif.split('.TIF')[0] + '_MASK.TIF')
+    # mask_result = ds_temp2.GetRasterBand(1)
+    # driver_tiff = gdal.GetDriverByName("GTiff")
+    # gap_filled = driver_tiff.CreateCopy(ori_tif.split('.TIF')[0] + '_SLC.TIF', ds_temp, strict=0)
+    # raster_temp = gap_filled.GetRasterBand(1)
+    # gdal.FillNodata(raster_temp, mask_result, 10, 2)
+    # gap_filled = None
+    # ds_temp = None
+    # ds_temp2 = None
+    # gap_filled = cv2.inpaint(raster_temp, mask_result, 3, cv2.INPAINT_TELEA)
     # with rasterio.open(ori_tif.split('.TIF')[0] + '_SLC.TIF', 'w', driver='GTiff',
     #                    height=src.shape[0], width=src.shape[1], count=1,
     #                    dtype=rasterio.uint16, crs=src.crs, transform=src.transform) as out_slc:
@@ -2090,6 +2157,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
         create_folder(constructed_vi['Watermask_path'])
         for VI in all_supported_vi_list:
             constructed_vi[VI + '_factor'] = False
+
         for VI in VI_list:
             constructed_vi[VI + '_path'] = root_path_f + 'Landsat_constructed_index\\' + VI + '\\'
             constructed_vi[VI + '_factor'] = True
@@ -2106,8 +2174,10 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                     constructed_vi[VI + '_factor'] = not os.path.exists(str(constructed_vi[VI + '_path']) + str(filedate) + '_' + str(tile_num) + '_' + VI + '.TIF') or construction_overwritten_para
                     file_vacancy = file_vacancy or constructed_vi[VI + '_factor']
                 if constructed_vi['FVC_factor'] is True:
-                    constructed_vi['NDVI_factor'] = True
-                    constructed_vi['MNDWI_factor'] = True
+                    for VI_temp in ['NDVI', 'MNDWI']:
+                        constructed_vi[VI_temp + '_path'] = root_path_f + 'Landsat_constructed_index\\' + VI_temp + '\\'
+                        constructed_vi[VI_temp + '_factor'] = True
+                        create_folder(constructed_vi[VI_temp + '_path'])
                 constructed_vi['Watermask_factor'] = not os.path.exists(str(constructed_vi['Watermask_path']) + str(filedate) + '_' + str(tile_num) + '_watermask.TIF') or construction_overwritten_para
                 file_vacancy = file_vacancy or constructed_vi[VI + '_factor']
                 if file_vacancy:
@@ -2234,6 +2304,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                         MIR2_temp_array = dataset2array(MIR2_temp_ds)
                         MIR2_temp_array[MIR2_temp_array < 0] = 0
                         NIR_temp_array[NIR_temp_array < 0] = 0
+
                     # Process QI array
                     QI_temp_array = dataset2array(QI_temp_ds, Band_factor=False)
                     QI_temp_array[QI_temp_array == 1] = np.nan
@@ -2245,6 +2316,9 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                         QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
                         QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
                         QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 22080, QI_temp_array == 22208), QI_neighbor_average > 3)] = np.nan
+                        QI_temp_array[np.logical_and(
+                            np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
+                            np.logical_and(np.mod(QI_temp_array, 128) != 0, np.mod(QI_temp_array, 128) != 66))] = np.nan
                         end_time = time.time()
                         print('The QI zonal detection consumes about ' + str(end_time - start_time) + ' s for processing all pixels')
                         # index_all = np.where(np.logical_or(QI_temp_array == 22080, QI_temp_array == 22208))
@@ -2267,14 +2341,21 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                         QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
                         QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
                                                      QI_neighbor_average > 3)] = np.nan
+                        QI_temp_array[np.logical_and(
+                            np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
+                            np.logical_and(np.mod(QI_temp_array, 128) != 0, np.mod(QI_temp_array, 128) != 66))] = np.nan
                         end_time = time.time()
                         print('The QI zonal detection consumes about ' + str(
                             end_time - start_time) + ' s for processing all pixels')
-                    QI_temp_array[np.logical_and(np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2), np.logical_and(np.mod(QI_temp_array, 128) != 0, np.mod(QI_temp_array, 128) != 66))] = np.nan
+                        if scan_line_correction:
+                            gap_mask_ds = gdal.Open(unzipped_file_path_f + i.split('_02_T')[0] + '_gap_mask.TIF')
+                            gap_mask_array = gap_mask_ds.GetRasterBand(1).ReadAsArray()
+                            QI_temp_array[gap_mask_array == 0] = 1
                     WATER_temp_array = copy.copy(QI_temp_array)
                     QI_temp_array[~np.isnan(QI_temp_array)] = 1
                     WATER_temp_array[np.logical_and(np.floor_divide(np.mod(WATER_temp_array, 256), 128) != 1, ~np.isnan(np.floor_divide(np.mod(WATER_temp_array, 256), 128)))] = 0
                     WATER_temp_array[np.divide(np.mod(WATER_temp_array, 256), 128) == 1] = 1
+
                     if constructed_vi['Watermask_factor']:
                         print('Start generating Watermask file ' + i + ' (' + str(p + 1) + ' of ' + str(
                             file_metadata_f.shape[0]) + ')')
@@ -2438,6 +2519,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                     print('Finished in ' + str(end_time - start_time) + ' s.')
                 p += 1
             np.save(key_dictionary_path + study_area + '_vi.npy', clipped_vi)
+            # Generate SA map
             if not os.path.exists(root_path_f + 'Landsat_key_dic\\' + study_area + '_map.npy'):
                 file_input = clipped_vi[VI + '_input'][0]
                 ds_temp = gdal.Open(file_input)
@@ -2457,6 +2539,8 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                 gdal.Warp(root_path_f + 'temp3.TIF', root_path_f + 'temp_sa2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
                 ds_temp_sa_map = gdal.Open(root_path_f + 'temp3.TIF')
                 np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_map.npy', ds_temp_sa_map.GetRasterBand(1).ReadAsArray())
+                ds_temp = None
+                ds_sa_temp = None
             remove_all_file_and_folder(file_filter(root_path_f, ['temp', '.TIF'], and_or_factor='and'))
             print('All ' + VI + ' files within the ' + study_area + ' are clipped.')
     else:
