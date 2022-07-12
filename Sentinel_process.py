@@ -322,6 +322,15 @@ class Sentinel2_ds(object):
         print(f'Finish in {str(time.time() - start_temp)} sec!')
         print('----------------------------  End the construction of Metadata  ----------------------------')
 
+    def check_metadata_availability(self):
+
+        if self.S2_metadata is None:
+            try:
+                self.construct_metadata()
+            except:
+                print('Please manually construct the S2_metadata before further processing!')
+                sys.exit(-1)
+
     def check_output_band_statue(self, band_name, tiffile_serial_num, *args, **kwargs):
 
         # Define local var
@@ -500,14 +509,6 @@ class Sentinel2_ds(object):
         else:
             print('The output bounds has some logical issue!')
             sys.exit(-1)
-
-    def check_metadata_availability(self):
-        if self.S2_metadata is None:
-            try:
-                self.construct_metadata()
-            except:
-                print('Please manually construct the S2_metadata before further processing!')
-                sys.exit(-1)
 
     def subset_tiffiles(self, processed_index_list, tiffile_serial_num, overwritten_para=False, *args, **kwargs):
         """
