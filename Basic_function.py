@@ -5,6 +5,39 @@ import datetime
 import gdal
 from osgeo import gdal_array, osr
 import shutil
+import geopandas as gp
+
+class Path(object):
+    def __init__(self, file_path):
+        """
+
+        :type file_path: str
+        """
+        self.path_type = None
+        self.path_extension = None
+        if os.path.exists(file_path):
+            self.path_name = file_path
+        else:
+            print('Invalid filepath founded!')
+            sys.exit(-1)
+
+        if os.path.isdir(self.path_name):
+            if not self.path_name.endswith('\\'):
+                self.path_name = f'{self.path_name}\\'
+            self.path_type = 'dir'
+        elif os.path.isfile(self.path_name):
+            self.path_type = 'file'
+            self.path_extension = self.path_name.split('.')[-1]
+
+
+def shp2geojson(shpfile_path):
+    if not os.path.exists(shpfile_path) or not shpfile_path.endswith('.shp'):
+        print('Please input valid shpfile!')
+        sys.exit(-1)
+    else:
+        shp_file = gp.read_file(shpfile_path)
+        shp_file.to_file(os.path.dirname(shpfile_path) + shpfile_path.split('\\')[-1].split('.shp')[0] + '.geojson', driver='GeoJSON')
+    return os.path.dirname(shpfile_path) + shpfile_path.split('\\')[-1].split('.shp')[0] + '.geojson'
 
 
 def file2raster(filename):
@@ -47,7 +80,6 @@ def remove_all_file_and_folder(filter_list):
                 print('file cannot be removed')
         else:
             print('Something went wrong during the file removal')
-
 
 
 def retrieve_srs(ds_temp):
@@ -217,7 +249,7 @@ def file_filter(file_path_temp, containing_word_list, subfolder_detection=False,
             if os.path.isdir(file_path_temp + file) and subfolder_detection:
                 filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list, subfolder_detection=True, and_or_factor=and_or_factor)
                 if filter_list_temp != []:
-                    filter_list.append(filter_list_temp)
+                    filter_list.extend(filter_list_temp)
             else:
                 for containing_word in containing_word_list:
                     if containing_word in file_path_temp + file:
@@ -242,7 +274,7 @@ def file_filter(file_path_temp, containing_word_list, subfolder_detection=False,
                 filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list,
                                                subfolder_detection=True, and_or_factor=and_or_factor)
                 if filter_list_temp != []:
-                    filter_list.append(filter_list_temp)
+                    filter_list.extend(filter_list_temp)
             else:
                 for containing_word in containing_word_list:
                     if containing_word not in file_path_temp + file:
@@ -257,7 +289,7 @@ def file_filter(file_path_temp, containing_word_list, subfolder_detection=False,
         return filter_list
 
 
-def create_folder(path_name):
+def create_folder(path_name, print_existence=False):
     if not os.path.exists(path_name):
         try:
             os.makedirs(path_name)
@@ -265,7 +297,8 @@ def create_folder(path_name):
             print('Something went wrong during creating new folder')
             sys.exit(-1)
     else:
-        print('Folder already exist  (' + path_name + ')')
+        if print_existence:
+            print('Folder already exist  (' + path_name + ')')
 
 
 def check_file_path(file_path):
@@ -273,22 +306,28 @@ def check_file_path(file_path):
     if type(file_path) != str:
         print('Please make sure the file path is under string type')
         sys.exit(-1)
+    path_check(file_path)
     # Check if the file path is end with '\\'
-    if file_path[-1:] != '\\':
+    if not file_path.endswith('\\'):
         file_path = file_path + '\\'
     return file_path
 
 
 def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=None, nodatavalue=None):
-    if raster_datatype is None:
+
+    if raster_datatype is None and nodatavalue is None:
         raster_datatype = gdal.GDT_Float32
         nodatavalue = np.nan
-    if nodatavalue is None:
-        nodatavalue = np.nan
-    elif raster_datatype is gdal.GDT_UInt16:
-        nodatavalue = 65535
-    elif raster_datatype is gdal.GDT_Int16:
-        nodatavalue = -32768
+    elif raster_datatype is not None and nodatavalue is None:
+        if raster_datatype is gdal.GDT_UInt16:
+            nodatavalue = 65535
+        elif raster_datatype is gdal.GDT_Int16:
+            nodatavalue = -32768
+        else:
+            nodatavalue = 0
+    elif raster_datatype is None and nodatavalue is not None:
+        raster_datatype = gdal.GDT_Float32
+
     driver = gdal.GetDriverByName('GTiff')
     driver.Register()
     gt = ori_ds.GetGeoTransform()
@@ -296,7 +335,7 @@ def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=No
     if os.path.exists(file_path_f + file_name_f):
         os.remove(file_path_f + file_name_f)
     outds = driver.Create(file_path_f + file_name_f, xsize=new_array.shape[1], ysize=new_array.shape[0],
-                          bands=1, eType=raster_datatype, options=['COMPRESS=LZW'])
+                          bands=1, eType=raster_datatype, options=['COMPRESS=LZW', 'PREDICTOR=2'])
     outds.SetGeoTransform(gt)
     outds.SetProjection(proj)
     outband = outds.GetRasterBand(1)
