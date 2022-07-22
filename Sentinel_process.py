@@ -26,18 +26,10 @@ from functools import wraps
 import concurrent.futures
 from itertools import repeat
 from zipfile import ZipFile
-
-# global self.S2_metadata, mndwi_threshold, VI_dic
+import traceback
 
 # Input Snappy data style
 np.seterr(divide='ignore', invalid='ignore')
-
-
-def log_para(func):
-    def wrapper(*args, **kwargs):
-        pass
-
-    return wrapper
 
 
 def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=None, nodatavalue=None):
@@ -200,12 +192,13 @@ class Sentinel2_ds(object):
         self.S2_metadata_size = np.nan
         self.date_list = []
 
-        # Define key variables (kwargs)
+        # Define key variables for subset (kwargs)
         self.size_control_factor = False
         self.cloud_removal_para = False
         self.vi_clip_factor = False
         self.sparsify_matrix_factor = False
-        self.cloud_clip_seq = None
+        self.large_roi = False
+        self.dst_coord = None
 
         # Remove all the duplicated data
         dup_data = bf.file_filter(self.ori_folder, ['.1.zip'])
@@ -237,9 +230,9 @@ class Sentinel2_ds(object):
         # Create output path
         self.output_path = f'{self.work_env}Sentinel2_L2A_Output\\'
         self.shpfile_path = f'{self.work_env}shpfile\\'
-        self.log_file = f'{self.work_env}logfile\\'
+        self.log_filepath = f'{self.work_env}log\\'
         bf.create_folder(self.output_path)
-        bf.create_folder(self.log_file)
+        bf.create_folder(self.log_filepath)
         bf.create_folder(self.shpfile_path)
 
         # Constant
@@ -250,18 +243,51 @@ class Sentinel2_ds(object):
                                          'NDVI_RE', 'NDVI_RE2', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9',
                                          'B11', 'B12']
 
-    # def save_log_file(func):
-    #
-    #     def wrapper(self, *args, **kwargs):
-    #         if os.path.exists(self.log_file)
-    #         log_file = fsave
-    #         func(*args, **kwargs)
-    #         consuming_time = time.time()-time1
-    #
-    #
-    #     return wrapper
+    def save_log_file(func):
+        def wrapper(self, *args, **kwargs):
+            time_start = time.time()
+            c_time = time.ctime()
+            log_file = open(f"{self.log_filepath}log.txt", "a+")
+            para_file = open(f"{self.log_filepath}para_file.txt", "a+")
+            error_inf = None
+            try:
+                func(self, *args, **kwargs)
+            except:
+                error_inf = traceback.format_exc()
+                print(error_inf)
+            para_temp = ['#' * 70 + '\n', f'Process Func: {func.__name__}\n', f'Start time: {c_time}\n',
+                    f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
+            if 'metadata' in func.__name__:
+                para_file.writelines(para_temp)
+                if error_inf is None:
+                    log_file.writelines(['#' * 70 + '\n', 'Finished construct metadata!\n', f'Start time: {c_time}\n', f'End time: {time.ctime()}\n',
+                                         f'Total processing time: {str(time.time() - time_start)}\n', '#' * 70 + '\n'])
+                else:
+                    log_file.writelines(['#' * 70 + '\n', 'Error in constructing metadata!\n', 'Error information:\n', error_inf + '\n', '#' * 70 + '\n'])
+            else:
+                args_f = 0
+                args_list = []
+                kwargs_list = []
 
-    # @save_log_file
+                for i in args:
+                    args_list.extend([f"args{str(args_f)}:{str(i)}\n"])
+                for k_key in kwargs.keys():
+                    kwargs_list.extend([f"{str(k_key)}:{str(kwargs[k_key])}\n"])
+
+                if 'subset' in func.__name__:
+                    para_temp.extend(['*' * 50 + '\n', 'ARGUEMENTS:\n'])
+                    para_temp.extend(args_list)
+                    kwargs_list.append('#' * 70 + '\n')
+                    para_temp.extend(kwargs_list)
+                    para_file.writelines(para_temp)
+                    if error_inf is None:
+                        log_file.writelines(['#' * 70 + '\n', f'Finished {func.__name__}!\n', f'Start time: {c_time}\n',
+                                             f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n', '#' * 70 + '\n'])
+                    else:
+                        log_file.writelines(['#' * 70 + '\n', 'Error in subsetting files!\n', 'Error information:\n', error_inf + '\n', '#' * 70 + '\n'])
+        return wrapper
+
+    @save_log_file
     def construct_metadata(self):
         print('---------------------------- Start the construction of Metadata ----------------------------')
         start_temp = time.time()
@@ -323,7 +349,7 @@ class Sentinel2_ds(object):
         print('----------------------------  End the construction of Metadata  ----------------------------')
 
     def check_metadata_availability(self):
-
+        # Check metadata availability
         if self.S2_metadata is None:
             try:
                 self.construct_metadata()
@@ -350,19 +376,26 @@ class Sentinel2_ds(object):
 
         # Detect whether the required band was generated before
         try:
-            if False in [os.path.exists(f'{output_path}{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{band_temp}.tif') for band_temp in band_name]:
+            if False in [os.path.exists(
+                    f'{output_path}{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{band_temp}.tif')
+                         for band_temp in band_name]:
                 self.subset_tiffiles(band_name, tiffile_serial_num, **kwargs)
 
             # Return output
-            if False in [os.path.exists(f'{output_path}{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{band_temp}.tif') for band_temp in band_name]:
-                print(f'Something error PROCESSIMG {band_name}!')
+            if False in [os.path.exists(
+                    f'{output_path}{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{band_temp}.tif')
+                         for band_temp in band_name]:
+                print(f'Something error processing {band_name}!')
                 return None
             else:
-                return [gdal.Open(f'{output_path}{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{band_temp}.tif') for band_temp in band_name]
+                return [gdal.Open(
+                    f'{output_path}{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{band_temp}.tif')
+                        for band_temp in band_name]
 
         except:
             return None
 
+    @save_log_file
     def mp_subset(self, *args, **kwargs):
         if self.S2_metadata is None:
             print('Please construct the S2_metadata before the subset!')
@@ -372,6 +405,7 @@ class Sentinel2_ds(object):
         with concurrent.futures.ProcessPoolExecutor() as executor:
             executor.map(self.subset_tiffiles, repeat(args[0]), i, repeat(False), repeat(kwargs))
 
+    @save_log_file
     def sequenced_subset(self, *args, **kwargs):
         if self.S2_metadata is None:
             print('Please construct the S2_metadata before the subset!')
@@ -383,8 +417,8 @@ class Sentinel2_ds(object):
     def subset_indicator_process(self, **kwargs):
         # Detect whether all the indicator are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ['ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_strategy',
-                                       'sparsify_matrix_factor', 'cloud_clip_priority']:
+            if kwarg_indicator not in ('ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_strategy',
+                                       'sparsify_matrix_factor', 'large_roi', 'dst_coord'):
                 print(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clip parameter
@@ -427,17 +461,26 @@ class Sentinel2_ds(object):
             self.sparsify_matrix_factor = False
 
         # process cloud removal and clipping sequence
-        if 'cloud_clip_priority' in kwargs.keys():
-            if kwargs['cloud_clip_priority'] == 'cloud':
-                self.cloud_clip_seq = True
-            elif kwargs['cloud_clip_priority'] == 'clip':
-                self.cloud_clip_seq = False
+        if 'large_roi' in kwargs.keys():
+            if kwargs['large_roi'] is True:
+                if self.vi_clip_factor:
+                    self.large_roi = True
+                else:
+                    print('Please input the ROI if large_roi is True')
+                    sys.exit(-1)
+            elif kwargs['large_roi'] is False:
+                self.large_roi = False
             else:
-                self.cloud_clip_seq = False
-                print('Cloud clip sequence para need to input the specific process!')
+                print('Large ROI factor need bool type input!')
                 sys.exit(-1)
         else:
-            self.cloud_clip_seq = False
+            self.large_roi = False
+
+        # Process dst coordinate
+        if 'dst_coord' in kwargs.keys():
+            self.dst_coord = kwargs['dst_coord']
+        else:
+            self.dst_coord = False
 
     def generate_10m_output_bounds(self, tiffile_serial_num, **kwargs):
         # determine the subset indicator
@@ -453,11 +496,10 @@ class Sentinel2_ds(object):
 
         # Define the output path
         if self.vi_clip_factor:
-            output_path = f'{self.output_path}{self.ROI_name}_{VI}\\'
+            b2_output_path = f'{self.output_path}{self.ROI_name}_{VI}\\'
         else:
-            output_path = f'{self.output_path}{VI}\\'
-        bf.create_folder(output_path)
-        print(f' Generate 10m bounds define variable consume {time.time()-time1}s')
+            b2_output_path = f'{self.output_path}{VI}\\'
+        bf.create_folder(b2_output_path)
 
         # Create the output bounds based on the 10-m Band2 images
         if self.output_bounds.shape[0] > tiffile_serial_num:
@@ -465,7 +507,7 @@ class Sentinel2_ds(object):
                 temp_S2file_path = self.S2_metadata.iat[tiffile_serial_num, 1]
                 zfile = ZipFile(temp_S2file_path, 'r')
                 b2_band_file_name = f'{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_B2'
-                if not os.path.exists(output_path + b2_band_file_name + '.tif'):
+                if not os.path.exists(b2_output_path + b2_band_file_name + '.tif'):
                     b2_file = [zfile_temp for zfile_temp in zfile.namelist() if 'B02_10m.jp2' in zfile_temp]
                     if len(b2_file) != 1:
                         print(
@@ -474,41 +516,63 @@ class Sentinel2_ds(object):
                         return
                     else:
                         ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, b2_file[0]))
-                        if self.vi_clip_factor:
-                            gdal.Warp('/vsimem/' + b2_band_file_name + '.tif', ds_temp, dstSRS='EPSG:32649', xRes=10,
-                                      yRes=10, cutlineDSName=self.ROI, cropToCutline=True, outputType=gdal.GDT_UInt16,
-                                      dstNodata=0)
-                        else:
-                            gdal.Warp('/vsimem/' + b2_band_file_name + '.tif', ds_temp, dstSRS='EPSG:32649', xRes=10,
-                                      yRes=10, outputType=gdal.GDT_UInt16, dstNodata=0)
-                        gdal.Translate(output_path + b2_band_file_name + '.tif',
+                        if self.large_roi and self.vi_clip_factor:
+                            if self.dst_coord is False:
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                                          cutlineDSName=self.ROI,
+                                          outputType=gdal.GDT_UInt16, dstNodata=0)
+                            else:
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.tif', ds_temp, dstSRS=self.dst_coord,
+                                          xRes=10,
+                                          yRes=10, cutlineDSName=self.ROI, outputType=gdal.GDT_UInt16, dstNodata=0)
+                        elif not self.large_roi and self.vi_clip_factor:
+                            if self.dst_coord is False:
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.tif', ds_temp, dstSRS=self.dst_coord,
+                                          cutlineDSName=self.ROI,
+                                          cropToCutline=True, xRes=10, yRes=10, outputType=gdal.GDT_UInt16, dstNodata=0)
+                            else:
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                                          cutlineDSName=self.ROI,
+                                          cropToCutline=True, outputType=gdal.GDT_UInt16, dstNodata=0)
+                        elif not self.vi_clip_factor:
+                            if self.dst_coord is False:
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                                          outputType=gdal.GDT_UInt16, dstNodata=0)
+                            else:
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.tif', ds_temp, dstSRS=self.dst_coord,
+                                          xRes=10,
+                                          yRes=10, outputType=gdal.GDT_UInt16, dstNodata=0)
+                        gdal.Translate(b2_output_path + b2_band_file_name + '.tif',
                                        '/vsimem/' + b2_band_file_name + '.tif', options=topts, noData=0)
                         gdal.Unlink('/vsimem/' + b2_band_file_name + '.tif')
-                ds4bounds = gdal.Open(output_path + b2_band_file_name + '.tif')
+
+                ds4bounds = gdal.Open(b2_output_path + b2_band_file_name + '.tif')
                 ulx, xres, xskew, uly, yskew, yres = ds4bounds.GetGeoTransform()
                 self.output_bounds[tiffile_serial_num, :] = np.array(
                     [ulx, uly + yres * ds4bounds.RasterYSize, ulx + xres * ds4bounds.RasterXSize, uly])
                 ds4bounds = None
 
-            if self.cloud_clip_seq and True in np.isnan(self.raw_10m_bounds[tiffile_serial_num, :]):
-                temp_S2file_path = self.S2_metadata.iat[tiffile_serial_num, 1]
-                zfile = ZipFile(temp_S2file_path, 'r')
-                b2_file = [zfile_temp for zfile_temp in zfile.namelist() if 'B02_10m.jp2' in zfile_temp]
-                if len(b2_file) != 1:
-                    print(
-                        f'Data issue for the B2 file of all_cloud data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata.shape[0])})')
-                    self.subset_failure_file.append([VI, tiffile_serial_num, temp_S2file_path])
-                    return
-                else:
-                    ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, b2_file[0]))
-                    if self.cloud_clip_seq:
-                        ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
-                        self.raw_10m_bounds[tiffile_serial_num, :] = np.array(
-                            [ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize,
-                             ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp])
+            # if self.cloud_clip_seq and True in np.isnan(self.raw_10m_bounds[tiffile_serial_num, :]):
+            #     temp_S2file_path = self.S2_metadata.iat[tiffile_serial_num, 1]
+            #     zfile = ZipFile(temp_S2file_path, 'r')
+            #     b2_file = [zfile_temp for zfile_temp in zfile.namelist() if 'B02_10m.jp2' in zfile_temp]
+            #     if len(b2_file) != 1:
+            #         print(
+            #             f'Data issue for the B2 file of all_cloud data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata.shape[0])})')
+            #         self.subset_failure_file.append([VI, tiffile_serial_num, temp_S2file_path])
+            #         return
+            #     else:
+            #         ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, b2_file[0]))
+            #         if self.cloud_clip_seq:
+            #             ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
+            #             self.raw_10m_bounds[tiffile_serial_num, :] = np.array(
+            #                 [ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize,
+            #                  ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp])
         else:
             print('The output bounds has some logical issue!')
             sys.exit(-1)
+        print(
+            f' Generate 10m bounds of {str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])} consume {time.time() - time1}s')
 
     def subset_tiffiles(self, processed_index_list, tiffile_serial_num, overwritten_para=False, *args, **kwargs):
         """
@@ -541,10 +605,7 @@ class Sentinel2_ds(object):
             output_limit = (
                 int(self.output_bounds[tiffile_serial_num, 0]), int(self.output_bounds[tiffile_serial_num, 1]),
                 int(self.output_bounds[tiffile_serial_num, 2]), int(self.output_bounds[tiffile_serial_num, 3]))
-            if self.cloud_clip_seq:
-                raw_10m_bound = (
-                int(self.raw_10m_bounds[tiffile_serial_num, 0]), int(self.raw_10m_bounds[tiffile_serial_num, 1]),
-                int(self.raw_10m_bounds[tiffile_serial_num, 2]), int(self.raw_10m_bounds[tiffile_serial_num, 3]))
+
             for VI in processed_index_list:
                 start_temp = time.time()
                 print(f'Start processing {VI} data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
@@ -554,21 +615,15 @@ class Sentinel2_ds(object):
                 # Generate output folder
                 if self.vi_clip_factor:
                     subset_output_path = f'{self.output_path}{self.ROI_name}_{VI}\\'
+                    qi_path = f'{self.output_path}{self.ROI_name}_QI\\'
                     if VI in self.band_output_list:
                         subset_output_path = f'{self.output_path}{self.ROI_name}_all_band\\'
                 else:
                     subset_output_path = f'{self.output_path}{VI}\\'
+                    qi_path = f'{self.output_path}_QI\\'
                     if VI in self.band_output_list:
                         subset_output_path = f'{self.output_path}_all_band\\'
-
-                # Generate qi output folder
-                if self.cloud_clip_seq or not self.vi_clip_factor:
-                    qi_path = f'{self.output_path}QI\\'
-                else:
-                    qi_path = f'{self.output_path}{self.ROI_name}_QI\\'
-
                 bf.create_folder(subset_output_path)
-                bf.create_folder(qi_path)
 
                 # Define the file name for VI
                 file_name = f'{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{VI}'
@@ -584,12 +639,33 @@ class Sentinel2_ds(object):
                     else:
                         for band_temp in band_all:
                             ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
-                            if self.cloud_clip_seq or not self.vi_clip_factor:
-                                gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10, outputType=gdal.GDT_UInt16, dstNodata=0, outputBounds=raw_10m_bound)
-                            else:
-                                gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
-                                          dstSRS='EPSG:32649', outputBounds=output_limit, cutlineDSName=self.ROI,
-                                          cropToCutline=True, outputType=gdal.GDT_UInt16, dstNodata=0)
+                            if self.large_roi and self.vi_clip_factor:
+                                if self.dst_coord is False:
+                                    gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                                              cutlineDSName=self.ROI,
+                                              outputType=gdal.GDT_UInt16, dstNodata=0, outputBounds=output_limit)
+                                else:
+                                    gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                                              cutlineDSName=self.ROI, dstSRS=self.dst_coord,
+                                              outputType=gdal.GDT_UInt16, dstNodata=0, outputBounds=output_limit)
+                            elif not self.large_roi and self.vi_clip_factor:
+                                if self.dst_coord is False:
+                                    gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                                              outputBounds=output_limit, cutlineDSName=self.ROI,
+                                              cropToCutline=True, outputType=gdal.GDT_UInt16, dstNodata=0)
+                                else:
+                                    gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                                              dstSRS=self.dst_coord, outputBounds=output_limit, cutlineDSName=self.ROI,
+                                              cropToCutline=True, outputType=gdal.GDT_UInt16, dstNodata=0)
+                            elif not self.vi_clip_factor:
+                                if self.dst_coord is False:
+                                    gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                                              outputBounds=output_limit,
+                                              outputType=gdal.GDT_UInt16, dstNodata=0)
+                                else:
+                                    gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                                              dstSRS=self.dst_coord, outputBounds=output_limit, cropToCutline=True,
+                                              outputType=gdal.GDT_UInt16, dstNodata=0)
                             gdal.Translate(qi_path + file_name + '.tif', '/vsimem/' + file_name + '.tif', options=topts,
                                            noData=0, outputType=gdal.GDT_UInt16)
                             gdal.Unlink('/vsimem/' + file_name + '.tif')
@@ -611,10 +687,10 @@ class Sentinel2_ds(object):
 
                     if overwritten_para or False in [os.path.exists(
                             subset_output_path + str(self.S2_metadata[sensing_date][tiffile_serial_num]) + '_' + str(
-                                self.S2_metadata[tile_num][tiffile_serial_num]) + '_' + str(band_temp) + '.tif') for
-                        band_temp in band_output_list]:
+                                    self.S2_metadata[tile_num][tiffile_serial_num]) + '_' + str(band_temp) + '.tif') for
+                                                     band_temp in band_output_list]:
                         for band_name, band_output in zip(band_name_list, band_output_list):
-                            if band_output != 'B2' or self.cloud_clip_seq:
+                            if band_output != 'B2':
                                 all_band_file_name = f'{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{str(band_output)}'
                                 if not os.path.exists(all_band_file_name + '.tif') or overwritten_para:
                                     band_all = [zfile_temp for zfile_temp in zfile.namelist() if
@@ -625,77 +701,68 @@ class Sentinel2_ds(object):
                                         self.subset_failure_file.append([VI, tiffile_serial_num, temp_S2file_path])
                                     else:
                                         for band_temp in band_all:
-                                            if not self.cloud_clip_seq:
-                                                t1 = time.time()
-                                                ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
-                                                time1 = time.time() - t1
-                                                t2 = time.time()
-                                                if self.vi_clip_factor:
+                                            t1 = time.time()
+                                            ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
+                                            time1 = time.time() - t1
+                                            t2 = time.time()
+                                            if self.large_roi and self.vi_clip_factor:
+                                                if self.dst_coord is not False:
                                                     gdal.Warp('/vsimem/' + all_band_file_name + '.tif', ds_temp,
-                                                              xRes=10, yRes=10, dstSRS='EPSG:32649',
-                                                              cutlineDSName=self.ROI, cropToCutline=True,
+                                                              xRes=10, yRes=10, dstSRS=self.dst_coord,
+                                                              cutlineDSName=self.ROI,
                                                               outputBounds=output_limit, outputType=gdal.GDT_UInt16,
                                                               dstNodata=0)
                                                 else:
                                                     gdal.Warp('/vsimem/' + all_band_file_name + '.tif', ds_temp,
-                                                              xRes=10, yRes=10, dstSRS='EPSG:32649',
+                                                              xRes=10, yRes=10,
+                                                              cutlineDSName=self.ROI,
+                                                              outputBounds=output_limit,
+                                                              outputType=gdal.GDT_UInt16,
+                                                              dstNodata=0)
+                                            elif not self.large_roi and self.vi_clip_factor:
+                                                if self.dst_coord is not False:
+                                                    gdal.Warp('/vsimem/' + all_band_file_name + '.tif', ds_temp,
+                                                              xRes=10, yRes=10,
+                                                              cutlineDSName=self.ROI, dstSRS=self.dst_coord,
+                                                              cropToCutline=True, outputBounds=output_limit,
+                                                              outputType=gdal.GDT_UInt16,
+                                                              dstNodata=0)
+                                                else:
+                                                    gdal.Warp('/vsimem/' + all_band_file_name + '.tif', ds_temp,
+                                                              xRes=10, yRes=10,
+                                                              cutlineDSName=self.ROI,
+                                                              cropToCutline=True, outputBounds=output_limit,
+                                                              outputType=gdal.GDT_UInt16,
+                                                              dstNodata=0)
+                                            elif not self.vi_clip_factor:
+                                                if self.dst_coord is not False:
+                                                    gdal.Warp('/vsimem/' + all_band_file_name + '.tif', ds_temp,
+                                                              xRes=10, yRes=10,
                                                               outputBounds=output_limit, outputType=gdal.GDT_UInt16,
                                                               dstNodata=0)
-                                                time2 = time.time() - t2
-                                                t3 = time.time()
-                                                if self.cloud_removal_para:
-                                                    qi_file_path = f'{qi_path}{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_QI.tif'
-                                                    if not os.path.exists(qi_file_path):
-                                                        self.subset_tiffiles(['QI'], tiffile_serial_num, **kwargs)
-                                                    qi_remove_cloud('/vsimem/' + all_band_file_name + '.tif',
-                                                                    qi_file_path, dst_nodata=0,
-                                                                    sparse_matrix_factor=self.sparsify_matrix_factor,
-                                                                    **kwargs)
-                                                time3 = time.time() - t3
-                                                t4 = time.time()
-                                                gdal.Translate(subset_output_path + all_band_file_name + '.tif',
-                                                               '/vsimem/' + all_band_file_name + '.tif', options=topts,
-                                                               noData=0)
-                                                gdal.Unlink('/vsimem/' + all_band_file_name + '.tif')
-                                                time4 = time.time() - t4
-                                                print(time1, time2, time3, time4)
-                                            else:
-                                                t1 = time.time()
-                                                if self.cloud_removal_para:
-                                                    qi_file_path = f'{qi_path}{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_QI.tif'
-                                                    if not os.path.exists(qi_file_path):
-                                                        self.subset_tiffiles(['QI'], tiffile_serial_num, **kwargs)
-                                                    gdal.Warp('/vsimem/' + all_band_file_name + '_temp.tif',
-                                                              '/vsizip/%s/%s' % (temp_S2file_path, band_temp), xRes=10,
-                                                              yRes=10, outputBounds=raw_10m_bound)
-                                                    qi_remove_cloud('/vsimem/' + all_band_file_name + '_temp.tif',
-                                                                    qi_file_path, dst_nodata=0,
-                                                                    sparse_matrix_factor=self.sparsify_matrix_factor,
-                                                                    **kwargs)
-                                                    ds_temp = gdal.Open('/vsimem/' + all_band_file_name + '_temp.tif')
-                                                else:
-                                                    ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
-                                                time1 += time.time() - t1
-                                                t2 = time.time()
-                                                if self.vi_clip_factor:
-                                                    gdal.Warp('/vsimem/' + all_band_file_name + '.tif', ds_temp,
-                                                              xRes=10, yRes=10,
-                                                              cutlineDSName=self.ROI, cropToCutline=True,
-                                                              outputBounds=output_limit,
-                                                              dstNodata=0)
                                                 else:
                                                     gdal.Warp('/vsimem/' + all_band_file_name + '.tif', ds_temp,
-                                                              xRes=10, yRes=10,
-                                                              outputBounds=output_limit,
+                                                              xRes=10, yRes=10, dstSRS=self.dst_coord,
+                                                              outputBounds=output_limit, outputType=gdal.GDT_UInt16,
                                                               dstNodata=0)
-                                                time2 += time.time() - t2
-                                                t3 = time.time()
-                                                gdal.Translate(subset_output_path + all_band_file_name + '.tif',
-                                                               '/vsimem/' + all_band_file_name + '.tif', options=topts,
-                                                               noData=0, dstSRS='EPSG:32649',)
-                                                gdal.Unlink('/vsimem/' + all_band_file_name + '.tif')
-                                                time3 += time.time() - t3
-                                                print(time1, time2, time3)
+                                            time2 = time.time() - t2
+                                            t3 = time.time()
+                                            if self.cloud_removal_para:
+                                                qi_file_path = f'{qi_path}{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_QI.tif'
+                                                if not os.path.exists(qi_file_path):
+                                                    self.subset_tiffiles(['QI'], tiffile_serial_num, **kwargs)
+                                                qi_remove_cloud('/vsimem/' + all_band_file_name + '.tif',
+                                                                qi_file_path, dst_nodata=0,
+                                                                sparse_matrix_factor=self.sparsify_matrix_factor,
+                                                                **kwargs)
+                                            time3 = time.time() - t3
+                                            t4 = time.time()
+                                            gdal.Translate(subset_output_path + all_band_file_name + '.tif',
+                                                           '/vsimem/' + all_band_file_name + '.tif', options=topts,
+                                                           noData=0)
+                                            gdal.Unlink('/vsimem/' + all_band_file_name + '.tif')
+                                            time4 = time.time() - t4
+                                            print(time1, time2, time3, time4)
                             else:
                                 if not os.path.exists(
                                         f'{subset_output_path}\\{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_B2.tif'):
@@ -921,13 +988,84 @@ class Sentinel2_ds(object):
             sys.exit(-1)
         return
 
-    def check_subset_intergrality(self, indicator, **kwargs):
-        if self.ROI_name is None and ('ROI' not in kwargs.keys() and 'ROI_name' not in kwargs.keys()):
-            check_path = f'{self.output_path}{str(indicator)}\\'
-        elif self.ROI_name is None and ('ROI' in kwargs.keys() or 'ROI_name' in kwargs.keys()):
-            self.subset_indicator_process(**kwargs)
-            if self.ROI_name is None:
-                print()
+    def check_subset_integrality(self, indicator, **kwargs):
+        """
+
+        :type indicator: list
+        :type kwargs: dict
+        :return:
+        """
+        self.check_metadata_availability()
+        indicator = union_list(indicator, self.all_supported_index_list)
+        if 'QI' in indicator:
+            indicator.remove('QI')
+
+        for indicator_temp in indicator:
+            try:
+                if 'ROI_name' in kwargs.keys():
+                    roi = kwargs['ROI_name']
+                elif self.ROI_name is not None:
+                    roi = self.ROI_name
+                elif 'ROI' in kwargs.keys():
+                    roi = kwargs['ROI'].split('\\')[-1].split('.')[0]
+                elif self.ROI is not None:
+                    roi = self.ROI.split('\\')[-1].split('.')[0]
+                else:
+                    if os.path.exists(self.log_filepath + 'para.txt'):
+                        para_file = open(f"{self.log_filepath}para_file.txt")
+                        para_txt = para_file.read()
+                        ROI_all = [i for i in para_txt.split('\n') if i.startswith('ROI')]
+                        if len(ROI_all) != 0:
+                            roi = ''
+                        else:
+                            if ROI_all[-1].split(':')[0] == 'ROI':
+                                roi = ROI_all[-1].split(':')[-1]
+                            elif ROI_all[-1].split(':')[0] == 'ROI_name':
+                                roi = ROI_all[-1].split(':')[-1].split('\\')[-1].split('.')[0]
+                            else:
+                                roi = ''
+                    else:
+                        roi = ''
+            except:
+                print('ROI input type is not correct!')
+                sys.exit(-1)
+
+            # create check path
+            if roi == '':
+                check_path = f'{self.output_path}{str(indicator_temp)}\\'
+            else:
+                check_path = f'{self.output_path}{str(roi)}_{str(indicator_temp)}\\'
+
+            # consistency check
+            if os.path.exists(check_path):
+                valid_file = bf.file_filter(check_path, [indicator_temp])
+                if self.S2_metadata_size != len(valid_file):
+                    indicator.remove(indicator_temp)
+
+            if len(indicator) == 0:
+                print('Mentioned! please input a valid roi or indicator for mosaic!')
+                sys.exit(-1)
+        return indicator
+
+    def mosaic_indicator_process(self, **kwargs):
+
+
+
+    def sequenced_mosaic(self, *args, **kwargs):
+        pass
+
+    def mp_mosaic(self, *args, **kwargs):
+        pass
+
+    @ save_log_file
+    def mosaic_process(self, processed_index_list, *args, **kwargs):
+        self.check_subset_integrality(processed_index_list, **kwargs)
+        pass
+
+
+
+
+
 
     def temporal_mosaic(self, indicator, date, **kwargs):
         self.check_metadata_availability()
@@ -1525,15 +1663,17 @@ def curve_fitting(l2a_output_path_f, index_list, study_area_f, pixel_limitation_
 
 if __name__ == '__main__':
     # Create Output folder
-    # filepath = 'E:\A_Veg_phase2\Sentinel_2_test\Original_file'
-    filepath = 'G:\Sample_Sentinel2\Original_file\\'
+    filepath = 'E:\A_Veg_phase2\Sentinel_2_test\Original_file'
+    # filepath = 'G:\Sample_Sentinel2\Original_file\\'
     s2_ds_temp = Sentinel2_ds(filepath)
     s2_ds_temp.construct_metadata()
     # s2_ds_temp.subset_tiffiles(['all_band', 'NDVI'],0)
     # s2_ds_temp.sequenced_subset(['all_band'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
     #                             ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
-    #                             sparsify_matrix_factor=True, size_control_factor=True, cloud_clip_priority='clip')
-    s2_ds_temp.mp_subset(['all_band'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp', ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud', sparsify_matrix_factor=True, size_control_factor=True, cloud_clip_priority='clip')
+    #                             sparsify_matrix_factor=True, size_control_factor=True, large_roi=True)
+    s2_ds_temp.mp_subset(['NDVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
+                         ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
+                         sparsify_matrix_factor=True, size_control_factor=True, large_roi=True)
     file_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\Original_Zipfile\\'
     output_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\'
     l2a_output_path = output_path + 'Sentinel2_L2A_output\\'
