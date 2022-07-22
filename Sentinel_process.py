@@ -245,16 +245,24 @@ class Sentinel2_ds(object):
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):
+
+            #########################################################################
+            # Document the log file and para file
+            # The difference between log file and para file is that the log file contains the information for each run/debug
+            # While the para file only comprises of the parameter for the latest run/debug
+
             time_start = time.time()
             c_time = time.ctime()
             log_file = open(f"{self.log_filepath}log.txt", "a+")
             para_file = open(f"{self.log_filepath}para_file.txt", "a+")
             error_inf = None
+
             try:
                 func(self, *args, **kwargs)
             except:
                 error_inf = traceback.format_exc()
                 print(error_inf)
+
             para_temp = ['#' * 70 + '\n', f'Process Func: {func.__name__}\n', f'Start time: {c_time}\n',
                     f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
             if 'metadata' in func.__name__:
@@ -282,9 +290,13 @@ class Sentinel2_ds(object):
                     para_file.writelines(para_temp)
                     if error_inf is None:
                         log_file.writelines(['#' * 70 + '\n', f'Finished {func.__name__}!\n', f'Start time: {c_time}\n',
-                                             f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n', '#' * 70 + '\n'])
+                                             f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n'])
+                        log_file.writelines(para_temp)
+                        log_file.writelines(['#' * 70 + '\n'])
                     else:
-                        log_file.writelines(['#' * 70 + '\n', 'Error in subsetting files!\n', 'Error information:\n', error_inf + '\n', '#' * 70 + '\n'])
+                        log_file.writelines(['#' * 70 + '\n', 'Error in subsetting files!\n', 'Error information:\n', error_inf + '\n',])
+                        log_file.writelines(para_temp)
+                        log_file.writelines(['#' * 70 + '\n'])
         return wrapper
 
     @save_log_file
@@ -1045,10 +1057,11 @@ class Sentinel2_ds(object):
             if len(indicator) == 0:
                 print('Mentioned! please input a valid roi or indicator for mosaic!')
                 sys.exit(-1)
-        return indicator
+            else:
+                return indicator
 
-    def mosaic_indicator_process(self, **kwargs):
-
+    def mosaic_para_process(self, **kwargs):
+        pass
 
 
     def sequenced_mosaic(self, *args, **kwargs):
@@ -1057,13 +1070,16 @@ class Sentinel2_ds(object):
     def mp_mosaic(self, *args, **kwargs):
         pass
 
+
     @ save_log_file
-    def mosaic_process(self, processed_index_list, *args, **kwargs):
+    def mosaic_by_date(self, processed_index_list, date, *args, **kwargs):
+
+        # intial check
         self.check_subset_integrality(processed_index_list, **kwargs)
-        pass
+        self.mosaic_para_process(*args, **kwargs)
+        # mosaic
 
-
-
+    def composition
 
 
 
