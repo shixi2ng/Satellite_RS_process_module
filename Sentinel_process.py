@@ -200,6 +200,10 @@ class Sentinel2_ds(object):
         self.large_roi = False
         self.dst_coord = None
 
+        # Define var for mosaic
+        self.mosaic_cor_pathlist = []
+        self.mosaic_indicator_list = []
+
         # Remove all the duplicated data
         dup_data = bf.file_filter(self.ori_folder, ['.1.zip'])
         for dup in dup_data:
@@ -250,12 +254,21 @@ class Sentinel2_ds(object):
             # Document the log file and para file
             # The difference between log file and para file is that the log file contains the information for each run/debug
             # While the para file only comprises of the parameter for the latest run/debug
+            #########################################################################
 
             time_start = time.time()
             c_time = time.ctime()
             log_file = open(f"{self.log_filepath}log.txt", "a+")
-            para_file = open(f"{self.log_filepath}para_file.txt", "a+")
+            if os.path.exists(f"{self.log_filepath}para_file.txt"):
+                para_file = open(f"{self.log_filepath}para_file.txt", "r+")
+            else:
+                para_file = open(f"{self.log_filepath}para_file.txt", "w+")
             error_inf = None
+
+            para_txt_all = para_file.read()
+            para_ori_txt = para_txt_all.split('#' * 70 + '\n')
+            para_txt = para_txt_all.split('\n')
+            contain_func = [txt for txt in para_txt if txt.startswith('Process Func:')]
 
             try:
                 func(self, *args, **kwargs)
@@ -263,40 +276,49 @@ class Sentinel2_ds(object):
                 error_inf = traceback.format_exc()
                 print(error_inf)
 
+            # Header for the log file
+            log_temp = ['#' * 70 + '\n', f'Process Func: {func.__name__}\n', f'Start time: {c_time}\n',
+                    f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
+
+            # Create args and kwargs list
+            args_f = 0
+            args_list = ['*' * 25 + 'Arguments' + '*' * 25 + '\n']
+            kwargs_list = []
+            for i in args:
+                args_list.extend([f"args{str(args_f)}:{str(i)}\n"])
+            for k_key in kwargs.keys():
+                kwargs_list.extend([f"{str(k_key)}:{str(kwargs[k_key])}\n"])
             para_temp = ['#' * 70 + '\n', f'Process Func: {func.__name__}\n', f'Start time: {c_time}\n',
                     f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
-            if 'metadata' in func.__name__:
-                para_file.writelines(para_temp)
-                if error_inf is None:
-                    log_file.writelines(['#' * 70 + '\n', 'Finished construct metadata!\n', f'Start time: {c_time}\n', f'End time: {time.ctime()}\n',
-                                         f'Total processing time: {str(time.time() - time_start)}\n', '#' * 70 + '\n'])
-                else:
-                    log_file.writelines(['#' * 70 + '\n', 'Error in constructing metadata!\n', 'Error information:\n', error_inf + '\n', '#' * 70 + '\n'])
-            else:
-                args_f = 0
-                args_list = []
-                kwargs_list = []
+            para_temp.extend(args_list)
+            para_temp.extend(kwargs_list)
+            para_temp.append('#' * 70 + '\n')
 
-                for i in args:
-                    args_list.extend([f"args{str(args_f)}:{str(i)}\n"])
-                for k_key in kwargs.keys():
-                    kwargs_list.extend([f"{str(k_key)}:{str(kwargs[k_key])}\n"])
-
-                if 'subset' in func.__name__:
-                    para_temp.extend(['*' * 50 + '\n', 'ARGUEMENTS:\n'])
-                    para_temp.extend(args_list)
-                    kwargs_list.append('#' * 70 + '\n')
-                    para_temp.extend(kwargs_list)
-                    para_file.writelines(para_temp)
+            log_temp.extend(args_list)
+            log_temp.extend(kwargs_list)
+            log_file.writelines(log_temp)
+            for func_key, func_processing_name in zip(['metadata', 'subset'], ['constructing metadata', 'executing subset']):
+                if func_key in func.__name__:
                     if error_inf is None:
-                        log_file.writelines(['#' * 70 + '\n', f'Finished {func.__name__}!\n', f'Start time: {c_time}\n',
-                                             f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n'])
-                        log_file.writelines(para_temp)
-                        log_file.writelines(['#' * 70 + '\n'])
+                        log_file.writelines([f'Status: Finished {func_processing_name}!\n', '#' * 70 + '\n'])
                     else:
-                        log_file.writelines(['#' * 70 + '\n', 'Error in subsetting files!\n', 'Error information:\n', error_inf + '\n',])
-                        log_file.writelines(para_temp)
-                        log_file.writelines(['#' * 70 + '\n'])
+                        log_file.writelines([f'Status: Error in {func_processing_name}!\n', 'Error information:\n', error_inf + '\n', '#' * 70 + '\n'])
+
+                    metadata_line = [q for q in contain_func if func_key in q]
+                    if len(metadata_line) == 0:
+                        para_file.writelines(para_temp)
+                        para_file.close()
+                    elif len(metadata_line) == 1:
+                        for para_ori_temp in para_ori_txt:
+                            if para_ori_temp != '' and metadata_line[0] not in para_ori_temp:
+                                para_temp.extend(['#' * 70 + '\n', para_ori_temp, '#' * 70 + '\n'])
+                                para_file.close()
+                                para_file = open(f"{self.log_filepath}para_file.txt", "w+")
+                                para_file.writelines(para_temp)
+                                para_file.close()
+                    elif len(metadata_line) > 1:
+                        print('Code error! ')
+                        sys.exit(-1)
         return wrapper
 
     @save_log_file
@@ -1013,79 +1035,103 @@ class Sentinel2_ds(object):
             indicator.remove('QI')
 
         for indicator_temp in indicator:
-            try:
-                if 'ROI_name' in kwargs.keys():
-                    roi = kwargs['ROI_name']
-                elif self.ROI_name is not None:
-                    roi = self.ROI_name
-                elif 'ROI' in kwargs.keys():
-                    roi = kwargs['ROI'].split('\\')[-1].split('.')[0]
-                elif self.ROI is not None:
-                    roi = self.ROI.split('\\')[-1].split('.')[0]
-                else:
-                    if os.path.exists(self.log_filepath + 'para.txt'):
-                        para_file = open(f"{self.log_filepath}para_file.txt")
-                        para_txt = para_file.read()
-                        ROI_all = [i for i in para_txt.split('\n') if i.startswith('ROI')]
-                        if len(ROI_all) != 0:
-                            roi = ''
-                        else:
-                            if ROI_all[-1].split(':')[0] == 'ROI':
-                                roi = ROI_all[-1].split(':')[-1]
-                            elif ROI_all[-1].split(':')[0] == 'ROI_name':
-                                roi = ROI_all[-1].split(':')[-1].split('\\')[-1].split('.')[0]
-                            else:
-                                roi = ''
+            if indicator_temp not in self.mosaic_indicator_list:
+                try:
+                    if 'ROI_name' in kwargs.keys():
+                        roi = kwargs['ROI_name']
+                    elif self.ROI_name is not None:
+                        roi = self.ROI_name
+                    elif 'ROI' in kwargs.keys():
+                        roi = kwargs['ROI'].split('\\')[-1].split('.')[0]
+                    elif self.ROI is not None:
+                        roi = self.ROI.split('\\')[-1].split('.')[0]
                     else:
-                        roi = ''
-            except:
-                print('ROI input type is not correct!')
-                sys.exit(-1)
+                        if os.path.exists(self.log_filepath + 'para.txt'):
+                            para_file = open(f"{self.log_filepath}para_file.txt")
+                            para_txt = para_file.read()
+                            ROI_all = [i for i in para_txt.split('\n') if i.startswith('ROI')]
+                            if len(ROI_all) != 0:
+                                roi = ''
+                            else:
+                                if ROI_all[-1].split(':')[0] == 'ROI':
+                                    roi = ROI_all[-1].split(':')[-1]
+                                elif ROI_all[-1].split(':')[0] == 'ROI_name':
+                                    roi = ROI_all[-1].split(':')[-1].split('\\')[-1].split('.')[0]
+                                else:
+                                    roi = ''
+                        else:
+                            roi = ''
+                except:
+                    print('ROI input type is not correct!')
+                    sys.exit(-1)
 
-            # create check path
-            if roi == '':
-                check_path = f'{self.output_path}{str(indicator_temp)}\\'
-            else:
-                check_path = f'{self.output_path}{str(roi)}_{str(indicator_temp)}\\'
+                # create check path
+                if roi == '':
+                    check_path = f'{self.output_path}{str(indicator_temp)}\\'
+                else:
+                    check_path = f'{self.output_path}{str(roi)}_{str(indicator_temp)}\\'
 
-            # consistency check
-            if os.path.exists(check_path):
-                valid_file = bf.file_filter(check_path, [indicator_temp])
-                if self.S2_metadata_size != len(valid_file):
-                    indicator.remove(indicator_temp)
+                # consistency check
+                if os.path.exists(check_path):
+                    valid_file = bf.file_filter(check_path, [indicator_temp])
+                    if self.S2_metadata_size == len(valid_file):
+                        self.mosaic_indicator_list.append(indicator_temp)
+                        self.mosaic_cor_pathlist.append(check_path)
 
-            if len(indicator) == 0:
-                print('Mentioned! please input a valid roi or indicator for mosaic!')
-                sys.exit(-1)
-            else:
-                return indicator
-
-    def mosaic_para_process(self, **kwargs):
+    def retrieve_para_from_para_file(self):
+        # if self.
         pass
 
+    def check_mosaic_para(self, **kwargs):
+
+        pass
 
     def sequenced_mosaic(self, *args, **kwargs):
-        pass
+        self.check_subset_integrality(args[0], **kwargs)
+        if not self.date_list:
+            print('No valid date!')
+            sys.exit(-1)
+        for i in range(len(self.date_list)):
+            self.subset_tiffiles(args[0], i, **kwargs)
 
+    @save_log_file
     def mp_mosaic(self, *args, **kwargs):
-        pass
+        self.check_subset_integrality(args[0], **kwargs)
+        if not self.date_list:
+            print('No valid date!')
+            sys.exit(-1)
+        i = range(len(self.date_list))
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            executor.map(self.mosaic_by_date, repeat(args[0]), i, repeat(kwargs))
 
-
-    @ save_log_file
-    def mosaic_by_date(self, processed_index_list, date, *args, **kwargs):
+    def mosaic_by_date(self, processed_indicator_list, date_index, **kwargs):
 
         # intial check
-        self.check_subset_integrality(processed_index_list, **kwargs)
-        self.mosaic_para_process(*args, **kwargs)
-        # mosaic
+        self.check_subset_integrality(processed_indicator_list, **kwargs)
+        self.check_mosaic_para(**kwargs)
+        # mosaic by date
+        if len(self.mosaic_indicator_list) == 0:
+            print('Please input valid indicator!')
+            sys.exit(-1)
+        elif len(self.mosaic_indicator_list) != self.mosaic_cor_pathlist:
+            print('Code error')
+            sys.exit(-1)
 
-    def composition
+        date_temp = self.date_list[date_index]
+        for indicator_temp, indicator_filepath in zip(self.mosaic_indicator_list, self.mosaic_cor_pathlist):
+            valid_file_list = bf.file_filter(indicator_filepath, [indicator_temp, date_temp])
+            # valid_vrt_file = gdal.BuildVRT('temp.vrt', output_bounds=self.)
 
 
+
+
+
+    def composition(self):
+        pass
 
     def temporal_mosaic(self, indicator, date, **kwargs):
         self.check_metadata_availability()
-        self.check_subset_intergrality(indicator)
+        self.check_subset_integrality(indicator)
 
         pass
 
@@ -1679,15 +1725,15 @@ def curve_fitting(l2a_output_path_f, index_list, study_area_f, pixel_limitation_
 
 if __name__ == '__main__':
     # Create Output folder
-    filepath = 'E:\A_Veg_phase2\Sentinel_2_test\Original_file'
-    # filepath = 'G:\Sample_Sentinel2\Original_file\\'
+    # filepath = 'E:\A_Veg_phase2\Sentinel_2_test\Original_file'
+    filepath = 'G:\\Sample_Sentinel2\\Original_file\\'
     s2_ds_temp = Sentinel2_ds(filepath)
     s2_ds_temp.construct_metadata()
     # s2_ds_temp.subset_tiffiles(['all_band', 'NDVI'],0)
     # s2_ds_temp.sequenced_subset(['all_band'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
     #                             ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
     #                             sparsify_matrix_factor=True, size_control_factor=True, large_roi=True)
-    s2_ds_temp.mp_subset(['NDVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
+    s2_ds_temp.mp_subset(['all_band', 'NDVI', 'MNDWI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
                          ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
                          sparsify_matrix_factor=True, size_control_factor=True, large_roi=True)
     file_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\Original_Zipfile\\'
