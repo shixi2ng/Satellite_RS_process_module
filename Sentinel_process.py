@@ -1072,13 +1072,44 @@ class Sentinel2_ds(object):
                         self.merge_cor_pathlist.append(check_path)
 
     def retrieve_para_from_para_file(self, required_para_name_list, **kwargs):
+
+        if not os.path.exists(f'{self.log_filepath}para_file.txt'):
+            print('The para file is not established yet')
+        else:
+            para_file = open(f"{self.log_filepath}para_file.txt", "r+")
+            para_raw_txt = para_file.read().split('\n')
+
         for para in required_para_name_list:
             if para in self.__dir__():
-                pass
+                for q in para_raw_txt:
+                    if q.startswith(str(para)):
+                        if q.split(':')[-1] == 'None':
+                            self.__dict__[para] = None
+                        elif q.split(':')[-1] == 'True':
+                            self.__dict__[para] = True
+                        elif q.split(':')[-1] == 'False':
+                            self.__dict__[para] = False
+                        else:
+                            self.__dict__[para] = q.split(':')[-1]
 
     def check_merge_para(self, **kwargs):
+        # Get the ROI or outbounds
+        if 'ROI' not in kwargs.keys() and self.ROI is None:
+            if herit_from_subset in kwargs.keys():
+                self.retrieve_para_from_para_file(['ROI', 'ROI_name'])
+            else:
+                self.ROI, self.ROI_name = None, None
+        elif 'ROI' in kwargs.keys():
+            if '.shp' in kwargs['ROI'] and os.path.exists(kwargs['ROI']):
+                self.ROI = kwargs['ROI']
+            else:
+                print('Please input valid shp file for clip!')
+                sys.exit(-1)
 
-        pass
+            if 'ROI_name' in kwargs.keys():
+                self.ROI_name = kwargs['ROI_name']
+            else:
+                self.ROI_name = self.ROI.split('\\')[-1].split('.')[0]
 
     def sequenced_merge(self, *args, **kwargs):
         self.check_subset_integrality(args[0], **kwargs)
@@ -1100,7 +1131,7 @@ class Sentinel2_ds(object):
 
     def merge_by_date(self, processed_indicator_list, date_index, **kwargs):
 
-        # intial check
+        # initial check
         self.check_subset_integrality(processed_indicator_list, **kwargs)
         self.check_merge_para(**kwargs)
         # merge by date
@@ -1110,21 +1141,21 @@ class Sentinel2_ds(object):
         elif len(self.merge_indicator_list) != self.merge_cor_pathlist:
             print('Code error')
             sys.exit(-1)
-
+        merge_file_path = self.output_path +
         date_temp = self.date_list[date_index]
         for indicator_temp, indicator_filepath in zip(self.merge_indicator_list, self.merge_cor_pathlist):
             valid_file_list = bf.file_filter(indicator_filepath, [indicator_temp, date_temp])
-            # valid_vrt_file = gdal.BuildVRT('temp.vrt', valid_file_list, output_bounds=self.)
-            # gdal.Translate(merge_file_path, valid_vrt_file)
+            valid_vrt_file = gdal.BuildVRT('temp.vrt', valid_file_list, xRes=10, yRes=10, srcNodata=)
+            if self.ROI is not None:
+                gdal.Warp(merge_file_path, valid_vrt_file, xRes=10, yRes=10, cutlineDSName=self.ROI, cropToCutline=True)
+            else:
+                gdal.Translate
             valid_vrt_file = None
 
     def composition(self):
         pass
 
-    def temporal_merge(self, indicator, date, **kwargs):
-        self.check_metadata_availability()
-        self.check_subset_integrality(indicator)
-
+    def phenology_process(self):
         pass
 
     def vi_process(self, l2a_output_path_f, mask_path, index_list, study_area_f, specific_name_list_f,
