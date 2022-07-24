@@ -200,9 +200,11 @@ class Sentinel2_ds(object):
         self.large_roi = False
         self.dst_coord = None
 
-        # Define var for mosaic
-        self.mosaic_cor_pathlist = []
-        self.mosaic_indicator_list = []
+        # Define var for merge
+        self.merge_cor_pathlist = []
+        self.merge_indicator_list = []
+
+        # Define key variables for merge (kwargs)
 
         # Remove all the duplicated data
         dup_data = bf.file_filter(self.ori_folder, ['.1.zip'])
@@ -246,6 +248,7 @@ class Sentinel2_ds(object):
         self.all_supported_index_list = ['QI', 'all_band', '4visual', 'NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI',
                                          'NDVI_RE', 'NDVI_RE2', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9',
                                          'B11', 'B12']
+        self.process_steps = ('metadata', 'subset', 'merge')
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):
@@ -605,8 +608,8 @@ class Sentinel2_ds(object):
         else:
             print('The output bounds has some logical issue!')
             sys.exit(-1)
-        print(
-            f' Generate 10m bounds of {str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])} consume {time.time() - time1}s')
+        # print(
+        #     f' Generate 10m bounds of {str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])} consume {time.time() - time1}s')
 
     def subset_tiffiles(self, processed_index_list, tiffile_serial_num, overwritten_para=False, *args, **kwargs):
         """
@@ -642,9 +645,9 @@ class Sentinel2_ds(object):
 
             for VI in processed_index_list:
                 start_temp = time.time()
-                print(f'Start processing {VI} data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
                 sensing_date = 'Sensing_Date'
                 tile_num = 'Tile_Num'
+                print(f'Start processing {VI} data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)}) {str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}')
 
                 # Generate output folder
                 if self.vi_clip_factor:
@@ -796,7 +799,7 @@ class Sentinel2_ds(object):
                                                            noData=0)
                                             gdal.Unlink('/vsimem/' + all_band_file_name + '.tif')
                                             time4 = time.time() - t4
-                                            print(time1, time2, time3, time4)
+                                            # print(time1, time2, time3, time4)
                             else:
                                 if not os.path.exists(
                                         f'{subset_output_path}\\{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_B2.tif'):
@@ -815,18 +818,16 @@ class Sentinel2_ds(object):
                 elif not overwritten_para and not os.path.exists(subset_output_path + file_name + 'tif') and not (
                         VI == 'QI' or VI == 'all_band' or VI == '4visual' or VI in self.band_output_list):
                     if VI == 'NDVI':
-                        time1 = time.time()
+                        # time1 = time.time()
                         ds_list = self.check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
-                        print('process b8 and b4' + str(time.time() - time1))
                         if ds_list is not None:
-                            time1 = time.time()
+                            # time1 = time.time()
                             if self.sparsify_matrix_factor:
                                 B8_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
                                 B4_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
                             else:
                                 B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                                 B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                            # print(time.time()-time1)
                             output_array = (B8_array - B4_array) / (B8_array + B4_array)
                             B4_array = None
                             B8_array = None
@@ -835,22 +836,19 @@ class Sentinel2_ds(object):
                             self.subset_failure_file.append([VI, tiffile_serial_num, temp_S2file_path])
                             break
                     elif VI == 'MNDWI':
-                        B11_statue, a_ds, B11_filepath = self.check_output_band_statue('B11', str(
-                            self.S2_metadata[sensing_date][tiffile_serial_num]), str(
-                            self.S2_metadata[tile_num][tiffile_serial_num]), zfile, temp_S2file_path)
-                        B3_statue, b_ds, B3_filepath = self.check_output_band_statue('B3', str(
-                            self.S2_metadata[sensing_date][tiffile_serial_num]), str(
-                            self.S2_metadata[tile_num][tiffile_serial_num]), zfile, temp_S2file_path)
-                        if B11_statue is not None and B3_statue is not None:
+                        ds_list = self.check_output_band_statue(['B3', 'B11'], tiffile_serial_num, **kwargs)
+                        if ds_list is not None:
+                            # time1 = time.time()
                             if self.sparsify_matrix_factor:
-                                B3_array = sp.csr_matrix(a_ds.GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                B11_array = sp.csr_matrix(b_ds.GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                B3_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                B11_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
                             else:
-                                B3_array = a_ds.GetRasterBand(1).ReadAsArray().astype(np.float)
-                                B11_array = b_ds.GetRasterBand(1).ReadAsArray().astype(np.float)
+                                B3_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                                B11_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
                             output_array = (B3_array - B11_array) / (B3_array + B11_array)
                             B3_array = None
                             B11_array = None
+                            # print(time.time()-time1)
                         else:
                             self.subset_failure_file.append([VI, tiffile_serial_num, temp_S2file_path])
                             break
@@ -961,19 +959,14 @@ class Sentinel2_ds(object):
                             self.subset_failure_file.append([VI, tiffile_serial_num, temp_S2file_path])
                             break
                     elif VI == 'OSAVI':
-                        B8_statue, a_ds, B8_filepath = self.check_output_band_statue('B8', str(
-                            self.S2_metadata[sensing_date][tiffile_serial_num]), str(
-                            self.S2_metadata[tile_num][tiffile_serial_num]), zfile, temp_S2file_path)
-                        B4_statue, b_ds, B4_filepath = self.check_output_band_statue('B4', str(
-                            self.S2_metadata[sensing_date][tiffile_serial_num]), str(
-                            self.S2_metadata[tile_num][tiffile_serial_num]), zfile, temp_S2file_path)
-                        if B8_statue is not None and B4_statue is not None:
+                        ds_list = self.check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
+                        if ds_list is not None:
                             if self.sparsify_matrix_factor:
-                                B8_array = sp.csr_matrix(a_ds.GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                B4_array = sp.csr_matrix(b_ds.GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                B8_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                B4_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
                             else:
-                                B8_array = a_ds.GetRasterBand(1).ReadAsArray().astype(np.float)
-                                B4_array = b_ds.GetRasterBand(1).ReadAsArray().astype(np.float)
+                                B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                                B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
                             output_array = 1.16 * (B8_array - B4_array) / (B8_array + B4_array + 0.16)
                             B4_array = None
                             B8_array = None
@@ -1035,7 +1028,7 @@ class Sentinel2_ds(object):
             indicator.remove('QI')
 
         for indicator_temp in indicator:
-            if indicator_temp not in self.mosaic_indicator_list:
+            if indicator_temp not in self.merge_indicator_list:
                 try:
                     if 'ROI_name' in kwargs.keys():
                         roi = kwargs['ROI_name']
@@ -1075,18 +1068,19 @@ class Sentinel2_ds(object):
                 if os.path.exists(check_path):
                     valid_file = bf.file_filter(check_path, [indicator_temp])
                     if self.S2_metadata_size == len(valid_file):
-                        self.mosaic_indicator_list.append(indicator_temp)
-                        self.mosaic_cor_pathlist.append(check_path)
+                        self.merge_indicator_list.append(indicator_temp)
+                        self.merge_cor_pathlist.append(check_path)
 
-    def retrieve_para_from_para_file(self):
-        # if self.
+    def retrieve_para_from_para_file(self, required_para_name_list, **kwargs):
+        for para in required_para_name_list:
+            if para in self.__dir__():
+                pass
+
+    def check_merge_para(self, **kwargs):
+
         pass
 
-    def check_mosaic_para(self, **kwargs):
-
-        pass
-
-    def sequenced_mosaic(self, *args, **kwargs):
+    def sequenced_merge(self, *args, **kwargs):
         self.check_subset_integrality(args[0], **kwargs)
         if not self.date_list:
             print('No valid date!')
@@ -1095,41 +1089,39 @@ class Sentinel2_ds(object):
             self.subset_tiffiles(args[0], i, **kwargs)
 
     @save_log_file
-    def mp_mosaic(self, *args, **kwargs):
+    def mp_merge(self, *args, **kwargs):
         self.check_subset_integrality(args[0], **kwargs)
         if not self.date_list:
             print('No valid date!')
             sys.exit(-1)
         i = range(len(self.date_list))
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            executor.map(self.mosaic_by_date, repeat(args[0]), i, repeat(kwargs))
+            executor.map(self.merge_by_date, repeat(args[0]), i, repeat(kwargs))
 
-    def mosaic_by_date(self, processed_indicator_list, date_index, **kwargs):
+    def merge_by_date(self, processed_indicator_list, date_index, **kwargs):
 
         # intial check
         self.check_subset_integrality(processed_indicator_list, **kwargs)
-        self.check_mosaic_para(**kwargs)
-        # mosaic by date
-        if len(self.mosaic_indicator_list) == 0:
+        self.check_merge_para(**kwargs)
+        # merge by date
+        if len(self.merge_indicator_list) == 0:
             print('Please input valid indicator!')
             sys.exit(-1)
-        elif len(self.mosaic_indicator_list) != self.mosaic_cor_pathlist:
+        elif len(self.merge_indicator_list) != self.merge_cor_pathlist:
             print('Code error')
             sys.exit(-1)
 
         date_temp = self.date_list[date_index]
-        for indicator_temp, indicator_filepath in zip(self.mosaic_indicator_list, self.mosaic_cor_pathlist):
+        for indicator_temp, indicator_filepath in zip(self.merge_indicator_list, self.merge_cor_pathlist):
             valid_file_list = bf.file_filter(indicator_filepath, [indicator_temp, date_temp])
-            # valid_vrt_file = gdal.BuildVRT('temp.vrt', output_bounds=self.)
-
-
-
-
+            # valid_vrt_file = gdal.BuildVRT('temp.vrt', valid_file_list, output_bounds=self.)
+            # gdal.Translate(merge_file_path, valid_vrt_file)
+            valid_vrt_file = None
 
     def composition(self):
         pass
 
-    def temporal_mosaic(self, indicator, date, **kwargs):
+    def temporal_merge(self, indicator, date, **kwargs):
         self.check_metadata_availability()
         self.check_subset_integrality(indicator)
 
@@ -1730,7 +1722,7 @@ if __name__ == '__main__':
     s2_ds_temp = Sentinel2_ds(filepath)
     s2_ds_temp.construct_metadata()
     # s2_ds_temp.subset_tiffiles(['all_band', 'NDVI'],0)
-    # s2_ds_temp.sequenced_subset(['all_band'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
+    # s2_ds_temp.sequenced_subset(['MNDWI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
     #                             ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
     #                             sparsify_matrix_factor=True, size_control_factor=True, large_roi=True)
     s2_ds_temp.mp_subset(['all_band', 'NDVI', 'MNDWI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
