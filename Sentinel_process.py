@@ -457,6 +457,7 @@ class Sentinel2_ds(object):
             if kwarg_indicator not in ('ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_strategy',
                                        'sparsify_matrix_factor', 'large_roi', 'dst_coord'):
                 print(f'{kwarg_indicator} is not supported kwargs! Please double check!')
+                sys.exit(-1)
 
         # process clip parameter
         if self.ROI is None:
@@ -1093,9 +1094,15 @@ class Sentinel2_ds(object):
                             self.__dict__[para] = q.split(':')[-1]
 
     def check_merge_para(self, **kwargs):
+        # Detect whether all the indicator are valid
+        for kwarg_indicator in kwargs.keys():
+            if kwarg_indicator not in ('ROI', 'ROI_name', 'size_control_factor', 'large_roi', 'dst_coord'):
+                print(f'{kwarg_indicator} is not supported kwargs! Please double check!')
+                sys.exit(-1)
+
         # Get the ROI or outbounds
         if 'ROI' not in kwargs.keys() and self.ROI is None:
-            if herit_from_subset in kwargs.keys():
+            if 'herit_from_subset' in kwargs.keys():
                 self.retrieve_para_from_para_file(['ROI', 'ROI_name'])
             else:
                 self.ROI, self.ROI_name = None, None
@@ -1110,6 +1117,8 @@ class Sentinel2_ds(object):
                 self.ROI_name = kwargs['ROI_name']
             else:
                 self.ROI_name = self.ROI.split('\\')[-1].split('.')[0]
+
+        # Get the ROI or outbounds
 
     def sequenced_merge(self, *args, **kwargs):
         self.check_subset_integrality(args[0], **kwargs)
@@ -1141,6 +1150,7 @@ class Sentinel2_ds(object):
         elif len(self.merge_indicator_list) != self.merge_cor_pathlist:
             print('Code error')
             sys.exit(-1)
+
         merge_file_path = self.output_path +
         date_temp = self.date_list[date_index]
         for indicator_temp, indicator_filepath in zip(self.merge_indicator_list, self.merge_cor_pathlist):
