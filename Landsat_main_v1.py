@@ -31,7 +31,10 @@ import PyQt5
 import subprocess
 import Basic_function as bf
 from gdalconst import *
+import pickle
 
+
+pickle.DEFAULT_PROTOCOL = 4
 
 all_supported_vi_list = ['NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC', 'AWEI']
 phase0_time, phase1_time, phase2_time, phase3_time, phase4_time = 0, 0, 0, 0, 0
@@ -1198,35 +1201,49 @@ def composition(re_doy_index, doy_list, file_list, nan_value, composition_strate
 
             if file_temp_cube != []:
                 file_output = np.ones([file_temp_cube.shape[0], file_temp_cube.shape[1]]) * nan_value
-                for y in range(file_temp_cube.shape[0]):
-                    for x in range(file_temp_cube.shape[1]):
-                        temp_set = file_temp_cube[y, x, :].flatten()
-                        temp = nan_value
-                        if composition_strategy == 'first':
-                            for set_index in range(temp_set.shape[0]):
-                                if temp_set[set_index] != nan_value:
-                                    temp = temp_set[set_index]
-                                    break
-                        elif composition_strategy == 'mean':
-                            if not (temp_set == nan_value).all:
-                                temp = np.nanmean(temp_set)
-                        elif composition_strategy == 'last':
+                ori_type = file_temp_cube.dtype
+                file_temp_cube = file_temp_cube.astype(np.float)
+                file_temp_cube[file_temp_cube == nan_value] = np.nan
+                if composition_strategy == 'first':
+                    for y in range(file_temp_cube.shape[0]):
+                        for x in range(file_temp_cube.shape[1]):
+                            temp_set = file_temp_cube[y, x, :].flatten()
+                            temp = nan_value
+                            if composition_strategy == 'first':
+                                for set_index in range(temp_set.shape[0]):
+                                    if temp_set[set_index] != nan_value:
+                                        temp = temp_set[set_index]
+                                        break
+                            file_output[y, x] = temp
+                elif composition_strategy == 'last':
+                    for y in range(file_temp_cube.shape[0]):
+                        for x in range(file_temp_cube.shape[1]):
+                            temp_set = file_temp_cube[y, x, :].flatten()
+                            temp = nan_value
                             set_index = temp_set.shape[0] - 1
                             while set_index >= 0:
                                 if temp_set[set_index] != nan_value:
                                     temp = temp_set[set_index]
                                     break
                                 set_index -= 1
-                        elif composition_strategy == 'dry_wet_ratio_sequenced':
+                            file_output[y, x] = temp
+                elif composition_strategy == 'mean':
+                    file_output = np.nanmean(file_temp_cube, axis=2)
+                elif composition_strategy == 'dry_wet_ratio_sequenced':
+                    for y in range(file_temp_cube.shape[0]):
+                        for x in range(file_temp_cube.shape[1]):
+                            temp_set = file_temp_cube[y, x, :].flatten()
+                            temp = nan_value
                             for set_index in range(temp_set.shape[0]):
                                 if temp_set[set_index] != nan_value:
                                     temp = temp_set[set_index]
                                     break
-                        elif composition_strategy == 'max':
-                            temp = np.nanmax(temp_set)
-                        elif composition_strategy == 'min':
-                            temp = np.nanmin(temp_set)
-                        file_output[y, x] = temp
+                            file_output[y, x] = temp
+                elif composition_strategy == 'max':
+                    file_output = np.nanmax(file_temp_cube, axis=2)
+                elif composition_strategy == 'min':
+                    file_output = np.nanmin(file_temp_cube, axis=2)
+                file_output = file_output.astype(ori_type)
                 write_raster(file_directory['temp_ds_0'], file_output, composition_output_folder, 'composite_Year_' + str(year) + '_' + time_coverage + '_' + str(itr) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
         elif len(re_doy_index) == 1:
             file_ds = gdal.Open(file_list[re_doy_index[0]])
@@ -1327,7 +1344,7 @@ def data_composition(file_path, metadata_path, time_coverage=None, composition_s
         doy_list = date2doy(date_list)
     elif len(date_list) == len(file_list):
         doy_list = date2doy(date_list)
-    elif len(doy_list) == len(file_list):
+    elif len(doy_list) != len(file_list):
         print('Consistency error occurred during data composition!')
         sys.exit(-1)
 
@@ -1348,7 +1365,7 @@ def data_composition(file_path, metadata_path, time_coverage=None, composition_s
             for doy_index in range(len(doy_list)):
                 if doy_list[doy_index] // 1000 == year:
                     re_doy_index.append(doy_index)
-                composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, year, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path, Landsat_7_influence=Landsat7_influence)
+            composition(re_doy_index, doy_list, file_list, nan_value, composition_strategy, composition_output_folder, year, time_coverage, year, inundated_value, nan_inundated_value, dry_wet_ratio_threshold=dry_wet_ratio_threshold, metadata_file_path=metadata_path, Landsat_7_influence=Landsat7_influence)
         elif time_coverage == 'monsoon':
             for i in ['wet', 'dry']:
                 re_doy_index = []
@@ -1472,7 +1489,10 @@ def surrounding_pixel_cor(water_pixel_under_invest, water_center_pixel_list, sur
         surrounding_water_pixel_list = [i for i in surrounding_water_pixel_list_t if i not in water_center_pixel_list]
         water_center_pixel_list.extend(surrounding_water_pixel_list)
         surrounding_nan_water_pixel_list.extend(surrounding_nan_water_pixel_list_t)
-        surrounding_nan_water_pixel_list = np.unique(np.array(surrounding_nan_water_pixel_list), axis=0).tolist()
+        try:
+            surrounding_nan_water_pixel_list = np.unique(np.array(surrounding_nan_water_pixel_list), axis=0).tolist()
+        except:
+            surrounding_nan_water_pixel_list = []
     return surrounding_water_pixel_list, surrounding_nan_water_pixel_list, water_center_pixel_list
 
 
@@ -2332,7 +2352,7 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                         #     end_time = time.time()
                         #     print('The QI zonal detection consumes about ' + str(
                         #         end_time - start_time) + ' s for processing one pixel')
-                    elif 'LE07' in i or 'LT05' in i:
+                    elif 'LE07' in i:
                         start_time = time.time()
                         QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
                         QI_temp_array_temp = copy.copy(QI_temp_array)
@@ -2351,6 +2371,22 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                             gap_mask_ds = gdal.Open(unzipped_file_path_f + i.split('_02_T')[0] + '_gap_mask.TIF')
                             gap_mask_array = gap_mask_ds.GetRasterBand(1).ReadAsArray()
                             QI_temp_array[gap_mask_array == 0] = 1
+                    elif 'LT05' in i:
+                        start_time = time.time()
+                        QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
+                        QI_temp_array_temp = copy.copy(QI_temp_array)
+                        QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
+                        QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
+                        QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
+                        QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
+                                                     QI_neighbor_average > 3)] = np.nan
+                        QI_temp_array[np.logical_and(
+                            np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
+                            np.logical_and(np.mod(QI_temp_array, 128) != 0, np.mod(QI_temp_array, 128) != 66))] = np.nan
+                        end_time = time.time()
+                        print('The QI zonal detection consumes about ' + str(
+                            end_time - start_time) + ' s for processing all pixels')
+
                     WATER_temp_array = copy.copy(QI_temp_array)
                     QI_temp_array[~np.isnan(QI_temp_array)] = 1
                     WATER_temp_array[np.logical_and(np.floor_divide(np.mod(WATER_temp_array, 256), 128) != 1, ~np.isnan(np.floor_divide(np.mod(WATER_temp_array, 256), 128)))] = 0
@@ -2625,9 +2661,9 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
 
                 try:
                     if not dc_vi['data_list']:
-                        dc_vi['data_list'] = data_cube_temp
+                        dc_vi['data_list'] = date_cube_temp
                 except:
-                    dc_vi['data_list'] = data_cube_temp
+                    dc_vi['data_list'] = date_cube_temp
 
             print('Finish constructing ' + VI + ' datacube.')
         np.save(key_dictionary_path + study_area + '_dc_vi.npy', dc_vi)
@@ -2698,20 +2734,12 @@ def generate_landsat_vi(root_path_f, unzipped_file_path_f, file_metadata_f, vi_c
                                 else:
                                     print('date long error')
                                     sys.exit(-1)
-                                data_cube_temp_factor = copy.copy(data_cube_temp)
-                                data_cube_temp_factor[np.isnan(data_cube_temp_factor)] = -1
-                                data_cube_temp_factor[data_cube_temp_factor > -1] = 1
-                                data_cube_temp_factor[data_cube_temp_factor <= -1] = 0
-                                data_cube_temp_factor = data_cube_temp_factor.sum(axis=2)
-                                data_cube_temp[data_cube_temp <= -1] = 0
-                                data_cube_temp[np.isnan(data_cube_temp)] = 0
-                                data_cube_temp = data_cube_temp.sum(axis=2)
-                                data_cube_temp_temp = data_cube_temp / data_cube_temp_factor
+                                data_cube_temp_temp = np.nanmean(data_cube_temp, axis=2)
                                 sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp_temp
                             else:
                                 print('Something error during generate sequenced datecube')
                                 sys.exit(-1)
-                        np.save(str(sdc_vi[VI + '_path']) + "doy_list.npy", sdc_vi['doy'])
+                        np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
                         np.save(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy', sdc_vi_dc[VI + '_in_order'])
                     else:
                         print('consistency error')
@@ -2951,7 +2979,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                     if not os.path.exists(band_path['NIR_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF') or not os.path.exists(band_path['SWIR2_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_SWIR2.TIF') or inundation_data_overwritten_factor:
                         if main_coordinate_system is not None and retrieve_srs(NIR_temp_ds) != main_coordinate_system:
                             gdal.Warp(band_path['NIR_sa'] + 'temp2.TIF', band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_NIR.TIF', dstSRS=main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
-                            gdal.Warp(band_path['NIR_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR_sa'] + 'temp2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
+                            gdal.Warp(band_path['NIR_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR_sa'] + 'temp2.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
                         else:
                             gdal.Warp(band_path['NIR_sa'] + str(filedate) + '_' + str(tile_num) + '_' + study_area + '_NIR.TIF', band_path['NIR'] + str(filedate) + '_' + str(tile_num) + '_NIR.TIF', cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
 
@@ -3085,6 +3113,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                     write_raster(ds_temp, AWEI_temp, inundation_AWEI_dic['AWEI_' + study_area] + 'individual_tif\\', 'AWEI_' + str(doy_array[doy]) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
             np.save(root_path_f + 'Landsat_key_dic\\' + study_area + '_AWEI_inundation_dic.npy', inundation_AWEI_dic)
             inundation_approach_dic['approach_list'].append('AWEI')
+
         # (1') Inundation area identification by local method (DYNAMIC MNDWI THRESHOLD using time-series MNDWI calculated by Landsat ETM+ and TM)
         if local_factor:
             if os.path.exists(root_path_f + 'Landsat_key_dic\\' + study_area + '_local_inundation_dic.npy'):
