@@ -1206,8 +1206,23 @@ class Sentinel2_ds(object):
             valid_vrt_file = None
             print(f'Finish merging {indicator_temp} of {str(date_temp)} in {str(time.time()-time_start)}s ({str(date_index + 1)} of {str(len(self.date_list))})')
 
-    def composition(self):
-        pass
+    def check_temporal_consistency(self, *args, **kwargs):
+        # Generate the available index list for composition
+        temporal_composited_index_list = copy.copy(self.all_supported_index_list)
+        temporal_composited_index_list.extend([f'{i}_merged' for i in self.all_supported_index_list])
+
+        if type(args[0]) == list:
+            for VI in
+        elif type(args[0]) == str:
+
+    def composition(self, *args, **kwargs):
+
+    def generate_datacube(self, *args, **kwargs):
+
+class RS_datacube(self):
+    def __init__(self, datacube_path, *args, **kwargs):
+
+    def lsp_extraction(self):
 
     def phenology_process(self):
         pass
