@@ -1206,23 +1206,111 @@ class Sentinel2_ds(object):
             valid_vrt_file = None
             print(f'Finish merging {indicator_temp} of {str(date_temp)} in {str(time.time()-time_start)}s ({str(date_index + 1)} of {str(len(self.date_list))})')
 
+    def read_tiffile_size(self, tif_file):
+        ds_temp = gdal.Open(tif_file)
+        return [ds_temp.RasterXSize, ds_temp.RasterYSize]
+
     def check_temporal_consistency(self, *args, **kwargs):
         # Generate the available index list for composition
         temporal_composited_index_list = copy.copy(self.all_supported_index_list)
         temporal_composited_index_list.extend([f'{i}_merged' for i in self.all_supported_index_list])
 
         if type(args[0]) == list:
-            for VI in
+            processed_list = union_list(args[0], temporal_composited_index_list)
+            if len(processed_list) == 0:
+                print('None valid index for temporal process')
+                return
+            else:
+                for index_temp in processed_list:
+                    check_folder_temp = bf.file_filter(self.output_path, [str(index_temp)])
+                    if len(check_folder_temp) == 0:
+                        print('Please generate the index before the temporal process!')
+                        break
+                    elif len(check_folder_temp) == 1:
+                        index_name = check_folder_temp[0].split('\\')[-1]
+                        print(f"The {index_name} was regarded as the temporal process object!")
+                        processed_file_all = bf.file_filter(check_folder_temp, ['.tif'])
+                        raster_size_list = []
+                        if len(processed_file_all) > 200:
+                            with concurrent.futures.ProcessPoolExecutor() as executor:
+                                for result in executor.map(self.read_tiffile_size, processed_file_all):
+                                    raster_size_list.append(result)
+                        else:
+                            for tif_file in processed_file_all:
+                                raster_size_list.append(self.read_tiffile_size(tif_file))
+                    else:
+                        if self.ROI_name is not None:
+                            roi_temp = self.ROI_name
+                        elif self.ROI is not None:
+                            roi_temp = self.ROI.split('\\')[-1].split('.')[0]
+                        elif 'ROI_name' in kwargs.keys():
+                            roi_temp = kwargs['ROI_name']
+                        elif 'ROI' in kwargs.keys():
+                            roi_temp = kwargs['ROI'].split('\\')[-1].split('.')[0]
+                        else:
+                            roi_temp = ''
+
+                        if roi_temp == '':
+                            check_folder_temp = [path for path in check_folder_temp if f'\\{str(index_temp)}' in path]
+                        else:
+                            check_folder_temp = [path for path in check_folder_temp if f'\\{roi_temp}_{str(index_temp)}' in path]
+
+                        if len(check_folder_temp) != 1:
+                            print('Please input tht correct ROI name for the temporal analysis!')
+                            sys.exit(-1)
+                        else:
+                            index_name = check_folder_temp[0].split('\\')[-1]
+                            print(f"The {index_name} was regarded as the temporal process object!")
+                            processed_file_all = bf.file_filter(check_folder_temp, ['.tif'])
+                            raster_size_list = []
+                            if len(processed_file_all) > 200:
+                                with concurrent.futures.ProcessPoolExecutor() as executor:
+                                    for result in executor.map(self.read_tiffile_size, processed_file_all):
+                                        raster_size_list.append(result)
+                            else:
+                                for tif_file in processed_file_all:
+                                    raster_size_list.append(self.read_tiffile_size(tif_file))
+
+                    if False in [com == raster_size_list[0] for com in raster_size_list]:
+                        print('The dataset is temporal inconsistency, please double check!')
+                        sys.exit(-1)
+
         elif type(args[0]) == str:
+            if os.path.exists(args[0]):
+                raster_size_list = []
+                processed_file_all = bf.file_filter(bf.Path(args[0]).path_name, ['.tif'])
+                if len(processed_file_all) > 200:
+                    with concurrent.futures.ProcessPoolExecutor() as executor:
+                        for result in executor.map(self.read_tiffile_size, processed_file_all):
+                            raster_size_list.append(result)
+                else:
+                    for tif_file in processed_file_all:
+                        raster_size_list.append(self.read_tiffile_size(tif_file))
+
+                if False in [com == raster_size_list[0] for com in raster_size_list]:
+                    print('The dataset is temporal inconsistency, please double check!')
+                    sys.exit(-1)
+
+            else:
+                print('Please input a valid path for the arguments!')
+                sys.exit(-1)
+
+        else:
+            print('Please input the indicator name or the valid file path for temporal analysis')
+            sys.exit(-1)
 
     def composition(self, *args, **kwargs):
+        self.check_temporal_consistency()
 
     def generate_datacube(self, *args, **kwargs):
+        self.check_temporal_consistency()
 
-class RS_datacube(self):
+class RS_datacube(object):
     def __init__(self, datacube_path, *args, **kwargs):
+        pass
 
     def lsp_extraction(self):
+        pass
 
     def phenology_process(self):
         pass
