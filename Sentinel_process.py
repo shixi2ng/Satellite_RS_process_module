@@ -32,6 +32,21 @@ import traceback
 np.seterr(divide='ignore', invalid='ignore')
 
 
+def read_tiffile_size(tif_file):
+    ds_temp = gdal.Open(tif_file)
+    return [ds_temp.RasterXSize, ds_temp.RasterYSize]
+
+def check_kwargs(kwargs_dic, key_list, func_name=None):
+    for key_temp in key_list:
+        if key_temp not in kwargs_dic.keys():
+            if func_name is not None:
+                print(f'The {key_temp} is not available for the {str(func_name)}!')
+                sys.exit(-1)
+            else:
+                print(f'The {key_temp} is not available')
+                sys.exit(-1)
+
+
 def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=None, nodatavalue=None):
     if raster_datatype is None and nodatavalue is None:
         raster_datatype = gdal.GDT_Float32
@@ -254,6 +269,8 @@ class Sentinel2_ds(object):
                                          'NDVI_RE', 'NDVI_RE2', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9',
                                          'B11', 'B12']
         self.process_steps = ('metadata', 'subset', 'merge')
+        self.all_supported_datacube_list = copy.copy(self.all_supported_index_list)
+        self.all_supported_datacube_list.extend([f'{i}_merged' for i in self.all_supported_index_list])
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):
@@ -1131,6 +1148,7 @@ class Sentinel2_ds(object):
             else:
                 self.ROI_name = self.ROI.split('\\')[-1].split('.')[0]
 
+    @save_log_file
     def sequenced_merge(self, *args, **kwargs):
         self.check_subset_integrality(args[0], **kwargs)
         if not self.date_list:
@@ -1157,6 +1175,7 @@ class Sentinel2_ds(object):
         # initial check
         self.check_subset_integrality(processed_indicator_list, **kwargs)
         self.check_merge_para(**kwargs)
+
         # merge by date
         if len(self.merge_indicator_list) == 0:
             print('Please input valid indicator!')
@@ -1206,17 +1225,12 @@ class Sentinel2_ds(object):
             valid_vrt_file = None
             print(f'Finish merging {indicator_temp} of {str(date_temp)} in {str(time.time()-time_start)}s ({str(date_index + 1)} of {str(len(self.date_list))})')
 
-    def read_tiffile_size(self, tif_file):
-        ds_temp = gdal.Open(tif_file)
-        return [ds_temp.RasterXSize, ds_temp.RasterYSize]
-
     def check_temporal_consistency(self, *args, **kwargs):
-        # Generate the available index list for composition
-        temporal_composited_index_list = copy.copy(self.all_supported_index_list)
-        temporal_composited_index_list.extend([f'{i}_merged' for i in self.all_supported_index_list])
+
+        check_kwargs(kwargs, ['ROI', 'ROI_name'], func_name='check_temporal_consistency')
 
         if type(args[0]) == list:
-            processed_list = union_list(args[0], temporal_composited_index_list)
+            processed_list = union_list(args[0], self.all_supported_datacube_list)
             if len(processed_list) == 0:
                 print('None valid index for temporal process')
                 return
@@ -1233,11 +1247,11 @@ class Sentinel2_ds(object):
                         raster_size_list = []
                         if len(processed_file_all) > 200:
                             with concurrent.futures.ProcessPoolExecutor() as executor:
-                                for result in executor.map(self.read_tiffile_size, processed_file_all):
+                                for result in executor.map(read_tiffile_size, processed_file_all):
                                     raster_size_list.append(result)
                         else:
                             for tif_file in processed_file_all:
-                                raster_size_list.append(self.read_tiffile_size(tif_file))
+                                raster_size_list.append(read_tiffile_size(tif_file))
                     else:
                         if self.ROI_name is not None:
                             roi_temp = self.ROI_name
@@ -1265,15 +1279,17 @@ class Sentinel2_ds(object):
                             raster_size_list = []
                             if len(processed_file_all) > 200:
                                 with concurrent.futures.ProcessPoolExecutor() as executor:
-                                    for result in executor.map(self.read_tiffile_size, processed_file_all):
+                                    for result in executor.map(read_tiffile_size, processed_file_all):
                                         raster_size_list.append(result)
                             else:
                                 for tif_file in processed_file_all:
-                                    raster_size_list.append(self.read_tiffile_size(tif_file))
+                                    raster_size_list.append(read_tiffile_size(tif_file))
 
                     if False in [com == raster_size_list[0] for com in raster_size_list]:
                         print('The dataset is temporal inconsistency, please double check!')
                         sys.exit(-1)
+                    else:
+                        return check_folder_temp[0]
 
         elif type(args[0]) == str:
             if os.path.exists(args[0]):
@@ -1281,15 +1297,17 @@ class Sentinel2_ds(object):
                 processed_file_all = bf.file_filter(bf.Path(args[0]).path_name, ['.tif'])
                 if len(processed_file_all) > 200:
                     with concurrent.futures.ProcessPoolExecutor() as executor:
-                        for result in executor.map(self.read_tiffile_size, processed_file_all):
+                        for result in executor.map(read_tiffile_size, processed_file_all):
                             raster_size_list.append(result)
                 else:
                     for tif_file in processed_file_all:
-                        raster_size_list.append(self.read_tiffile_size(tif_file))
+                        raster_size_list.append(read_tiffile_size(tif_file))
 
-                if False in [com == raster_size_list[0] for com in raster_size_list]:
+                if False in [ras_size_temp == raster_size_list[0] for ras_size_temp in raster_size_list]:
                     print('The dataset is temporal inconsistency, please double check!')
                     sys.exit(-1)
+                else:
+                    return bf.Path(args[0]).path_name
 
             else:
                 print('Please input a valid path for the arguments!')
@@ -1302,11 +1320,32 @@ class Sentinel2_ds(object):
     def composition(self, *args, **kwargs):
         self.check_temporal_consistency()
 
-    def generate_datacube(self, *args, **kwargs):
-        self.check_temporal_consistency()
+    def export2datacube(self, vi, *args, **kwargs):
+
+        # check the temporal consistency and completeness of the index series
+        input_index_path = self.check_temporal_consistency(vi, **kwargs)
+        input_files = bf.file_filter(input_index_path, ['.tif'])
+        if len(input_files) != len(self.date_list):
+            print('Consistency issue between the metadata date list and the index date list!')
+            sys.exit(-1)
+
+        # define var
+        header_dic = {'DC_origin': input_index_path.split('\\')[-2],'Date_list': self.date_list}
+        datacube_output_path = os.path.dirname(os.path.dirname(input_index_path)) + input_index_path.split('\\')[-2] + '_dc\\'
+        raster_x_size, raster_y_size = read_tiffile_size(input_files[0])[0], read_tiffile_size(input_files[0])[1]
+        datacube = np.zeros([raster_y_size, raster_x_size, len(input_files)])
+
+        for input_file in input_files:
+
+
+        #
+
 
 class RS_datacube(object):
     def __init__(self, datacube_path, *args, **kwargs):
+        pass
+
+    def read_datacube(self):
         pass
 
     def lsp_extraction(self):
