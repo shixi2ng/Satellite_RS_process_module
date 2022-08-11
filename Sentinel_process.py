@@ -32,9 +32,26 @@ import traceback
 np.seterr(divide='ignore', invalid='ignore')
 
 
-def read_tiffile_size(tif_file):
-    ds_temp = gdal.Open(tif_file)
-    return [ds_temp.RasterXSize, ds_temp.RasterYSize]
+def read_tiffile_size(tif_file: str) -> list:
+    if type(tif_file) is str and tif_file.lower().endswith('.tif'):
+        ds_temp = gdal.Open(tif_file)
+        return [ds_temp.RasterXSize, ds_temp.RasterYSize]
+    else:
+        print('Invalid file type for the read_tiffile_size function')
+        sys.exit(-1)
+
+
+def get_tiffile_nodata(tif_file: str) -> int:
+    if type(tif_file) is str and tif_file.lower().endswith('.tif'):
+        ds_temp = gdal.Open(tif_file)
+        no_data_value = ds_temp.GetRasterBand(1).GetNoDataValue()
+        if str(no_data_value).endswith('.0'):
+            no_data_value = int(no_data_value)
+        return no_data_value
+    else:
+        print('Invalid file type for the read_tiffile_size function')
+        sys.exit(-1)
+
 
 def check_kwargs(kwargs_dic, key_list, func_name=None):
     for key_temp in key_list:
@@ -403,7 +420,7 @@ class Sentinel2_ds(object):
         self.S2_metadata_size = self.S2_metadata.shape[0]
         self.output_bounds = np.zeros([self.S2_metadata_size, 4]) * np.nan
         self.raw_10m_bounds = np.zeros([self.S2_metadata_size, 4]) * np.nan
-        self.date_list = self.S2_metadata['Sensing_Date'].drop_duplicates().to_list()
+        self.date_list = self.S2_metadata['Sensing_Date'].drop_duplicates().sort_values().tolist()
         print(f'Finish in {str(time.time() - start_temp)} sec!')
         print('----------------------------  End the construction of Metadata  ----------------------------')
 
@@ -824,12 +841,12 @@ class Sentinel2_ds(object):
                                             elif not self.vi_clip_factor:
                                                 if self.dst_coord is not False:
                                                     gdal.Warp('/vsimem/' + all_band_file_name + '.tif', ds_temp,
-                                                              xRes=10, yRes=10,
+                                                              xRes=10, yRes=10, dstSRS=self.dst_coord,
                                                               outputBounds=output_limit, outputType=gdal.GDT_UInt16,
                                                               dstNodata=0)
                                                 else:
                                                     gdal.Warp('/vsimem/' + all_band_file_name + '.tif', ds_temp,
-                                                              xRes=10, yRes=10, dstSRS=self.dst_coord,
+                                                              xRes=10, yRes=10,
                                                               outputBounds=output_limit, outputType=gdal.GDT_UInt16,
                                                               dstNodata=0)
                                             time2 = time.time() - t2
@@ -1046,13 +1063,7 @@ class Sentinel2_ds(object):
             sys.exit(-1)
         return
 
-    def check_subset_integrality(self, indicator, **kwargs):
-        """
-
-        :type indicator: list
-        :type kwargs: dict
-        :return:
-        """
+    def check_subset_integrality(self, indicator: list, **kwargs) -> None:
         self.check_metadata_availability()
         indicator = union_list(indicator, self.all_supported_index_list)
         if 'QI' in indicator:
@@ -1070,11 +1081,11 @@ class Sentinel2_ds(object):
                     elif self.ROI is not None:
                         roi = self.ROI.split('\\')[-1].split('.')[0]
                     else:
-                        if os.path.exists(self.log_filepath + 'para.txt'):
+                        if os.path.exists(self.log_filepath + 'para_file.txt'):
                             para_file = open(f"{self.log_filepath}para_file.txt")
                             para_txt = para_file.read()
                             ROI_all = [i for i in para_txt.split('\n') if i.startswith('ROI')]
-                            if len(ROI_all) != 0:
+                            if len(ROI_all) == 0:
                                 roi = ''
                             else:
                                 if ROI_all[-1].split(':')[0] == 'ROI':
@@ -1106,6 +1117,7 @@ class Sentinel2_ds(object):
 
         if not os.path.exists(f'{self.log_filepath}para_file.txt'):
             print('The para file is not established yet')
+            sys.exit(-1)
         else:
             para_file = open(f"{self.log_filepath}para_file.txt", "r+")
             para_raw_txt = para_file.read().split('\n')
@@ -1120,22 +1132,32 @@ class Sentinel2_ds(object):
                             self.__dict__[para] = True
                         elif q.split(':')[-1] == 'False':
                             self.__dict__[para] = False
+                        elif q.split(':')[-1].startswith('['):
+                            self.__dict__[para] = list(q.split(':')[-1][1: -1])
+                        elif q.split(':')[-1].startswith('('):
+                            self.__dict__[para] = tuple(q.split(':')[-1][1: -1])
                         else:
-                            self.__dict__[para] = q.split(':')[-1]
+                            try:
+                                t = float(q.split(':')[-1])
+                                self.__dict__[para] = float(q.split(':')[-1])
+                            except:
+                                self.__dict__[para] = q.split(':')[-1]
 
     def check_merge_para(self, **kwargs):
+
         # Detect whether all the indicator are valid
+        merge_para = ['ROI', 'ROI_name', 'queried_from_parafile']
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('ROI', 'ROI_name', 'herit_from_subset'):
+            if kwarg_indicator not in merge_para:
                 print(f'{kwarg_indicator} is not supported kwargs! Please double check!')
                 sys.exit(-1)
 
         # Get the ROI or outbounds
         if 'ROI' not in kwargs.keys() and self.ROI is None:
-            if 'herit_from_subset' in kwargs.keys():
-                self.retrieve_para_from_para_file(['ROI', 'ROI_name'])
+            if 'queried_from_parafile' in kwargs.keys():
+                self.retrieve_para_from_para_file(['ROI'])
             else:
-                self.ROI, self.ROI_name = None, None
+                self.ROI = None
         elif 'ROI' in kwargs.keys():
             if '.shp' in kwargs['ROI'] and os.path.exists(kwargs['ROI']):
                 self.ROI = kwargs['ROI']
@@ -1143,10 +1165,14 @@ class Sentinel2_ds(object):
                 print('Please input valid shp file for clip!')
                 sys.exit(-1)
 
-            if 'ROI_name' in kwargs.keys():
-                self.ROI_name = kwargs['ROI_name']
+        if 'ROI_name' not in kwargs.keys() and self.ROI_name is None:
+            if 'queried_from_parafile' in kwargs.keys():
+                self.retrieve_para_from_para_file(['ROI_name'])
             else:
-                self.ROI_name = self.ROI.split('\\')[-1].split('.')[0]
+                self.ROI = None
+            self.ROI_name = kwargs['ROI_name']
+        else:
+            self.ROI_name = self.ROI.split('\\')[-1].split('.')[0]
 
     @save_log_file
     def sequenced_merge(self, *args, **kwargs):
@@ -1167,18 +1193,19 @@ class Sentinel2_ds(object):
         with concurrent.futures.ProcessPoolExecutor() as executor:
             executor.map(self.merge_by_date, repeat(args[0]), i, repeat(kwargs))
 
-    def merge_by_date(self, processed_indicator_list, date_index, *args, **kwargs):
+    def merge_by_date(self, processed_indicator_list: list, date_index: int, *args, **kwargs) -> None:
+        print(f'Start merging the {str(processed_indicator_list)} of {self.date_list[date_index]} ({str(date_index)} of {str(len(self.date_list))})')
+
         # Retrieve kwargs from args using the mp
         if args != () and type(args[0]) == dict:
             kwargs = copy.copy(args[0])
 
         # initial check
-        self.check_subset_integrality(processed_indicator_list, **kwargs)
         self.check_merge_para(**kwargs)
 
         # merge by date
         if len(self.merge_indicator_list) == 0:
-            print('Please input valid indicator!')
+            print('Please input valid processed indicator list for merge!')
             sys.exit(-1)
         elif len(self.merge_indicator_list) != len(self.merge_cor_pathlist):
             print('Code error')
@@ -1320,7 +1347,8 @@ class Sentinel2_ds(object):
     def composition(self, *args, **kwargs):
         self.check_temporal_consistency()
 
-    def export2datacube(self, vi, *args, **kwargs):
+    @save_log_file
+    def export2datacube(self, vi: str, *args, **kwargs) -> None:
 
         # check the temporal consistency and completeness of the index series
         input_index_path = self.check_temporal_consistency(vi, **kwargs)
@@ -1333,16 +1361,30 @@ class Sentinel2_ds(object):
         header_dic = {'DC_origin': input_index_path.split('\\')[-2],'Date_list': self.date_list}
         datacube_output_path = os.path.dirname(os.path.dirname(input_index_path)) + input_index_path.split('\\')[-2] + '_dc\\'
         raster_x_size, raster_y_size = read_tiffile_size(input_files[0])[0], read_tiffile_size(input_files[0])[1]
-        datacube = np.zeros([raster_y_size, raster_x_size, len(input_files)])
+        nodata_value = get_tiffile_nodata(input_files[0])
+        datacube = np.zeros([raster_y_size, raster_x_size, len(input_files)]) * nodata_value
 
-        for input_file in input_files:
+        # Generate the datacube
+        date_index = 0
+        for date_temp in self.date_list:
+            for file_name in input_files:
+                if str(date_temp) in file_name:
+                    break
+                elif file_name == input_files[-1] and str(date_temp) not in file_name:
+                    print('Date list has discrepancy with the file list')
+                    sys.exit(-1)
+            ds_temp = gdal.Open(file_name)
+            raster_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+            datacube[:, :, date_index] = raster_temp.reshape(raster_temp.shape[0], raster_temp.shape[1], 1)
+            date_index += 1
 
-
-        #
+        # Output the datacube
+        np.save(datacube_output_path + input_index_path.split('\\')[-2] + '_dc.npy', datacube)
+        np.save(datacube_output_path + input_index_path.split('\\')[-2] + '_header.npy', header_dic)
 
 
 class RS_datacube(object):
-    def __init__(self, datacube_path, *args, **kwargs):
+    def __init__(self, datacube_path: str, *args, **kwargs) -> None:
         pass
 
     def read_datacube(self):
@@ -1944,22 +1986,28 @@ def curve_fitting(l2a_output_path_f, index_list, study_area_f, pixel_limitation_
 
 if __name__ == '__main__':
 
-    # 4Main
-    filepath = 'G:\\Sample_Sentinel2\\Original_file\\'
+    # Test
+    filepath = 'E:\\Z_Phd_Other_stuff\\2022_08_09_Map\\Sentinel_2\\Original_files\\'
     s2_ds_temp = Sentinel2_ds(filepath)
     s2_ds_temp.construct_metadata()
-    s2_ds_temp.mp_subset(['all_band', 'NDVI', 'MNDWI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp', ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
-                        size_control_factor=True, large_roi=True)
-    s2_ds_temp.mp_merge(['NDVI', 'MNDWI', 'OSAVI'], herit_from_subset=True)
+    s2_ds_temp.mp_subset(['all_band'])
 
-    # 4TEST
-    # filepath = 'E:\A_Veg_phase2\Sentinel_2_test\Original_file\\'
+    # 4Main
+    # filepath = 'G:\\Sample_Sentinel2\\Original_file\\'
     # s2_ds_temp = Sentinel2_ds(filepath)
     # s2_ds_temp.construct_metadata()
-    # s2_ds_temp.mp_subset(['all_band', 'NDVI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
-    #                              ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
-    #                             size_control_factor=True, large_roi=True, dst_coord='EPSG:32649')
-    # s2_ds_temp.mp_merge(['MNDWI'], herit_from_subset=True)
+    # s2_ds_temp.mp_subset(['all_band', 'NDVI', 'MNDWI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp', ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
+    #                     size_control_factor=True, large_roi=True)
+    # s2_ds_temp.mp_merge(['NDVI', 'MNDWI', 'OSAVI'], herit_from_subset=True)
+
+    # 4TEST
+    filepath = 'E:\A_Veg_phase2\Sentinel_2_test\Original_file\\'
+    s2_ds_temp = Sentinel2_ds(filepath)
+    s2_ds_temp.construct_metadata()
+    s2_ds_temp.mp_subset(['all_band', 'NDVI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
+                                 ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
+                                size_control_factor=True, large_roi=True, dst_coord='EPSG:32649')
+    s2_ds_temp.mp_merge(['NDVI'], queried_from_parafile=True)
 
 
     file_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\Original_Zipfile\\'
