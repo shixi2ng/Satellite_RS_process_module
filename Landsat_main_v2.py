@@ -2073,6 +2073,10 @@ class Landsat_l2_ds(object):
         # Define key var for to datacube
         self.dc_vi = {}
         self.dc_overwritten_para = False
+        self.inherit_from_logfile = None
+        self.remove_nan_layer = False
+        self.manually_remove_para = False
+        self.manually_remove_datelist = None
 
         # Initialise the work environment
         if work_env is None:
@@ -2839,10 +2843,41 @@ class Landsat_l2_ds(object):
         else:
             raise Exception('Please input the ROI correctly!')
 
+    def retrieve_para_from_para_file(self, required_para_name_list, **kwargs):
+
+        if not os.path.exists(f'{self.log_filepath}para_file.txt'):
+            print('The para file is not established yet')
+            sys.exit(-1)
+        else:
+            para_file = open(f"{self.log_filepath}para_file.txt", "r+")
+            para_raw_txt = para_file.read().split('\n')
+
+        for para in required_para_name_list:
+            if para in self.__dir__():
+                for q in para_raw_txt:
+                    para = str(para)
+                    if q.startswith(para + ':'):
+                        if q.split(para + ':')[-1] == 'None':
+                            self.__dict__[para] = None
+                        elif q.split(para + ':')[-1] == 'True':
+                            self.__dict__[para] = True
+                        elif q.split(para + ':')[-1] == 'False':
+                            self.__dict__[para] = False
+                        elif q.split(para + ':')[-1].startswith('['):
+                            self.__dict__[para] = list(q.split(para + ':')[-1][1: -1])
+                        elif q.split(para + ':')[-1].startswith('('):
+                            self.__dict__[para] = tuple(q.split(para + ':')[-1][1: -1])
+                        else:
+                            try:
+                                t = float(q.split(para + ':')[-1])
+                                self.__dict__[para] = float(q.split(para + ':')[-1])
+                            except:
+                                self.__dict__[para] = q.split(para + ':')[-1]
+
     def process_2dc_para(self, ROI_name, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('dc_overwritten_para', 'main_coordinate_system', 'clipped_overwritten_factor'):
+            if kwarg_indicator not in ('inherit_from_logfile', 'ROI_name', 'dc_overwritten_para', 'remove_nan_layer', 'manually_remove_datelist'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clipped_overwritten_para
@@ -2854,7 +2889,46 @@ class Landsat_l2_ds(object):
         else:
             self.clipped_overwritten_para = False
 
-    def to_datacube(self, VI_list, ROI_name, *args, **kwargs):
+        # process inherit from logfile
+        if 'inherit_from_logfile' in kwargs.keys():
+            if type(kwargs['inherit_from_logfile']) is bool:
+                self.inherit_from_logfile = kwargs['inherit_from_logfile']
+            else:
+                raise TypeError('Please mention the dc_overwritten_para should be bool type!')
+        else:
+            self.inherit_from_logfile = False
+
+        # process remove_nan_layer
+        if 'remove_nan_layer' in kwargs.keys():
+            if type(kwargs['remove_nan_layer']) is bool:
+                self.inherit_from_logfile = kwargs['remove_nan_layer']
+            else:
+                raise TypeError('Please mention the remove_nan_layer should be bool type!')
+        else:
+            self.inherit_from_logfile = False
+
+        # process remove_nan_layer
+        if 'manually_remove_datelist' in kwargs.keys():
+            if type(kwargs['manually_remove_datelist']) is list:
+                self.manually_remove_datelist = kwargs['manually_remove_datelist']
+                self.manually_remove_para = True
+            else:
+                raise TypeError('Please mention the manually_remove_datelist should be list type!')
+        else:
+            self.inherit_from_logfile = False
+            self.manually_remove_para = False
+
+        # process ROI_NAME
+        if 'ROI_name' in kwargs.keys():
+            self.ROI_name = kwargs['ROI_name']
+        else:
+            self.ROI_name = None
+
+        # ROI process
+        if self.ROI_name is None and self.inherit_from_logfile:
+            self.retrieve_para_from_para_file(['ROI_name'])
+
+    def to_datacube(self, VI_list, *args, **kwargs):
 
         # for the MP
         if args != () and type(args[0]) == dict:
@@ -2866,43 +2940,61 @@ class Landsat_l2_ds(object):
         # generate dc_vi
         for VI in VI_list:
             # Remove all files which not meet the requirements
-            eliminating_all_not_required_file(self.clipped_vi_path_dic[VI])
-            self.dc_vi[VI] = self.work_env + 'Landsat_' + self.ROI_name + '_datacube\\' + VI + '_datacube\\'
+            if self.ROI_name is None:
+                self.dc_vi[VI + 'input_path'] = self.work_env + f'Landsat_constructed_index\\{VI}\\'
+            else:
+                self.dc_vi[VI + 'input_path'] = self.work_env + f'Landsat_{self.ROI_name}_index\\{VI}\\'
+
+            # path check
+            if not os.path.exists(self.dc_vi[VI + 'input_path']):
+                raise Exception('Please validate the roi name and vi for datacube output!')
+
+            eliminating_all_not_required_file(self.dc_vi[VI + 'input_path'])
+            if self.ROI_name is None:
+                self.dc_vi[VI] = self.work_env + 'Landsat_constructed_datacube\\' + VI + '_datacube\\'
+            else:
+                self.dc_vi[VI] = self.work_env + 'Landsat_' + self.ROI_name + '_datacube\\' + VI + '_datacube\\'
             create_folder(self.dc_vi[VI])
-            if len(file_filter(self.clipped_vi_path_dic[VI], ['.TIF'])) != self.Landsat_metadata_size:
+
+            if len(file_filter(self.dc_vi[VI + 'input_path'], [VI, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
                 raise ValueError(f'{VI} is not consistent')
-            # File consistency check
-            # file_consistency_check(clipped_vi[VI + '_path'], VI_list, files_in_same_folder=False)
+
         for VI in VI_list:
             if self.dc_overwritten_para or not os.path.exists(self.dc_vi[VI] + VI + '_datacube.npy') or not os.path.exists(self.dc_vi[VI] + VI + 'date.npy') or not os.path.exists(self.dc_vi[VI] + VI + 'header.npy'):
-                print('Start processing ' + VI + ' datacube of the ' + self.ROI_name + '.')
+
+                if self.ROI_name is None:
+                    print('Start processing ' + VI + ' datacube.')
+                else:
+                    print('Start processing ' + VI + ' datacube of the ' + self.ROI_name + '.')
+
                 start_time = time.time()
-                VI_clipped_file_list = file_filter(self.clipped_vi_path_dic[VI], ['.TIF'])
-                VI_clipped_file_list.sort()
-                temp_ds = gdal.Open(VI_clipped_file_list[0])
+                VI_stack_list = file_filter(self.dc_vi[VI + 'input_path'], [VI, '.TIF'])
+                VI_stack_list.sort()
+                temp_ds = gdal.Open(VI_stack_list[0])
                 cols = temp_ds.RasterXSize
                 rows = temp_ds.RasterYSize
-                data_cube_temp = np.zeros((rows, cols, len(VI_clipped_file_list)), dtype=np.float16)
-                date_cube_temp = np.zeros((len(VI_clipped_file_list)), dtype=np.uint32)
+                data_cube_temp = np.zeros((rows, cols, len(VI_stack_list)), dtype=np.float16)
+                date_cube_temp = np.zeros((len(VI_stack_list)), dtype=np.uint32)
+                header_dic = {'ROI_name': self.ROI_name, 'VI': VI, 'Datatype': 'float'}
 
                 i = 0
-                while i < len(VI_clipped_file_list):
-                    date_cube_temp[i] = int(VI_clipped_file_list[i][VI_clipped_file_list[i].find(VI + '\\') + 1 + len(VI): VI_clipped_file_list[i].find(VI + '\\') + 9 + len(VI)])
+                while i < len(VI_stack_list):
+                    date_cube_temp[i] = int(VI_stack_list[i][VI_stack_list[i].find(VI + '\\') + 1 + len(VI): VI_stack_list[i].find(VI + '\\') + 9 + len(VI)])
                     i += 1
 
                 i = 0
-                while i < len(VI_clipped_file_list):
-                    temp_ds2 = gdal.Open(VI_clipped_file_list[i])
+                while i < len(VI_stack_list):
+                    temp_ds2 = gdal.Open(VI_stack_list[i])
                     data_cube_temp[:, :, i] = temp_ds2.GetRasterBand(1).ReadAsArray()
                     i += 1
-                end_time = time.time()
 
-                if size_control_factor:
+                if self.size_control_factor:
                     data_cube_temp[data_cube_temp == -32768] = np.nan
                     data_cube_temp = data_cube_temp / 10000
-                if manual_remove_issue_data is True and manual_remove_date_list is not None:
+
+                if self.manually_remove_para is True and self.manually_remove_datelist is not None:
                     i_temp = 0
-                    manual_remove_date_list_temp = copy.copy(manual_remove_date_list)
+                    manual_remove_date_list_temp = copy.copy(self.manually_remove_datelist)
                     while i_temp < date_cube_temp.shape[0]:
                         if str(date_cube_temp[i_temp]) in manual_remove_date_list_temp:
                             manual_remove_date_list_temp.remove(str(date_cube_temp[i_temp]))
@@ -2912,31 +3004,42 @@ class Landsat_l2_ds(object):
                         i_temp += 1
 
                     if manual_remove_date_list_temp:
-                        print('Some manual input date is not properly removed')
-                        sys.exit(-1)
-                elif manual_remove_issue_data is True and manual_remove_date_list is None:
-                    print('Please input the issue date list')
-                    sys.exit(-1)
+                        raise Exception('Some manual input date is not properly removed')
 
-                print('Finished in ' + str(end_time - start_time) + ' s.')
+                elif self.manually_remove_para is True and self.manually_remove_datelist is None:
+                    raise ValueError('Please correctly input the manual input datelist')
+
+                if self.remove_nan_layer:
+                    i_temp = 0
+                    while i_temp < date_cube_temp.shape[0]:
+                        if np.isnan(data_cube_temp[:,:,i_temp]).all() is True:
+                            date_cube_temp = np.delete(date_cube_temp, i_temp, 0)
+                            data_cube_temp = np.delete(data_cube_temp, i_temp, 2)
+                            i_temp -= 1
+                        i_temp += 1
+                print('Finished in ' + str(time.time() - start_time) + ' s.')
+
                 # Write the datacube
-                print('Start writing ' + VI + ' datacube.')
+                print('Start writing the ' + VI + ' datacube.')
                 start_time = time.time()
-                np.save(dc_vi[VI + '_path'] + 'date.npy', date_cube_temp.astype(np.uint32))
-                np.save(dc_vi[VI + '_path'] + str(VI) + '_datacube.npy', data_cube_temp.astype(np.float16))
+                np.save(self.dc_vi[VI] + 'header.npy', header_dic)
+                np.save(self.dc_vi[VI] + 'date.npy', date_cube_temp.astype(np.uint32))
+                np.save(self.dc_vi[VI] + str(VI) + '_datacube.npy', data_cube_temp.astype(np.float16))
                 end_time = time.time()
                 print('Finished in ' + str(end_time - start_time) + ' s')
 
-                try:
-                    if not dc_vi['data_list']:
-                        dc_vi['data_list'] = date_cube_temp
-                except:
-                    dc_vi['data_list'] = date_cube_temp
-
             print('Finish constructing ' + VI + ' datacube.')
-        np.save(key_dictionary_path + study_area + '_dc_vi.npy', dc_vi)
-        print('All datacube within the ' + study_area + ' was successfully constructed!')
 
+    class Landsat_dc(object):
+        def __init__(self, dc_filepath, work_env=None):
+            # define var
+            if os.path.exists(dc_filepath):
+                self.dc_filepath = dc_filepath
+            else:
+                raise ValueError()
+            if work_env is None:
+
+        def sequenced_dc(self):
 
         if construct_sdc_para:
             # Create fundamental dictionary
