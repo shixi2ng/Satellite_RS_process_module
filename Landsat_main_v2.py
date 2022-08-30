@@ -3034,143 +3034,145 @@ class Landsat_l2_ds(object):
                 print('Finished in ' + str(end_time - start_time) + ' s')
             print('Finish constructing ' + VI + ' datacube.')
 
-    class Landsat_dc(object):
-        def __init__(self, dc_filepath, work_env=None, sdc_factor=False):
-            # define var
-            if os.path.exists(dc_filepath):
-                self.dc_filepath = dc_filepath
-            else:
-                raise ValueError('Please input a valid dc filepath')
-            eliminating_all_not_required_file(self.dc_filepath, filename_extension=['.npy'])
+class Landsat_dc(object):
+    def __init__(self, dc_filepath, work_env=None, sdc_factor=False):
+        # define var
+        if os.path.exists(dc_filepath) and os.path.isdir(dc_filepath):
+            self.dc_filepath = dc_filepath
+        else:
+            raise ValueError('Please input a valid dc filepath')
+        eliminating_all_not_required_file(self.dc_filepath, filename_extension=['.npy'])
 
-            # Define the sdc_factor:
-            self.sdc_factor = False
-            if type(sdc_factor) is bool:
-                self.sdc_factor = sdc_factor
-            else:
-                raise TypeError('Please input the sdc factor as bool type!')
+        # Define the sdc_factor:
+        self.sdc_factor = False
+        if type(sdc_factor) is bool:
+            self.sdc_factor = sdc_factor
+        else:
+            raise TypeError('Please input the sdc factor as bool type!')
 
-            # Read header
-            header_file = file_filter(self.dc_filepath, ['header.npy'])
-            if len(header_file) == 0:
-                raise ValueError('There has no valid dc or the header file of the dc was missing!')
-            elif len(header_file) >=1:
-                raise ValueError('There has more than one header file in the dir')
-            else:
-                self.dc_header = np.load(header_file[0], allow_pickle=True).item()
-                if type(self.dc_header) is not dict:
-                    raise Exception('Please make sure the header file is a dictionary constructed in python!')
+        # Read header
+        header_file = file_filter(self.dc_filepath, ['header.npy'])
+        if len(header_file) == 0:
+            raise ValueError('There has no valid dc or the header file of the dc was missing!')
+        elif len(header_file) >=1:
+            raise ValueError('There has more than one header file in the dir')
+        else:
+            self.dc_header = np.load(header_file[0], allow_pickle=True).item()
+            if type(self.dc_header) is not dict:
+                raise Exception('Please make sure the header file is a dictionary constructed in python!')
 
-                self.ROI_name = self.dc_header['ROI_name']
-                self.VI = self.dc_header['VI']
-                if 'sdc_factor' in self.dc_header.keys():
-                    self.sdc_factor = self.dc_header['sdc_factor']
+            self.ROI_name = self.dc_header['ROI_name']
+            self.VI = self.dc_header['VI']
+            if 'sdc_factor' in self.dc_header.keys():
+                self.sdc_factor = self.dc_header['sdc_factor']
 
-            if sdc_factor is True:
-                # Read doylist
-                pass
-            else:
-                # Read datelist
-                if self.ROI_name is None:
-                    date_file = file_filter(self.dc_filepath, ['date.npy', str(self.VI)], and_or_factor='and')
-                else:
-                    date_file = file_filter(self.dc_filepath, ['date.npy', str(self.VI), str(self.ROI_name)], and_or_factor='and')
-
-                if len(header_file) == 0:
-                    raise ValueError('There has no valid dc or the date file of the dc was missing!')
-                elif len(header_file) >=1:
-                    raise ValueError('There has more than one date file in the dc dir')
-                else:
-                    self.dc_datelist = np.load(date_file[0], allow_pickle=True)
-
-                # Define var for sequenced_dc
-                self.sdc_output_folder = None
-
-            # Read datacube
+        if sdc_factor is True:
+            # Read doylist
+            pass
+        else:
+            # Read datelist
             if self.ROI_name is None:
-                dc_file = file_filter(self.dc_filepath, ['datacube.npy', str(self.VI)], and_or_factor='and')
+                date_file = file_filter(self.dc_filepath, ['date.npy', str(self.VI)], and_or_factor='and')
             else:
-                dc_file = file_filter(self.dc_filepath, ['datacube.npy', str(self.VI), str(self.ROI_name)], and_or_factor='and')
+                date_file = file_filter(self.dc_filepath, ['date.npy', str(self.VI), str(self.ROI_name)], and_or_factor='and')
 
-            if len(date_file) == 0:
-                raise ValueError('There has no valid dc or the dc was missing!')
-            elif len(date_file) >= 1:
+            if len(header_file) == 0:
+                raise ValueError('There has no valid dc or the date file of the dc was missing!')
+            elif len(header_file) >=1:
                 raise ValueError('There has more than one date file in the dc dir')
             else:
-                self.dc = np.load(date_file[0], allow_pickle=True)
+                self.dc_datelist = np.load(date_file[0], allow_pickle=True)
 
-            # Check work env
-            if work_env is not None:
-                self.work_env = Path(work_env).path_name
+            # Define var for sequenced_dc
+            self.sdc_output_folder = None
+
+        # Read datacube
+        if self.ROI_name is None:
+            dc_file = file_filter(self.dc_filepath, ['datacube.npy', str(self.VI)], and_or_factor='and')
+        else:
+            dc_file = file_filter(self.dc_filepath, ['datacube.npy', str(self.VI), str(self.ROI_name)], and_or_factor='and')
+
+        if len(date_file) == 0:
+            raise ValueError('There has no valid dc or the dc was missing!')
+        elif len(date_file) >= 1:
+            raise ValueError('There has more than one date file in the dc dir')
+        else:
+            self.dc = np.load(date_file[0], allow_pickle=True)
+
+        # Check work env
+        if work_env is not None:
+            self.work_env = Path(work_env).path_name
+        else:
+            self.work_env = Path(os.path.dirname(self.dc_filepath)).path_name
+
+    def sequenced_dc(self, **kwargs):
+        # Sequenced check
+        if self.sdc_factor is True:
+            raise Exception('The datacube has been already sequenced!')
+
+        self.sdc_output_folder = self.work_env + self.VI + '_sequenced_datacube\\'
+        bf.create_folder(self.sdc_output_folder)
+        if self.sdc_overwritten_para or not os.path.exists(self.sdc_output_folder + 'header.npy') or not os.path.exists(self.sdc_output_folder + 'doy_list.npy') or not os.path.exists(self.sdc_output_folder + self.VI + '_sequenced_datacube.npy'):
+
+            start_time = time.time()
+            sdc_header = {'sdc_factor': True, 'VI': self.VI, 'ROI_name': self.ROI_name, 'original_dc_path': self.dc_filepath, 'original_datelist': self.dc_datelist}
+
+            if self.ROI_name is not None:
+                print('Start constructing ' + self.VI + ' sequenced datacube of the ' + self.ROI_name + '.')
             else:
-                self.work_env = Path(os.path.dirname(self.dc_filepath)).path_name
+                print('Start constructing ' + self.VI + ' sequenced datacube.')
 
-        def sequenced_dc(self, **kwargs):
-            # Sequenced check
-            if self.sdc_factor is True:
-                raise Exception('The datacube has been already sequenced!')
+            sdc_vi_doy_temp = []
+            doy_list = []
 
+            if not sdc_vi_doy_temp or not self.dc_date_list:
+                for i in vi_date_cube_temp:
+                    date_temp = int(i)
+                    if date_temp not in self.dc_date_list:
+                        self.dc_date_list.append(date_temp)
+                for i in self.dc_date_list:
+                    doy_list.append(datetime.date(int(i // 10000), int((i % 10000) // 100),
+                                                  int(i % 100)).timetuple().tm_yday + int(i // 10000) * 1000)
+                sdc_vi_doy_temp = doy_list
+                sdc_vi['doy'] = sdc_vi_doy_temp
 
-
-            self.sdc_output_folder = self.work_env + self.VI + '_sequenced_datacube\\'
-            bf.create_folder(self.sdc_output_folder)
-            if self.sdc_overwritten_para or not os.path.exists(self.sdc_output_folder + 'header.npy') or not os.path.exists(self.sdc_output_folder + 'doy_list.npy') or not os.path.exists(self.sdc_output_folder + self.VI + '_sequenced_datacube.npy'):
-                sdc_header = {'sdc_factor': True, 'VI': self.VI, 'ROI_name': self.ROI_name, 'original_dc_path': self.dc_filepath, 'original_datelist': self.dc_datelist}
-                sdc_vi_doy_temp = []
-                if self.ROI_name is not None:
-                    print('Start constructing ' + self.VI + ' sequenced datacube of the ' + self.ROI_name + '.')
-                else:
-                    print('Start constructing ' + self.VI + ' sequenced datacube.')
-                start_time = time.time()
-                doy_list = []
-        #             if not sdc_vi_doy_temp or not date_list:
-        #                 for i in vi_date_cube_temp:
-        #                     date_temp = int(i)
-        #                     if date_temp not in date_list:
-        #                         date_list.append(date_temp)
-        #                 for i in date_list:
-        #                     doy_list.append(datetime.date(int(i // 10000), int((i % 10000) // 100),
-        #                                                   int(i % 100)).timetuple().tm_yday + int(i // 10000) * 1000)
-        #                 sdc_vi_doy_temp = doy_list
-        #                 sdc_vi['doy'] = sdc_vi_doy_temp
-        #
-        #             if len(sdc_vi['doy']) != len(vi_date_cube_temp):
-        #                 vi_data_cube_temp = np.load(sdc_vi[VI + '_input'])
-        #                 data_cube_inorder = np.zeros((vi_data_cube_temp.shape[0], vi_data_cube_temp.shape[1], len(doy_list)), dtype=np.float16)
-        #                 sdc_vi_dc[VI + '_in_order'] = data_cube_inorder
-        #                 if vi_data_cube_temp.shape[2] == len(vi_date_cube_temp):
-        #                     for date_t in date_list:
-        #                         date_all = [z for z, z_temp in enumerate(vi_date_cube_temp) if z_temp == date_t]
-        #                         if len(date_all) == 1:
-        #                             data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0]]
-        #                             data_cube_temp[data_cube_temp <= -1] = np.nan
-        #                             data_cube_temp = data_cube_temp.reshape(data_cube_temp.shape[0], -1)
-        #                             sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp
-        #                         elif len(date_all) > 1:
-        #                             if np.where(vi_date_cube_temp == date_t)[0][len(date_all) - 1] - np.where(vi_date_cube_temp == date_t)[0][0] + 1 == len(date_all):
-        #                                 data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0][0]: np.where(vi_date_cube_temp == date_t)[0][0] + len(date_all)]
-        #                             else:
-        #                                 print('date long error')
-        #                                 sys.exit(-1)
-        #                             data_cube_temp_temp = np.nanmean(data_cube_temp, axis=2)
-        #                             sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp_temp
-        #                         else:
-        #                             print('Something error during generate sequenced datecube')
-        #                             sys.exit(-1)
-        #                     np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
-        #                     np.save(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy', sdc_vi_dc[VI + '_in_order'])
-        #                 else:
-        #                     print('consistency error')
-        #                     sys.exit(-1)
-        #             elif len(sdc_vi['doy']) == len(vi_date_cube_temp):
-        #                 np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
-        #                 shutil.copyfile(sdc_vi[VI + '_input'], str(sdc_vi[VI + '_path']) + VI + '_sequenced_datacube.npy')
-        #             end_time = time.time()
-        #             print('Finished in ' + str(end_time - start_time) + ' s')
-        #         print(VI + 'sequenced datacube of the ' + study_area + ' was constructed.')
-        #     np.save(key_dictionary_path + study_area + '_sdc_vi.npy', sdc_vi)
-        # else:
-        #     print('Sequenced datacube construction was not implemented.')
+                if len(sdc_vi['doy']) != len(vi_date_cube_temp):
+                    vi_data_cube_temp = np.load(sdc_vi[VI + '_input'])
+                    data_cube_inorder = np.zeros((vi_data_cube_temp.shape[0], vi_data_cube_temp.shape[1], len(doy_list)), dtype=np.float16)
+                    sdc_vi_dc[VI + '_in_order'] = data_cube_inorder
+                    if vi_data_cube_temp.shape[2] == len(vi_date_cube_temp):
+                        for date_t in date_list:
+                            date_all = [z for z, z_temp in enumerate(vi_date_cube_temp) if z_temp == date_t]
+                            if len(date_all) == 1:
+                                data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0]]
+                                data_cube_temp[data_cube_temp <= -1] = np.nan
+                                data_cube_temp = data_cube_temp.reshape(data_cube_temp.shape[0], -1)
+                                sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp
+                            elif len(date_all) > 1:
+                                if np.where(vi_date_cube_temp == date_t)[0][len(date_all) - 1] - np.where(vi_date_cube_temp == date_t)[0][0] + 1 == len(date_all):
+                                    data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0][0]: np.where(vi_date_cube_temp == date_t)[0][0] + len(date_all)]
+                                else:
+                                    print('date long error')
+                                    sys.exit(-1)
+                                data_cube_temp_temp = np.nanmean(data_cube_temp, axis=2)
+                                sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp_temp
+                            else:
+                                print('Something error during generate sequenced datecube')
+                                sys.exit(-1)
+                        np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
+                        np.save(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy', sdc_vi_dc[VI + '_in_order'])
+                    else:
+                        print('consistency error')
+                        sys.exit(-1)
+                elif len(sdc_vi['doy']) == len(vi_date_cube_temp):
+                    np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
+                    shutil.copyfile(sdc_vi[VI + '_input'], str(sdc_vi[VI + '_path']) + VI + '_sequenced_datacube.npy')
+                end_time = time.time()
+                print('Finished in ' + str(end_time - start_time) + ' s')
+            print(VI + 'sequenced datacube of the ' + study_area + ' was constructed.')
+        np.save(key_dictionary_path + study_area + '_sdc_vi.npy', sdc_vi)
+    else:
+        print('Sequenced datacube construction was not implemented.')
 
 
 def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None, main_coordinate_system=None, cloud_removal_para=False):
