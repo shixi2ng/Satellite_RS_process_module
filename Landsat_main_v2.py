@@ -318,7 +318,7 @@ def retrieve_srs(ds_temp):
 
 def generate_inundation_status(file_folder, file_priority, output_folder, sa_name, water_level_data, sa_map=None, nan_value=-2, inundated_value=1,generate_inundation_status_factor=True, generate_max_water_level_factor=False, example_date=None):
     output_folder = output_folder + str(sa_name) + '\\'
-    create_folder(output_folder)
+    bf.create_folder(output_folder)
 
     if type(file_folder) == str:
         file_folder = list(file_folder)
@@ -479,7 +479,7 @@ def generate_inundation_status(file_folder, file_priority, output_folder, sa_nam
 
     if generate_inundation_status_factor:
         combined_file_path = output_folder + 'Original_Inundation_File\\'
-        create_folder(combined_file_path)
+        bf.create_folder(combined_file_path)
 
         for file_path in tif_file:
             ds_temp = gdal.Open(file_path)
@@ -518,7 +518,7 @@ def generate_inundation_status(file_folder, file_priority, output_folder, sa_nam
 
         inundation_file = file_filter(combined_file_path, containing_word_list=['.tif'])
         sole_file_path = output_folder + 'Sole_Inundation_File\\'
-        create_folder(sole_file_path)
+        bf.create_folder(sole_file_path)
 
         date_dc = []
         inundation_dc = []
@@ -618,10 +618,10 @@ def generate_inundation_status(file_folder, file_priority, output_folder, sa_nam
         annual_inundation_epoch_folder = output_folder + 'Annual_inundation_epoch\\'
         annual_inundation_beg_folder = output_folder + 'Annual_inundation_beg\\'
         annual_inundation_end_folder = output_folder + 'Annual_inundation_end\\'
-        create_folder(annual_inundation_folder)
-        create_folder(annual_inundation_epoch_folder)
-        create_folder(annual_inundation_beg_folder)
-        create_folder(annual_inundation_end_folder)
+        bf.create_folder(annual_inundation_folder)
+        bf.create_folder(annual_inundation_epoch_folder)
+        bf.create_folder(annual_inundation_beg_folder)
+        bf.create_folder(annual_inundation_end_folder)
 
         for year in year_list:
             inundation_temp = []
@@ -1336,9 +1336,9 @@ def data_composition(file_path, metadata_path, time_coverage=None, composition_s
         sys.exit(-1)
 
     # Create the composition output folder
-    create_folder(file_path + 'composition_output\\')
+    bf.create_folder(file_path + 'composition_output\\')
     composition_output_folder = file_path + 'composition_output\\' + time_coverage + '\\'
-    create_folder(composition_output_folder)
+    bf.create_folder(composition_output_folder)
     date_list = []
     doy_list = []
     for i in file_list:
@@ -1793,17 +1793,6 @@ def eliminating_all_not_required_file(file_path_f, filename_extension=None):
                 raise Exception(f'file {file} cannot be removed')
 
 
-def create_folder(path_name):
-    if not os.path.exists(path_name):
-        try:
-            os.makedirs(path_name)
-        except:
-            print('Something went wrong during creating new folder')
-            sys.exit(-1)
-    else:
-        print('Folder already exist  (' + path_name + ')')
-
-
 def file_filter(file_path_temp, containing_word_list, subfolder_detection=False, and_or_factor=None, exclude_word_list=[]):
     if and_or_factor is None:
         and_or_factor = 'or'
@@ -2090,14 +2079,12 @@ class Landsat_l2_ds(object):
 
         # Create output path
         self.unzipped_folder = self.work_env + 'Landsat_original_tiffile\\'
-        self.output_path = f'{self.work_env}Landsat_l2_Output\\'
-        self.log_filepath = f'{self.work_env}log\\'
+        self.log_filepath = f'{self.work_env}Log\\'
         bf.create_folder(self.log_filepath)
         bf.create_folder(self.unzipped_folder)
-        bf.create_folder(self.output_path)
 
         # Create cache path
-        self.cache_folder = self.work_env + 'cache\\'
+        self.cache_folder = self.work_env + 'Cache\\'
         bf.create_folder(self.cache_folder)
 
     def save_log_file(func):
@@ -2183,7 +2170,7 @@ class Landsat_l2_ds(object):
             raise ValueError('There has no valid Landsat L2 data in the original folder!')
 
         # Read the corrupted Landsat zip file
-        corrupted_file_folder = os.path.join(self.work_env, 'Corrupted_Landsat_file\\')
+        corrupted_file_folder = os.path.join(self.work_env, 'Corrupted_zip_file\\')
         bf.create_folder(corrupted_file_folder)
         corrupted_file_list = bf.file_filter(corrupted_file_folder, ['.tar', 'L2SP'], and_or_factor='and', subfolder_detection=True)
 
@@ -2225,11 +2212,17 @@ class Landsat_l2_ds(object):
                     elif 'LC08' in i:
                         Data_type.append(i[i.find('LC08'): i.find('LC08') + 9])
                         FileID.append(i[i.find('LC08'): i.find('.tar')])
+                    elif 'LC09' in i:
+                        Data_type.append(i[i.find('LC09'): i.find('LC09') + 9])
+                        FileID.append(i[i.find('LC09'): i.find('.tar')])
+                    elif 'LT04' in i:
+                        Data_type.append(i[i.find('LT04'): i.find('LT04') + 9])
+                        FileID.append(i[i.find('LT04'): i.find('.tar')])
                     elif 'LT05' in i:
                         Data_type.append(i[i.find('LT05'): i.find('LT05') + 9])
                         FileID.append(i[i.find('LT05'): i.find('.tar')])
                     else:
-                        print('The Original Tiff files are not belonging to Landsat 5 7 or 8')
+                        raise Exception(f'The Original tiffile {str(i)} is not belonging to Landsat 4 5 7 8 or 9')
                     Tile.append(i[i.find('L2S') + 5: i.find('L2S') + 11])
                     Date.append(i[i.find('L2S') + 12: i.find('L2S') + 20])
                     Tier_level.append(i[i.find('_T') + 1: i.find('_T') + 3])
@@ -2241,15 +2234,21 @@ class Landsat_l2_ds(object):
                     elif 'LC08' in i:
                         Corrupted_Data_type.append(i[i.find('LC08'): i.find('LC08') + 9])
                         Corrupted_FileID.append(i[i.find('LCO8'): i.find('.tar')])
+                    elif 'LT04' in i:
+                        Corrupted_Data_type.append(i[i.find('LT04'): i.find('LT04') + 9])
+                        Corrupted_FileID.append(i[i.find('LT04'): i.find('.tar')])
+                    elif 'LC09' in i:
+                        Corrupted_Data_type.append(i[i.find('LC09'): i.find('LC09') + 9])
+                        Corrupted_FileID.append(i[i.find('LCO9'): i.find('.tar')])
                     elif 'LT05' in i:
                         Corrupted_Data_type.append(i[i.find('LT05'): i.find('LT05') + 9])
                         Corrupted_FileID.append(i[i.find('LT05'): i.find('.tar')])
                     else:
-                        print('The Original Tiff files are not belonging to Landsat 5 7 or 8')
+                        raise Exception(f'The Original tiffile {str(i)} is not belonging to Landsat 4 5 7 8 or 9')
                     Corrupted_Tile.append(i[i.find('L2S') + 5: i.find('L2S') + 11])
                     Corrupted_Date.append(i[i.find('L2S') + 12: i.find('L2S') + 20])
                     Corrupted_Tier_level.append(i[i.find('_T') + 1: i.find('_T') + 3])
-                    create_folder(corrupted_file_folder)
+                    bf.create_folder(corrupted_file_folder)
                     shutil.move(i, corrupted_file_folder + i[i.find('L2S') - 5:])
             File_metadata = pandas.DataFrame(
                 {'File_Path': File_path, 'FileID': FileID, 'Data_Type': Data_type, 'Tile_Num': Tile, 'Date': Date,
@@ -2265,11 +2264,17 @@ class Landsat_l2_ds(object):
                 elif 'LC08' in i:
                     Corrupted_Data_type.append(i[i.find('LC08'): i.find('LC08') + 9])
                     Corrupted_FileID.append(i[i.find('LCO8'): i.find('.tar')])
+                elif 'LC09' in i:
+                    Corrupted_Data_type.append(i[i.find('LC09'): i.find('LC09') + 9])
+                    Corrupted_FileID.append(i[i.find('LCO9'): i.find('.tar')])
                 elif 'LT05' in i:
                     Corrupted_Data_type.append(i[i.find('LT05'): i.find('LT05') + 9])
                     Corrupted_FileID.append(i[i.find('LT05'): i.find('.tar')])
+                elif 'LT04' in i:
+                    Corrupted_Data_type.append(i[i.find('LT04'): i.find('LT04') + 9])
+                    Corrupted_FileID.append(i[i.find('LT04'): i.find('.tar')])
                 else:
-                    print('The Original Tiff files are not belonging to Landsat 5 7 or 8')
+                    raise Exception(f'The Original tiffile {str(i)} is not belonging to Landsat 4 5 7 8 or 9')
                 Corrupted_Tile.append(i[i.find('L2S') + 5: i.find('L2S') + 11])
                 Corrupted_Date.append(i[i.find('L2S') + 12: i.find('L2S') + 20])
                 Corrupted_Tier_level.append(i[i.find('_T') + 1: i.find('_T') + 3])
@@ -2277,8 +2282,7 @@ class Landsat_l2_ds(object):
                 {'FileID': Corrupted_FileID, 'Data_Type': Corrupted_Data_type, 'Tile_Num': Corrupted_Tile,
                  'Date': Corrupted_Date, 'Tier_Level': Corrupted_Tier_level})
             Corrupted_File_metadata.to_excel(self.work_env + 'Corrupted_metadata.xlsx')
-        else:
-            self.Landsat_metadata = pandas.read_excel(self.work_env + 'Metadata.xlsx')
+        self.Landsat_metadata = pandas.read_excel(self.work_env + 'Metadata.xlsx')
         self.Landsat_metadata.sort_values(by=['Date'], ascending=True)
         self.Landsat_metadata_size = self.Landsat_metadata.shape[0]
         self.date_list = self.Landsat_metadata['Date'].drop_duplicates().sort_values().tolist()
@@ -2309,7 +2313,7 @@ class Landsat_l2_ds(object):
             else:
                 raise TypeError('Please mention the construction_overwrittern_para should be bool type!')
         else:
-            self.cloud_removal_para = False
+            self.construction_overwrittern_para = False
 
         # process scan line correction
         if 'scan_line_correction' in kwargs.keys():
@@ -2355,9 +2359,9 @@ class Landsat_l2_ds(object):
             self.construct_landsat_vi(args[0], i, **kwargs)
 
     def construct_landsat_vi(self, VI_list, i, *args, **kwargs):
-
         # Process VI list
         VI_list = union_list(VI_list, self.all_supported_vi_list)
+
         if VI_list == []:
             raise ValueError('No vi is supported')
         elif 'FVC' in VI_list and 'NDVI' not in VI_list:
@@ -2383,7 +2387,7 @@ class Landsat_l2_ds(object):
                     raise Exception(f'The {band_name} for the {fileid} is not consistent!')
 
             Watermask_path = self.work_env + 'Landsat_constructed_index\\Watermask\\'
-            create_folder(Watermask_path)
+            bf.create_folder(Watermask_path)
 
             VI_list.append('Watermask')
             # Detect VI existence
@@ -2393,7 +2397,7 @@ class Landsat_l2_ds(object):
                 if os.path.exists(self.vi_output_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '.TIF') and not self.construction_overwrittern_para:
                     VI_list.remove(VI)
                 else:
-                    create_folder(self.vi_output_path_dic[VI])
+                    bf.create_folder(self.vi_output_path_dic[VI])
 
             # Construct VI
             if VI_list != []:
@@ -2429,7 +2433,7 @@ class Landsat_l2_ds(object):
                             NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
                             BLUE_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B1.TIF')
 
-                    if 'MNDWI' in VI_list and not 'AWEI' in VI_list:
+                    if 'MNDWI' in VI_list and 'AWEI' not in VI_list:
                         print('Start processing Green and MIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                         if self.scan_line_correction:
                             if not os.path.exists(
@@ -2490,7 +2494,7 @@ class Landsat_l2_ds(object):
                         NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
                         BLUE_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2.TIF')
 
-                    if 'MNDWI' in VI_list and not 'AWEI' in VI_list:
+                    if 'MNDWI' in VI_list and 'AWEI' not in VI_list:
                         print('Start processing Green and MIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                         MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B6.TIF')
                         GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
@@ -2527,6 +2531,7 @@ class Landsat_l2_ds(object):
                 # Process QI array
                 QI_temp_array = dataset2array(QI_temp_ds, Band_factor=False)
                 QI_temp_array[QI_temp_array == 1] = np.nan
+
                 if 'LC08' in fileid or 'LC09' in fileid:
                     start_time = time.time()
                     QI_temp_array[np.floor_divide(QI_temp_array, 256) > 86] = np.nan
@@ -2582,7 +2587,7 @@ class Landsat_l2_ds(object):
                 WATER_temp_array[np.divide(np.mod(WATER_temp_array, 256), 128) == 1] = 1
 
                 if 'Watermask' in VI_list:
-                    print('Start generating Watermask file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size.shape[0]) + ')')
+                    print('Start generating Watermask file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                     start_time = time.time()
                     WATER_temp_array[np.isnan(WATER_temp_array)] = 65535
                     write_raster(QI_temp_ds, WATER_temp_array, self.vi_output_path_dic['Watermask'],
@@ -2592,7 +2597,7 @@ class Landsat_l2_ds(object):
                     print('Finished in ' + str(end_time - start_time) + ' s')
                 # Band calculation
                 if 'NDVI' in VI_list:
-                    print('Start generating NDVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size.shape[0]) + ')')
+                    print('Start generating NDVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                     start_time = time.time()
                     NDVI_temp_array = (NIR_temp_array - RED_temp_array) / (NIR_temp_array + RED_temp_array)
                     NDVI_temp_array[NDVI_temp_array > 1] = 1
@@ -2612,7 +2617,7 @@ class Landsat_l2_ds(object):
                     end_time = time.time()
                     print('Finished in ' + str(end_time - start_time) + ' s')
                 if 'AWEI' in VI_list:
-                    print('Start generating AWEI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size.shape[0]) + ')')
+                    print('Start generating AWEI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                     start_time = time.time()
                     AWEI_temp_array = 4 * (GREEN_temp_array - MIR_temp_array) - (0.25 * NIR_temp_array + 2.75 * MIR2_temp_array)
                     AWEI_temp_array[AWEI_temp_array > 3.2] = 3.2
@@ -2631,7 +2636,7 @@ class Landsat_l2_ds(object):
                                      str(filedate) + '_' + str(tile_num) + '_AWEI.TIF')
                     print('Finished in ' + str(time.time() - start_time) + ' s')
                 if 'OSAVI' in VI_list:
-                    print('Start generating OSAVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size.shape[0]) + ')')
+                    print('Start generating OSAVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                     start_time = time.time()
                     OSAVI_temp_array = (NIR_temp_array - RED_temp_array) / (NIR_temp_array + RED_temp_array + 0.16)
                     OSAVI_temp_array[OSAVI_temp_array > 1] = 1
@@ -2650,7 +2655,7 @@ class Landsat_l2_ds(object):
                                      str(filedate) + '_' + str(tile_num) + '_OSAVI.TIF')
                     print('Finished in ' + str(time.time() - start_time) + ' s')
                 if 'EVI' in VI_list:
-                    print('Start generating EVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size.shape[0]) + ')')
+                    print('Start generating EVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                     start_time = time.time()
                     EVI_temp_array = 2.5 * (NIR_temp_array - RED_temp_array) / (
                                 NIR_temp_array + 6 * RED_temp_array - 7.5 * BLUE_temp_array + 1)
@@ -2668,7 +2673,7 @@ class Landsat_l2_ds(object):
                                      str(filedate) + '_' + str(tile_num) + '_EVI.TIF')
                     print('Finished in ' + str(time.time() - start_time) + ' s')
                 if 'MNDWI' in VI_list:
-                    print('Start generating MNDWI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size.shape[0]) + ')')
+                    print('Start generating MNDWI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                     start_time = time.time()
                     MNDWI_temp_array = (GREEN_temp_array - MIR_temp_array) / (MIR_temp_array + GREEN_temp_array)
                     MNDWI_temp_array[MNDWI_temp_array > 1] = 1
@@ -2687,7 +2692,7 @@ class Landsat_l2_ds(object):
                                      str(filedate) + '_' + str(tile_num) + '_MNDWI.TIF')
                     print('Finished in ' + str(time.time() - start_time) + ' s')
                 if 'FVC' in VI_list:
-                    print('Start generating FVC file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size.shape[0]) + ')')
+                    print('Start generating FVC file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                     start_time = time.time()
                     if self.size_control_factor:
                         NDVI_temp_array[MNDWI_temp_array > 1000] = -32768
@@ -2756,7 +2761,7 @@ class Landsat_l2_ds(object):
 
         # Create shapefile path
         shp_file_path = self.work_env + 'study_area_shapefile\\'
-        create_folder(shp_file_path)
+        bf.create_folder(shp_file_path)
 
         # Move all roi file into the new folder with specific sa name
         if self.ROI is not None:
@@ -2798,7 +2803,7 @@ class Landsat_l2_ds(object):
             # Create clipped vi path
             for VI in VI_list:
                 self.clipped_vi_path_dic[VI] = self.work_env + 'Landsat_' + self.ROI_name + '_index\\' + VI + '\\'
-                create_folder(self.clipped_vi_path_dic[VI])
+                bf.create_folder(self.clipped_vi_path_dic[VI])
             # File consistency check
             for VI in VI_list:
                 fileid = self.Landsat_metadata.FileID[i]
@@ -2825,7 +2830,7 @@ class Landsat_l2_ds(object):
             # Generate SA map
                 if not os.path.exists(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.npy'):
                     if os.path.exists(self.work_env + 'ROI_map\\'):
-                        create_folder(self.work_env + 'ROI_map\\')
+                        bf.create_folder(self.work_env + 'ROI_map\\')
                     ds_temp = gdal.Open(file_list[0])
                     array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
                     array_temp[:, :] = 1
@@ -2954,7 +2959,7 @@ class Landsat_l2_ds(object):
                 self.dc_vi[VI] = self.work_env + 'Landsat_constructed_datacube\\' + VI + '_datacube\\'
             else:
                 self.dc_vi[VI] = self.work_env + 'Landsat_' + self.ROI_name + '_datacube\\' + VI + '_datacube\\'
-            create_folder(self.dc_vi[VI])
+            bf.create_folder(self.dc_vi[VI])
 
             if len(file_filter(self.dc_vi[VI + 'input_path'], [VI, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
                 raise ValueError(f'{VI} is not consistent')
@@ -3027,102 +3032,145 @@ class Landsat_l2_ds(object):
                 np.save(self.dc_vi[VI] + str(VI) + '_datacube.npy', data_cube_temp.astype(np.float16))
                 end_time = time.time()
                 print('Finished in ' + str(end_time - start_time) + ' s')
-
             print('Finish constructing ' + VI + ' datacube.')
 
     class Landsat_dc(object):
-        def __init__(self, dc_filepath, work_env=None):
+        def __init__(self, dc_filepath, work_env=None, sdc_factor=False):
             # define var
             if os.path.exists(dc_filepath):
                 self.dc_filepath = dc_filepath
             else:
-                raise ValueError()
-            if work_env is None:
+                raise ValueError('Please input a valid dc filepath')
+            eliminating_all_not_required_file(self.dc_filepath, filename_extension=['.npy'])
 
-        def sequenced_dc(self):
-
-        if construct_sdc_para:
-            # Create fundamental dictionary
-            try:
-                dc_vi = np.load(key_dictionary_path + study_area + '_dc_vi.npy', allow_pickle=True).item()
-            except:
-                print('Please make sure the datacube of the ' + study_area + ' dictionary was constructed!')
-                sys.exit(-1)
-
-            if not os.path.exists(key_dictionary_path + study_area + '_sdc_vi.npy'):
-                sdc_vi = {}
+            # Define the sdc_factor:
+            self.sdc_factor = False
+            if type(sdc_factor) is bool:
+                self.sdc_factor = sdc_factor
             else:
-                sdc_vi = np.load(key_dictionary_path + study_area + '_sdc_vi.npy', allow_pickle=True).item()
+                raise TypeError('Please input the sdc factor as bool type!')
 
-            sdc_vi_dc = {}
-            for VI in VI_list:
-                # Remove all files which not meet the requirements
-                eliminating_all_not_required_file(dc_vi[VI + '_path'], filename_extension=['.npy'])
-                sdc_vi[VI + '_path'] = root_path_f + 'Landsat_' + study_area + '_sequenced_datacube\\' + VI + '_sequenced_datacube\\'
-                sdc_vi[VI + '_input'] = dc_vi[VI + '_path'] + VI + '_datacube.npy'
-                sdc_vi[VI + '_input_path'] = dc_vi[VI + '_path']
-                sdc_vi['date_input'] = dc_vi[VI + '_path'] + 'date.npy'
-                create_folder(sdc_vi[VI + '_path'])
-                if len(file_filter(sdc_vi[VI + '_input_path'], ['.npy'])) != 2:
-                    print('There are more than two datacube in the ' + VI + ' folder.')
-                    sys.exit(-1)
+            # Read header
+            header_file = file_filter(self.dc_filepath, ['header.npy'])
+            if len(header_file) == 0:
+                raise ValueError('There has no valid dc or the header file of the dc was missing!')
+            elif len(header_file) >=1:
+                raise ValueError('There has more than one header file in the dir')
+            else:
+                self.dc_header = np.load(header_file[0], allow_pickle=True).item()
+                if type(self.dc_header) is not dict:
+                    raise Exception('Please make sure the header file is a dictionary constructed in python!')
 
-            sdc_vi_doy_temp = []
-            for VI in VI_list:
-                if sdc_overwritten_para or not os.path.exists(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy') or not os.path.exists(str(sdc_vi[VI + '_path']) + 'doy.npy'):
-                    print('Start constructing ' + VI + ' sequenced datacube of the ' + study_area + '.')
-                    start_time = time.time()
-                    vi_date_cube_temp = np.load(sdc_vi['date_input'])
-                    date_list = []
-                    doy_list = []
-                    if not sdc_vi_doy_temp or not date_list:
-                        for i in vi_date_cube_temp:
-                            date_temp = int(i)
-                            if date_temp not in date_list:
-                                date_list.append(date_temp)
-                        for i in date_list:
-                            doy_list.append(datetime.date(int(i // 10000), int((i % 10000) // 100),
-                                                          int(i % 100)).timetuple().tm_yday + int(i // 10000) * 1000)
-                        sdc_vi_doy_temp = doy_list
-                        sdc_vi['doy'] = sdc_vi_doy_temp
+                self.ROI_name = self.dc_header['ROI_name']
+                self.VI = self.dc_header['VI']
+                if 'sdc_factor' in self.dc_header.keys():
+                    self.sdc_factor = self.dc_header['sdc_factor']
 
-                    if len(sdc_vi['doy']) != len(vi_date_cube_temp):
-                        vi_data_cube_temp = np.load(sdc_vi[VI + '_input'])
-                        data_cube_inorder = np.zeros((vi_data_cube_temp.shape[0], vi_data_cube_temp.shape[1], len(doy_list)), dtype=np.float16)
-                        sdc_vi_dc[VI + '_in_order'] = data_cube_inorder
-                        if vi_data_cube_temp.shape[2] == len(vi_date_cube_temp):
-                            for date_t in date_list:
-                                date_all = [z for z, z_temp in enumerate(vi_date_cube_temp) if z_temp == date_t]
-                                if len(date_all) == 1:
-                                    data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0]]
-                                    data_cube_temp[data_cube_temp <= -1] = np.nan
-                                    data_cube_temp = data_cube_temp.reshape(data_cube_temp.shape[0], -1)
-                                    sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp
-                                elif len(date_all) > 1:
-                                    if np.where(vi_date_cube_temp == date_t)[0][len(date_all) - 1] - np.where(vi_date_cube_temp == date_t)[0][0] + 1 == len(date_all):
-                                        data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0][0]: np.where(vi_date_cube_temp == date_t)[0][0] + len(date_all)]
-                                    else:
-                                        print('date long error')
-                                        sys.exit(-1)
-                                    data_cube_temp_temp = np.nanmean(data_cube_temp, axis=2)
-                                    sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp_temp
-                                else:
-                                    print('Something error during generate sequenced datecube')
-                                    sys.exit(-1)
-                            np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
-                            np.save(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy', sdc_vi_dc[VI + '_in_order'])
-                        else:
-                            print('consistency error')
-                            sys.exit(-1)
-                    elif len(sdc_vi['doy']) == len(vi_date_cube_temp):
-                        np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
-                        shutil.copyfile(sdc_vi[VI + '_input'], str(sdc_vi[VI + '_path']) + VI + '_sequenced_datacube.npy')
-                    end_time = time.time()
-                    print('Finished in ' + str(end_time - start_time) + ' s')
-                print(VI + 'sequenced datacube of the ' + study_area + ' was constructed.')
-            np.save(key_dictionary_path + study_area + '_sdc_vi.npy', sdc_vi)
-        else:
-            print('Sequenced datacube construction was not implemented.')
+            if sdc_factor is True:
+                # Read doylist
+                pass
+            else:
+                # Read datelist
+                if self.ROI_name is None:
+                    date_file = file_filter(self.dc_filepath, ['date.npy', str(self.VI)], and_or_factor='and')
+                else:
+                    date_file = file_filter(self.dc_filepath, ['date.npy', str(self.VI), str(self.ROI_name)], and_or_factor='and')
+
+                if len(header_file) == 0:
+                    raise ValueError('There has no valid dc or the date file of the dc was missing!')
+                elif len(header_file) >=1:
+                    raise ValueError('There has more than one date file in the dc dir')
+                else:
+                    self.dc_datelist = np.load(date_file[0], allow_pickle=True)
+
+                # Define var for sequenced_dc
+                self.sdc_output_folder = None
+
+            # Read datacube
+            if self.ROI_name is None:
+                dc_file = file_filter(self.dc_filepath, ['datacube.npy', str(self.VI)], and_or_factor='and')
+            else:
+                dc_file = file_filter(self.dc_filepath, ['datacube.npy', str(self.VI), str(self.ROI_name)], and_or_factor='and')
+
+            if len(date_file) == 0:
+                raise ValueError('There has no valid dc or the dc was missing!')
+            elif len(date_file) >= 1:
+                raise ValueError('There has more than one date file in the dc dir')
+            else:
+                self.dc = np.load(date_file[0], allow_pickle=True)
+
+            # Check work env
+            if work_env is not None:
+                self.work_env = Path(work_env).path_name
+            else:
+                self.work_env = Path(os.path.dirname(self.dc_filepath)).path_name
+
+        def sequenced_dc(self, **kwargs):
+            # Sequenced check
+            if self.sdc_factor is True:
+                raise Exception('The datacube has been already sequenced!')
+
+
+
+            self.sdc_output_folder = self.work_env + self.VI + '_sequenced_datacube\\'
+            bf.create_folder(self.sdc_output_folder)
+            if self.sdc_overwritten_para or not os.path.exists(self.sdc_output_folder + 'header.npy') or not os.path.exists(self.sdc_output_folder + 'doy_list.npy') or not os.path.exists(self.sdc_output_folder + self.VI + '_sequenced_datacube.npy'):
+                sdc_header = {'sdc_factor': True, 'VI': self.VI, 'ROI_name': self.ROI_name, 'original_dc_path': self.dc_filepath, 'original_datelist': self.dc_datelist}
+                sdc_vi_doy_temp = []
+                if self.ROI_name is not None:
+                    print('Start constructing ' + self.VI + ' sequenced datacube of the ' + self.ROI_name + '.')
+                else:
+                    print('Start constructing ' + self.VI + ' sequenced datacube.')
+                start_time = time.time()
+                doy_list = []
+        #             if not sdc_vi_doy_temp or not date_list:
+        #                 for i in vi_date_cube_temp:
+        #                     date_temp = int(i)
+        #                     if date_temp not in date_list:
+        #                         date_list.append(date_temp)
+        #                 for i in date_list:
+        #                     doy_list.append(datetime.date(int(i // 10000), int((i % 10000) // 100),
+        #                                                   int(i % 100)).timetuple().tm_yday + int(i // 10000) * 1000)
+        #                 sdc_vi_doy_temp = doy_list
+        #                 sdc_vi['doy'] = sdc_vi_doy_temp
+        #
+        #             if len(sdc_vi['doy']) != len(vi_date_cube_temp):
+        #                 vi_data_cube_temp = np.load(sdc_vi[VI + '_input'])
+        #                 data_cube_inorder = np.zeros((vi_data_cube_temp.shape[0], vi_data_cube_temp.shape[1], len(doy_list)), dtype=np.float16)
+        #                 sdc_vi_dc[VI + '_in_order'] = data_cube_inorder
+        #                 if vi_data_cube_temp.shape[2] == len(vi_date_cube_temp):
+        #                     for date_t in date_list:
+        #                         date_all = [z for z, z_temp in enumerate(vi_date_cube_temp) if z_temp == date_t]
+        #                         if len(date_all) == 1:
+        #                             data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0]]
+        #                             data_cube_temp[data_cube_temp <= -1] = np.nan
+        #                             data_cube_temp = data_cube_temp.reshape(data_cube_temp.shape[0], -1)
+        #                             sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp
+        #                         elif len(date_all) > 1:
+        #                             if np.where(vi_date_cube_temp == date_t)[0][len(date_all) - 1] - np.where(vi_date_cube_temp == date_t)[0][0] + 1 == len(date_all):
+        #                                 data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0][0]: np.where(vi_date_cube_temp == date_t)[0][0] + len(date_all)]
+        #                             else:
+        #                                 print('date long error')
+        #                                 sys.exit(-1)
+        #                             data_cube_temp_temp = np.nanmean(data_cube_temp, axis=2)
+        #                             sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp_temp
+        #                         else:
+        #                             print('Something error during generate sequenced datecube')
+        #                             sys.exit(-1)
+        #                     np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
+        #                     np.save(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy', sdc_vi_dc[VI + '_in_order'])
+        #                 else:
+        #                     print('consistency error')
+        #                     sys.exit(-1)
+        #             elif len(sdc_vi['doy']) == len(vi_date_cube_temp):
+        #                 np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
+        #                 shutil.copyfile(sdc_vi[VI + '_input'], str(sdc_vi[VI + '_path']) + VI + '_sequenced_datacube.npy')
+        #             end_time = time.time()
+        #             print('Finished in ' + str(end_time - start_time) + ' s')
+        #         print(VI + 'sequenced datacube of the ' + study_area + ' was constructed.')
+        #     np.save(key_dictionary_path + study_area + '_sdc_vi.npy', sdc_vi)
+        # else:
+        #     print('Sequenced datacube construction was not implemented.')
 
 
 def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None, main_coordinate_system=None, cloud_removal_para=False):
@@ -3150,11 +3198,11 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
         inundation_approach_dic = {'approach_list': []}
     VI_sdc = {}
     # Check VI para
-    if VI_list_f is None:
-        VI_list_f = all_supported_vi_list
-    elif not list_containing_check(VI_list_f, all_supported_vi_list):
-        print('Sorry, Some VI are not supported or make sure all of them are in Capital Letter')
-        sys.exit(-1)
+    # if VI_list_f is None:
+    #     VI_list_f = all_supported_vi_list
+    # elif not list_containing_check(VI_list_f, all_supported_vi_list):
+    #     print('Sorry, Some VI are not supported or make sure all of them are in Capital Letter')
+    #     sys.exit(-1)
     # Check SA para
     if study_area is None:
         print('Please specify the study area name')
@@ -3204,7 +3252,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             # Create Inundation Map
             sate_dem_inundated_dic = {'year_range': year_range,
                                       'inundation_folder': root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_' + 'sate_dem_inundated\\'}
-            create_folder(sate_dem_inundated_dic['inundation_folder'])
+            bf.create_folder(sate_dem_inundated_dic['inundation_folder'])
             for year in year_range:
                 if inundation_data_overwritten_factor or not os.path.exists(sate_dem_inundated_dic['inundation_folder'] + str(year) + '_inundation_map.TIF'):
                     if input_factor is False:
@@ -3282,8 +3330,8 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             for band in band_list:
                 band_path[band] = root_path_f + 'Landsat_constructed_index\\' + str(band) + '\\'
                 band_path[band + '_sa'] = root_path_f + 'Landsat_' + study_area + '_VI\\' + str(band) + '\\'
-                create_folder(band_path[band])
-                create_folder(band_path[band + '_sa'])
+                bf.create_folder(band_path[band])
+                bf.create_folder(band_path[band + '_sa'])
             for p in range(file_metadata_f.shape[0]):
                 if file_metadata_f['Tier_Level'][p] == 'T1':
                     i = file_metadata_f['FileID'][p]
@@ -3371,7 +3419,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             NIR_filepath = root_path_f + 'Landsat_' + study_area + '_VI\\NIR\\'
             SWIR2_filepath = root_path_f + 'Landsat_' + study_area + '_VI\\SWIR2\\'
             inundation_global_dic['global_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_global\\'
-            create_folder(inundation_global_dic['global_' + study_area])
+            bf.create_folder(inundation_global_dic['global_' + study_area])
             inundated_dc = np.array([])
             if not os.path.exists(inundation_global_dic['global_' + study_area] + 'doy.npy') or not os.path.exists(inundation_global_dic['global_' + study_area] + 'inundated_dc.npy'):
                 # Input the sdc vi array
@@ -3392,7 +3440,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                         date_temp -= 1
                     date_temp += 1
 
-                create_folder(inundation_global_dic['global_' + study_area] + 'individual_tif\\')
+                bf.create_folder(inundation_global_dic['global_' + study_area] + 'individual_tif\\')
                 for doy in doy_array:
                     if not os.path.exists(inundation_global_dic['global_' + study_area] + 'individual_tif\\global_' + str(doy) + '.TIF') or inundation_data_overwritten_factor:
                         year_t = doy // 1000
@@ -3439,7 +3487,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
 
             # Create annual inundation map
             inundation_global_dic['global_annual_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_global\\Annual\\'
-            create_folder(inundation_global_dic['global_annual_' + study_area])
+            bf.create_folder(inundation_global_dic['global_annual_' + study_area])
             inundated_dc = np.load(inundation_global_dic['inundated_dc_file'])
             doy_array = np.load(inundation_global_dic['inundated_doy_file'])
             year_array = np.unique(doy_array // 1000)
@@ -3472,8 +3520,8 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 print('Please double check the AWEI sequenced datacube availability')
                 sys.exit(-1)
             inundation_AWEI_dic['AWEI_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_AWEI\\'
-            create_folder(inundation_AWEI_dic['AWEI_' + study_area])
-            create_folder(inundation_AWEI_dic['AWEI_' + study_area] + 'individual_tif\\')
+            bf.create_folder(inundation_AWEI_dic['AWEI_' + study_area])
+            bf.create_folder(inundation_AWEI_dic['AWEI_' + study_area] + 'individual_tif\\')
             for doy in range(AWEI_sdc.shape[2]):
                 if not os.path.exists(inundation_AWEI_dic['AWEI_' + study_area] + 'individual_tif\\AWEI_' + str(doy_array[doy]) + '.TIF'):
                     AWEI_temp = AWEI_sdc[:, :, doy]
@@ -3513,7 +3561,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 MNDWI_sdc_temp = copy.copy(MNDWI_sdc)
                 std_fig_path_temp = root_path_f + 'Landsat_Inundation_Condition\\MNDWI_variation\\' + study_area + '\\std\\'
                 inundation_local_dic['std_fig_' + study_area] = std_fig_path_temp
-                create_folder(std_fig_path_temp)
+                bf.create_folder(std_fig_path_temp)
                 for y_temp in range(MNDWI_sdc.shape[0]):
                     for x_temp in range(MNDWI_sdc.shape[1]):
                         doy_array_pixel = np.concatenate(np.mod(doy_array_temp, 1000), axis=None)
@@ -3540,7 +3588,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                             plt.close()
 
             inundation_local_dic['local_threshold_map_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\MNDWI_variation\\' + study_area + '\\threshold\\'
-            create_folder(inundation_local_dic['local_threshold_map_' + study_area])
+            bf.create_folder(inundation_local_dic['local_threshold_map_' + study_area])
             if not os.path.exists(inundation_local_dic['local_threshold_map_' + study_area] + 'threshold_map.TIF'):
                 doy_array_temp = copy.copy(doy_array)
                 MNDWI_sdc_temp = copy.copy(MNDWI_sdc)
@@ -3572,8 +3620,8 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             doy_array_temp = copy.copy(doy_array)
             MNDWI_sdc_temp = copy.copy(MNDWI_sdc)
             inundation_local_dic['local_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_local\\'
-            create_folder(inundation_local_dic['local_' + study_area])
-            create_folder(inundation_local_dic['local_' + study_area] + 'individual_tif\\')
+            bf.create_folder(inundation_local_dic['local_' + study_area])
+            bf.create_folder(inundation_local_dic['local_' + study_area] + 'individual_tif\\')
             inundated_dc = np.array([])
             local_threshold_ds = gdal.Open(inundation_local_dic['local_threshold_map_' + study_area] + 'threshold_map.TIF')
             local_threshold = local_threshold_ds.GetRasterBand(1).ReadAsArray().astype(np.float)
@@ -3610,7 +3658,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
 
             # Create annual inundation map
             inundation_local_dic['local_annual_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_local\\Annual\\'
-            create_folder(inundation_local_dic['local_annual_' + study_area])
+            bf.create_folder(inundation_local_dic['local_annual_' + study_area])
             inundated_dc = np.load(inundation_local_dic['inundated_dc_file'])
             doy_array = np.load(inundation_local_dic['inundated_doy_file'])
             year_array = np.unique(doy_array // 1000)
@@ -3765,7 +3813,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 inundation_dic = {}
 
             inundation_dic['final_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_final\\'
-            create_folder(inundation_dic['final_' + study_area])
+            bf.create_folder(inundation_dic['final_' + study_area])
             if not os.path.exists(inundation_dic['final_' + study_area] + 'inundated_dc.npy') or not os.path.exists(inundation_dic['final_' + study_area] + 'doy.npy'):
                 landsat_inundation_file_list = file_filter(inundation_dic[gl_factor + '_' + study_area] + 'individual_tif\\', ['.TIF'])
                 date_array = np.zeros([0]).astype(np.uint32)
@@ -3796,7 +3844,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
 
             # Create the annual inundation map
             inundation_dic['final_annual_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_final\\Annual\\'
-            create_folder(inundation_dic['final_annual_' + study_area])
+            bf.create_folder(inundation_dic['final_annual_' + study_area])
             inundated_dc = np.load(inundation_dic['inundated_dc_file'])
             doy_array = np.load(inundation_dic['inundated_doy_file'])
             year_array = np.unique(doy_array // 1000)
@@ -3828,7 +3876,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             # The code below execute the dem fix
             inundation_dic = np.load(root_path_f + 'Landsat_key_dic\\' + study_area + '_final_inundation_dic.npy', allow_pickle=True).item()
             inundation_dic['DEM_fix_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_final\\' + study_area + '_dem_fixed\\'
-            create_folder(inundation_dic['DEM_fix_' + study_area])
+            bf.create_folder(inundation_dic['DEM_fix_' + study_area])
             if not os.path.exists(inundation_dic['DEM_fix_' + study_area] + 'fixed_dem_min_' + study_area + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + study_area] + 'fixed_dem_max_' + study_area + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + study_area] + 'inundated_threshold_' + study_area + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + study_area] + 'variation_dem_max_' + study_area + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + study_area] + 'variation_dem_min_' + study_area + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + study_area] + 'dem_fix_num_' + study_area + '.tif'):
                 water_level_data = excel2water_level_array(water_level_data_path, Year_range, cross_section)
                 year_range = range(int(np.min(water_level_data[:, 0] // 10000)), int(np.max(water_level_data[:, 0] // 10000) + 1))
@@ -3906,14 +3954,14 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
             survey_inundation_dic['cross_section'] = cross_section
             survey_inundation_dic['study_area'] = study_area
             survey_inundation_dic['surveyed_' + study_area] = str(root_path_f) + 'Landsat_Inundation_Condition\\' + str(study_area) + '_survey\\'
-            create_folder(survey_inundation_dic['surveyed_' + study_area])
+            bf.create_folder(survey_inundation_dic['surveyed_' + study_area])
             inundated_doy = np.array([])
             inundated_dc = np.array([])
             if not os.path.exists(survey_inundation_dic['surveyed_' + study_area] + 'inundated_dc.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + study_area] + 'doy.npy'):
                 for year in range(np.amin(water_level_data[:, 0].astype(np.int32) // 10000, axis=0), np.amax(water_level_data[:, 0].astype(np.int32) // 10000, axis=0) + 1):
                     if not os.path.exists(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\inundation_detection_cube.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\inundation_height_cube.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\inundation_date.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\yearly_inundation_condition.TIF') or inundation_data_overwritten_factor:
                         inundation_detection_cube, inundation_height_cube, inundation_date_array = inundation_detection_surveyed_daily_water_level(DEM_array, water_level_data, VEG_array, year_factor=year)
-                        create_folder(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\')
+                        bf.create_folder(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\')
                         np.save(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\inundation_height_cube.npy', inundation_height_cube)
                         np.save(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\inundation_date.npy', inundation_date_array)
                         np.save(survey_inundation_dic['surveyed_' + study_area] + 'Annual_tif\\' + str(year) + '\\inundation_detection_cube.npy', inundation_detection_cube)
@@ -3939,7 +3987,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 np.save(survey_inundation_dic['inundated_doy_file'], inundated_doy)
 
             survey_inundation_dic['surveyed_annual_' + study_area] = root_path_f + 'Landsat_Inundation_Condition\\' + study_area + '_survey\\Annual\\'
-            create_folder(survey_inundation_dic['surveyed_annual_' + study_area])
+            bf.create_folder(survey_inundation_dic['surveyed_annual_' + study_area])
             doy_array = np.load(survey_inundation_dic['inundated_doy_file'])
             year_array = np.unique(doy_array // 1000)
             for year in year_array:
@@ -4044,9 +4092,9 @@ def VI_curve_fitting(root_path_f, vi, sa, inundated_factor=None, curve_fitting_a
 
     # Create output path
     key_output_path = root_path_f + 'Landsat_' + sa + '_curfitting_datacube\\'
-    create_folder(key_output_path)
+    bf.create_folder(key_output_path)
     output_path = key_output_path + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_datacube\\'
-    create_folder(output_path)
+    bf.create_folder(output_path)
     if not os.path.exists(root_path_f + 'Landsat_key_dic\\' + sa + '_curve_fitting_dic.npy'):
         cf_inform_dic = {str(sa) + '_' + str(vi) + '_' + str(VI_curve_fitting_dic['CFM']) + '_path': output_path}
     else:
@@ -4321,13 +4369,13 @@ def phenology_metrics_generation(root_path_f, vi, sa, phenology_index=None, curv
         phenology_metrics_inform_dic = np.load(root_path_f + 'Landsat_key_dic\\' + sa + '_phenology_metrics.npy', allow_pickle=True).item()
 
     root_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\'
-    create_folder(root_folder)
+    bf.create_folder(root_folder)
     root_output_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '\\'
-    create_folder(root_output_folder)
+    bf.create_folder(root_output_folder)
     for phenology_index_indi in phenology_index:
         phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'] = root_output_folder + phenology_index_indi + '\\'
         phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_year'] = year_list
-        create_folder(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'])
+        bf.create_folder(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'])
 
     # Main procedure
     doy_temp = np.linspace(1, 365, 365)
@@ -4460,13 +4508,13 @@ def quantify_vegetation_variation(root_path_f, vi, sa, phenology_index, curve_fi
 
     # Create output folder
     root_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\'
-    create_folder(root_folder)
+    bf.create_folder(root_folder)
     root_output_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_veg_variation\\'
-    create_folder(root_output_folder)
+    bf.create_folder(root_output_folder)
     for phenology_index_indi in phenology_index:
         for quantify_st in quantify_strategy:
             phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'] = root_output_folder + phenology_index_indi + '_' + quantify_st + '\\'
-            create_folder(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'])
+            bf.create_folder(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'])
 
     # Main process
     for phenology_index_temp in phenology_index:
@@ -4549,9 +4597,9 @@ def phenology_year_vi_construction(root_path_f, study_area, inundated_factor=Non
 
     # Process the phenology
     phenology_year_sa_path = root_path_f + 'Landsat_' + study_area + '_pheyear_datacube\\'
-    create_folder(phenology_year_sa_path)
+    bf.create_folder(phenology_year_sa_path)
     phenology_year_sa_vi_path = phenology_year_sa_path + str(VI_factor) + '_pheyear_dc\\'
-    create_folder(phenology_year_sa_vi_path)
+    bf.create_folder(phenology_year_sa_vi_path)
     annual_inundated_path = inundated_dic[inundated_factor + '_annual_' + study_area]
     if not os.path.exists(root_path_f + 'Landsat_key_dic\\' + str(study_area) + '_sdc_vi.npy'):
         print('Please generate fundamental dic before further process')
@@ -4793,7 +4841,7 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
     # Create the overview curve of phenology
     if phenology_overview_factor is True:
         phenology_fig_dic['overview_curve_path'] = root_path_f + 'Landsat_phenology_curve\\' + study_area + '_overview\\'
-        create_folder(phenology_fig_dic['overview_curve_path'])
+        bf.create_folder(phenology_fig_dic['overview_curve_path'])
         for vi in VI_list_f:
             file_dir = file_filter(phenology_fig_dic['overview_curve_path'], ['.png'])
             y_max_temp = phenology_fig_dic[vi + '_sdc'].shape[0]
@@ -4821,7 +4869,7 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
 
     if phenology_individual_factor is True:
         phenology_fig_dic['individual_curve_path'] = root_path_f + 'Landsat_phenology_curve\\' + study_area + '_annual\\'
-        create_folder(phenology_fig_dic['individual_curve_path'])
+        bf.create_folder(phenology_fig_dic['individual_curve_path'])
         x_temp = np.linspace(0, 365, 10000)
         for vi in VI_list_f:
             surveyed_year_list = [int(i) for i in os.listdir(survey_inundation_dic['surveyed_' + study_area])]
@@ -4964,7 +5012,7 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
         except:
             pass
         inundated_curve_path = root_path_f + 'Landsat_phenology_curve\\'
-        create_folder(inundated_curve_path)
+        bf.create_folder(inundated_curve_path)
         for vi in VI_list_f:
             try:
                 VI_sdc[vi + '_sdc'] = np.load(sdc_vi_f[vi + '_path'] + vi + '_sequenced_datacube.npy')
@@ -4979,7 +5027,7 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
             else:
                 pixel_l_factor = True
             vi_inundated_curve_path = inundated_curve_path + vi + '\\'
-            create_folder(vi_inundated_curve_path)
+            bf.create_folder(vi_inundated_curve_path)
             # Generate the phenology curve of the inundated pixel diagram
             if inundated_pixel_phe_curve_factor and not os.path.exists(root_path_f + 'Landsat_key_dic\\inundation_dic.npy'):
                 print('Mention! Inundation map should be generated before the curve construction.')
@@ -4989,7 +5037,7 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
                 i = 1
                 while i < len(inundated_dic['year_range']) - 1:
                     yearly_vi_inundated_curve_path = vi_inundated_curve_path + str(inundated_dic['year_range'][i]) + '_' + VI_curve_fitting['CFM'] + '\\'
-                    create_folder(yearly_vi_inundated_curve_path)
+                    bf.create_folder(yearly_vi_inundated_curve_path)
                     inundated_year_doy_beg = np.argwhere(VI_sdc['doy'] > inundated_dic['year_range'][i] * 1000)[0]
                     inundated_year_doy_end = np.argwhere(VI_sdc['doy'] < inundated_dic['year_range'][i + 1] * 1000)[-1]
                     last_year_doy_beg = np.argwhere(VI_sdc['doy'] > inundated_dic['year_range'][i - 1] * 1000)[0]
@@ -5137,5 +5185,11 @@ def phenology_monitor(demo_path, phenology_indicator):
     pass
 
 
-# pixel_limitation = cor_to_pixel([[775576.487, 3326499.324], [783860353.937, 3321687.841]], root_path + 'Landsat_clipped_NDVI\\')
+if __name__ == '__main__':
+    # Landsat main v2 test
+    sample122124 = Landsat_l2_ds('G:\\Landsat\\Sample122_124039\\Original_zipfile\\')
+    sample122124.generate_landsat_metadata(unzipped_para=False)
+    # sample122124.sequenced_construct_vi(['OSAVI', 'MNDWI'], cloud_removal_para=True, size_control_factor=True)
+    sample122124.mp_construct_vi(['OSAVI', 'MNDWI'], cloud_removal_para=True, size_control_factor=True)
+    sample122124.mp_clip_vi(['OSAVI', 'MNDWI'], ROI_name='WGZ')
 
