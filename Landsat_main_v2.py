@@ -2051,6 +2051,8 @@ class Landsat_l2_ds(object):
         self.construction_overwrittern_para = False
         self.scan_line_correction = False
         self.vi_output_path_dic = {}
+        self.construction_issue_factor = False
+        self.construction_failure_files = []
 
         # Define key var for VI clip
         self.clipped_overwritten_para = False
@@ -2164,15 +2166,59 @@ class Landsat_l2_ds(object):
     def generate_landsat_metadata(self, unzipped_para=False):
         print('----------------------- Start generate Landsat Metadata -----------------------')
 
+        # Construct corrupted folder
+        corrupted_file_folder = os.path.join(self.work_env, 'Corrupted_zip_file\\')
+        bf.create_folder(corrupted_file_folder)
+
         # Read the ori Landsat zip file
         self.orifile_list = file_filter(self.original_file_path, ['.tar', 'L2SP'], and_or_factor='and', subfolder_detection=True)
         if len(self.orifile_list) == 0:
             raise ValueError('There has no valid Landsat L2 data in the original folder!')
 
+        # Drop duplicate files
+        for file_name in [filepath_temp.split('\\')[-1].split('.')[0] for filepath_temp in self.orifile_list]:
+            file_list_temp = bf.file_filter(self.original_file_path, [str(file_name)])
+            if len(file_list_temp) > 1:
+                for file in file_list_temp:
+                    if file.find(file_name) + len(file_name) != file.find('.tar'):
+                        duplicate_file_name = file.split("\\")[-1]
+                        try:
+                            os.rename(file, f'{corrupted_file_folder}{duplicate_file_name}')
+                        except:
+                            pass
+
+        # Landsat 9 and Landsat 7 duplicate
+        ## SINCE the Landsat 9 was not struggled with the scan line corrector issue
+        ## It has a priority than the Landsat 7
+        date_tile_combined_list = [filepath_temp.split('\\')[-1].split('.')[0][10: 25] for filepath_temp in self.orifile_list]
+        for date_tile_temp in date_tile_combined_list:
+            if date_tile_combined_list.count(date_tile_temp) == 2:
+                l79_list = bf.file_filter(self.original_file_path, [str(date_tile_temp)])
+                if len(l79_list) == 2 and (('LE07' in l79_list[0] and 'LC09' in l79_list[1]) or ('LE07' in l79_list[1] and 'LC09' in l79_list[0])):
+                    l7_file = [q for q in l79_list if 'LE07' in q][0]
+                    l7_file_name = l7_file.split('\\')[-1]
+                    try:
+                        os.rename(l7_file, f'{corrupted_file_folder}{l7_file_name}')
+                    except:
+                        pass
+                elif len(l79_list) == 1 and 'LC09' in l79_list[0]:
+                    pass
+                else:
+                    raise Exception(f'Something went wrong with the Landsat file under {date_tile_temp}!')
+
+            elif date_tile_combined_list.count(date_tile_temp) > 2:
+                raise Exception('Drop Duplicate failed in constructing metadata!')
+
         # Read the corrupted Landsat zip file
-        corrupted_file_folder = os.path.join(self.work_env, 'Corrupted_zip_file\\')
-        bf.create_folder(corrupted_file_folder)
         corrupted_file_list = bf.file_filter(corrupted_file_folder, ['.tar', 'L2SP'], and_or_factor='and', subfolder_detection=True)
+        # Remove the tif image unzipped from corrupted files
+        for corrupted_filename in [q.split('\\')[-1].split('.tar')[0] for q in corrupted_file_list]:
+            unzipped_corrupted_files = bf.file_filter(self.unzipped_folder, [corrupted_filename])
+            for temp in unzipped_corrupted_files:
+                try:
+                    os.remove(temp)
+                except:
+                    pass
 
         # Get the detail of current metadata file
         if os.path.exists(self.work_env + 'Metadata.xlsx'):
@@ -2229,26 +2275,25 @@ class Landsat_l2_ds(object):
                     File_path.append(i)
                 except:
                     if 'LE07' in i:
-                        Corrupted_Data_type.append(i[i.find('LEO7'): i.find('LEO7') + 9])
-                        Corrupted_FileID.append(i[i.find('LEO7'): i.find('.tar')])
+                        Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                        Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
                     elif 'LC08' in i:
-                        Corrupted_Data_type.append(i[i.find('LC08'): i.find('LC08') + 9])
-                        Corrupted_FileID.append(i[i.find('LCO8'): i.find('.tar')])
-                    elif 'LT04' in i:
-                        Corrupted_Data_type.append(i[i.find('LT04'): i.find('LT04') + 9])
-                        Corrupted_FileID.append(i[i.find('LT04'): i.find('.tar')])
+                        Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                        Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
                     elif 'LC09' in i:
-                        Corrupted_Data_type.append(i[i.find('LC09'): i.find('LC09') + 9])
-                        Corrupted_FileID.append(i[i.find('LCO9'): i.find('.tar')])
+                        Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                        Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
                     elif 'LT05' in i:
-                        Corrupted_Data_type.append(i[i.find('LT05'): i.find('LT05') + 9])
-                        Corrupted_FileID.append(i[i.find('LT05'): i.find('.tar')])
+                        Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                        Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
+                    elif 'LT04' in i:
+                        Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                        Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
                     else:
                         raise Exception(f'The Original tiffile {str(i)} is not belonging to Landsat 4 5 7 8 or 9')
                     Corrupted_Tile.append(i[i.find('L2S') + 5: i.find('L2S') + 11])
                     Corrupted_Date.append(i[i.find('L2S') + 12: i.find('L2S') + 20])
                     Corrupted_Tier_level.append(i[i.find('_T') + 1: i.find('_T') + 3])
-                    bf.create_folder(corrupted_file_folder)
                     shutil.move(i, corrupted_file_folder + i[i.find('L2S') - 5:])
             File_metadata = pandas.DataFrame(
                 {'File_Path': File_path, 'FileID': FileID, 'Data_Type': Data_type, 'Tile_Num': Tile, 'Date': Date,
@@ -2257,22 +2302,21 @@ class Landsat_l2_ds(object):
 
             corrupted_file_list = bf.file_filter(corrupted_file_folder, ['.tar', 'L2SP'], and_or_factor='and', subfolder_detection=True)
             for i in corrupted_file_list:
-                Corrupted_FileID, Corrupted_Data_type, Corrupted_Tile, Corrupted_Date, Corrupted_Tier_level = ([] for i in range(5))
                 if 'LE07' in i:
-                    Corrupted_Data_type.append(i[i.find('LEO7'): i.find('LEO7') + 9])
-                    Corrupted_FileID.append(i[i.find('LEO7'): i.find('.tar')])
+                    Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                    Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
                 elif 'LC08' in i:
-                    Corrupted_Data_type.append(i[i.find('LC08'): i.find('LC08') + 9])
-                    Corrupted_FileID.append(i[i.find('LCO8'): i.find('.tar')])
+                    Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                    Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
                 elif 'LC09' in i:
-                    Corrupted_Data_type.append(i[i.find('LC09'): i.find('LC09') + 9])
-                    Corrupted_FileID.append(i[i.find('LCO9'): i.find('.tar')])
+                    Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                    Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
                 elif 'LT05' in i:
-                    Corrupted_Data_type.append(i[i.find('LT05'): i.find('LT05') + 9])
-                    Corrupted_FileID.append(i[i.find('LT05'): i.find('.tar')])
+                    Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                    Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
                 elif 'LT04' in i:
-                    Corrupted_Data_type.append(i[i.find('LT04'): i.find('LT04') + 9])
-                    Corrupted_FileID.append(i[i.find('LT04'): i.find('.tar')])
+                    Corrupted_Data_type.append(i.split('\\')[-1][0: 9])
+                    Corrupted_FileID.append(i.split('\\')[-1].split('.tar')[0])
                 else:
                     raise Exception(f'The Original tiffile {str(i)} is not belonging to Landsat 4 5 7 8 or 9')
                 Corrupted_Tile.append(i[i.find('L2S') + 5: i.find('L2S') + 11])
@@ -2350,6 +2394,13 @@ class Landsat_l2_ds(object):
         with concurrent.futures.ProcessPoolExecutor() as executor:
             executor.map(self.construct_landsat_vi, repeat(args[0]), i, repeat(kwargs))
 
+        if self.construction_issue_factor:
+            issue_files = open(f"{self.log_filepath}construction_failure_files.txt", "w+")
+            issue_files.writelines(['#' * 50 + 'Construction issue files' + '#' * 50])
+            issue_files.writelines([q + '\n' for q in self.construction_failure_files])
+            issue_files.writelines(['#' * 50 + 'Construction issue files' + '#' * 50])
+            issue_files.close()
+
     @save_log_file
     def sequenced_construct_vi(self, *args, **kwargs):
         if self.Landsat_metadata is None:
@@ -2358,373 +2409,386 @@ class Landsat_l2_ds(object):
         for i in range(self.Landsat_metadata_size):
             self.construct_landsat_vi(args[0], i, **kwargs)
 
+        if self.construction_issue_factor:
+            issue_files = open(f"{self.log_filepath}construction_failure_files.txt", "w+")
+            issue_files.writelines(['#' * 50 + 'Construction issue files' + '#' * 50])
+            issue_files.writelines([q + '\n' for q in self.construction_failure_files])
+            issue_files.writelines(['#' * 50 + 'Construction issue files' + '#' * 50])
+            issue_files.close()
+
     def construct_landsat_vi(self, VI_list, i, *args, **kwargs):
-        # Process VI list
-        VI_list = union_list(VI_list, self.all_supported_vi_list)
+        try:
+            # Process VI list
+            VI_list = union_list(VI_list, self.all_supported_vi_list)
 
-        if VI_list == []:
-            raise ValueError('No vi is supported')
-        elif 'FVC' in VI_list and 'NDVI' not in VI_list:
-            # Since FVC is based on NDVI
-            VI_list.append('NDVI')
-            VI_list.append('MNDWI')
+            if VI_list == []:
+                raise ValueError('No vi is supported')
+            elif 'FVC' in VI_list and 'NDVI' not in VI_list:
+                # Since FVC is based on NDVI
+                VI_list.append('NDVI')
+                VI_list.append('MNDWI')
 
-        # Retrieve kwargs from args using the mp
-        if args != () and type(args[0]) == dict:
-            kwargs = copy.copy(args[0])
+            # Retrieve kwargs from args using the mp
+            if args != () and type(args[0]) == dict:
+                kwargs = copy.copy(args[0])
 
-        # determine the subset indicator
-        self.process_generation_para(**kwargs)
-        self.check_metadata_availability()
+            # determine the subset indicator
+            self.process_generation_para(**kwargs)
+            self.check_metadata_availability()
 
-        # File consistency check
-        if self.Landsat_metadata['Tier_Level'][i] == 'T1':
-            fileid = self.Landsat_metadata.FileID[i]
-            filedate = self.Landsat_metadata['Date'][i]
-            tile_num = self.Landsat_metadata['Tile_Num'][i]
-            for band_name in ['B1.', 'B2.', 'B3.', 'B4.', 'B5.', 'B6.', 'QA_PIXEL']:
-                if len(bf.file_filter(self.unzipped_folder, [band_name, fileid], and_or_factor='and')) != 1:
-                    raise Exception(f'The {band_name} for the {fileid} is not consistent!')
+            if self.Landsat_metadata['Tier_Level'][i] == 'T1':
 
-            Watermask_path = self.work_env + 'Landsat_constructed_index\\Watermask\\'
-            bf.create_folder(Watermask_path)
+                # Retrieve the file inform
+                fileid = self.Landsat_metadata.FileID[i]
+                filedate = self.Landsat_metadata['Date'][i]
+                tile_num = self.Landsat_metadata['Tile_Num'][i]
 
-            VI_list.append('Watermask')
-            # Detect VI existence
-            self.vi_output_path_dic = {}
-            for VI in VI_list:
-                self.vi_output_path_dic[VI] = self.work_env + 'Landsat_constructed_index\\' + VI + '\\'
-                if os.path.exists(self.vi_output_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '.TIF') and not self.construction_overwrittern_para:
-                    VI_list.remove(VI)
-                else:
-                    bf.create_folder(self.vi_output_path_dic[VI])
+                # Detect VI existence
+                self.vi_output_path_dic = {}
+                VI_list.append('Watermask')
+                q_temp = 0
+                while q_temp < len(VI_list):
+                    VI = VI_list[q_temp]
+                    self.vi_output_path_dic[VI] = self.work_env + 'Landsat_constructed_index\\' + VI + '\\'
+                    if os.path.exists(self.vi_output_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '.TIF') and not self.construction_overwrittern_para:
+                        VI_list.remove(VI)
+                        q_temp -= 1
+                    else:
+                        bf.create_folder(self.vi_output_path_dic[VI])
+                    q_temp += 1
 
-            # Construct VI
-            if VI_list != []:
-                if 'LE07' in fileid:
-                    # Input Raster
-                    if ('NDVI' in VI_list or 'OSAVI' in VI_list) and not 'EVI' in VI_list:
-                        print('Start processing Red and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        if self.scan_line_correction:
-                            if not os.path.exists(self.unzipped_folder + fileid + '_SR_B3_SLC.TIF') or not os.path.exists(self.unzipped_folder + fileid + '_SR_B4_SLC.TIF'):
-                                fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B3.TIF')
-                                fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B4.TIF')
-                            RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3_SLC.TIF')
-                            NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4_SLC.TIF')
-                        else:
+                # Construct VI
+                if VI_list != []:
+
+                    # File consistency check
+                    for band_name in ['B1.', 'B2.', 'B3.', 'B4.', 'B5.', 'B6.', 'QA_PIXEL']:
+                        if len(bf.file_filter(self.unzipped_folder, [band_name, fileid], and_or_factor='and')) != 1:
+                            raise Exception(f'The {band_name} for the {fileid} is not consistent!')
+
+                    # Read original tif files
+                    if 'LE07' in fileid:
+                        if ('NDVI' in VI_list or 'OSAVI' in VI_list) and not 'EVI' in VI_list:
+                            print('Start processing Red and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            if self.scan_line_correction:
+                                if not os.path.exists(self.unzipped_folder + fileid + '_SR_B3_SLC.TIF') or not os.path.exists(self.unzipped_folder + fileid + '_SR_B4_SLC.TIF'):
+                                    fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B3.TIF')
+                                    fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B4.TIF')
+                                RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3_SLC.TIF')
+                                NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4_SLC.TIF')
+                            else:
+                                RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
+                                NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
+
+                        elif 'EVI' in VI_list:
+                            print('Start processing Red, Blue and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            if self.scan_line_correction:
+                                if not os.path.exists(
+                                        self.unzipped_folder + fileid + '_SR_B3_SLC.TIF') or not os.path.exists(
+                                        self.unzipped_folder + fileid + '_SR_B4_SLC.TIF') or not os.path.exists(
+                                        self.unzipped_folder + fileid + '_SR_B1_SLC.TIF'):
+                                    fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B3.TIF')
+                                    fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B4.TIF')
+                                    fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B1.TIF')
+                                RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3_SLC.TIF')
+                                NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4_SLC.TIF')
+                                BLUE_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B1_SLC.TIF')
+                            else:
+                                RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
+                                NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
+                                BLUE_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B1.TIF')
+
+                        if 'MNDWI' in VI_list and 'AWEI' not in VI_list:
+                            print('Start processing Green and MIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            if self.scan_line_correction:
+                                if not os.path.exists(
+                                        self.unzipped_folder + fileid + '_SR_B5_SLC.TIF') or not os.path.exists(
+                                        self.unzipped_folder + fileid + '_SR_B2_SLC.TIF'):
+                                    fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B5.TIF')
+                                    fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B2.TIF')
+                                MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5_SLC.TIF')
+                                GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2_SLC.TIF')
+                            else:
+                                MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
+                                GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2.TIF')
+                        elif 'AWEI' in VI_list:
+                            print('Start processing Green NIR SWIR and MIR2 band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            if self.scan_line_correction:
+                                if not os.path.exists(self.unzipped_folder + fileid + '_SR_B5_SLC.TIF') or not os.path.exists(self.unzipped_folder + fileid + '_SR_B2_SLC.TIF'):
+                                    fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B5.TIF')
+                                    fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B2.TIF')
+                                MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5_SLC.TIF')
+                                GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2_SLC.TIF')
+                            else:
+                                MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
+                                GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2.TIF')
+                                MIR2_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B7.TIF')
+                                NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
+
+                    elif 'LT05' in fileid or 'LT04' in fileid:
+                        # Input Raster
+                        if ('NDVI' in VI_list or 'OSAVI' in VI_list) and not 'EVI' in VI_list:
+                            print('Start processing Red and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                             RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
                             NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
-
-                    elif 'EVI' in VI_list:
-                        print('Start processing Red, Blue and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        if self.scan_line_correction:
-                            if not os.path.exists(
-                                    self.unzipped_folder + fileid + '_SR_B3_SLC.TIF') or not os.path.exists(
-                                    self.unzipped_folder + fileid + '_SR_B4_SLC.TIF') or not os.path.exists(
-                                    self.unzipped_folder + fileid + '_SR_B1_SLC.TIF'):
-                                fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B3.TIF')
-                                fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B4.TIF')
-                                fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B1.TIF')
-                            RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3_SLC.TIF')
-                            NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4_SLC.TIF')
-                            BLUE_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B1_SLC.TIF')
-                        else:
+                        elif 'EVI' in VI_list:
+                            print('Start processing Red, Blue and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                             RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
                             NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
                             BLUE_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B1.TIF')
-
-                    if 'MNDWI' in VI_list and 'AWEI' not in VI_list:
-                        print('Start processing Green and MIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        if self.scan_line_correction:
-                            if not os.path.exists(
-                                    self.unzipped_folder + fileid + '_SR_B5_SLC.TIF') or not os.path.exists(
-                                    self.unzipped_folder + fileid + '_SR_B2_SLC.TIF'):
-                                fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B5.TIF')
-                                fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B2.TIF')
-                            MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5_SLC.TIF')
-                            GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2_SLC.TIF')
-                        else:
+                        if 'MNDWI' in VI_list and not 'AWEI' in VI_list:
+                            print('Start processing Green and MIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                             MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
                             GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2.TIF')
-                    elif 'AWEI' in VI_list:
-                        print('Start processing Green NIR SWIR and MIR2 band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        if self.scan_line_correction:
-                            if not os.path.exists(self.unzipped_folder + fileid + '_SR_B5_SLC.TIF') or not os.path.exists(self.unzipped_folder + fileid + '_SR_B2_SLC.TIF'):
-                                fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B5.TIF')
-                                fill_landsat7_gap(self.unzipped_folder + fileid + '_SR_B2.TIF')
-                            MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5_SLC.TIF')
-                            GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2_SLC.TIF')
-                        else:
+                        elif 'AWEI' in VI_list:
+                            print('Start processing Green NIR SWIR and MIR2 band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                             MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
                             GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2.TIF')
                             MIR2_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B7.TIF')
                             NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
 
-                elif 'LT05' in fileid or 'LT04' in fileid:
-                    # Input Raster
-                    if ('NDVI' in VI_list or 'OSAVI' in VI_list) and not 'EVI' in VI_list:
-                        print('Start processing Red and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
-                        NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
-                    elif 'EVI' in VI_list:
-                        print('Start processing Red, Blue and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
-                        NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
-                        BLUE_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B1.TIF')
-                    if 'MNDWI' in VI_list and not 'AWEI' in VI_list:
-                        print('Start processing Green and MIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
-                        GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2.TIF')
-                    elif 'AWEI' in VI_list:
-                        print('Start processing Green NIR SWIR and MIR2 band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
-                        GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2.TIF')
-                        MIR2_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B7.TIF')
-                        NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
+                    elif 'LC08' in fileid or 'LC09' in fileid:
+                        # Input Raster
+                        if ('NDVI' in VI_list or 'OSAVI' in VI_list) and not 'EVI' in VI_list:
+                            print('Start processing Red and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
+                            NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
+                        elif 'EVI' in VI_list:
+                            print('Start processing Red, Blue and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
+                            NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
+                            BLUE_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2.TIF')
 
-                elif 'LC08' in fileid or 'LC09' in fileid:
-                    # Input Raster
-                    if ('NDVI' in VI_list or 'OSAVI' in VI_list) and not 'EVI' in VI_list:
-                        print('Start processing Red and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
-                        NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
-                    elif 'EVI' in VI_list:
-                        print('Start processing Red, Blue and NIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        RED_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B4.TIF')
-                        NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
-                        BLUE_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B2.TIF')
-
-                    if 'MNDWI' in VI_list and 'AWEI' not in VI_list:
-                        print('Start processing Green and MIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B6.TIF')
-                        GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
-                    elif 'AWEI' in VI_list:
-                        print('Start processing Green NIR SWIR and MIR2 band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B6.TIF')
-                        GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
-                        MIR2_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B7.TIF')
-                        NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
-                else:
-                    print('The Original Tiff files are not belonging to Landsat 5, 7, 8 OR 9')
-                QI_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_QA_PIXEL.TIF')
-
-                # Process red blue nir mir green band data
-                if 'NDVI' in VI_list or 'EVI' in VI_list or 'OSAVI' in VI_list:
-                    RED_temp_array = dataset2array(RED_temp_ds)
-                    NIR_temp_array = dataset2array(NIR_temp_ds)
-                    NIR_temp_array[NIR_temp_array < 0] = 0
-                    RED_temp_array[RED_temp_array < 0] = 0
-                if 'MNDWI' in VI_list or 'AWEI' in VI_list:
-                    GREEN_temp_array = dataset2array(GREEN_temp_ds)
-                    MIR_temp_array = dataset2array(MIR_temp_ds)
-                    MIR_temp_array[MIR_temp_array < 0] = 0
-                    GREEN_temp_array[GREEN_temp_array < 0] = 0
-                if 'EVI' in VI_list:
-                    BLUE_temp_array = dataset2array(BLUE_temp_ds)
-                    BLUE_temp_array[BLUE_temp_array < 0] = 0
-                if 'AWEI' in VI_list:
-                    NIR_temp_array = dataset2array(NIR_temp_ds)
-                    MIR2_temp_array = dataset2array(MIR2_temp_ds)
-                    MIR2_temp_array[MIR2_temp_array < 0] = 0
-                    NIR_temp_array[NIR_temp_array < 0] = 0
-
-                # Process QI array
-                QI_temp_array = dataset2array(QI_temp_ds, Band_factor=False)
-                QI_temp_array[QI_temp_array == 1] = np.nan
-
-                if 'LC08' in fileid or 'LC09' in fileid:
-                    start_time = time.time()
-                    QI_temp_array[np.floor_divide(QI_temp_array, 256) > 86] = np.nan
-                    QI_temp_array_temp = copy.copy(QI_temp_array)
-                    QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
-                    QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
-                    QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
-                    QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 22080, QI_temp_array == 22208),
-                                                 QI_neighbor_average > 3)] = np.nan
-                    QI_temp_array[np.logical_and(
-                        np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
-                        np.logical_and(np.mod(QI_temp_array, 128) != 0,
-                                       np.mod(QI_temp_array, 128) != 66))] = np.nan
-                    print('The QI zonal detection consumes about ' + str(time.time() - start_time) + ' s for processing all pixels')
-
-                elif 'LE07' in fileid:
-                    start_time = time.time()
-                    QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
-                    QI_temp_array_temp = copy.copy(QI_temp_array)
-                    QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
-                    QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
-                    QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
-                    QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
-                                                 QI_neighbor_average > 3)] = np.nan
-                    QI_temp_array[np.logical_and(
-                        np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
-                        np.logical_and(np.mod(QI_temp_array, 128) != 0,
-                                       np.mod(QI_temp_array, 128) != 66))] = np.nan
-                    print('The QI zonal detection consumes about ' + str(time.time() - start_time) + ' s for processing all pixels')
-                    if self.scan_line_correction:
-                        gap_mask_ds = gdal.Open(self.unzipped_folder + fileid.split('_02_T')[0] + '_gap_mask.TIF')
-                        gap_mask_array = gap_mask_ds.GetRasterBand(1).ReadAsArray()
-                        QI_temp_array[gap_mask_array == 0] = 1
-                elif 'LT05' in fileid or 'LT04' in fileid:
-                    start_time = time.time()
-                    QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
-                    QI_temp_array_temp = copy.copy(QI_temp_array)
-                    QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
-                    QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
-                    QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
-                    QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
-                                                 QI_neighbor_average > 3)] = np.nan
-                    QI_temp_array[np.logical_and(
-                        np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
-                        np.logical_and(np.mod(QI_temp_array, 128) != 0,
-                                       np.mod(QI_temp_array, 128) != 66))] = np.nan
-                    end_time = time.time()
-                    print('The QI zonal detection consumes about ' + str(end_time - start_time) + ' s for processing all pixels')
-
-                WATER_temp_array = copy.copy(QI_temp_array)
-                QI_temp_array[~np.isnan(QI_temp_array)] = 1
-                WATER_temp_array[np.logical_and(np.floor_divide(np.mod(WATER_temp_array, 256), 128) != 1, ~np.isnan(np.floor_divide(np.mod(WATER_temp_array, 256), 128)))] = 0
-                WATER_temp_array[np.divide(np.mod(WATER_temp_array, 256), 128) == 1] = 1
-
-                if 'Watermask' in VI_list:
-                    print('Start generating Watermask file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                    start_time = time.time()
-                    WATER_temp_array[np.isnan(WATER_temp_array)] = 65535
-                    write_raster(QI_temp_ds, WATER_temp_array, self.vi_output_path_dic['Watermask'],
-                                 str(filedate) + '_' + str(tile_num) + '_Watermask.TIF',
-                                 raster_datatype=gdal.GDT_UInt16)
-                    end_time = time.time()
-                    print('Finished in ' + str(end_time - start_time) + ' s')
-                # Band calculation
-                if 'NDVI' in VI_list:
-                    print('Start generating NDVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                    start_time = time.time()
-                    NDVI_temp_array = (NIR_temp_array - RED_temp_array) / (NIR_temp_array + RED_temp_array)
-                    NDVI_temp_array[NDVI_temp_array > 1] = 1
-                    NDVI_temp_array[NDVI_temp_array < -1] = -1
-                    if self.cloud_removal_para:
-                        NDVI_temp_array = NDVI_temp_array * QI_temp_array
-                    if self.size_control_factor:
-                        NDVI_temp_array = NDVI_temp_array * 10000
-                        NDVI_temp_array[np.isnan(NDVI_temp_array)] = -32768
-                        NDVI_temp_array = NDVI_temp_array.astype(np.int16)
-                        write_raster(RED_temp_ds, NDVI_temp_array, self.vi_output_path_dic['NDVI'],
-                                     str(filedate) + '_' + str(tile_num) + '_NDVI.TIF',
-                                     raster_datatype=gdal.GDT_Int16)
+                        if 'MNDWI' in VI_list and 'AWEI' not in VI_list:
+                            print('Start processing Green and MIR band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B6.TIF')
+                            GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
+                        elif 'AWEI' in VI_list:
+                            print('Start processing Green NIR SWIR and MIR2 band of the ' + fileid + ' file(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            MIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B6.TIF')
+                            GREEN_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B3.TIF')
+                            MIR2_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B7.TIF')
+                            NIR_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_SR_B5.TIF')
                     else:
-                        write_raster(RED_temp_ds, NDVI_temp_array, self.vi_output_path_dic['NDVI'],
-                                     str(filedate) + '_' + str(tile_num) + '_NDVI.TIF')
-                    end_time = time.time()
-                    print('Finished in ' + str(end_time - start_time) + ' s')
-                if 'AWEI' in VI_list:
-                    print('Start generating AWEI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                    start_time = time.time()
-                    AWEI_temp_array = 4 * (GREEN_temp_array - MIR_temp_array) - (0.25 * NIR_temp_array + 2.75 * MIR2_temp_array)
-                    AWEI_temp_array[AWEI_temp_array > 3.2] = 3.2
-                    AWEI_temp_array[AWEI_temp_array < -3.2] = -3.2
-                    if self.cloud_removal_para:
-                        AWEI_temp_array = AWEI_temp_array * QI_temp_array
-                    if self.size_control_factor:
-                        AWEI_temp_array = AWEI_temp_array * 10000
-                        AWEI_temp_array[np.isnan(AWEI_temp_array)] = -32768
-                        AWEI_temp_array = AWEI_temp_array.astype(np.int16)
-                        write_raster(RED_temp_ds, AWEI_temp_array, self.vi_output_path_dic['AWEI'],
-                                     str(filedate) + '_' + str(tile_num) + '_AWEI.TIF',
-                                     raster_datatype=gdal.GDT_Int16)
-                    else:
-                        write_raster(RED_temp_ds, AWEI_temp_array, self.vi_output_path_dic['AWEI'],
-                                     str(filedate) + '_' + str(tile_num) + '_AWEI.TIF')
-                    print('Finished in ' + str(time.time() - start_time) + ' s')
-                if 'OSAVI' in VI_list:
-                    print('Start generating OSAVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                    start_time = time.time()
-                    OSAVI_temp_array = (NIR_temp_array - RED_temp_array) / (NIR_temp_array + RED_temp_array + 0.16)
-                    OSAVI_temp_array[OSAVI_temp_array > 1] = 1
-                    OSAVI_temp_array[OSAVI_temp_array < -1] = -1
-                    if self.cloud_removal_para:
-                        OSAVI_temp_array = OSAVI_temp_array * QI_temp_array
-                    if self.size_control_factor:
-                        OSAVI_temp_array = OSAVI_temp_array * 10000
-                        OSAVI_temp_array[np.isnan(OSAVI_temp_array)] = -32768
-                        OSAVI_temp_array = OSAVI_temp_array.astype(np.int16)
-                        write_raster(RED_temp_ds, OSAVI_temp_array, self.vi_output_path_dic['OSAVI'],
-                                     str(filedate) + '_' + str(tile_num) + '_OSAVI.TIF',
-                                     raster_datatype=gdal.GDT_Int16)
-                    else:
-                        write_raster(RED_temp_ds, OSAVI_temp_array, self.vi_output_path_dic['OSAVI'],
-                                     str(filedate) + '_' + str(tile_num) + '_OSAVI.TIF')
-                    print('Finished in ' + str(time.time() - start_time) + ' s')
-                if 'EVI' in VI_list:
-                    print('Start generating EVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                    start_time = time.time()
-                    EVI_temp_array = 2.5 * (NIR_temp_array - RED_temp_array) / (
-                                NIR_temp_array + 6 * RED_temp_array - 7.5 * BLUE_temp_array + 1)
-                    if self.cloud_removal_para:
-                        EVI_temp_array = EVI_temp_array * QI_temp_array
-                    if self.size_control_factor:
-                        EVI_temp_array = EVI_temp_array * 10000
-                        EVI_temp_array[np.isnan(EVI_temp_array)] = -32768
-                        EVI_temp_array = EVI_temp_array.astype(np.int16)
-                        write_raster(RED_temp_ds, EVI_temp_array, self.vi_output_path_dic['EVI'],
-                                     str(filedate) + '_' + str(tile_num) + '_EVI.TIF',
-                                     raster_datatype=gdal.GDT_Int16)
-                    else:
-                        write_raster(RED_temp_ds, EVI_temp_array, self.vi_output_path_dic['EVI'],
-                                     str(filedate) + '_' + str(tile_num) + '_EVI.TIF')
-                    print('Finished in ' + str(time.time() - start_time) + ' s')
-                if 'MNDWI' in VI_list:
-                    print('Start generating MNDWI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                    start_time = time.time()
-                    MNDWI_temp_array = (GREEN_temp_array - MIR_temp_array) / (MIR_temp_array + GREEN_temp_array)
-                    MNDWI_temp_array[MNDWI_temp_array > 1] = 1
-                    MNDWI_temp_array[MNDWI_temp_array < -1] = -1
-                    if self.cloud_removal_para:
-                        MNDWI_temp_array = MNDWI_temp_array * QI_temp_array
-                    if self.size_control_factor:
-                        MNDWI_temp_array = MNDWI_temp_array * 10000
-                        MNDWI_temp_array[np.isnan(MNDWI_temp_array)] = -32768
-                        MNDWI_temp_array = MNDWI_temp_array.astype(np.int16)
-                        write_raster(MIR_temp_ds, MNDWI_temp_array, self.vi_output_path_dic['MNDWI'],
-                                     str(filedate) + '_' + str(tile_num) + '_MNDWI.TIF',
-                                     raster_datatype=gdal.GDT_Int16)
-                    else:
-                        write_raster(MIR_temp_ds, MNDWI_temp_array, self.vi_output_path_dic['MNDWI'],
-                                     str(filedate) + '_' + str(tile_num) + '_MNDWI.TIF')
-                    print('Finished in ' + str(time.time() - start_time) + ' s')
-                if 'FVC' in VI_list:
-                    print('Start generating FVC file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                    start_time = time.time()
-                    if self.size_control_factor:
-                        NDVI_temp_array[MNDWI_temp_array > 1000] = -32768
-                        NDVI_flatten = NDVI_temp_array.flatten()
-                        nan_pos = np.argwhere(NDVI_flatten == -32768)
-                        NDVI_flatten = np.sort(np.delete(NDVI_flatten, nan_pos))
-                        if NDVI_flatten.shape[0] <= 50:
-                            write_raster(RED_temp_ds, NDVI_temp_array, self.vi_output_path_dic['FVC'],
-                                         str(filedate) + '_' + str(tile_num) + '_FVC.TIF',
+                        print('The Original Tiff files are not belonging to Landsat 5, 7, 8 OR 9')
+                    QI_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_QA_PIXEL.TIF')
+
+                    # Process red blue nir mir green band data
+                    if 'NDVI' in VI_list or 'EVI' in VI_list or 'OSAVI' in VI_list:
+                        RED_temp_array = dataset2array(RED_temp_ds)
+                        NIR_temp_array = dataset2array(NIR_temp_ds)
+                        NIR_temp_array[NIR_temp_array < 0] = 0
+                        RED_temp_array[RED_temp_array < 0] = 0
+                    if 'MNDWI' in VI_list or 'AWEI' in VI_list:
+                        GREEN_temp_array = dataset2array(GREEN_temp_ds)
+                        MIR_temp_array = dataset2array(MIR_temp_ds)
+                        MIR_temp_array[MIR_temp_array < 0] = 0
+                        GREEN_temp_array[GREEN_temp_array < 0] = 0
+                    if 'EVI' in VI_list:
+                        BLUE_temp_array = dataset2array(BLUE_temp_ds)
+                        BLUE_temp_array[BLUE_temp_array < 0] = 0
+                    if 'AWEI' in VI_list:
+                        NIR_temp_array = dataset2array(NIR_temp_ds)
+                        MIR2_temp_array = dataset2array(MIR2_temp_ds)
+                        MIR2_temp_array[MIR2_temp_array < 0] = 0
+                        NIR_temp_array[NIR_temp_array < 0] = 0
+
+                    # Process QI array
+                    QI_temp_array = dataset2array(QI_temp_ds, Band_factor=False)
+                    QI_temp_array[QI_temp_array == 1] = np.nan
+
+                    if 'LC08' in fileid or 'LC09' in fileid:
+                        start_time = time.time()
+                        QI_temp_array[np.floor_divide(QI_temp_array, 256) > 86] = np.nan
+                        QI_temp_array_temp = copy.copy(QI_temp_array)
+                        QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
+                        QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
+                        QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
+                        QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 22080, QI_temp_array == 22208),
+                                                     QI_neighbor_average > 3)] = np.nan
+                        QI_temp_array[np.logical_and(
+                            np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
+                            np.logical_and(np.mod(QI_temp_array, 128) != 0,
+                                           np.mod(QI_temp_array, 128) != 66))] = np.nan
+                        print('The QI zonal detection consumes about ' + str(time.time() - start_time) + ' s for processing all pixels')
+
+                    elif 'LE07' in fileid:
+                        start_time = time.time()
+                        QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
+                        QI_temp_array_temp = copy.copy(QI_temp_array)
+                        QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
+                        QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
+                        QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
+                        QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
+                                                     QI_neighbor_average > 3)] = np.nan
+                        QI_temp_array[np.logical_and(
+                            np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
+                            np.logical_and(np.mod(QI_temp_array, 128) != 0,
+                                           np.mod(QI_temp_array, 128) != 66))] = np.nan
+                        print('The QI zonal detection consumes about ' + str(time.time() - start_time) + ' s for processing all pixels')
+                        if self.scan_line_correction:
+                            gap_mask_ds = gdal.Open(self.unzipped_folder + fileid.split('_02_T')[0] + '_gap_mask.TIF')
+                            gap_mask_array = gap_mask_ds.GetRasterBand(1).ReadAsArray()
+                            QI_temp_array[gap_mask_array == 0] = 1
+                    elif 'LT05' in fileid or 'LT04' in fileid:
+                        start_time = time.time()
+                        QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
+                        QI_temp_array_temp = copy.copy(QI_temp_array)
+                        QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
+                        QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
+                        QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
+                        QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
+                                                     QI_neighbor_average > 3)] = np.nan
+                        QI_temp_array[np.logical_and(
+                            np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
+                            np.logical_and(np.mod(QI_temp_array, 128) != 0,
+                                           np.mod(QI_temp_array, 128) != 66))] = np.nan
+                        end_time = time.time()
+                        print('The QI zonal detection consumes about ' + str(end_time - start_time) + ' s for processing all pixels')
+
+                    WATER_temp_array = copy.copy(QI_temp_array)
+                    QI_temp_array[~np.isnan(QI_temp_array)] = 1
+                    WATER_temp_array[np.logical_and(np.floor_divide(np.mod(WATER_temp_array, 256), 128) != 1, ~np.isnan(np.floor_divide(np.mod(WATER_temp_array, 256), 128)))] = 0
+                    WATER_temp_array[np.divide(np.mod(WATER_temp_array, 256), 128) == 1] = 1
+
+                    if 'Watermask' in VI_list:
+                        print('Start generating Watermask file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                        start_time = time.time()
+                        WATER_temp_array[np.isnan(WATER_temp_array)] = 65535
+                        write_raster(QI_temp_ds, WATER_temp_array, self.vi_output_path_dic['Watermask'],
+                                     str(filedate) + '_' + str(tile_num) + '_Watermask.TIF',
+                                     raster_datatype=gdal.GDT_UInt16)
+                        end_time = time.time()
+                        print('Finished in ' + str(end_time - start_time) + ' s')
+                    # Band calculation
+                    if 'NDVI' in VI_list:
+                        print('Start generating NDVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                        start_time = time.time()
+                        NDVI_temp_array = (NIR_temp_array - RED_temp_array) / (NIR_temp_array + RED_temp_array)
+                        NDVI_temp_array[NDVI_temp_array > 1] = 1
+                        NDVI_temp_array[NDVI_temp_array < -1] = -1
+                        if self.cloud_removal_para:
+                            NDVI_temp_array = NDVI_temp_array * QI_temp_array
+                        if self.size_control_factor:
+                            NDVI_temp_array = NDVI_temp_array * 10000
+                            NDVI_temp_array[np.isnan(NDVI_temp_array)] = -32768
+                            NDVI_temp_array = NDVI_temp_array.astype(np.int16)
+                            write_raster(RED_temp_ds, NDVI_temp_array, self.vi_output_path_dic['NDVI'],
+                                         str(filedate) + '_' + str(tile_num) + '_NDVI.TIF',
                                          raster_datatype=gdal.GDT_Int16)
                         else:
-                            NDVI_soil = NDVI_flatten[int(np.round(NDVI_flatten.shape[0] * 0.02))]
-                            NDVI_veg = NDVI_flatten[int(np.round(NDVI_flatten.shape[0] * 0.98))]
-                            FVC_temp_array = copy.copy(NDVI_temp_array).astype(np.float)
-                            FVC_temp_array[FVC_temp_array >= NDVI_veg] = 10000
-                            FVC_temp_array[
-                                np.logical_and(FVC_temp_array <= NDVI_soil, FVC_temp_array != -32768)] = 0
-                            FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil,
-                                                          FVC_temp_array < NDVI_veg)] = 10000 * (FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil,FVC_temp_array < NDVI_veg)] - NDVI_soil) / (NDVI_veg - NDVI_soil)
-                            FVC_temp_array[MNDWI_temp_array > 1000] = -32768
-                            FVC_temp_array.astype(np.int16)
-                            write_raster(RED_temp_ds, FVC_temp_array, self.vi_output_path_dic['FVC'],
-                                         str(filedate) + '_' + str(tile_num) + '_FVC.TIF',
+                            write_raster(RED_temp_ds, NDVI_temp_array, self.vi_output_path_dic['NDVI'],
+                                         str(filedate) + '_' + str(tile_num) + '_NDVI.TIF')
+                        end_time = time.time()
+                        print('Finished in ' + str(end_time - start_time) + ' s')
+                    if 'AWEI' in VI_list:
+                        print('Start generating AWEI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                        start_time = time.time()
+                        AWEI_temp_array = 4 * (GREEN_temp_array - MIR_temp_array) - (0.25 * NIR_temp_array + 2.75 * MIR2_temp_array)
+                        AWEI_temp_array[AWEI_temp_array > 3.2] = 3.2
+                        AWEI_temp_array[AWEI_temp_array < -3.2] = -3.2
+                        if self.cloud_removal_para:
+                            AWEI_temp_array = AWEI_temp_array * QI_temp_array
+                        if self.size_control_factor:
+                            AWEI_temp_array = AWEI_temp_array * 10000
+                            AWEI_temp_array[np.isnan(AWEI_temp_array)] = -32768
+                            AWEI_temp_array = AWEI_temp_array.astype(np.int16)
+                            write_raster(RED_temp_ds, AWEI_temp_array, self.vi_output_path_dic['AWEI'],
+                                         str(filedate) + '_' + str(tile_num) + '_AWEI.TIF',
                                          raster_datatype=gdal.GDT_Int16)
-                    else:
-                        pass
-                    print('Finished in ' + str(time.time() - start_time) + ' s')
+                        else:
+                            write_raster(RED_temp_ds, AWEI_temp_array, self.vi_output_path_dic['AWEI'],
+                                         str(filedate) + '_' + str(tile_num) + '_AWEI.TIF')
+                        print('Finished in ' + str(time.time() - start_time) + ' s')
+                    if 'OSAVI' in VI_list:
+                        print('Start generating OSAVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                        start_time = time.time()
+                        OSAVI_temp_array = (NIR_temp_array - RED_temp_array) / (NIR_temp_array + RED_temp_array + 0.16)
+                        OSAVI_temp_array[OSAVI_temp_array > 1] = 1
+                        OSAVI_temp_array[OSAVI_temp_array < -1] = -1
+                        if self.cloud_removal_para:
+                            OSAVI_temp_array = OSAVI_temp_array * QI_temp_array
+                        if self.size_control_factor:
+                            OSAVI_temp_array = OSAVI_temp_array * 10000
+                            OSAVI_temp_array[np.isnan(OSAVI_temp_array)] = -32768
+                            OSAVI_temp_array = OSAVI_temp_array.astype(np.int16)
+                            write_raster(RED_temp_ds, OSAVI_temp_array, self.vi_output_path_dic['OSAVI'],
+                                         str(filedate) + '_' + str(tile_num) + '_OSAVI.TIF',
+                                         raster_datatype=gdal.GDT_Int16)
+                        else:
+                            write_raster(RED_temp_ds, OSAVI_temp_array, self.vi_output_path_dic['OSAVI'],
+                                         str(filedate) + '_' + str(tile_num) + '_OSAVI.TIF')
+                        print('Finished in ' + str(time.time() - start_time) + ' s')
+                    if 'EVI' in VI_list:
+                        print('Start generating EVI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                        start_time = time.time()
+                        EVI_temp_array = 2.5 * (NIR_temp_array - RED_temp_array) / (
+                                    NIR_temp_array + 6 * RED_temp_array - 7.5 * BLUE_temp_array + 1)
+                        if self.cloud_removal_para:
+                            EVI_temp_array = EVI_temp_array * QI_temp_array
+                        if self.size_control_factor:
+                            EVI_temp_array = EVI_temp_array * 10000
+                            EVI_temp_array[np.isnan(EVI_temp_array)] = -32768
+                            EVI_temp_array = EVI_temp_array.astype(np.int16)
+                            write_raster(RED_temp_ds, EVI_temp_array, self.vi_output_path_dic['EVI'],
+                                         str(filedate) + '_' + str(tile_num) + '_EVI.TIF',
+                                         raster_datatype=gdal.GDT_Int16)
+                        else:
+                            write_raster(RED_temp_ds, EVI_temp_array, self.vi_output_path_dic['EVI'],
+                                         str(filedate) + '_' + str(tile_num) + '_EVI.TIF')
+                        print('Finished in ' + str(time.time() - start_time) + ' s')
+                    if 'MNDWI' in VI_list:
+                        print('Start generating MNDWI file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                        start_time = time.time()
+                        MNDWI_temp_array = (GREEN_temp_array - MIR_temp_array) / (MIR_temp_array + GREEN_temp_array)
+                        MNDWI_temp_array[MNDWI_temp_array > 1] = 1
+                        MNDWI_temp_array[MNDWI_temp_array < -1] = -1
+                        if self.cloud_removal_para:
+                            MNDWI_temp_array = MNDWI_temp_array * QI_temp_array
+                        if self.size_control_factor:
+                            MNDWI_temp_array = MNDWI_temp_array * 10000
+                            MNDWI_temp_array[np.isnan(MNDWI_temp_array)] = -32768
+                            MNDWI_temp_array = MNDWI_temp_array.astype(np.int16)
+                            write_raster(MIR_temp_ds, MNDWI_temp_array, self.vi_output_path_dic['MNDWI'],
+                                         str(filedate) + '_' + str(tile_num) + '_MNDWI.TIF',
+                                         raster_datatype=gdal.GDT_Int16)
+                        else:
+                            write_raster(MIR_temp_ds, MNDWI_temp_array, self.vi_output_path_dic['MNDWI'],
+                                         str(filedate) + '_' + str(tile_num) + '_MNDWI.TIF')
+                        print('Finished in ' + str(time.time() - start_time) + ' s')
+                    if 'FVC' in VI_list:
+                        print('Start generating FVC file ' + fileid + ' (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                        start_time = time.time()
+                        if self.size_control_factor:
+                            NDVI_temp_array[MNDWI_temp_array > 1000] = -32768
+                            NDVI_flatten = NDVI_temp_array.flatten()
+                            nan_pos = np.argwhere(NDVI_flatten == -32768)
+                            NDVI_flatten = np.sort(np.delete(NDVI_flatten, nan_pos))
+                            if NDVI_flatten.shape[0] <= 50:
+                                write_raster(RED_temp_ds, NDVI_temp_array, self.vi_output_path_dic['FVC'],
+                                             str(filedate) + '_' + str(tile_num) + '_FVC.TIF',
+                                             raster_datatype=gdal.GDT_Int16)
+                            else:
+                                NDVI_soil = NDVI_flatten[int(np.round(NDVI_flatten.shape[0] * 0.02))]
+                                NDVI_veg = NDVI_flatten[int(np.round(NDVI_flatten.shape[0] * 0.98))]
+                                FVC_temp_array = copy.copy(NDVI_temp_array).astype(np.float)
+                                FVC_temp_array[FVC_temp_array >= NDVI_veg] = 10000
+                                FVC_temp_array[
+                                    np.logical_and(FVC_temp_array <= NDVI_soil, FVC_temp_array != -32768)] = 0
+                                FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil,
+                                                              FVC_temp_array < NDVI_veg)] = 10000 * (FVC_temp_array[np.logical_and(FVC_temp_array > NDVI_soil,FVC_temp_array < NDVI_veg)] - NDVI_soil) / (NDVI_veg - NDVI_soil)
+                                FVC_temp_array[MNDWI_temp_array > 1000] = -32768
+                                FVC_temp_array.astype(np.int16)
+                                write_raster(RED_temp_ds, FVC_temp_array, self.vi_output_path_dic['FVC'],
+                                             str(filedate) + '_' + str(tile_num) + '_FVC.TIF',
+                                             raster_datatype=gdal.GDT_Int16)
+                    print('All required VI were constructed in ' + str(time.time() - start_time) + 's (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                else:
+                    print('All required VI have already constructed(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
             else:
-                print('All VI were already generated(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-            print('VI construction was finished.')
-        else:
-            print('VI construction was not implemented.')
+                print('VI construction was not implemented.')
+        except:
+            self.construction_issue_factor = True
+            self.construction_failure_files.append(self.Landsat_metadata.FileID[i])
 
     def process_clip_para(self, ROI, **kwargs):
         # Detect whether all the indicators are valid
@@ -2745,7 +2809,7 @@ class Landsat_l2_ds(object):
         if 'main_coordinate_system' in kwargs.keys():
             self.main_coordinate_system = kwargs['main_coordinate_system']
         else:
-            self.main_coordinate_system = False
+            self.main_coordinate_system = None
 
         # process clip parameter
         if self.ROI is None:
@@ -2765,11 +2829,20 @@ class Landsat_l2_ds(object):
 
         # Move all roi file into the new folder with specific sa name
         if self.ROI is not None:
-            file_all = file_filter(os.path.dirname(self.ROI), [os.path.basename(self.ROI).split('.')[0]])
-            for ori_file in file_all:
-                shutil.copyfile(ori_file,
-                                shp_file_path + self.ROI_name + '.' + os.path.basename(ori_file).split('.')[-1])
-            if os.path.exists(shp_file_path + self.ROI_name + '.shp'):
+            if not os.path.exists(shp_file_path + self.ROI_name + '.shp'):
+                file_all = bf.file_filter(Path(os.path.dirname(self.ROI)).path_name, [os.path.basename(self.ROI).split('.')[0]], subfolder_detection=True)
+                roi_remove_factor = True
+                for ori_file in file_all:
+                    try:
+                        shutil.copyfile(ori_file, shp_file_path + os.path.basename(ori_file))
+                    except:
+                        roi_remove_factor = False
+
+                if os.path.exists(shp_file_path + self.ROI_name + '.shp') and roi_remove_factor:
+                    self.ROI = shp_file_path + self.ROI_name + '.shp'
+                else:
+                    pass
+            else:
                 self.ROI = shp_file_path + self.ROI_name + '.shp'
 
     @save_log_file
@@ -2800,16 +2873,22 @@ class Landsat_l2_ds(object):
 
         # Main procedure
         if self.ROI is not None:
+
             # Create clipped vi path
             for VI in VI_list:
                 self.clipped_vi_path_dic[VI] = self.work_env + 'Landsat_' + self.ROI_name + '_index\\' + VI + '\\'
-                bf.create_folder(self.clipped_vi_path_dic[VI])
+                try:
+                    bf.create_folder(self.clipped_vi_path_dic[VI])
+                except:
+                    pass
+
             # File consistency check
             for VI in VI_list:
                 fileid = self.Landsat_metadata.FileID[i]
                 filedate = self.Landsat_metadata['Date'][i]
                 tile_num = self.Landsat_metadata['Tile_Num'][i]
-                file_list = file_filter(self.vi_output_path_dic[VI], [str(filedate), str(tile_num), str(VI)], and_or_factor='and')
+                constructed_index_list = f'{self.work_env}Landsat_constructed_index\\{VI}\\'
+                file_list = file_filter(constructed_index_list, [str(filedate), str(tile_num), str(VI)], and_or_factor='and')
                 if len(file_list) != 1:
                     raise Exception(f'Incosistency problem for the {VI} of {fileid}!')
                 elif not file_list[0].endswith('.tif') and not file_list[0].endswith('.TIF'):
@@ -2819,7 +2898,7 @@ class Landsat_l2_ds(object):
                         print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                         start_time = time.time()
                         ds_temp = gdal.Open(file_list[0])
-                        if retrieve_srs(ds_temp) != self.main_coordinate_system:
+                        if self.main_coordinate_system is not None and retrieve_srs(ds_temp) != self.main_coordinate_system:
                             gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF', ds_temp, cutlineDSName=self.ROI, cropToCutline=True,
                                       dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
                         else:
@@ -3122,57 +3201,57 @@ class Landsat_dc(object):
             else:
                 print('Start constructing ' + self.VI + ' sequenced datacube.')
 
-            sdc_vi_doy_temp = []
-            doy_list = []
-
-            if not sdc_vi_doy_temp or not self.dc_date_list:
-                for i in vi_date_cube_temp:
-                    date_temp = int(i)
-                    if date_temp not in self.dc_date_list:
-                        self.dc_date_list.append(date_temp)
-                for i in self.dc_date_list:
-                    doy_list.append(datetime.date(int(i // 10000), int((i % 10000) // 100),
-                                                  int(i % 100)).timetuple().tm_yday + int(i // 10000) * 1000)
-                sdc_vi_doy_temp = doy_list
-                sdc_vi['doy'] = sdc_vi_doy_temp
-
-                if len(sdc_vi['doy']) != len(vi_date_cube_temp):
-                    vi_data_cube_temp = np.load(sdc_vi[VI + '_input'])
-                    data_cube_inorder = np.zeros((vi_data_cube_temp.shape[0], vi_data_cube_temp.shape[1], len(doy_list)), dtype=np.float16)
-                    sdc_vi_dc[VI + '_in_order'] = data_cube_inorder
-                    if vi_data_cube_temp.shape[2] == len(vi_date_cube_temp):
-                        for date_t in date_list:
-                            date_all = [z for z, z_temp in enumerate(vi_date_cube_temp) if z_temp == date_t]
-                            if len(date_all) == 1:
-                                data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0]]
-                                data_cube_temp[data_cube_temp <= -1] = np.nan
-                                data_cube_temp = data_cube_temp.reshape(data_cube_temp.shape[0], -1)
-                                sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp
-                            elif len(date_all) > 1:
-                                if np.where(vi_date_cube_temp == date_t)[0][len(date_all) - 1] - np.where(vi_date_cube_temp == date_t)[0][0] + 1 == len(date_all):
-                                    data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0][0]: np.where(vi_date_cube_temp == date_t)[0][0] + len(date_all)]
-                                else:
-                                    print('date long error')
-                                    sys.exit(-1)
-                                data_cube_temp_temp = np.nanmean(data_cube_temp, axis=2)
-                                sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp_temp
-                            else:
-                                print('Something error during generate sequenced datecube')
-                                sys.exit(-1)
-                        np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
-                        np.save(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy', sdc_vi_dc[VI + '_in_order'])
-                    else:
-                        print('consistency error')
-                        sys.exit(-1)
-                elif len(sdc_vi['doy']) == len(vi_date_cube_temp):
-                    np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
-                    shutil.copyfile(sdc_vi[VI + '_input'], str(sdc_vi[VI + '_path']) + VI + '_sequenced_datacube.npy')
-                end_time = time.time()
-                print('Finished in ' + str(end_time - start_time) + ' s')
-            print(VI + 'sequenced datacube of the ' + study_area + ' was constructed.')
-        np.save(key_dictionary_path + study_area + '_sdc_vi.npy', sdc_vi)
-    else:
-        print('Sequenced datacube construction was not implemented.')
+    #         sdc_vi_doy_temp = []
+    #         doy_list = []
+    #
+    #         if not sdc_vi_doy_temp or not self.dc_date_list:
+    #             for i in vi_date_cube_temp:
+    #                 date_temp = int(i)
+    #                 if date_temp not in self.dc_date_list:
+    #                     self.dc_date_list.append(date_temp)
+    #             for i in self.dc_date_list:
+    #                 doy_list.append(datetime.date(int(i // 10000), int((i % 10000) // 100),
+    #                                               int(i % 100)).timetuple().tm_yday + int(i // 10000) * 1000)
+    #             sdc_vi_doy_temp = doy_list
+    #             sdc_vi['doy'] = sdc_vi_doy_temp
+    #
+    #             if len(sdc_vi['doy']) != len(vi_date_cube_temp):
+    #                 vi_data_cube_temp = np.load(sdc_vi[VI + '_input'])
+    #                 data_cube_inorder = np.zeros((vi_data_cube_temp.shape[0], vi_data_cube_temp.shape[1], len(doy_list)), dtype=np.float16)
+    #                 sdc_vi_dc[VI + '_in_order'] = data_cube_inorder
+    #                 if vi_data_cube_temp.shape[2] == len(vi_date_cube_temp):
+    #                     for date_t in date_list:
+    #                         date_all = [z for z, z_temp in enumerate(vi_date_cube_temp) if z_temp == date_t]
+    #                         if len(date_all) == 1:
+    #                             data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0]]
+    #                             data_cube_temp[data_cube_temp <= -1] = np.nan
+    #                             data_cube_temp = data_cube_temp.reshape(data_cube_temp.shape[0], -1)
+    #                             sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp
+    #                         elif len(date_all) > 1:
+    #                             if np.where(vi_date_cube_temp == date_t)[0][len(date_all) - 1] - np.where(vi_date_cube_temp == date_t)[0][0] + 1 == len(date_all):
+    #                                 data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0][0]: np.where(vi_date_cube_temp == date_t)[0][0] + len(date_all)]
+    #                             else:
+    #                                 print('date long error')
+    #                                 sys.exit(-1)
+    #                             data_cube_temp_temp = np.nanmean(data_cube_temp, axis=2)
+    #                             sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp_temp
+    #                         else:
+    #                             print('Something error during generate sequenced datecube')
+    #                             sys.exit(-1)
+    #                     np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
+    #                     np.save(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy', sdc_vi_dc[VI + '_in_order'])
+    #                 else:
+    #                     print('consistency error')
+    #                     sys.exit(-1)
+    #             elif len(sdc_vi['doy']) == len(vi_date_cube_temp):
+    #                 np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
+    #                 shutil.copyfile(sdc_vi[VI + '_input'], str(sdc_vi[VI + '_path']) + VI + '_sequenced_datacube.npy')
+    #             end_time = time.time()
+    #             print('Finished in ' + str(end_time - start_time) + ' s')
+    #         print(VI + 'sequenced datacube of the ' + study_area + ' was constructed.')
+    #     np.save(key_dictionary_path + study_area + '_sdc_vi.npy', sdc_vi)
+    # else:
+    #     print('Sequenced datacube construction was not implemented.')
 
 
 def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None, main_coordinate_system=None, cloud_removal_para=False):
@@ -5188,10 +5267,12 @@ def phenology_monitor(demo_path, phenology_indicator):
 
 
 if __name__ == '__main__':
+    roi_name_list = ['daijiazhou', 'dongcaozhou', 'shanjiazhou', 'xinzhou', 'guniuzhou', 'huojianzhou', 'jinchengzhou', 'guanzhou', 'mayangzhou', 'wuguizhou', 'liutiaozhou', 'tuqizhou']
     # Landsat main v2 test
     sample122124 = Landsat_l2_ds('G:\\Landsat\\Sample122_124039\\Original_zipfile\\')
     sample122124.generate_landsat_metadata(unzipped_para=False)
     # sample122124.sequenced_construct_vi(['OSAVI', 'MNDWI'], cloud_removal_para=True, size_control_factor=True)
     sample122124.mp_construct_vi(['OSAVI', 'MNDWI'], cloud_removal_para=True, size_control_factor=True)
-    sample122124.mp_clip_vi(['OSAVI', 'MNDWI'], ROI_name='WGZ')
+    for roi in roi_name_list:
+        sample122124.mp_clip_vi(['OSAVI', 'MNDWI'], f'G:\\Landsat\\Jingjiang_shp\\shpfile\\Intersect\\{roi}.shp')
 
