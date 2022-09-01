@@ -3145,6 +3145,7 @@ class Landsat_dc(object):
             if 'sdc_factor' in self.dc_header.keys():
                 self.sdc_factor = self.dc_header['sdc_factor']
 
+        # Read doy or date file of the Datacube
         if sdc_factor is True:
             # Read doylist
             pass
@@ -3164,6 +3165,7 @@ class Landsat_dc(object):
 
             # Define var for sequenced_dc
             self.sdc_output_folder = None
+            self.sdc_doylist = []
 
         # Read datacube
         if self.ROI_name is None:
@@ -3176,7 +3178,7 @@ class Landsat_dc(object):
         elif len(date_file) >= 1:
             raise ValueError('There has more than one date file in the dc dir')
         else:
-            self.dc = np.load(date_file[0], allow_pickle=True)
+            self.dc = np.load(dc_file[0], allow_pickle=True)
 
         # Check work env
         if work_env is not None:
@@ -3201,57 +3203,53 @@ class Landsat_dc(object):
             else:
                 print('Start constructing ' + self.VI + ' sequenced datacube.')
 
-    #         sdc_vi_doy_temp = []
-    #         doy_list = []
-    #
-    #         if not sdc_vi_doy_temp or not self.dc_date_list:
-    #             for i in vi_date_cube_temp:
-    #                 date_temp = int(i)
-    #                 if date_temp not in self.dc_date_list:
-    #                     self.dc_date_list.append(date_temp)
-    #             for i in self.dc_date_list:
-    #                 doy_list.append(datetime.date(int(i // 10000), int((i % 10000) // 100),
-    #                                               int(i % 100)).timetuple().tm_yday + int(i // 10000) * 1000)
-    #             sdc_vi_doy_temp = doy_list
-    #             sdc_vi['doy'] = sdc_vi_doy_temp
-    #
-    #             if len(sdc_vi['doy']) != len(vi_date_cube_temp):
-    #                 vi_data_cube_temp = np.load(sdc_vi[VI + '_input'])
-    #                 data_cube_inorder = np.zeros((vi_data_cube_temp.shape[0], vi_data_cube_temp.shape[1], len(doy_list)), dtype=np.float16)
-    #                 sdc_vi_dc[VI + '_in_order'] = data_cube_inorder
-    #                 if vi_data_cube_temp.shape[2] == len(vi_date_cube_temp):
-    #                     for date_t in date_list:
-    #                         date_all = [z for z, z_temp in enumerate(vi_date_cube_temp) if z_temp == date_t]
-    #                         if len(date_all) == 1:
-    #                             data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0]]
-    #                             data_cube_temp[data_cube_temp <= -1] = np.nan
-    #                             data_cube_temp = data_cube_temp.reshape(data_cube_temp.shape[0], -1)
-    #                             sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp
-    #                         elif len(date_all) > 1:
-    #                             if np.where(vi_date_cube_temp == date_t)[0][len(date_all) - 1] - np.where(vi_date_cube_temp == date_t)[0][0] + 1 == len(date_all):
-    #                                 data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0][0]: np.where(vi_date_cube_temp == date_t)[0][0] + len(date_all)]
-    #                             else:
-    #                                 print('date long error')
-    #                                 sys.exit(-1)
-    #                             data_cube_temp_temp = np.nanmean(data_cube_temp, axis=2)
-    #                             sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp_temp
-    #                         else:
-    #                             print('Something error during generate sequenced datecube')
-    #                             sys.exit(-1)
-    #                     np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
-    #                     np.save(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy', sdc_vi_dc[VI + '_in_order'])
-    #                 else:
-    #                     print('consistency error')
-    #                     sys.exit(-1)
-    #             elif len(sdc_vi['doy']) == len(vi_date_cube_temp):
-    #                 np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
-    #                 shutil.copyfile(sdc_vi[VI + '_input'], str(sdc_vi[VI + '_path']) + VI + '_sequenced_datacube.npy')
-    #             end_time = time.time()
-    #             print('Finished in ' + str(end_time - start_time) + ' s')
-    #         print(VI + 'sequenced datacube of the ' + study_area + ' was constructed.')
-    #     np.save(key_dictionary_path + study_area + '_sdc_vi.npy', sdc_vi)
-    # else:
-    #     print('Sequenced datacube construction was not implemented.')
+            self.sdc_doylist = []
+            if 'dc_datelist' in self.__dict__().keys() and self.dc_datelist != []:
+                for date_temp in self.dc_datelist:
+                    date_temp = int(date_temp)
+                    if date_temp not in self.sdc_doylist:
+                        self.sdc_doylist.append(date_temp)
+
+            self.sdc_doylist = bf.date2doy(self.sdc_doylist)
+            self.sdc_doylist = np.sort(np.array(self.sdc_doylist)).tolist()
+
+            if len(self.sdc_doylist) != len(self.dc_datelist):
+                vi_data_cube_temp = np.load(sdc_vi[VI + '_input'])
+                data_cube_inorder = np.zeros((vi_data_cube_temp.shape[0], vi_data_cube_temp.shape[1], len(doy_list)), dtype=np.float16)
+                sdc_vi_dc[VI + '_in_order'] = data_cube_inorder
+                if vi_data_cube_temp.shape[2] == len(vi_date_cube_temp):
+                    for date_t in date_list:
+                        date_all = [z for z, z_temp in enumerate(vi_date_cube_temp) if z_temp == date_t]
+                        if len(date_all) == 1:
+                            data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0]]
+                            data_cube_temp[data_cube_temp <= -1] = np.nan
+                            data_cube_temp = data_cube_temp.reshape(data_cube_temp.shape[0], -1)
+                            sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp
+                        elif len(date_all) > 1:
+                            if np.where(vi_date_cube_temp == date_t)[0][len(date_all) - 1] - np.where(vi_date_cube_temp == date_t)[0][0] + 1 == len(date_all):
+                                data_cube_temp = vi_data_cube_temp[:, :, np.where(vi_date_cube_temp == date_t)[0][0]: np.where(vi_date_cube_temp == date_t)[0][0] + len(date_all)]
+                            else:
+                                print('date long error')
+                                sys.exit(-1)
+                            data_cube_temp_temp = np.nanmean(data_cube_temp, axis=2)
+                            sdc_vi_dc[VI + '_in_order'][:, :, date_list.index(date_t)] = data_cube_temp_temp
+                        else:
+                            print('Something error during generate sequenced datecube')
+                            sys.exit(-1)
+                    np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
+                    np.save(str(sdc_vi[VI + '_path']) + str(VI) + '_sequenced_datacube.npy', sdc_vi_dc[VI + '_in_order'])
+                else:
+                    print('consistency error')
+                    sys.exit(-1)
+            elif len(sdc_vi['doy']) == len(vi_date_cube_temp):
+                np.save(str(sdc_vi[VI + '_path']) + "doy.npy", sdc_vi['doy'])
+                shutil.copyfile(sdc_vi[VI + '_input'], str(sdc_vi[VI + '_path']) + VI + '_sequenced_datacube.npy')
+            end_time = time.time()
+            print('Finished in ' + str(end_time - start_time) + ' s')
+        print(VI + 'sequenced datacube of the ' + study_area + ' was constructed.')
+    np.save(key_dictionary_path + study_area + '_sdc_vi.npy', sdc_vi)
+else:
+    print('Sequenced datacube construction was not implemented.')
 
 
 def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, Inundation_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None, main_coordinate_system=None, cloud_removal_para=False):
