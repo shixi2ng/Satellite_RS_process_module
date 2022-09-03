@@ -2592,57 +2592,10 @@ class Landsat_l2_ds(object):
                         NIR_temp_array[NIR_temp_array < 0] = 0
 
                     # Process QI array
+                    start_time = time.time()
                     QI_temp_array = dataset2array(QI_temp_ds, Band_factor=False)
-                    QI_temp_array[QI_temp_array == 1] = np.nan
-
-                    if 'LC08' in fileid or 'LC09' in fileid:
-                        start_time = time.time()
-                        QI_temp_array[np.floor_divide(QI_temp_array, 256) > 86] = np.nan
-                        QI_temp_array_temp = copy.copy(QI_temp_array)
-                        QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
-                        QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
-                        QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
-                        QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 22080, QI_temp_array == 22208),
-                                                     QI_neighbor_average > 3)] = np.nan
-                        QI_temp_array[np.logical_and(
-                            np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
-                            np.logical_and(np.mod(QI_temp_array, 128) != 0,
-                                           np.mod(QI_temp_array, 128) != 66))] = np.nan
-                        print('The QI zonal detection consumes about ' + str(time.time() - start_time) + ' s for processing all pixels')
-
-                    elif 'LE07' in fileid:
-                        start_time = time.time()
-                        QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
-                        QI_temp_array_temp = copy.copy(QI_temp_array)
-                        QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
-                        QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
-                        QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
-                        QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
-                                                     QI_neighbor_average > 3)] = np.nan
-                        QI_temp_array[np.logical_and(
-                            np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
-                            np.logical_and(np.mod(QI_temp_array, 128) != 0,
-                                           np.mod(QI_temp_array, 128) != 66))] = np.nan
-                        print('The QI zonal detection consumes about ' + str(time.time() - start_time) + ' s for processing all pixels')
-                        if self.scan_line_correction:
-                            gap_mask_ds = gdal.Open(self.unzipped_folder + fileid.split('_02_T')[0] + '_gap_mask.TIF')
-                            gap_mask_array = gap_mask_ds.GetRasterBand(1).ReadAsArray()
-                            QI_temp_array[gap_mask_array == 0] = 1
-                    elif 'LT05' in fileid or 'LT04' in fileid:
-                        start_time = time.time()
-                        QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
-                        QI_temp_array_temp = copy.copy(QI_temp_array)
-                        QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
-                        QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
-                        QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
-                        QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
-                                                     QI_neighbor_average > 3)] = np.nan
-                        QI_temp_array[np.logical_and(
-                            np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
-                            np.logical_and(np.mod(QI_temp_array, 128) != 0,
-                                           np.mod(QI_temp_array, 128) != 66))] = np.nan
-                        end_time = time.time()
-                        print('The QI zonal detection consumes about ' + str(end_time - start_time) + ' s for processing all pixels')
+                    QI_temp_array = self._remove_cloud_using_QA(QI_temp_array, fileid)
+                    print('The QI zonal detection consumes about ' + str(time.time() - start_time) + ' s for processing all pixels')
 
                     WATER_temp_array = copy.copy(QI_temp_array)
                     QI_temp_array[~np.isnan(QI_temp_array)] = 1
@@ -2861,7 +2814,64 @@ class Landsat_l2_ds(object):
         for i in range(self.Landsat_metadata_size):
             self.clip_landsat_vi(args[0], args[1], i, **kwargs)
 
-    def _remove_cloud_using_QA(self):
+    def _remove_cloud_using_QA(self, QI_temp_array, filename):
+
+        if type(QI_temp_array) != np.ndarray or type(filename) != str:
+            raise TypeError('The qi temp array or the file name was under a wrong format!')
+
+        QI_temp_array[QI_temp_array == 1] = np.nan
+
+        if 'LC08' in filename or 'LC09' in filename:
+            start_time = time.time()
+            QI_temp_array[np.floor_divide(QI_temp_array, 256) > 86] = np.nan
+            QI_temp_array_temp = copy.copy(QI_temp_array)
+            QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
+            QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
+            QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
+            QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 22080, QI_temp_array == 22208),
+                                         QI_neighbor_average > 3)] = np.nan
+            QI_temp_array[np.logical_and(
+                np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
+                np.logical_and(np.mod(QI_temp_array, 128) != 0,
+                               np.mod(QI_temp_array, 128) != 66))] = np.nan
+
+        elif 'LE07' in filename:
+            start_time = time.time()
+            QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
+            QI_temp_array_temp = copy.copy(QI_temp_array)
+            QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
+            QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
+            QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
+            QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
+                                         QI_neighbor_average > 3)] = np.nan
+            QI_temp_array[np.logical_and(
+                np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
+                np.logical_and(np.mod(QI_temp_array, 128) != 0,
+                               np.mod(QI_temp_array, 128) != 66))] = np.nan
+
+            if self.scan_line_correction:
+                gap_mask_ds = gdal.Open(self.unzipped_folder + filename.split('_02_T')[0] + '_gap_mask.TIF')
+                gap_mask_array = gap_mask_ds.GetRasterBand(1).ReadAsArray()
+                QI_temp_array[gap_mask_array == 0] = 1
+
+        elif 'LT05' in filename or 'LT04' in filename:
+            start_time = time.time()
+            QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
+            QI_temp_array_temp = copy.copy(QI_temp_array)
+            QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
+            QI_temp_array_temp[np.isnan(QI_temp_array_temp)] = 1
+            QI_neighbor_average = neighbor_average_convolve2d(QI_temp_array_temp, size=7)
+            QI_temp_array[np.logical_and(np.logical_or(QI_temp_array == 5696, QI_temp_array == 5760),
+                                         QI_neighbor_average > 3)] = np.nan
+            QI_temp_array[np.logical_and(
+                np.logical_and(np.mod(QI_temp_array, 128) != 64, np.mod(QI_temp_array, 128) != 2),
+                np.logical_and(np.mod(QI_temp_array, 128) != 0,
+                               np.mod(QI_temp_array, 128) != 66))] = np.nan
+
+        else:
+            raise ValueError(f'This {filename} is not supported Landsat data!')
+
+        return QI_temp_array
 
     def clip_landsat_vi(self, VI_list, ROI, i, *args, **kwargs):
 
@@ -2968,21 +2978,51 @@ class Landsat_l2_ds(object):
 
                             # cloud removal situation
                             if self.cloud_removal_para:
+
+                                # Input the qi array
                                 if len(qi_list) == 1:
                                     qi_ds = gdal.Open(qi_list[0])
+                                    qi_array = qi_ds.GetRasterBand(1).ReadAsArray()
+                                    qi_array = self._remove_cloud_using_QA(qi_array, fileid)
+                                    qi_array[~np.isnan(qi_array)] = 1
                                 else:
                                     raise ValueError(f'The QA PIXEL file for {fileid} is not consistent!')
+
+                                # Input the raster
+                                raster_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                                raster_temp = raster_temp * qi_array
+                                raster_temp[np.isnan(raster_temp)] = 0
+                                raster_temp = raster_temp.astype(np.uint16)
+                                write_raster(ds_temp, raster_temp, '/vsimem/', f'{fileid}.tif')
+
+                                # Project to a defined coordinate sys
+                                if self.main_coordinate_system is not None and retrieve_srs(ds_temp) != self.main_coordinate_system:
+                                    gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF', f'/vsimem/{fileid}.tif',
+                                              cutlineDSName=self.ROI,
+                                              cropToCutline=True,
+                                              dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=0)
+                                else:
+                                    gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF', f'/vsimem/{fileid}.tif',
+                                              cutlineDSName=self.ROI,
+                                              cropToCutline=True,
+                                              dstNodata=0, xRes=30, yRes=30)
+
+                                # Unlink the cache file
+                                gdal.Unlink(f'/vsimem/{fileid}.tif')
+
                             elif not self.cloud_removal_para:
+
+                                # Project to a defined coordinate sys
                                 if self.main_coordinate_system is not None and retrieve_srs(ds_temp) != self.main_coordinate_system:
                                     gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF', ds_temp,
                                               cutlineDSName=self.ROI,
                                               cropToCutline=True,
-                                              dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
+                                              dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=0)
                                 else:
                                     gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF', ds_temp,
                                               cutlineDSName=self.ROI,
                                               cropToCutline=True,
-                                              dstNodata=-32768, xRes=30, yRes=30)
+                                              dstNodata=0, xRes=30, yRes=30)
                             print('Finished in ' + str(time.time() - start_time) + ' s.')
 
                 else:
@@ -3442,7 +3482,7 @@ class Landsat_datacubes(object):
         else:
             raise Exception('Please make sure all the datacubes was not void')
 
-        self.VI_list =
+        # self.VI_list
 
 
 #     def inundation_detection(self, flood_mapping_method, rs_dem_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, flood_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None, main_coordinate_system=None, cloud_removal_para=False):
