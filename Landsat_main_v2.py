@@ -2792,7 +2792,7 @@ class Landsat_l2_ds(object):
     def _process_clip_para(self, ROI, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('ROI_name', 'main_coordinate_system', 'clipped_overwritten_factor'):
+            if kwarg_indicator not in ('ROI_name', 'main_coordinate_system', 'clipped_overwritten_factor', 'cloud_removal_para'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clipped_overwritten_para
@@ -2861,6 +2861,8 @@ class Landsat_l2_ds(object):
         for i in range(self.Landsat_metadata_size):
             self.clip_landsat_vi(args[0], args[1], i, **kwargs)
 
+    def _remove_cloud_using_QA(self):
+
     def clip_landsat_vi(self, VI_list, ROI, i, *args, **kwargs):
 
         # for the MP
@@ -2905,6 +2907,32 @@ class Landsat_l2_ds(object):
                     constructed_index_list = f'{self.work_env}Landsat_constructed_index\\{VI}\\'
                     file_list = file_filter(constructed_index_list, [str(filedate), str(tile_num), str(VI)], and_or_factor='and')
 
+                    # Clip the files
+                    if len(file_list) != 1:
+                        raise Exception(f'Incosistency problem for the {VI} of {fileid}!')
+                    elif not file_list[0].endswith('.tif') and not file_list[0].endswith('.TIF'):
+                        raise Exception(f'No valid tif file for the {VI} of {fileid}!')
+                    else:
+                        if self.clipped_overwritten_para or not os.path.exists(
+                                self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(
+                                        tile_num) + VI + '_' + self.ROI_name + '.TIF'):
+                            print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(
+                                i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            start_time = time.time()
+                            ds_temp = gdal.Open(file_list[0])
+                            if self.main_coordinate_system is not None and retrieve_srs(
+                                    ds_temp) != self.main_coordinate_system:
+                                gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(
+                                    tile_num) + VI + '_' + self.ROI_name + '.TIF', ds_temp, cutlineDSName=self.ROI,
+                                          cropToCutline=True,
+                                          dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
+                            else:
+                                gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(
+                                    tile_num) + VI + '_' + self.ROI_name + '.TIF', ds_temp, cutlineDSName=self.ROI,
+                                          cropToCutline=True,
+                                          dstNodata=-32768, xRes=30, yRes=30)
+                            print('Finished in ' + str(time.time() - start_time) + ' s.')
+
                 elif VI in band_list:
 
                     if 'LT05' in fileid or 'LE07' in fileid or 'LT04' in fileid:
@@ -2917,27 +2945,48 @@ class Landsat_l2_ds(object):
                     # Retrieve the file list
                     constructed_index_list = f'{self.work_env}Landsat_original_tiffile\\'
                     file_list = file_filter(constructed_index_list, [str(filedate), str(tile_num), str(VI_name)], and_or_factor='and')
+                    qi_list = file_filter(constructed_index_list, [str(filedate), str(tile_num),'QA_PIXEL'], and_or_factor='and')
+
+                    if 'cloud_removal_para' in kwargs.keys():
+                        if type(self.cloud_removal_para) is bool:
+                            self.cloud_removal_para = kwargs['cloud_removal_para']
+                        else:
+                            raise TypeError('Cloud removal para should be under bool type!')
+                    else:
+                        self._retrieve_para(['cloud_removal_para'])
+
+                    # Clip the files
+                    if len(file_list) != 1:
+                        raise Exception(f'Inconsistency problem for the {VI} of {fileid}!')
+                    elif not file_list[0].endswith('.tif') and not file_list[0].endswith('.TIF'):
+                        raise Exception(f'No valid tif file for the {VI} of {fileid}!')
+                    else:
+                        if self.clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF'):
+                            print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                            start_time = time.time()
+                            ds_temp = gdal.Open(file_list[0])
+
+                            # cloud removal situation
+                            if self.cloud_removal_para:
+                                if len(qi_list) == 1:
+                                    qi_ds = gdal.Open(qi_list[0])
+                                else:
+                                    raise ValueError(f'The QA PIXEL file for {fileid} is not consistent!')
+                            elif not self.cloud_removal_para:
+                                if self.main_coordinate_system is not None and retrieve_srs(ds_temp) != self.main_coordinate_system:
+                                    gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF', ds_temp,
+                                              cutlineDSName=self.ROI,
+                                              cropToCutline=True,
+                                              dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
+                                else:
+                                    gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF', ds_temp,
+                                              cutlineDSName=self.ROI,
+                                              cropToCutline=True,
+                                              dstNodata=-32768, xRes=30, yRes=30)
+                            print('Finished in ' + str(time.time() - start_time) + ' s.')
 
                 else:
                     raise ValueError('Please input a supported index for clipping')
-
-                # Clip the files
-                if len(file_list) != 1:
-                    raise Exception(f'Incosistency problem for the {VI} of {fileid}!')
-                elif not file_list[0].endswith('.tif') and not file_list[0].endswith('.TIF'):
-                    raise Exception(f'No valid tif file for the {VI} of {fileid}!')
-                else:
-                    if self.clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF'):
-                        print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        start_time = time.time()
-                        ds_temp = gdal.Open(file_list[0])
-                        if self.main_coordinate_system is not None and retrieve_srs(ds_temp) != self.main_coordinate_system:
-                            gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF', ds_temp, cutlineDSName=self.ROI, cropToCutline=True,
-                                      dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
-                        else:
-                            gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + VI + '_' + self.ROI_name + '.TIF', ds_temp, cutlineDSName=self.ROI, cropToCutline=True,
-                                      dstNodata=-32768, xRes=30, yRes=30)
-                        print('Finished in ' + str(time.time() - start_time) + ' s.')
 
                 # Generate SA map
                 if not os.path.exists(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.npy'):
@@ -3375,7 +3424,26 @@ class Landsat_datacubes(object):
             else:
                 self.Landsat_dcs.append(args_temp)
 
-        #
+        # Validation and consistency check
+        if len(self.Landsat_dcs) == 0:
+            raise ValueError('Please input at least one valid Landsat datacube')
+
+        self.index_list, self.ROI_list = [], []
+        x_size, y_size, z_size = 0, 0, 0
+        for dc_temp in self.Landsat_dcs:
+            if x_size == 0 and y_size == 0 and z_size == 0:
+                x_size, y_size, z_size = dc_temp.dc_XSize, dc_temp.dc_YSize, dc_temp.dc_ZSize
+            elif x_size != dc_temp.dc_XSize or y_size != dc_temp.dc_YSize or z_size != dc_temp.dc_ZSize:
+                raise Exception('Please make sure all the datacube share the same size!')
+            self.index_list.append(dc_temp.VI)
+            self.ROI_list.append(dc_temp.ROI_name)
+        if x_size != 0 and y_size != 0 and z_size != 0:
+            self.dcs_XSize, self.dcs_YSize, self.dc_ZSize = x_size, y_size, z_size
+        else:
+            raise Exception('Please make sure all the datacubes was not void')
+
+        self.VI_list =
+
 
 #     def inundation_detection(self, flood_mapping_method, rs_dem_factor=False, inundation_data_overwritten_factor=False, mndwi_threshold=0, VI_list_f=None, flood_month_list=None, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, std_num=2, inundation_mapping_accuracy_evaluation_factor=False, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, landsat_detected_inundation_area=False, surveyed_inundation_detection_factor=False, global_threshold=None, main_coordinate_system=None, cloud_removal_para=False):
 #
