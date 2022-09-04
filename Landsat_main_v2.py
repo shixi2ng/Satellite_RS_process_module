@@ -2819,6 +2819,7 @@ class Landsat_l2_ds(object):
         if type(QI_temp_array) != np.ndarray or type(filename) != str:
             raise TypeError('The qi temp array or the file name was under a wrong format!')
 
+        QI_temp_array = QI_temp_array.astype(np.float)
         QI_temp_array[QI_temp_array == 1] = np.nan
 
         if 'LC08' in filename or 'LC09' in filename:
