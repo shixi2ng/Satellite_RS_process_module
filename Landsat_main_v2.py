@@ -2617,6 +2617,7 @@ class Landsat_l2_ds(object):
                     # Process QI array
                     start_time = time.time()
                     if not os.path.exists(self.work_env + 'Landsat_constructed_index\\QA\\' + str(filedate) + '_' + str(tile_num) + '_QA.TIF'):
+                        bf.create_folder(self.work_env + 'Landsat_constructed_index\\QA\\')
                         QI_temp_ds = gdal.Open(self.unzipped_folder + fileid + '_QA_PIXEL.TIF')
                         QI_temp_array = dataset2array(QI_temp_ds, Band_factor=False)
                         QI_temp_array = self._remove_cloud_using_QA(QI_temp_array, fileid)
@@ -2845,13 +2846,13 @@ class Landsat_l2_ds(object):
 
     def _remove_cloud_using_QA(self, QI_temp_array, filename):
 
-        s1_time = time.time()
+        # s1_time = time.time()
         if type(QI_temp_array) != np.ndarray or type(filename) != str:
             raise TypeError('The qi temp array or the file name was under a wrong format!')
 
         QI_temp_array = QI_temp_array.astype(np.float)
         QI_temp_array[QI_temp_array == 1] = np.nan
-        print(f's1 time {str(time.time() - s1_time)}')
+        # print(f's1 time {str(time.time() - s1_time)}')
 
         if 'LC08' in filename or 'LC09' in filename:
             start_time = time.time()
@@ -2902,8 +2903,7 @@ class Landsat_l2_ds(object):
         else:
             raise ValueError(f'This {filename} is not supported Landsat data!')
 
-        print(f's1 time {str(time.time() - start_time)}')
-
+        # print(f's1 time {str(time.time() - start_time)}')
         return QI_temp_array
 
     def clip_landsat_vi(self, VI_list, ROI, i, *args, **kwargs):
@@ -2977,7 +2977,6 @@ class Landsat_l2_ds(object):
                 elif VI in band_list:
                     if self.clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF'):
 
-
                         # Check the landsat sensor type
                         if 'LT05' in fileid or 'LE07' in fileid or 'LT04' in fileid:
                             VI_name = l57_bandnum[band_list.index(VI)]
@@ -3013,6 +3012,7 @@ class Landsat_l2_ds(object):
                                 # Input the qi array
                                 if len(qi_list) == 1:
                                     if not os.path.exists(self.work_env + 'Landsat_constructed_index\\QA\\' + str(filedate) + '_' + str(tile_num) + '_QA.TIF'):
+                                        bf.create_folder(self.work_env + 'Landsat_constructed_index\\QA\\')
                                         qi_ds = gdal.Open(self.unzipped_folder + fileid + '_QA_PIXEL.TIF')
                                         qi_array = dataset2array(qi_ds, Band_factor=False)
                                         qi_array = self._remove_cloud_using_QA(qi_array, fileid)
@@ -3033,7 +3033,7 @@ class Landsat_l2_ds(object):
                                 raster_temp[np.isnan(raster_temp)] = 0
                                 raster_temp = raster_temp.astype(np.uint16)
                                 write_raster(ds_temp, raster_temp, '/vsimem/', f'{fileid}.tif')
-                                print(f's2 time {str(time.time() - s2_time)}')
+                                # print(f's2 time {str(time.time() - s2_time)}')
 
                                 s3_time = time.time()
                                 # Project to a defined coordinate sys
@@ -3050,7 +3050,7 @@ class Landsat_l2_ds(object):
 
                                 # Unlink the cache file
                                 gdal.Unlink(f'/vsimem/{fileid}.tif')
-                                print(f's3 time {str(time.time() - s3_time)}')
+                                # print(f's3 time {str(time.time() - s3_time)}')
 
                             elif not self.cloud_removal_para:
 
