@@ -152,12 +152,14 @@ class Readable_key_dic(pd.DataFrame):
 
 
 def bimodal_histogram_threshold(list_temp, method=None, init_threshold=np.nan):
-    if type(list_temp) is not list:
+    if type(list_temp) is not list and type(list_temp) is not np.ndarray:
         raise TypeError('Please input a list for the generation of bimodal histogram threshold!')
-    elif False in [type(data_temp) is int or type(data_temp) is float for data_temp in list_temp]:
+    elif False in [type(data_temp) is int or type(data_temp) is float or np.isnan(data_temp) for data_temp in list_temp]:
         raise TypeError('Please input the list with all numbers in it!')
 
-    array_temp = np.array(list_temp)
+    if type(list_temp) is list:
+        array_temp = np.array(list_temp)
+
     if np.isnan(init_threshold):
         init_threshold = (array_temp.max() + array_temp.min()) / 2
     elif type(init_threshold) is not int and type(init_threshold) is not int:
@@ -1108,7 +1110,7 @@ def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=No
 
 def dataset2array(ds_temp, Band_factor=True):
     temp_band = ds_temp.GetRasterBand(1)
-    temp_array = gdal_array.BandReadAsArray(temp_band).astype(np.float16)
+    temp_array = gdal_array.BandReadAsArray(temp_band).astype(np.float32)
     temp_array[temp_array == temp_band.GetNoDataValue()] = np.nan
     if Band_factor:
         temp_array = temp_array * 0.0000275 - 0.2
@@ -2794,7 +2796,7 @@ class Landsat_l2_ds(object):
             self.main_coordinate_system = None
 
         # process clip parameter
-        if self.ROI is None:
+        if self.ROI is None or self.ROI != ROI:
             if '.shp' in ROI and os.path.exists(ROI):
                 self.ROI = ROI
             else:
@@ -2942,12 +2944,12 @@ class Landsat_l2_ds(object):
                 fileid = self.Landsat_metadata.FileID[i]
                 filedate = self.Landsat_metadata['Date'][i]
                 tile_num = self.Landsat_metadata['Tile_Num'][i]
+                start_time = time.time()
 
                 # Input folder
                 if VI in self.all_supported_vi_list:
                     if self.clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF'):
                         print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        start_time = time.time()
                         # Retrieve the file list
                         constructed_index_list = f'{self.work_env}Landsat_constructed_index\\{VI}\\'
                         file_list = file_filter(constructed_index_list, [str(filedate), str(tile_num), str(VI)], and_or_factor='and')
@@ -2972,11 +2974,11 @@ class Landsat_l2_ds(object):
                                           dstNodata=-32768, xRes=30, yRes=30)
                         print('Finished in ' + str(time.time() - start_time) + ' s.')
                     else:
-                        print(VI + ' file of the ' + self.ROI_name + 'has already clipped (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                        print(VI + ' file of the ' + self.ROI_name + ' has already clipped (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
 
                 elif VI in band_list:
                     if self.clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF'):
-
+                        print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                         # Check the landsat sensor type
                         if 'LT05' in fileid or 'LE07' in fileid or 'LT04' in fileid:
                             VI_name = l57_bandnum[band_list.index(VI)]
@@ -3068,28 +3070,39 @@ class Landsat_l2_ds(object):
 
                         print('Finished in ' + str(time.time() - start_time) + ' s.')
                     else:
-                        print(VI + ' file of the ' + self.ROI_name + 'has already clipped (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
+                        print(VI + ' file of the ' + self.ROI_name + ' has already clipped (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                 else:
                     raise ValueError('Please input a supported index for clipping')
 
                 # Generate SA map
                 if not os.path.exists(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.npy'):
-                    if not os.path.exists(self.work_env + 'ROI_map\\'):
-                        bf.create_folder(self.work_env + 'ROI_map\\')
+                    file_list = file_filter(f'{self.work_env}Landsat_original_tiffile\\', [f'{str(tile_num)}_{str(filedate)}', '_B1.TIF'], and_or_factor='and', exclude_word_list=['LE07'])
+                    bf.create_folder(self.work_env + 'ROI_map\\')
                     ds_temp = gdal.Open(file_list[0])
                     array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
                     array_temp[:, :] = 1
                     write_raster(ds_temp, array_temp, self.cache_folder, 'temp_' + self.ROI_name + '.TIF', raster_datatype=gdal.GDT_Int16)
                     if retrieve_srs(ds_temp) != self.main_coordinate_system:
-                        gdal.Warp(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF', self.cache_folder + 'temp_' + self.ROI_name + '.TIF', dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI, cropToCutline=True, xRes=30, yRes=30, dstNodata=-32768)
+                        gdal.Warp('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF', self.cache_folder + 'temp_' + self.ROI_name + '.TIF', dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI, cropToCutline=True, xRes=30, yRes=30, dstNodata=-32768)
                     else:
-                        gdal.Warp(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF', self.cache_folder + 'temp_' + self.ROI_name + '.TIF', cutlineDSName=self.ROI, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
-                    ds_sa_temp = gdal.Open(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF')
-                    np.save(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.npy', ds_sa_temp.GetRasterBand(1).ReadAsArray())
+                        gdal.Warp('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF', self.cache_folder + 'temp_' + self.ROI_name + '.TIF', cutlineDSName=self.ROI, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
+                    ds_sa_temp = gdal.Open('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF')
+                    ds_sa_array = ds_sa_temp.GetRasterBand(1).ReadAsArray()
+                    if (ds_sa_array == -32768).all() == False:
+                        np.save(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.npy', ds_sa_array)
+                        if retrieve_srs(ds_temp) != self.main_coordinate_system:
+                            gdal.Warp(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF',
+                                      self.cache_folder + 'temp_' + self.ROI_name + '.TIF',
+                                      dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI, cropToCutline=True,
+                                      xRes=30, yRes=30, dstNodata=-32768)
+                        else:
+                            gdal.Warp(self.work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF',
+                                      self.cache_folder + 'temp_' + self.ROI_name + '.TIF', cutlineDSName=self.ROI,
+                                      cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
+                    gdal.Unlink('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF')
                     ds_temp = None
                     ds_sa_temp = None
                     remove_all_file_and_folder(file_filter(self.cache_folder, ['temp', '.TIF'], and_or_factor='and'))
-                print('All ' + VI + ' files within the ' + self.ROI_name + ' are clipped.')
         else:
             raise Exception('Please input the ROI correctly!')
 
@@ -3165,7 +3178,7 @@ class Landsat_l2_ds(object):
             else:
                 raise TypeError('Please mention the manually_remove_datelist should be list type!')
         else:
-            self.inherit_from_logfile = False
+            self.manually_remove_datelist = False
             self.manually_remove_para = False
 
         # process ROI_NAME
@@ -3217,7 +3230,7 @@ class Landsat_l2_ds(object):
             bf.create_folder(self.dc_vi[VI])
 
             if len(file_filter(self.dc_vi[VI + 'input_path'], [VI, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
-                raise ValueError(f'{VI} is not consistent')
+                raise ValueError(f'{VI} of the {self.ROI_name} is not consistent')
 
         for VI in VI_list:
             if self.dc_overwritten_para or not os.path.exists(self.dc_vi[VI] + VI + '_datacube.npy') or not os.path.exists(self.dc_vi[VI] + 'date.npy') or not os.path.exists(self.dc_vi[VI] + 'header.npy'):
@@ -3237,16 +3250,22 @@ class Landsat_l2_ds(object):
                 cols, rows = temp_ds.RasterXSize, temp_ds.RasterYSize
                 data_cube_temp = np.zeros((rows, cols, len(VI_stack_list)), dtype=np.float16)
                 date_cube_temp = np.zeros((len(VI_stack_list)), dtype=np.uint32)
-                header_dic['gdal_ds'] = temp_ds
+                header_dic['ds_file'] = VI_stack_list[0]
 
                 i = 0
                 while i < len(VI_stack_list):
                     date_cube_temp[i] = int(VI_stack_list[i][VI_stack_list[i].find(VI + '\\') + 1 + len(VI): VI_stack_list[i].find(VI + '\\') + 9 + len(VI)])
                     i += 1
 
+                nodata_value = np.nan
                 i = 0
                 while i < len(VI_stack_list):
                     temp_ds2 = gdal.Open(VI_stack_list[i])
+                    temp_band = temp_ds2.GetRasterBand(1)
+                    if i != 0 and nodata_value != temp_band.GetNoDataValue():
+                        raise Exception(f"The nodata value for the {VI} file list is not consistent!")
+                    else:
+                        nodata_value = temp_band.GetNoDataValue()
                     temp_raster = temp_ds2.GetRasterBand(1).ReadAsArray()
                     data_cube_temp[:, :, i] = temp_raster
                     i += 1
@@ -3275,7 +3294,7 @@ class Landsat_l2_ds(object):
                 if self.remove_nan_layer:
                     i_temp = 0
                     while i_temp < date_cube_temp.shape[0]:
-                        if np.isnan(data_cube_temp[:,:,i_temp]).all() == True:
+                        if np.isnan(data_cube_temp[:,:,i_temp]).all() == True or (data_cube_temp[:,:,i_temp] == nodata_value).all() == True:
                             date_cube_temp = np.delete(date_cube_temp, i_temp, 0)
                             data_cube_temp = np.delete(data_cube_temp, i_temp, 2)
                             i_temp -= 1
@@ -3286,10 +3305,10 @@ class Landsat_l2_ds(object):
                 print('Start writing the ' + VI + ' datacube.')
                 start_time = time.time()
                 np.save(self.dc_vi[VI] + 'header.npy', header_dic)
-                np.save(self.dc_vi[VI] + 'date.npy', date_cube_temp.astype(np.uint32))
+                np.save(self.dc_vi[VI] + 'date.npy', date_cube_temp.astype(np.uint32).tolist())
                 np.save(self.dc_vi[VI] + str(VI) + '_datacube.npy', data_cube_temp.astype(np.float16))
                 end_time = time.time()
-                print('Finished constructing ' + VI + ' datacube in ' + str(end_time - start_time) + ' s.')
+                print('Finished writing ' + VI + ' datacube in ' + str(end_time - start_time) + ' s.')
 
 
 class Landsat_dc(object):
@@ -3309,30 +3328,32 @@ class Landsat_dc(object):
             raise TypeError('Please input the sdc factor as bool type!')
 
         # Read header
-        try:
-            header_file = file_filter(self.dc_filepath, ['header.npy'])
-            if len(header_file) == 0:
-                raise ValueError('There has no valid dc or the header file of the dc was missing!')
-            elif len(header_file) >= 1:
-                raise ValueError('There has more than one header file in the dir')
-            else:
-                self.dc_header = np.load(header_file[0], allow_pickle=True).item()
 
+        header_file = file_filter(self.dc_filepath, ['header.npy'])
+        if len(header_file) == 0:
+            raise ValueError('There has no valid dc or the header file of the dc was missing!')
+        elif len(header_file) > 1:
+            raise ValueError('There has more than one header file in the dir')
+        else:
+            try:
+                self.dc_header = np.load(header_file[0], allow_pickle=True).item()
                 if type(self.dc_header) is not dict:
                     raise Exception('Please make sure the header file is a dictionary constructed in python!')
 
-                for dic_name in ['ROI_name', 'VI', 'Datatype', 'ROI', 'Study_area', 'gdal_ds', 'sdc_factor']:
+                for dic_name in ['ROI_name', 'VI', 'Datatype', 'ROI', 'Study_area', 'ds_file', 'sdc_factor']:
                     if dic_name not in self.dc_header.keys():
                         raise Exception(f'The {dic_name} is not in the dc header, double check!')
                     else:
-                        self.__dict__['dic_name'] = self.dc_header['dic_name']
-
-        except:
-            raise Exception('Something went wrong when reading the header!')
+                        if dic_name == 'Study_area':
+                            self.__dict__['sa_map'] = self.dc_header[dic_name]
+                        else:
+                            self.__dict__[dic_name] = self.dc_header[dic_name]
+            except:
+                raise Exception('Something went wrong when reading the header!')
 
         # Read doy or date file of the Datacube
         try:
-            if sdc_factor is True:
+            if self.sdc_factor is True:
                 # Read doylist
                 if self.ROI_name is None:
                     doy_file = file_filter(self.dc_filepath, ['doy.npy', str(self.VI)], and_or_factor='and')
@@ -3342,7 +3363,7 @@ class Landsat_dc(object):
 
                 if len(doy_file) == 0:
                     raise ValueError('There has no valid doy file or file was missing!')
-                elif len(doy_file) >= 1:
+                elif len(doy_file) > 1:
                     raise ValueError('There has more than one doy file in the dc dir')
                 else:
                     self.sdc_doylist = np.load(doy_file[0], allow_pickle=True)
@@ -3356,7 +3377,7 @@ class Landsat_dc(object):
 
                 if len(date_file) == 0:
                     raise ValueError('There has no valid dc or the date file of the dc was missing!')
-                elif len(date_file) >= 1:
+                elif len(date_file) > 1:
                     raise ValueError('There has more than one date file in the dc dir')
                 else:
                     self.dc_datelist = np.load(date_file[0], allow_pickle=True)
@@ -3377,7 +3398,7 @@ class Landsat_dc(object):
 
             if len(self.dc_filename) == 0:
                 raise ValueError('There has no valid dc or the dc was missing!')
-            elif len(self.dc_filename) >= 1:
+            elif len(self.dc_filename) > 1:
                 raise ValueError('There has more than one date file in the dc dir')
             else:
                 self.dc = np.load(self.dc_filename[0], allow_pickle=True)
@@ -3392,15 +3413,15 @@ class Landsat_dc(object):
         if work_env is not None:
             self.work_env = Path(work_env).path_name
         else:
-            self.work_env = Path(os.path.dirname(self.dc_filepath)).path_name
-        self.root_path = Path(os.path.dirname(self.work_env)).path_name
+            self.work_env = Path(os.path.dirname(os.path.dirname(self.dc_filepath))).path_name
+        self.root_path = Path(os.path.dirname(os.path.dirname(self.work_env))).path_name
 
         # Inundation parameter process
         self._DSWE_threshold = None
         self._flood_month_list = None
         self.flood_mapping_method = []
 
-    def to_sdc(self, **kwargs):
+    def to_sdc(self, sdc_substitued=False, **kwargs):
         # Sequenced check
         if self.sdc_factor is True:
             raise Exception('The datacube has been already sequenced!')
@@ -3410,7 +3431,7 @@ class Landsat_dc(object):
         if self.sdc_overwritten_para or not os.path.exists(self.sdc_output_folder + 'header.npy') or not os.path.exists(self.sdc_output_folder + 'doy_list.npy') or not os.path.exists(self.sdc_output_folder + self.VI + '_sequenced_datacube.npy'):
 
             start_time = time.time()
-            sdc_header = {'sdc_factor': True, 'VI': self.VI, 'ROI_name': self.ROI_name, 'Study_area': self.sa_map, 'original_dc_path': self.dc_filepath, 'original_datelist': self.dc_datelist}
+            sdc_header = {'sdc_factor': True, 'VI': self.VI, 'ROI_name': self.ROI_name, 'Study_area': self.sa_map, 'original_dc_path': self.dc_filepath, 'original_datelist': self.dc_datelist, 'Datatype': self.Datatype, 'ds_file': self.ds_file}
 
             if self.ROI_name is not None:
                 print('Start constructing ' + self.VI + ' sequenced datacube of the ' + self.ROI_name + '.')
@@ -3461,23 +3482,31 @@ class Landsat_dc(object):
                 raise Exception('Code error!')
 
             np.save(f'{self.sdc_output_folder}header.npy', sdc_header)
-            np.save(f'{self.sdc_output_folder}doy_list.npy', self.sdc_doylist)
+            np.save(f'{self.sdc_output_folder}doy.npy', self.sdc_doylist)
 
             if self.ROI_name is not None:
                 print(self.VI + ' sequenced datacube of the ' + self.ROI_name + ' was constructed using ' + str(time.time()-start_time) + ' s.')
             else:
-                print(self.VI + ' sequenced datacube  was constructed using ' + str(time.time()-start_time) + ' s.')
+                print(self.VI + ' sequenced datacube was constructed using ' + str(time.time()-start_time) + ' s.')
         else:
-            raise Exception('Sequenced datacube construction was not implemented.')
+            print(self.VI + ' sequenced datacube has already constructed!.')
+
+        # Substitute sdc
+        if type(sdc_substitued) is bool:
+            if sdc_substitued is True:
+                self.__init__(self.sdc_output_folder)
+                return self
+        else:
+            raise TypeError('Please input the sdc_substitued as bool type factor!')
 
 
 class Landsat_dcs(object):
-    def __init__(self, args, work_env=None):
+    def __init__(self, *args, work_env=None):
 
         # Generate the datacubes list
         self.Landsat_dcs = []
         for args_temp in args:
-            if type(args_temp) is not Landsat_dc:
+            if type(args_temp) != Landsat_dc:
                 raise TypeError('The Landsat datacubes was a bunch of Landsat datacube!')
             else:
                 self.Landsat_dcs.append(args_temp)
@@ -3497,17 +3526,17 @@ class Landsat_dcs(object):
             ROI_name_list.append(dc_temp.ROI_name)
             sdc_factor_list.append(dc_temp.sdc_factor)
             ROI_list.append(dc_temp.ROI)
-            ds_list.append(dc_temp.gdal_ds)
-            study_area_list.append(dc_temp.Study_area)
+            ds_list.append(dc_temp.ds_file)
+            study_area_list.append(dc_temp.sa_map)
             Datatype_list.append(dc_temp.Datatype)
 
         if x_size != 0 and y_size != 0 and z_size != 0:
-            self.dcs_XSize, self.dcs_YSize, self.dc_ZSize = x_size, y_size, z_size
+            self.dcs_XSize, self.dcs_YSize, self.dcs_ZSize = x_size, y_size, z_size
         else:
             raise Exception('Please make sure all the datacubes was not void')
 
         # Check the consistency of the roi list
-        if len(ROI_list) == 0 or False in [len(ROI_list) != len(self.index_list), len(self.index_list) != len(sdc_factor_list), len(ROI_name_list) != len(sdc_factor_list), len(ROI_name_list) != len(ds_list), len(ds_list) != len(study_area_list), len(study_area_list) != len(Datatype_list)]:
+        if len(ROI_list) == 0 or False in [len(ROI_list) == len(self.index_list), len(self.index_list) == len(sdc_factor_list), len(ROI_name_list) == len(sdc_factor_list), len(ROI_name_list) == len(ds_list), len(ds_list) == len(study_area_list), len(study_area_list) == len(Datatype_list)]:
             raise Exception('The ROI list or the index list for the datacubes were not properly generated!')
         elif False in [roi_temp == ROI_list[0] for roi_temp in ROI_list]:
             raise Exception('Please make sure all datacubes were in the same roi!')
@@ -3515,7 +3544,7 @@ class Landsat_dcs(object):
             raise Exception('Please make sure all dcs were consistent!')
         elif False in [roi_name_temp == ROI_name_list[0] for roi_name_temp in ROI_name_list]:
             raise Exception('Please make sure all dcs were consistent!')
-        elif False in [sa_temp == study_area_list[0] for sa_temp in study_area_list]:
+        elif False in [(sa_temp == study_area_list[0]).all() for sa_temp in study_area_list]:
             raise Exception('Please make sure all dcs were consistent!')
         elif False in [dt_temp == Datatype_list[0] for dt_temp in Datatype_list]:
             raise Exception('Please make sure all dcs were consistent!')
@@ -3526,17 +3555,17 @@ class Landsat_dcs(object):
         self.sdc_factor = sdc_factor_list[0]
         self.Datatype = Datatype_list[0]
         self.sa_map = study_area_list[0]
-        self.gdal_ds = ds_list[0]
+        self.ds_file = ds_list[0]
 
         # Read the doy or date list
         if self.sdc_factor is False:
             raise Exception('Please sequenced the datacubes before further process!')
         else:
-            self.doy_list = self.Landsat_dcs[0].sdc_doy_list
+            self.doy_list = self.Landsat_dcs[0].sdc_doylist
 
         #  Define the output_path
         if work_env is None:
-            self.work_env = Path(os.path.basename(self.Landsat_dcs[0].dc_filepath)).path_name
+            self.work_env = Path(os.path.dirname(os.path.dirname(self.Landsat_dcs[0].dc_filepath))).path_name
         else:
             self.work_env = work_env
         
@@ -3550,16 +3579,61 @@ class Landsat_dcs(object):
         self.inundation_para_folder = self.work_env + '\\Landsat_Inundation_Condition\\Inundation_para\\'
         self._sample_rs_link_list = None
         self._sample_data_path = None
+        self._flood_mapping_method = ['DSWE', 'DT', 'AWEI', 'rs_dem']
         bf.create_folder(self.inundation_para_folder)
-        
-        # Define var for the phenology process
 
-    def _process_inundation_para(self, **kwargs):
+        # Define var for the phenoolgical analysis
+        self._curve_fitting_algorithm = None
+        self._flood_removal_method = None
+        self._curve_fitting_dic = {}
+
+    def append(self, dc_temp: Landsat_dc) -> None:
+        if type(dc_temp) is not Landsat_dc:
+            raise TypeError('The appended data should be a Landsat_dc!')
+
+        for indicator in ['ROI', 'ROI_name', 'sdc_factor']:
+            if dc_temp.__dict__[indicator] != self.__dict__[indicator]:
+                raise ValueError('The appended datacube is not consistent with the original datacubes')
+
+        if self.dcs_XSize != dc_temp.dc_XSize or self.dcs_YSize != dc_temp.dc_YSize or self.dcs_ZSize != dc_temp.dc_ZSize:
+            raise ValueError('The appended datacube has different size compared to the original datacubes')
+
+        if self.doy_list != dc_temp.sdc_doylist:
+            raise ValueError('The appended datacube has doy list compared to the original datacubes')
+
+        self.index_list.append(dc_temp.VI)
+        self.Landsat_dcs.append(dc_temp.dc)
+
+    def extend(self, dcs_temp) -> None:
+        if type(dcs_temp) is not Landsat_dcs:
+            raise TypeError('The appended data should be a Landsat_dcs!')
+
+        for indicator in ['ROI', 'ROI_name', 'sdc_factor', 'dcs_XSize', 'dcs_YSize', 'dcs_ZSize', 'doy_list']:
+            if dcs_temp.__dict__[indicator] != self.__dict__[indicator]:
+                raise ValueError('The appended datacube is not consistent with the original datacubes')
+
+        self.index_list.extend(dcs_temp.index_list)
+        self.Landsat_dcs.extend(dcs_temp.Landsat_dcs)
+
+    def _process_inundation_para(self, **kwargs: dict) -> None:
         
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('DT_bimodal_histogram_factor', 'DSWE_threshold', 'flood_month_list', 'inundation_overwritten_factor', 'DT_std_fig_construction', 'variance_num', 'inundation_mapping_accuracy_evaluation_factor', 'sample_rs_link_list', 'sample_data_path'):
+            if kwarg_indicator not in ('DT_bimodal_histogram_factor', 'DSWE_threshold', 'flood_month_list', 'DEM_path'
+                                       'inundation_overwritten_factor', 'DT_std_fig_construction', 'variance_num',
+                                       'inundation_mapping_accuracy_evaluation_factor', 'sample_rs_link_list',
+                                       'sample_data_path', 'MNDWI_threshold', 'flood_mapping_accuracy_evaluation_factor',
+                                       'construct_inundated_dc'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
+
+        # Detect the construct_inundated_dc
+        if 'construct_inundated_dc' in kwargs.keys():
+            if type(kwargs['construct_inundated_dc']) != bool:
+                raise TypeError('Please input the construct_inundated_dc as a bool type!')
+            else:
+                self._construct_inundated_dc = (kwargs['construct_inundated_dc'])
+        else:
+            self._construct_inundated_dc = False
 
         # Detect the empirical MNDWI threshold
         if 'MNDWI_threshold' not in kwargs.keys():
@@ -3697,7 +3771,7 @@ class Landsat_dcs(object):
         rs_dem_factor, DT_factor, DSWE_factor, AWEI_factor = False, False, False, False
         if type(flood_mapping_method) is list:
             for method in flood_mapping_method:
-                if method not in ['DSWE', 'DT', 'AWEI', 'rs_dem']:
+                if method not in self._flood_mapping_method:
                     raise ValueError(f'The flood mapping method {str(method)} was not supported! Only support DSWE, DT rs_dem and AWEI!')
                 elif method == 'DSWE':
                     DSWE_factor = True
@@ -3782,9 +3856,9 @@ class Landsat_dcs(object):
 
         elif not rs_dem_factor:
 
-            # Flood mapping method 2 DSWE
             if DSWE_factor:
-                # Implement the DSWE inundation detection method
+
+                # Implement the Dynamic Water Surface Extent inundation detection method
                 if 'NIR' not in self.index_list or 'MIR2' not in self.index_list or 'MNDWI' not in self.index_list:
                     raise Exception('Please make sure the NIR and MIR2 is properly input when implementing the inundation detection through DSWE method')
                 else:
@@ -3794,7 +3868,7 @@ class Landsat_dcs(object):
                 inundated_dc = np.array([])
                 if not os.path.exists(self.inun_det_method_dic['DSWE_' + self.ROI_name] + 'doy.npy') or not os.path.exists(self.inun_det_method_dic['DSWE_' + self.ROI_name] + 'inundated_dc.npy'):
 
-                    # Input the sdc vi array
+                    # Input the SDC VI array
                     MNDWI_sdc = self.Landsat_dcs[self.index_list.index('MNDWI')].dc
                     NIR_sdc = self.Landsat_dcs[self.index_list.index('NIR')].dc
                     MIR2_sdc = self.Landsat_dcs[self.index_list.index('MIR2')].dc
@@ -3832,7 +3906,7 @@ class Landsat_dcs(object):
 
                             # inundated_array = reassign_sole_pixel(inundated_array, Nan_value=-32768, half_size_window=2)
                             inundated_array[self.sa_map == -32768] = -2
-                            write_raster(self.gdal_ds, inundated_array, self.inun_det_method_dic['DSWE_' + self.ROI_name], 'individual_tif\\DSWE_' + str(doy) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+                            write_raster(gdal.Open(self.ds_file), inundated_array, self.inun_det_method_dic['DSWE_' + self.ROI_name], 'individual_tif\\DSWE_' + str(doy) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                         else:
                             inundated_ds = gdal.Open(self.inun_det_method_dic['DSWE_' + self.ROI_name] + 'individual_tif\\DSWE_' + str(doy) + '.TIF')
                             inundated_array = inundated_ds.GetRasterBand(1).ReadAsArray()
@@ -3852,8 +3926,8 @@ class Landsat_dcs(object):
                 # Create annual inundation map
                 self.inun_det_method_dic['DSWE_annual_' + self.ROI_name] = self.work_env + 'Landsat_Inundation_Condition\\' + self.ROI_name + '_DSWE\\annual\\'
                 bf.create_folder(self.inun_det_method_dic['DSWE_annual_' + self.ROI_name])
-                inundated_dc = np.load(self.inun_det_method_dic['DSWE_dc_file'])
-                doy_array = np.load(self.inun_det_method_dic['DSWE_doy_file'])
+                inundated_dc = np.load(self.inun_det_method_dic['DSWE_' + self.ROI_name] + 'inundated_dc.npy')
+                doy_array = np.load(self.inun_det_method_dic['DSWE_' + self.ROI_name] + 'doy.npy')
                 year_array = np.unique(doy_array // 1000)
                 temp_ds = gdal.Open(file_filter(self.inun_det_method_dic['DSWE_' + self.ROI_name] + 'individual_tif\\', ['.TIF'])[0])
                 for year in year_array:
@@ -3864,7 +3938,6 @@ class Landsat_dcs(object):
                             if doy_array[doy_index] // 1000 == year and np.mod(doy_array[doy_index], 1000) >= 182:
                                 annual_inundated_map[inundated_dc[:, :, doy_index] > 0] = 1
                         write_raster(temp_ds, annual_inundated_map, self.inun_det_method_dic['DSWE_annual_' + self.ROI_name], 'DSWE_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
-                np.save(inundation_output_path + self.ROI_name + '_DSWE_inundation_dic.npy', self.inun_det_method_dic)
 
             if AWEI_factor:
 
@@ -3875,7 +3948,7 @@ class Landsat_dcs(object):
                     self.inun_det_method_dic['AWEI_' + self.ROI_name] = inundation_output_path + self.ROI_name + '_AWEI\\'
                     bf.create_folder(self.inun_det_method_dic['AWEI_' + self.ROI_name])
                     bf.create_folder(self.inun_det_method_dic['AWEI_' + self.ROI_name] + 'individual_tif\\')
-                    AWEI_sdc = self.Landsat_dcs[self.index_list.index['AWEI']].dc
+                    AWEI_sdc = self.Landsat_dcs[self.index_list.index('AWEI')].dc
 
                 # Generate the inundation condition
                 for doy in range(AWEI_sdc.shape[2]):
@@ -3885,7 +3958,7 @@ class Landsat_dcs(object):
                         AWEI_temp[AWEI_temp < 0] = 0
                         AWEI_temp[np.isnan(AWEI_temp)] = -2
                         AWEI_sdc[:, :, doy] = AWEI_temp
-                        write_raster(self.gdal_ds, AWEI_temp, self.inun_det_method_dic['AWEI_' + self.ROI_name] + 'individual_tif\\', 'AWEI_' + str(self.doy_list[doy]) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+                        write_raster(gdal.Open(self.ds_file), AWEI_temp, self.inun_det_method_dic['AWEI_' + self.ROI_name] + 'individual_tif\\', 'AWEI_' + str(self.doy_list[doy]) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
 
                 self.inun_det_method_dic['AWEI_doy_file'] = self.inun_det_method_dic['AWEI_' + self.ROI_name] + 'doy.npy'
                 self.inun_det_method_dic['AWEI_dc_file'] = self.inun_det_method_dic['AWEI_' + self.ROI_name] + 'inundated_dc.npy'
@@ -3893,7 +3966,7 @@ class Landsat_dcs(object):
                 np.save(self.inun_det_method_dic['AWEI_dc_file'], AWEI_sdc)
 
                 # Create annual inundation map for AWEI
-                self.inun_det_method_dic['AWEI_annual' + self.ROI_name] = self.work_env + 'Landsat_Inundation_Condition\\' + self.ROI_name + '_AWEI\\annual\\'
+                self.inun_det_method_dic['AWEI_annual_' + self.ROI_name] = self.work_env + 'Landsat_Inundation_Condition\\' + self.ROI_name + '_AWEI\\annual\\'
                 bf.create_folder(self.inun_det_method_dic['AWEI_annual_' + self.ROI_name])
                 inundated_dc = np.load(self.inun_det_method_dic['AWEI_dc_file'])
                 doy_array = np.load(self.inun_det_method_dic['AWEI_doy_file'])
@@ -3907,19 +3980,17 @@ class Landsat_dcs(object):
                             if doy_array[doy_index] // 1000 == year and np.mod(doy_array[doy_index], 1000) >= 182:
                                 annual_inundated_map[inundated_dc[:, :, doy_index] > 0] = 1
                         write_raster(temp_ds, annual_inundated_map, self.inun_det_method_dic['AWEI_annual_' + self.ROI_name], 'AWEI_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
-                np.save(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_AWEI_inundation_dic.npy', self.inun_det_method_dic)
 
-            # Flood mapping by DT method (DYNAMIC MNDWI THRESHOLD using time-series MNDWI!)
             if DT_factor:
 
-                # Implement the global inundation detection method
+                # Flood mapping by DT method (DYNAMIC MNDWI THRESHOLD using time-series MNDWI!)
                 if 'MNDWI' not in self.index_list:
                     raise Exception('Please make sure the MNDWI is properly input when implementing the inundation detection through DT method')
                 else:
                     self.inun_det_method_dic['DT_' + self.ROI_name] = inundation_output_path + self.ROI_name + '_DT\\'
-                    bf.create_folder(self.inun_det_method_dic['MNDWI_' + self.ROI_name])
-                    bf.create_folder(self.inun_det_method_dic['MNDWI_' + self.ROI_name] + 'individual_tif\\')
-                    MNDWI_sdc = self.Landsat_dcs[self.index_list.index['MNDWI']].dc
+                    bf.create_folder(self.inun_det_method_dic['DT_' + self.ROI_name])
+                    bf.create_folder(self.inun_det_method_dic['DT_' + self.ROI_name] + 'individual_tif\\')
+                    MNDWI_sdc = self.Landsat_dcs[self.index_list.index('MNDWI')].dc
 
                 doy_array = copy.copy(self.doy_list)
                 date_temp = 0
@@ -3932,7 +4003,7 @@ class Landsat_dcs(object):
 
                 self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name] = inundation_output_path + f'\\{self.ROI_name}_DT\\' + self.ROI_name + '\\threshold\\'
                 bf.create_folder(self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name])
-                if not os.path.exists(self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name] + 'threshold_map.TIF'):
+                if not os.path.exists(self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name] + 'threshold_map.TIF') or not os.path.exists(self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name] + 'bh_threshold_map.TIF'):
                     doy_array_temp = copy.copy(doy_array)
                     MNDWI_sdc_temp = copy.copy(MNDWI_sdc)
                     threshold_array = np.ones([MNDWI_sdc_temp.shape[0], MNDWI_sdc_temp.shape[1]]) * -2
@@ -3989,7 +4060,15 @@ class Landsat_dcs(object):
                         # threshold_array[threshold_array < -0.50] = np.nan
                         threshold_array[threshold_array > 0.123] = 0.123
 
-                    write_raster(self.gdal_ds, threshold_array, self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name], 'threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    write_raster(gdal.Open(self.ds_file), threshold_array, self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name], 'threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    write_raster(gdal.Open(self.ds_file), bh_threshold_array,
+                                 self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name], 'bh_threshold_map.TIF',
+                                 raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                else:
+                    bh_threshold_ds = gdal.Open(self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name] + 'threshold_map.TIF')
+                    threshold_ds = gdal.Open(self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name] + 'bh_threshold_map.TIF')
+                    threshold_array = threshold_ds.GetRasterBand(1).ReadAsArray()
+                    bh_threshold_array = bh_threshold_ds.GetRasterBand(1).ReadAsArray()
 
                 doy_array_temp = copy.copy(doy_array)
                 MNDWI_sdc_temp = copy.copy(MNDWI_sdc)
@@ -4027,6 +4106,8 @@ class Landsat_dcs(object):
                                     plt.ylim(ymax=35, ymin=0)
                                     plt.hist(mndwi_temp, bins=20)
                                     plt.plot(xx * mndwi_ave, yy, color='#FFFF00')
+                                    plt.plot(bh_threshold_array[y_temp, x_temp], yy, color='#CD0000', linewidth='3')
+                                    plt.plot(threshold_array[y_temp, x_temp], yy, color='#0000CD', linewidth='1.5')
                                     plt.plot(xx * (mndwi_ave - mndwi_temp_std), yy, color='#00CD00')
                                     plt.plot(xx * (mndwi_ave + mndwi_temp_std), yy, color='#00CD00')
                                     plt.plot(xx * (mndwi_ave - self._variance_num * mndwi_temp_std), yy, color='#00CD00')
@@ -4047,7 +4128,7 @@ class Landsat_dcs(object):
                                 inundation_map[i[0], i[1]] = 1
                             inundation_map = reassign_sole_pixel(inundation_map, Nan_value=-2, half_size_window=2)
                             inundation_map[np.isnan(self.sa_map)] = -32768
-                            write_raster(self.Landsat_dcs[0].dc_header['gdal_ds'], inundation_map, self.inun_det_method_dic['DT_' + self.ROI_name] + 'individual_tif\\', 'DT_' + str(doy_array_temp[date_temp]) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+                            write_raster(gdal.Open(self.ds_file), inundation_map, self.inun_det_method_dic['DT_' + self.ROI_name] + 'individual_tif\\', 'DT_' + str(doy_array_temp[date_temp]) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                         else:
                             inundated_ds = gdal.Open(self.inun_det_method_dic['DT_' + self.ROI_name] + 'individual_tif\\DT_' + str(doy_array_temp[date_temp]) + '.TIF')
                             inundation_map = inundated_ds.GetRasterBand(1).ReadAsArray()
@@ -4116,7 +4197,7 @@ class Landsat_dcs(object):
                             landsat_local_temp_ds = gdal.Open(self.inun_det_method_dic['DT_' + self.ROI_name] + 'individual_tif\\DT_' + str(landsat_doy) + '.TIF')
                             landsat_local_temp_raster = landsat_local_temp_ds.GetRasterBand(1).ReadAsArray()
                             confusion_matrix_temp = confusion_matrix_2_raster(landsat_local_temp_raster, sample_all_temp_raster, nan_value=-2)
-                            confusion_dic[self.ROI_name + '_local_' + str(sample_date)] = confusion_matrix_temp
+                            confusion_dic[self.ROI_name + '_DT_' + str(sample_date)] = confusion_matrix_temp
                             landsat_local_temp_raster = landsat_local_temp_raster.astype(np.float)
                             landsat_local_temp_raster[landsat_local_temp_raster == -2] = np.nan
                             local_error_distribution = landsat_local_temp_raster - sample_all_temp_raster_1
@@ -4133,10 +4214,10 @@ class Landsat_dcs(object):
 
                         if DSWE_factor:
 
-                            landsat_global_temp_ds = gdal.Open(self.inun_det_method_dic['DSWE_' + self.ROI_name] + 'individual_tif\\global_' + str(landsat_doy) + '.TIF')
+                            landsat_global_temp_ds = gdal.Open(self.inun_det_method_dic['DSWE_' + self.ROI_name] + 'individual_tif\\DSWE_' + str(landsat_doy) + '.TIF')
                             landsat_global_temp_raster = landsat_global_temp_ds.GetRasterBand(1).ReadAsArray()
                             confusion_matrix_temp = confusion_matrix_2_raster(landsat_global_temp_raster, sample_all_temp_raster, nan_value=-2)
-                            confusion_dic[self.ROI_name + '_global_' + str(sample_date)] = confusion_matrix_temp
+                            confusion_dic[self.ROI_name + '_DSWE_' + str(sample_date)] = confusion_matrix_temp
                             landsat_global_temp_raster = landsat_global_temp_raster.astype(np.float)
                             landsat_global_temp_raster[landsat_global_temp_raster == -2] = np.nan
                             global_error_distribution = landsat_global_temp_raster - sample_all_temp_raster_1
@@ -4151,8 +4232,8 @@ class Landsat_dcs(object):
                                 confusion_matrix_global_sum_temp[1:, 1:] = confusion_matrix_global_sum_temp[1:, 1:] + confusion_matrix_temp[1:, 1:]
 
                         if AWEI_factor:
-                            AWEI_inundation_dic = np.load(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_AWEI_inundation_dic.npy', allow_pickle=True).item()
-                            landsat_AWEI_temp_ds = gdal.Open(AWEI_inundation_dic['AWEI_' + self.ROI_name] + 'individual_tif\\AWEI_' + str(landsat_doy) + '.TIF')
+
+                            landsat_AWEI_temp_ds = gdal.Open(self.inun_det_method_dic['AWEI_' + self.ROI_name] + 'individual_tif\\AWEI_' + str(landsat_doy) + '.TIF')
                             landsat_AWEI_temp_raster = landsat_AWEI_temp_ds.GetRasterBand(1).ReadAsArray()
                             confusion_matrix_temp = confusion_matrix_2_raster(landsat_AWEI_temp_raster, sample_all_temp_raster, nan_value=-2)
                             confusion_dic[self.ROI_name + '_AWEI_' + str(sample_date)] = confusion_matrix_temp
@@ -4174,17 +4255,20 @@ class Landsat_dcs(object):
                     confusion_dic['AWEI_acc'] = float(confusion_matrix_AWEI_sum_temp[
                                                             confusion_matrix_AWEI_sum_temp.shape[0] - 1,
                                                             confusion_matrix_AWEI_sum_temp.shape[1] - 1][0:-1])
-                    confusion_dic['global_acc'] = float(confusion_matrix_global_sum_temp[confusion_matrix_global_sum_temp.shape[0] - 1, confusion_matrix_global_sum_temp.shape[1] - 1][0:-1])
-                    confusion_dic['local_acc'] = float(confusion_matrix_local_sum_temp[confusion_matrix_local_sum_temp.shape[0] - 1, confusion_matrix_local_sum_temp.shape[1] - 1][0:-1])
-                    xlsx_save(confusion_matrix_global_sum_temp, self.work_env + 'Landsat_Inundation_Condition\\global_' + self.ROI_name + '.xlsx')
-                    xlsx_save(confusion_matrix_local_sum_temp, self.work_env + 'Landsat_Inundation_Condition\\local_' + self.ROI_name + '.xlsx')
+                    confusion_dic['DSWE_acc'] = float(confusion_matrix_global_sum_temp[confusion_matrix_global_sum_temp.shape[0] - 1, confusion_matrix_global_sum_temp.shape[1] - 1][0:-1])
+                    confusion_dic['DT_acc'] = float(confusion_matrix_local_sum_temp[confusion_matrix_local_sum_temp.shape[0] - 1, confusion_matrix_local_sum_temp.shape[1] - 1][0:-1])
+                    xlsx_save(confusion_matrix_global_sum_temp, self.work_env + 'Landsat_Inundation_Condition\\DSWE_' + self.ROI_name + '.xlsx')
+                    xlsx_save(confusion_matrix_local_sum_temp, self.work_env + 'Landsat_Inundation_Condition\\DT_' + self.ROI_name + '.xlsx')
                     xlsx_save(confusion_matrix_AWEI_sum_temp, self.work_env + 'Landsat_Inundation_Condition\\AWEI_' + self.ROI_name + '.xlsx')
                     write_raster(sample_all_ds, AWEI_error_distribution_sum, self.work_env + 'Landsat_Inundation_Condition\\', str(self.ROI_name) + '_Error_dis_AWEI.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                     write_raster(sample_all_ds, global_error_distribution_sum, self.work_env + 'Landsat_Inundation_Condition\\',
                                  str(self.ROI_name) + '_Error_dis_global.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
                     write_raster(sample_all_ds, local_error_distribution_sum, self.work_env + 'Landsat_Inundation_Condition\\',
                                  str(self.ROI_name) + '_Error_dis_local.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
-                    np.save(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_inundation_acc_dic.npy', confusion_dic)
+                    np.save(self.work_env + 'Landsat_Inundation_Condition\\Key_dic\\' + self.ROI_name + '_inundation_acc_dic.npy', confusion_dic)
+
+        bf.create_folder(self.work_env + 'Landsat_Inundation_Condition\\Key_dic\\')
+        np.save(self.work_env + 'Landsat_Inundation_Condition\\Key_dic\\' + self.ROI_name + '_inundation_dic.npy', self.inun_det_method_dic)
 
         #     if landsat_detected_inundation_area is True:
         #         try:
@@ -4399,304 +4483,349 @@ class Landsat_dcs(object):
         # inundation_list_temp = np.unique(np.array(inundation_approach_dic['approach_list']))
         # inundation_approach_dic['approach_list'] = inundation_list_temp.tolist()
         # np.save(self.work_env + 'Landsat_key_dic\\' + str(self.ROI_name) + '_inundation_approach_list.npy', inundation_approach_dic)
-    def vi_dc_inundation_elimination(vi_dc, vi_doy, inundated_dc, inundated_doy):
+
+        # Construct and append the inundated dc
+        if self._construct_inundated_dc:
+            for method_temp in flood_mapping_method:
+                inundated_file_folder = self.inun_det_method_dic[method_temp + '_' + self.ROI_name] + 'individual_tif\\'
+                self.files2sdc(inundated_file_folder, method_temp, self.inun_det_method_dic[method_temp + '_' + self.ROI_name] + method_temp + '_datacube\\')
+                self.append(Landsat_dc(self.inun_det_method_dic[method_temp + '_' + self.ROI_name] + method_temp + '_datacube\\', sdc_factor=self.sdc_factor))
+
+    def _process_file2sdc_para(self, **kwargs):
+        pass
+
+    def files2sdc(self, file_folder: str, index: str, output_folder: str, **kwargs) -> None:
+
+        # Process file2sdc para
+        self._process_file2sdc_para(**kwargs)
+
+        # Generate sdc
+        if not os.path.exists(file_folder):
+            raise FileExistsError(f'The {file_folder} folder was missing!')
+        else:
+            if not os.path.exists(output_folder + 'header.npy') or not os.path.exists(output_folder + 'date.npy') or not os.path.exists(output_folder + str(index) + '_datacube.npy'):
+                files = bf.file_filter(file_folder, ['.TIF', str(index)], and_or_factor='and')
+                if len(files) != self.dcs_ZSize:
+                    raise Exception('Consistent error')
+                else:
+                    header_dic = {'ROI_name': self.ROI_name, 'VI': index, 'Datatype': 'Int', 'ROI': self.ROI,
+                                  'Study_area': self.sa_map, 'sdc_factor': self.sdc_factor, 'ds_file': self.ds_file}
+                    data_cube_temp = np.zeros((self.dcs_XSize, self.dcs_YSize, self.dcs_ZSize), dtype=np.float16)
+
+                    i = 0
+                    for doy in self.doy_list:
+                        file_list = bf.file_filter(file_folder, ['.TIF', str(index), str(doy)], and_or_factor='and')
+                        if len(file_list) == 1:
+                            temp_ds = gdal.Open(file_list[0])
+                            temp_raster = temp_ds.GetRasterBand(1).ReadAsArray()
+                            data_cube_temp[:, :, i] = temp_raster
+                            i += 1
+                        elif len(file_list) >= 1:
+                            for q in file_list:
+                                temp_ds = gdal.Open(q)
+                                temp_raster = temp_ds.GetRasterBand(1).ReadAsArray()
+                                data_cube_temp[:, :, i] = temp_raster
+                                i += 1
+                        else:
+                            raise Exception(f'The {str(doy)} file for {index} was missing!')
+
+                    # Write the datacube
+                    print('Start writing the ' + index + ' datacube.')
+                    start_time = time.time()
+                    np.save(output_folder + 'header.npy', header_dic)
+                    np.save(output_folder + 'date.npy', self.doy_list.astype(np.uint32).tolist())
+                    np.save(output_folder + str(index) + '_datacube.npy', data_cube_temp.astype(np.float16))
+                    end_time = time.time()
+                    print('Finished constructing ' + str(index) + ' datacube in ' + str(end_time - start_time) + ' s.')
+            else:
+                print(f'The sdc of the {index} has already constructed!')
+
+    def dc_flood_removal(self, index_dc, vi_doy, inundated_dc, inundated_doy):
         # Consistency check
-        if vi_dc.shape[0] != inundated_dc.shape[0] or vi_dc.shape[1] != inundated_dc.shape[1]:
+        if index_dc.shape[0] != inundated_dc.shape[0] or index_dc.shape[1] != inundated_dc.shape[1]:
             print('Consistency error!')
             sys.exit(-1)
-        if vi_doy.shape[0] != vi_dc.shape[2] or inundated_doy.shape[0] == 0:
+
+        if len(vi_doy) != index_dc.shape[2] or inundated_doy.shape[0] == 0:
             print('Consistency error!')
             sys.exit(-1)
 
         # Elimination
         vi_doy_index = 0
-        while vi_doy_index < vi_doy.shape[0]:
+        while vi_doy_index < len(vi_doy):
             inundated_doy_list = np.argwhere(inundated_doy == vi_doy[vi_doy_index])
             if inundated_doy_list.shape != 0:
                 inundated_doy_index = inundated_doy_list[0]
-                vi_dc_temp = vi_dc[:, :, vi_doy_index].reshape([vi_dc.shape[0], vi_dc.shape[1]])
-                inundated_dc_temp = inundated_dc[:, :, inundated_doy_index].reshape([vi_dc.shape[0], vi_dc.shape[1]])
-                vi_dc_temp[inundated_dc_temp == 1] = np.nan
-                vi_dc[:, :, vi_doy_index] = vi_dc_temp
+                index_dc_temp = index_dc[:, :, vi_doy_index].reshape([index_dc.shape[0], index_dc.shape[1]])
+                inundated_dc_temp = inundated_dc[:, :, inundated_doy_index].reshape([index_dc.shape[0], index_dc.shape[1]])
+                index_dc_temp[inundated_dc_temp == 1] = np.nan
+                index_dc[:, :, vi_doy_index] = index_dc_temp
             vi_doy_index += 1
-        return vi_dc, vi_doy
+        return index_dc, vi_doy
 
+    def _process_curve_fitting_para(self, **kwargs):
 
-    # def VI_curve_fitting(root_path_f, vi, sa, inundated_factor=None, curve_fitting_algorithm=None):
-    #     """
-    #     :param root_path_f:
-    #     :param vi:
-    #     :param sa:
-    #     :param inundated_factor:
-    #     :param curve_fitting_algorithm:
-    #     """
-    #     # check vi
-    #     all_vi_list = np.load(root_path_f + 'Landsat_key_dic\\fundamental_information_dic.npy', allow_pickle=True).item()['all_vi']
-    #     if vi not in all_vi_list:
-    #         print('Please make sure the vi datacube is constructed!')
-    #         sys.exit(-1)
-    #
-    #     # check study area
-    #     sa_list = np.load(root_path_f + 'Landsat_key_dic\\fundamental_information_dic.npy', allow_pickle=True).item()['study_area']
-    #     if sa not in sa_list:
-    #         print('Please make sure the study area is assessed!')
-    #         sys.exit(-1)
-    #
-    #     # input the sdc dic
-    #     sdc_dic = np.load(file_filter(root_path_f + 'Landsat_key_dic\\', [str(sa), 'sdc_vi.npy'], and_or_factor='and', exclude_word_list=['main'])[0], allow_pickle=True).item()
-    #     vi_dc = np.load(file_filter(sdc_dic[str(vi) + '_path'], ['datacube.npy'])[0])
-    #     doy_dc = np.load(file_filter(sdc_dic[str(vi) + '_path'], ['doy.npy'])[0])
-    #
-    #     # Input the sa map
-    #     sa_map = np.load(file_filter(root_path_f + 'Landsat_key_dic\\', [str(sa), 'map.npy'], and_or_factor='and', exclude_word_list=['main'])[0])
-    #
-    #     # Curve fitting method
-    #     all_supported_curve_fitting_method = ['seven_para_logistic', 'two_term_fourier']
-    #     VI_curve_fitting_dic = {}
-    #     if curve_fitting_algorithm is None or curve_fitting_algorithm == 'seven_para_logistic':
-    #         VI_curve_fitting_dic['CFM'] = 'SPL'
-    #         VI_curve_fitting_dic['para_num'] = 7
-    #         VI_curve_fitting_dic['initial_para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
-    #         VI_curve_fitting_dic['initial_para_boundary'] = ([0, 0.3, 0, 3, 180, 3, 0.00001], [0.5, 1, 180, 17, 330, 17, 0.01])
-    #         VI_curve_fitting_dic['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
-    #         VI_curve_fitting_dic['para_boundary'] = ([0.08, 0.7, 90, 6.2, 285, 4.5, 0.0015], [0.20, 1.0, 130, 11.5, 330, 8.8, 0.0028])
-    #         curve_fitting_algorithm = seven_para_logistic_function
-    #     elif curve_fitting_algorithm == 'two_term_fourier':
-    #         VI_curve_fitting_dic['CFM'] = 'TTF'
-    #         VI_curve_fitting_dic['para_num'] = 6
-    #         VI_curve_fitting_dic['para_ori'] = [0, 0, 0, 0, 0, 0.017]
-    #         VI_curve_fitting_dic['para_boundary'] = ([0, -0.5, -0.5, -0.05, -0.05, 0.015], [1, 0.5, 0.5, 0.05, 0.05, 0.019])
-    #         curve_fitting_algorithm = two_term_fourier
-    #     elif curve_fitting_algorithm not in all_supported_curve_fitting_method:
-    #         print('Please double check the curve fitting method')
-    #         sys.exit(-1)
-    #
-    #     # Eliminate the inundated value
-    #     if inundated_factor is None:
-    #         pass
-    #     else:
-    #         try:
-    #             inundated_dic = np.load(file_filter(root_path_f + 'Landsat_key_dic\\', ['.npy', sa, inundated_factor], and_or_factor='and', exclude_word_list=['main'])[0], allow_pickle=True).item()
-    #             inundated_dc = np.load(inundated_dic['inundated_dc_file']).astype(np.float)
-    #             inundated_doy = np.load(inundated_dic['inundated_doy_file']).astype(np.int)
-    #         except:
-    #             print('Double check the inundated factor!')
-    #             sys.exit(-1)
-    #         vi_dc, doy_dc = vi_dc_inundation_elimination(vi_dc, doy_dc, inundated_dc, inundated_doy)
-    #
-    #     # Create output path
-    #     key_output_path = root_path_f + 'Landsat_' + sa + '_curfitting_datacube\\'
-    #     bf.create_folder(key_output_path)
-    #     output_path = key_output_path + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_datacube\\'
-    #     bf.create_folder(output_path)
-    #     if not os.path.exists(root_path_f + 'Landsat_key_dic\\' + sa + '_curve_fitting_dic.npy'):
-    #         cf_inform_dic = {str(sa) + '_' + str(vi) + '_' + str(VI_curve_fitting_dic['CFM']) + '_path': output_path}
-    #     else:
-    #         cf_inform_dic = np.load(root_path_f + 'Landsat_key_dic\\' + sa + '_curve_fitting_dic.npy', allow_pickle=True).item()
-    #         cf_inform_dic[str(sa) + '_' + str(vi) + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'] = output_path
-    #
-    #     # Generate the initial parameter
-    #     if not os.path.exists(output_path + 'para_boundary.npy'):
-    #         doy_all_s = np.mod(doy_dc, 1000)
-    #         for y_t in range(vi_dc.shape[0]):
-    #             for x_t in range(vi_dc.shape[1]):
-    #                 if sa_map[y_t, x_t] != -32768:
-    #                     vi_all = vi_dc[y_t, x_t, :].flatten()
-    #                     doy_all = copy.copy(doy_all_s)
-    #                     vi_index = 0
-    #                     while vi_index < vi_all.shape[0]:
-    #                         if np.isnan(vi_all[vi_index]):
-    #                             vi_all = np.delete(vi_all, vi_index)
-    #                             doy_all = np.delete(doy_all, vi_index)
-    #                             vi_index -= 1
-    #                         vi_index += 1
-    #                     if doy_all.shape[0] >= 7:
-    #                         paras, extras = curve_fit(curve_fitting_algorithm, doy_all, vi_all, maxfev=500000, p0=VI_curve_fitting_dic['initial_para_ori'], bounds=VI_curve_fitting_dic['initial_para_boundary'])
-    #                         VI_curve_fitting_dic[str(x_t) + '_' + str(y_t) + '_para_ori'] = paras
-    #                         vi_dormancy = []
-    #                         doy_dormancy = []
-    #                         vi_max = []
-    #                         doy_max = []
-    #                         doy_index_max = np.argmax(curve_fitting_algorithm(np.linspace(0,366,365), paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]))
-    #                         # Generate the parameter boundary
-    #                         senescence_t = paras[4] - 4 * paras[5]
-    #                         for doy_index in range(doy_all.shape[0]):
-    #                             if 0 < doy_all[doy_index] < paras[2] or paras[4] < doy_all[doy_index] < 366:
-    #                                 vi_dormancy.append(vi_all[doy_index])
-    #                                 doy_dormancy.append(doy_all[doy_index])
-    #                             if doy_index_max - 5 < doy_all[doy_index] < doy_index_max + 5:
-    #                                 vi_max.append(vi_all[doy_index])
-    #                                 doy_max.append(doy_all[doy_index])
-    #
-    #                         if vi_max == []:
-    #                             vi_max = [np.max(vi_all)]
-    #                             doy_max = [doy_all[np.argmax(vi_all)]]
-    #
-    #                         itr = 5
-    #                         while itr < 10:
-    #                             doy_senescence = []
-    #                             vi_senescence = []
-    #                             for doy_index in range(doy_all.shape[0]):
-    #                                 if senescence_t - itr < doy_all[doy_index] < senescence_t + itr:
-    #                                     vi_senescence.append(vi_all[doy_index])
-    #                                     doy_senescence.append(doy_all[doy_index])
-    #                             if doy_senescence != [] and vi_senescence != []:
-    #                                 break
-    #                             else:
-    #                                 itr += 1
-    #
-    #                         # [0, 0.3, 0, 0, 180, 0, 0], [0.5, 1, 180, 20, 330, 10, 0.01]
-    #                         # define the para1
-    #                         if vi_dormancy != []:
-    #                             vi_dormancy_sort = np.sort(vi_dormancy)
-    #                             vi_max_sort = np.sort(vi_max)
-    #                             paras1_max = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.95))]
-    #                             paras1_min = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.05))]
-    #                             paras1_max = min(paras1_max, 0.5)
-    #                             paras1_min = max(paras1_min, 0)
-    #                         else:
-    #                             paras1_max = 0.5
-    #                             paras1_min = 0
-    #                         # define the para2
-    #                         paras2_max = vi_max[-1] - paras1_min
-    #                         paras2_min = vi_max[0] - paras1_max
-    #                         if paras2_min < 0.2:
-    #                             paras2_min = 0.2
-    #                         if paras2_max > 0.7 or paras2_max < 0.2:
-    #                             paras2_max = 0.7
-    #                         # define the para3
-    #                         paras3_max = 0
-    #                         for doy_index in range(len(doy_all)):
-    #                             if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] < 180:
-    #                                 paras3_max = max(float(paras3_max), doy_all[doy_index])
-    #
-    #                         paras3_min = 180
-    #                         for doy_index in range(len(doy_all)):
-    #                             if vi_all[doy_index] > paras1_max:
-    #                                 paras3_min = min(paras3_min, doy_all[doy_index])
-    #
-    #                         if paras3_min > paras[2] or paras3_min < paras[2] - 15:
-    #                             paras3_min = paras[2] - 15
-    #
-    #                         if paras3_max < paras[2] or paras3_max > paras[2] + 15:
-    #                             paras3_max = paras[2] + 15
-    #
-    #                         # define the para5
-    #                         paras5_max = 0
-    #                         for doy_index in range(len(doy_all)):
-    #                             if vi_all[doy_index] > paras1_max:
-    #                                 paras5_max = max(paras5_max, doy_all[doy_index])
-    #                         paras5_min = 365
-    #                         for doy_index in range(len(doy_all)):
-    #                             if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] > 180:
-    #                                 paras5_min = min(paras5_min, doy_all[doy_index])
-    #                         if paras5_min > paras[4] or paras5_min < paras[4] - 15:
-    #                             paras5_min = paras[4] - 15
-    #
-    #                         if paras5_max < paras[4] or paras5_max > paras[4] + 15:
-    #                             paras5_max = paras[4] + 15
-    #
-    #                         # define the para 4
-    #                         if len(doy_max) != 1:
-    #                             paras4_max = (np.nanmax(doy_max) - paras3_min) / 4
-    #                             paras4_min = (np.nanmin(doy_max) - paras3_max) / 4
-    #                         else:
-    #                             paras4_max = (np.nanmax(doy_max) + 5 - paras3_min) / 4
-    #                             paras4_min = (np.nanmin(doy_max) - 5 - paras3_max) / 4
-    #                         paras4_min = max(3, paras4_min)
-    #                         paras4_max = min(17, paras4_max)
-    #                         if paras4_min > 17:
-    #                             paras4_min = 3
-    #                         if paras4_max < 3:
-    #                             paras4_max = 17
-    #                         paras6_max = paras4_max
-    #                         paras6_min = paras4_min
-    #                         if doy_senescence == [] or vi_senescence == []:
-    #                             paras7_max = 0.01
-    #                             paras7_min = 0.00001
-    #                         else:
-    #                             paras7_max = (np.nanmax(vi_max) - np.nanmin(vi_senescence)) / (doy_senescence[np.argmin(vi_senescence)] - doy_max[np.argmax(vi_max)])
-    #                             paras7_min = (np.nanmin(vi_max) - np.nanmax(vi_senescence)) / (doy_senescence[np.argmax(vi_senescence)] - doy_max[np.argmin(vi_max)])
-    #                         if np.isnan(paras7_min):
-    #                             paras7_min = 0.00001
-    #                         if np.isnan(paras7_max):
-    #                             paras7_max = 0.01
-    #                         paras7_max = min(paras7_max, 0.01)
-    #                         paras7_min = max(paras7_min, 0.00001)
-    #                         if paras7_max < 0.00001:
-    #                             paras7_max = 0.01
-    #                         if paras7_min > 0.01:
-    #                             paras7_min = 0.00001
-    #                         if paras1_min > paras[0]:
-    #                             paras1_min = paras[0] - 0.01
-    #                         if paras1_max < paras[0]:
-    #                             paras1_max = paras[0] + 0.01
-    #                         if paras2_min > paras[1]:
-    #                             paras2_min = paras[1] - 0.01
-    #                         if paras2_max < paras[1]:
-    #                             paras2_max = paras[1] + 0.01
-    #                         if paras3_min > paras[2]:
-    #                             paras3_min = paras[2] - 1
-    #                         if paras3_max < paras[2]:
-    #                             paras3_max = paras[2] + 1
-    #                         if paras4_min > paras[3]:
-    #                             paras4_min = paras[3] - 0.1
-    #                         if paras4_max < paras[3]:
-    #                             paras4_max = paras[3] + 0.1
-    #                         if paras5_min > paras[4]:
-    #                             paras5_min = paras[4] - 1
-    #                         if paras5_max < paras[4]:
-    #                             paras5_max = paras[4] + 1
-    #                         if paras6_min > paras[5]:
-    #                             paras6_min = paras[5] - 0.5
-    #                         if paras6_max < paras[5]:
-    #                             paras6_max = paras[5] + 0.5
-    #                         if paras7_min > paras[6]:
-    #                             paras7_min = paras[6] - 0.00001
-    #                         if paras7_max < paras[6]:
-    #                             paras7_max = paras[6] + 0.00001
-    #                         VI_curve_fitting_dic['para_boundary_' + str(y_t) + '_' + str(x_t)] = ([paras1_min, paras2_min, paras3_min, paras4_min, paras5_min, paras6_min, paras7_min], [paras1_max, paras2_max,  paras3_max,  paras4_max,  paras5_max,  paras6_max,  paras7_max])
-    #                         VI_curve_fitting_dic['para_ori_' + str(y_t) + '_' + str(x_t)] = [paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]]
-    #         np.save(output_path + 'para_boundary.npy', VI_curve_fitting_dic)
-    #     else:
-    #         VI_curve_fitting_dic = np.load(output_path + 'para_boundary.npy', allow_pickle=True).item()
-    #
-    #     # Generate the year list
-    #     if not os.path.exists(output_path + 'annual_cf_para.npy') or not os.path.exists(output_path + 'year.npy'):
-    #         year_list = np.sort(np.unique(doy_dc // 1000))
-    #         annual_cf_para_dic = {}
-    #         for year in year_list:
-    #             year = int(year)
-    #             annual_para_dc = np.zeros([sa_map.shape[0], sa_map.shape[1], VI_curve_fitting_dic['para_num'] + 1])
-    #             annual_vi = vi_dc[:, :, np.min(np.argwhere(doy_dc // 1000 == year)): np.max(np.argwhere(doy_dc // 1000 == year)) + 1]
-    #             annual_doy = doy_dc[np.min(np.argwhere(doy_dc // 1000 == year)): np.max(np.argwhere(doy_dc // 1000 == year)) + 1]
-    #             annual_doy = np.mod(annual_doy, 1000)
-    #
-    #             for y_temp in range(annual_vi.shape[0]):
-    #                 for x_temp in range(annual_vi.shape[1]):
-    #                     if sa_map[y_temp, x_temp] != -32768:
-    #                         vi_temp = annual_vi[y_temp, x_temp, :]
-    #                         nan_index = np.argwhere(np.isnan(vi_temp))
-    #                         vi_temp = np.delete(vi_temp, nan_index)
-    #                         doy_temp = np.delete(annual_doy, nan_index)
-    #                         if np.sum(~np.isnan(vi_temp)) >= VI_curve_fitting_dic['para_num']:
-    #                             try:
-    #                                 paras, extras = curve_fit(curve_fitting_algorithm, doy_temp, vi_temp, maxfev=50000, p0=VI_curve_fitting_dic['para_ori_' + str(y_temp) + '_' + str(x_temp)], bounds=VI_curve_fitting_dic['para_boundary_' + str(y_temp) + '_' + str(x_temp)])
-    #                                 predicted_y_data = curve_fitting_algorithm(doy_temp, paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6])
-    #                                 R_square = (1 - np.sum((predicted_y_data - vi_temp) ** 2) / np.sum((vi_temp - np.mean(vi_temp)) ** 2))
-    #                                 annual_para_dc[y_temp, x_temp, :] = np.append(paras, R_square)
-    #                             except:
-    #                                 pass
-    #                         else:
-    #                             annual_para_dc[y_temp, x_temp, :] = np.nan
-    #                     else:
-    #                         annual_para_dc[y_temp, x_temp, :] = np.nan
-    #             annual_cf_para_dic[str(year) + '_cf_para'] = annual_para_dc
-    #         np.save(output_path + 'annual_cf_para.npy', annual_cf_para_dic)
-    #         np.save(output_path + 'year.npy', year_list)
-    #     np.save(root_path_f + 'Landsat_key_dic\\' + sa + '_curve_fitting_dic.npy', cf_inform_dic)
-    #
-    #
+        # Curve fitting method
+        all_supported_curve_fitting_method = ['seven_para_logistic', 'two_term_fourier']
+        
+        if 'curve_fitting_algorithm' in kwargs.keys():
+            self._curve_fitting_algorithm = kwargs['curve_fitting_algorithm']
+
+        if self._curve_fitting_algorithm is None or self._curve_fitting_algorithm == 'seven_para_logistic':
+            self._curve_fitting_dic['CFM'] = 'SPL'
+            self._curve_fitting_dic['para_num'] = 7
+            self._curve_fitting_dic['initial_para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
+            self._curve_fitting_dic['initial_para_boundary'] = (
+            [0, 0.3, 0, 3, 180, 3, 0.00001], [0.5, 1, 180, 17, 330, 17, 0.01])
+            self._curve_fitting_dic['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
+            self._curve_fitting_dic['para_boundary'] = (
+            [0.08, 0.7, 90, 6.2, 285, 4.5, 0.0015], [0.20, 1.0, 130, 11.5, 330, 8.8, 0.0028])
+            curve_fitting_algorithm = seven_para_logistic_function
+        elif self._curve_fitting_algorithm == 'two_term_fourier':
+            self._curve_fitting_dic['CFM'] = 'TTF'
+            self._curve_fitting_dic['para_num'] = 6
+            self._curve_fitting_dic['para_ori'] = [0, 0, 0, 0, 0, 0.017]
+            self._curve_fitting_dic['para_boundary'] = (
+            [0, -0.5, -0.5, -0.05, -0.05, 0.015], [1, 0.5, 0.5, 0.05, 0.05, 0.019])
+            curve_fitting_algorithm = two_term_fourier
+        elif self._curve_fitting_algorithm not in all_supported_curve_fitting_method:
+            ValueError(f'The curve fitting method {self._curve_fitting_algorithm} is not supported!')
+
+        # Determine inundation removal method
+        if 'flood_removal_method' in kwargs.keys():
+            self._flood_removal_method = kwargs['flood_removal_method']
+
+        if self._flood_removal_method not in self._flood_mapping_method:
+            raise ValueError(f'The flood removal method {self._flood_removal_method} is not supported!')
+
+    def curve_fitting(self, index, **kwargs):
+        # check vi
+        if index not in self.index_list:
+            raise ValueError('Please make sure the vi datacube is constructed!')
+
+        # Process paras
+        self._process_curve_fitting_para(**kwargs)
+
+        # Define the vi dc
+        index_dc = self.Landsat_dcs[self.index_list.index(index)]
+
+        # Eliminate the inundated value
+        if self._flood_removal_method is not None:
+            inundated_dc = self.Landsat_dcs[self.index_list.index(self._flood_removal_method)]
+            index_dc, doy_dc = self.dc_flood_removal(index_dc, self.doy_list, inundated_dc, self.doy_list)
+        else:
+            doy_dc = self.doy_list
+
+        # Create output path
+        curfit_output_path = self.work_env + 'Landsat_' + self.ROI_name + '_curfitdatacube\\'
+        bf.create_folder(curfit_output_path)
+        output_path = curfit_output_path + index + '_' + str(self._curve_fitting_dic['CFM']) + '_datacube\\'
+        bf.create_folder(output_path)
+        self._curve_fitting_dic[str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = output_path
+
+        # Generate the initial parameter
+        if not os.path.exists(output_path + 'para_boundary.npy'):
+            doy_all_s = np.mod(doy_dc, 1000)
+            for y_t in range(index_dc.shape[0]):
+                for x_t in range(index_dc.shape[1]):
+                    if self.sa_map[y_t, x_t] != -32768:
+                        vi_all = index_dc[y_t, x_t, :].flatten()
+                        doy_all = copy.copy(doy_all_s)
+                        vi_index = 0
+                        while vi_index < vi_all.shape[0]:
+                            if np.isnan(vi_all[vi_index]):
+                                vi_all = np.delete(vi_all, vi_index)
+                                doy_all = np.delete(doy_all, vi_index)
+                                vi_index -= 1
+                            vi_index += 1
+                        if doy_all.shape[0] >= 7:
+                            paras, extras = curve_fit(self._curve_fitting_algorithm, doy_all, vi_all, maxfev=500000, p0=self._curve_fitting_dic['initial_para_ori'], bounds=self._curve_fitting_dic['initial_para_boundary'])
+                            self._curve_fitting_dic[str(x_t) + '_' + str(y_t) + '_para_ori'] = paras
+                            vi_dormancy = []
+                            doy_dormancy = []
+                            vi_max = []
+                            doy_max = []
+                            doy_index_max = np.argmax(self._curve_fitting_algorithm(np.linspace(0,366,365), paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]))
+                            # Generate the parameter boundary
+                            senescence_t = paras[4] - 4 * paras[5]
+                            for doy_index in range(doy_all.shape[0]):
+                                if 0 < doy_all[doy_index] < paras[2] or paras[4] < doy_all[doy_index] < 366:
+                                    vi_dormancy.append(vi_all[doy_index])
+                                    doy_dormancy.append(doy_all[doy_index])
+                                if doy_index_max - 5 < doy_all[doy_index] < doy_index_max + 5:
+                                    vi_max.append(vi_all[doy_index])
+                                    doy_max.append(doy_all[doy_index])
+
+                            if vi_max == []:
+                                vi_max = [np.max(vi_all)]
+                                doy_max = [doy_all[np.argmax(vi_all)]]
+
+                            itr = 5
+                            while itr < 10:
+                                doy_senescence = []
+                                vi_senescence = []
+                                for doy_index in range(doy_all.shape[0]):
+                                    if senescence_t - itr < doy_all[doy_index] < senescence_t + itr:
+                                        vi_senescence.append(vi_all[doy_index])
+                                        doy_senescence.append(doy_all[doy_index])
+                                if doy_senescence != [] and vi_senescence != []:
+                                    break
+                                else:
+                                    itr += 1
+
+                            # [0, 0.3, 0, 0, 180, 0, 0], [0.5, 1, 180, 20, 330, 10, 0.01]
+                            # define the para1
+                            if vi_dormancy != []:
+                                vi_dormancy_sort = np.sort(vi_dormancy)
+                                vi_max_sort = np.sort(vi_max)
+                                paras1_max = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.95))]
+                                paras1_min = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.05))]
+                                paras1_max = min(paras1_max, 0.5)
+                                paras1_min = max(paras1_min, 0)
+                            else:
+                                paras1_max = 0.5
+                                paras1_min = 0
+
+                            # define the para2
+                            paras2_max = vi_max[-1] - paras1_min
+                            paras2_min = vi_max[0] - paras1_max
+                            if paras2_min < 0.2:
+                                paras2_min = 0.2
+                            if paras2_max > 0.7 or paras2_max < 0.2:
+                                paras2_max = 0.7
+
+                            # define the para3
+                            paras3_max = 0
+                            for doy_index in range(len(doy_all)):
+                                if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] < 180:
+                                    paras3_max = max(float(paras3_max), doy_all[doy_index])
+
+                            paras3_min = 180
+                            for doy_index in range(len(doy_all)):
+                                if vi_all[doy_index] > paras1_max:
+                                    paras3_min = min(paras3_min, doy_all[doy_index])
+
+                            if paras3_min > paras[2] or paras3_min < paras[2] - 15:
+                                paras3_min = paras[2] - 15
+
+                            if paras3_max < paras[2] or paras3_max > paras[2] + 15:
+                                paras3_max = paras[2] + 15
+
+                            # define the para5
+                            paras5_max = 0
+                            for doy_index in range(len(doy_all)):
+                                if vi_all[doy_index] > paras1_max:
+                                    paras5_max = max(paras5_max, doy_all[doy_index])
+                            paras5_min = 365
+                            for doy_index in range(len(doy_all)):
+                                if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] > 180:
+                                    paras5_min = min(paras5_min, doy_all[doy_index])
+                            if paras5_min > paras[4] or paras5_min < paras[4] - 15:
+                                paras5_min = paras[4] - 15
+
+                            if paras5_max < paras[4] or paras5_max > paras[4] + 15:
+                                paras5_max = paras[4] + 15
+
+                            # define the para 4
+                            if len(doy_max) != 1:
+                                paras4_max = (np.nanmax(doy_max) - paras3_min) / 4
+                                paras4_min = (np.nanmin(doy_max) - paras3_max) / 4
+                            else:
+                                paras4_max = (np.nanmax(doy_max) + 5 - paras3_min) / 4
+                                paras4_min = (np.nanmin(doy_max) - 5 - paras3_max) / 4
+                            paras4_min = max(3, paras4_min)
+                            paras4_max = min(17, paras4_max)
+                            if paras4_min > 17:
+                                paras4_min = 3
+                            if paras4_max < 3:
+                                paras4_max = 17
+                            paras6_max = paras4_max
+                            paras6_min = paras4_min
+                            if doy_senescence == [] or vi_senescence == []:
+                                paras7_max = 0.01
+                                paras7_min = 0.00001
+                            else:
+                                paras7_max = (np.nanmax(vi_max) - np.nanmin(vi_senescence)) / (doy_senescence[np.argmin(vi_senescence)] - doy_max[np.argmax(vi_max)])
+                                paras7_min = (np.nanmin(vi_max) - np.nanmax(vi_senescence)) / (doy_senescence[np.argmax(vi_senescence)] - doy_max[np.argmin(vi_max)])
+                            if np.isnan(paras7_min):
+                                paras7_min = 0.00001
+                            if np.isnan(paras7_max):
+                                paras7_max = 0.01
+                            paras7_max = min(paras7_max, 0.01)
+                            paras7_min = max(paras7_min, 0.00001)
+                            if paras7_max < 0.00001:
+                                paras7_max = 0.01
+                            if paras7_min > 0.01:
+                                paras7_min = 0.00001
+                            if paras1_min > paras[0]:
+                                paras1_min = paras[0] - 0.01
+                            if paras1_max < paras[0]:
+                                paras1_max = paras[0] + 0.01
+                            if paras2_min > paras[1]:
+                                paras2_min = paras[1] - 0.01
+                            if paras2_max < paras[1]:
+                                paras2_max = paras[1] + 0.01
+                            if paras3_min > paras[2]:
+                                paras3_min = paras[2] - 1
+                            if paras3_max < paras[2]:
+                                paras3_max = paras[2] + 1
+                            if paras4_min > paras[3]:
+                                paras4_min = paras[3] - 0.1
+                            if paras4_max < paras[3]:
+                                paras4_max = paras[3] + 0.1
+                            if paras5_min > paras[4]:
+                                paras5_min = paras[4] - 1
+                            if paras5_max < paras[4]:
+                                paras5_max = paras[4] + 1
+                            if paras6_min > paras[5]:
+                                paras6_min = paras[5] - 0.5
+                            if paras6_max < paras[5]:
+                                paras6_max = paras[5] + 0.5
+                            if paras7_min > paras[6]:
+                                paras7_min = paras[6] - 0.00001
+                            if paras7_max < paras[6]:
+                                paras7_max = paras[6] + 0.00001
+                            self._curve_fitting_dic['para_boundary_' + str(y_t) + '_' + str(x_t)] = ([paras1_min, paras2_min, paras3_min, paras4_min, paras5_min, paras6_min, paras7_min], [paras1_max, paras2_max,  paras3_max,  paras4_max,  paras5_max,  paras6_max,  paras7_max])
+                            self._curve_fitting_dic['para_ori_' + str(y_t) + '_' + str(x_t)] = [paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]]
+            np.save(output_path + 'para_boundary.npy', self._curve_fitting_dic)
+        else:
+            self._curve_fitting_dic = np.load(output_path + 'para_boundary.npy', allow_pickle=True).item()
+
+        # Generate the year list
+        if not os.path.exists(output_path + 'annual_cf_para.npy') or not os.path.exists(output_path + 'year.npy'):
+            year_list = np.sort(np.unique(doy_dc // 1000))
+            annual_cf_para_dic = {}
+            for year in year_list:
+                year = int(year)
+                annual_para_dc = np.zeros([self.sa_map.shape[0], self.sa_map.shape[1], self._curve_fitting_dic['para_num'] + 1])
+                annual_vi = index_dc[:, :, np.min(np.argwhere(doy_dc // 1000 == year)): np.max(np.argwhere(doy_dc // 1000 == year)) + 1]
+                annual_doy = doy_dc[np.min(np.argwhere(doy_dc // 1000 == year)): np.max(np.argwhere(doy_dc // 1000 == year)) + 1]
+                annual_doy = np.mod(annual_doy, 1000)
+
+                for y_temp in range(annual_vi.shape[0]):
+                    for x_temp in range(annual_vi.shape[1]):
+                        if self.sa_map[y_temp, x_temp] != -32768:
+                            vi_temp = annual_vi[y_temp, x_temp, :]
+                            nan_index = np.argwhere(np.isnan(vi_temp))
+                            vi_temp = np.delete(vi_temp, nan_index)
+                            doy_temp = np.delete(annual_doy, nan_index)
+                            if np.sum(~np.isnan(vi_temp)) >= self._curve_fitting_dic['para_num']:
+                                try:
+                                    paras, extras = curve_fit(self._curve_fitting_algorithm, doy_temp, vi_temp, maxfev=50000, p0=self._curve_fitting_dic['para_ori_' + str(y_temp) + '_' + str(x_temp)], bounds=self._curve_fitting_dic['para_boundary_' + str(y_temp) + '_' + str(x_temp)])
+                                    predicted_y_data = self._curve_fitting_algorithm(doy_temp, paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6])
+                                    R_square = (1 - np.sum((predicted_y_data - vi_temp) ** 2) / np.sum((vi_temp - np.mean(vi_temp)) ** 2))
+                                    annual_para_dc[y_temp, x_temp, :] = np.append(paras, R_square)
+                                except:
+                                    pass
+                            else:
+                                annual_para_dc[y_temp, x_temp, :] = np.nan
+                        else:
+                            annual_para_dc[y_temp, x_temp, :] = np.nan
+                annual_cf_para_dic[str(year) + '_cf_para'] = annual_para_dc
+            np.save(output_path + 'annual_cf_para.npy', annual_cf_para_dic)
+            np.save(output_path + 'year.npy', year_list)
+        np.save(curfit_output_path + 'Key_dic\\' + self.ROI_name + '_curve_fitting_dic.npy', self._curve_fitting_dic)
+
     # def phenology_metrics_generation(root_path_f, vi, sa, phenology_index=None, curve_fitting_algorithm=None):
     #     # save all phenology metrics into the fundamental dictionary
     #     phenology_index_all = ['annual_ave_VI', 'flood_ave_VI', 'unflood_ave_VI', 'max_VI', 'max_VI_doy', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI']
@@ -4738,14 +4867,14 @@ class Landsat_dcs(object):
     #
     #     # Curve fitting method
     #     all_supported_curve_fitting_method = ['seven_para_logistic', 'two_term_fourier']
-    #     VI_curve_fitting_dic = {}
+    #     self._curve_fitting_dic = {}
     #     if curve_fitting_algorithm is None or curve_fitting_algorithm == 'seven_para_logistic':
-    #         VI_curve_fitting_dic['CFM'] = 'SPL'
-    #         VI_curve_fitting_dic['para_num'] = 7
+    #         self._curve_fitting_dic['CFM'] = 'SPL'
+    #         self._curve_fitting_dic['para_num'] = 7
     #         curve_fitting_algorithm = seven_para_logistic_function
     #     elif curve_fitting_algorithm == 'two_term_fourier':
-    #         VI_curve_fitting_dic['CFM'] = 'TTF'
-    #         VI_curve_fitting_dic['para_num'] = 6
+    #         self._curve_fitting_dic['CFM'] = 'TTF'
+    #         self._curve_fitting_dic['para_num'] = 6
     #         curve_fitting_algorithm = two_term_fourier
     #     elif curve_fitting_algorithm not in all_supported_curve_fitting_method:
     #         print('Please double check the curve fitting method')
@@ -4753,8 +4882,8 @@ class Landsat_dcs(object):
     #
     #     # input the cf dic
     #     cf_inform_dic = np.load(file_filter(root_path_f + 'Landsat_key_dic\\', [str(sa), 'curve_fitting_dic.npy'], and_or_factor='and')[0], allow_pickle=True).item()
-    #     cf_para_dc = np.load(file_filter(cf_inform_dic[str(sa) + '_' + str(vi) + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'], ['annual_cf_para.npy'])[0], allow_pickle=True).item()
-    #     year_list = np.load(file_filter(cf_inform_dic[str(sa) + '_' + str(vi) + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'], ['year.npy'])[0])
+    #     cf_para_dc = np.load(file_filter(cf_inform_dic[str(sa) + '_' + str(vi) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'], ['annual_cf_para.npy'])[0], allow_pickle=True).item()
+    #     year_list = np.load(file_filter(cf_inform_dic[str(sa) + '_' + str(vi) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'], ['year.npy'])[0])
     #
     #     # Create the information dic
     #     if not os.path.exists(root_path_f + 'Landsat_key_dic\\' + sa + '_phenology_metrics.npy'):
@@ -4764,12 +4893,12 @@ class Landsat_dcs(object):
     #
     #     root_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\'
     #     bf.create_folder(root_folder)
-    #     root_output_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '\\'
+    #     root_output_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '\\'
     #     bf.create_folder(root_output_folder)
     #     for phenology_index_indi in phenology_index:
-    #         phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'] = root_output_folder + phenology_index_indi + '\\'
-    #         phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_year'] = year_list
-    #         bf.create_folder(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'])
+    #         phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = root_output_folder + phenology_index_indi + '\\'
+    #         phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_year'] = year_list
+    #         bf.create_folder(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_path'])
     #
     #     # Main procedure
     #     doy_temp = np.linspace(1, 365, 365)
@@ -4784,9 +4913,9 @@ class Landsat_dcs(object):
     #                     if sa_map[y_temp, x_temp] == -32768:
     #                         annual_phe[y_temp, x_temp, :] = np.nan
     #                     else:
-    #                         if VI_curve_fitting_dic['para_num'] == 7:
+    #                         if self._curve_fitting_dic['para_num'] == 7:
     #                             annual_phe[y_temp, x_temp, :] = curve_fitting_algorithm(doy_temp, annual_para[y_temp, x_temp, 0], annual_para[y_temp, x_temp, 1], annual_para[y_temp, x_temp, 2], annual_para[y_temp, x_temp, 3], annual_para[y_temp, x_temp, 4], annual_para[y_temp, x_temp, 5], annual_para[y_temp, x_temp, 6]).reshape([1, 1, 365])
-    #                         elif VI_curve_fitting_dic['para_num'] == 6:
+    #                         elif self._curve_fitting_dic['para_num'] == 6:
     #                             annual_phe[y_temp, x_temp, :] = curve_fitting_algorithm(doy_temp, annual_para[y_temp, x_temp, 0], annual_para[y_temp, x_temp, 1], annual_para[y_temp, x_temp, 2], annual_para[y_temp, x_temp, 3], annual_para[y_temp, x_temp, 4], annual_para[y_temp, x_temp, 5]).reshape([1, 1, 365])
     #             np.save(root_output_folder + str(year) + '_phe_metrics.npy', annual_phe)
     #         else:
@@ -4803,7 +4932,7 @@ class Landsat_dcs(object):
     #                 else:
     #                     break
     #             temp_ds = gdal.Open(file_list)
-    #             if not os.path.exists(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'] + str(year) + '_phe_metrics.TIF'):
+    #             if not os.path.exists(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] + str(year) + '_phe_metrics.TIF'):
     #                 if phenology_index_indi == 'annual_ave_VI':
     #                     phe_metrics = np.mean(annual_phe, axis=2)
     #                 elif phenology_index_indi == 'flood_ave_VI':
@@ -4828,7 +4957,7 @@ class Landsat_dcs(object):
     #                     phe_metrics = np.nanmean(phe_temp, axis=2)
     #                 phe_metrics = phe_metrics.astype(np.float)
     #                 phe_metrics[sa_map == -32768] = np.nan
-    #                 write_raster(temp_ds, phe_metrics, phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_path'], str(year) + '_phe_metrics.TIF', raster_datatype=gdal.GDT_Float32)
+    #                 write_raster(temp_ds, phe_metrics, phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_path'], str(year) + '_phe_metrics.TIF', raster_datatype=gdal.GDT_Float32)
     #     np.save(root_path_f + 'Landsat_key_dic\\' + sa + '_phenology_metrics.npy', phenology_metrics_inform_dic)
     #
     #
@@ -4889,13 +5018,13 @@ class Landsat_dcs(object):
     #
     #     # Curve fitting method
     #     all_supported_curve_fitting_method = ['seven_para_logistic', 'two_term_fourier']
-    #     VI_curve_fitting_dic = {}
+    #     self._curve_fitting_dic = {}
     #     if curve_fitting_algorithm is None or curve_fitting_algorithm == 'seven_para_logistic':
-    #         VI_curve_fitting_dic['CFM'] = 'SPL'
-    #         VI_curve_fitting_dic['para_num'] = 7
+    #         self._curve_fitting_dic['CFM'] = 'SPL'
+    #         self._curve_fitting_dic['para_num'] = 7
     #     elif curve_fitting_algorithm == 'two_term_fourier':
-    #         VI_curve_fitting_dic['CFM'] = 'TTF'
-    #         VI_curve_fitting_dic['para_num'] = 6
+    #         self._curve_fitting_dic['CFM'] = 'TTF'
+    #         self._curve_fitting_dic['para_num'] = 6
     #     elif curve_fitting_algorithm not in all_supported_curve_fitting_method:
     #         print('Please double check the curve fitting method')
     #         sys.exit(-1)
@@ -4903,17 +5032,17 @@ class Landsat_dcs(object):
     #     # Create output folder
     #     root_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\'
     #     bf.create_folder(root_folder)
-    #     root_output_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_veg_variation\\'
+    #     root_output_folder = root_path_f + 'Landsat_' + str(sa) + '_phenology_metrics\\' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_veg_variation\\'
     #     bf.create_folder(root_output_folder)
     #     for phenology_index_indi in phenology_index:
     #         for quantify_st in quantify_strategy:
-    #             phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'] = root_output_folder + phenology_index_indi + '_' + quantify_st + '\\'
-    #             bf.create_folder(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'])
+    #             phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'] = root_output_folder + phenology_index_indi + '_' + quantify_st + '\\'
+    #             bf.create_folder(phenology_metrics_inform_dic[phenology_index_indi + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'])
     #
     #     # Main process
     #     for phenology_index_temp in phenology_index:
-    #         file_path = phenology_metrics_inform_dic[phenology_index_temp + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_path']
-    #         year_list = phenology_metrics_inform_dic[phenology_index_temp + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_year']
+    #         file_path = phenology_metrics_inform_dic[phenology_index_temp + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_path']
+    #         year_list = phenology_metrics_inform_dic[phenology_index_temp + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_year']
     #         year_list = np.sort(np.array(year_list)).tolist()
     #         for year in year_list[1:]:
     #             last_year_ds = gdal.Open(file_filter(file_path, [str(int(year - 1)), '.TIF'], and_or_factor='and')[0])
@@ -4925,7 +5054,7 @@ class Landsat_dcs(object):
     #                     veg_variation_array = (current_year_array - last_year_array) / last_year_array
     #                 elif quantify_st == 'abs_value':
     #                     veg_variation_array = current_year_array - last_year_array
-    #                 write_raster(last_year_ds, veg_variation_array, phenology_metrics_inform_dic[phenology_index_temp + '_' + vi + '_' + str(VI_curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'], str(int(year - 1)) + '_' + str(int(year)) + '_veg_variation.TIF')
+    #                 write_raster(last_year_ds, veg_variation_array, phenology_metrics_inform_dic[phenology_index_temp + '_' + vi + '_' + str(self._curve_fitting_dic['CFM']) + '_' + quantify_st + '_veg_variation_path'], str(int(year - 1)) + '_' + str(int(year)) + '_veg_variation.TIF')
     #     np.save(root_path_f + 'Landsat_key_dic\\' + sa + '_veg_variation.npy', phenology_metrics_inform_dic)
     #
     #
@@ -5004,7 +5133,7 @@ class Landsat_dcs(object):
     #     if not os.path.exists(phenology_year_sa_path + str(VI_factor) + '_pheyear_dc\\pheyear_' + str(VI_factor) + '_sequenced_datacube.npy') or not os.path.exists(phenology_year_sa_path + str(VI_factor) + '_pheyear_dc\\doy.npy'):
     #         year_list = [int(i[i.find('.TIF') - 4: i.find('.TIF')]) for i in file_filter(annual_inundated_path, ['.TIF'])]
     #         phenology_year_dic = {}
-    #         phenology_year_vi_dc = []
+    #         phenology_year_index_dc = []
     #         phenology_year_doy = []
     #         for i in range(1, len(year_list)):
     #             current_year_inundated_temp_ds = gdal.Open(file_filter(annual_inundated_path, ['.TIF', str(year_list[i])], and_or_factor='and')[0])
@@ -5580,17 +5709,18 @@ class Landsat_dcs(object):
 
 
 if __name__ == '__main__':
-    roi_name_list = ['daijiazhou', 'dongcaozhou', 'shanjiazhou', 'xinzhou', 'guniuzhou', 'huojianzhou', 'jinchengzhou', 'guanzhou', 'mayangzhou', 'wuguizhou', 'liutiaozhou', 'tuqizhou']
-    coord_list = ['EPSG:32650', 'EPSG:32650', 'EPSG:32650', 'EPSG:32650', 'EPSG:32650', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649']
+    roi_name_list = ['jinchengzhou', 'daijiazhou', 'dongcaozhou', 'shanjiazhou', 'xinzhou', 'guniuzhou', 'huojianzhou', 'guanzhou', 'mayangzhou', 'wuguizhou', 'liutiaozhou', 'tuqizhou']
+    coord_list = ['EPSG:32649', 'EPSG:32650', 'EPSG:32650', 'EPSG:32650', 'EPSG:32650', 'EPSG:32650', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649']
     # Landsat main v2 test
     sample122124 = Landsat_l2_ds('G:\\Landsat\\Sample122_124039\\Original_zipfile\\')
     sample122124.generate_landsat_metadata(unzipped_para=False)
     # sample122124.sequenced_construct_vi(['OSAVI', 'MNDWI'], cloud_removal_para=True, size_control_factor=True)
     sample122124.mp_construct_vi(['OSAVI', 'MNDWI', 'AWEI'], cloud_removal_para=True, size_control_factor=True)
     for roi, coord_sys in zip(roi_name_list,  coord_list):
-        sample122124.mp_clip_vi(['NIR', 'MIR2'], f'G:\\Landsat\\Jingjiang_shp\\shpfile\\Intersect\\{roi}.shp', main_coordinate_system=coord_sys)
-        # sample122124.to_datacube(['OSAVI', 'MNDWI'], remove_nan_layer=True, inherit_from_logfile=True)
-        # for vi in ['OSAVI', 'MNDWI']:
-        #     dc_temp = Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\{vi}_datacube\\')
-        #     dc_temp.to_sdc()
-
+        sample122124.mp_clip_vi(['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2'], f'G:\\Landsat\\Jingjiang_shp\\shpfile\\Intersect\\{roi}.shp', main_coordinate_system=coord_sys)
+        sample122124.to_datacube(['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2'], remove_nan_layer=True, ROI=f'G:\\Landsat\\Jingjiang_shp\\shpfile\\Intersect\\{roi}.shp', ROI_name=roi)
+        dc_temp_dic = {}
+        for vi in ['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2']:
+            dc_temp_dic[vi] = Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\{vi}_datacube\\').to_sdc(sdc_substitued=True)
+        dcs_temp = Landsat_dcs(dc_temp_dic['OSAVI'], dc_temp_dic['MNDWI'], dc_temp_dic['AWEI'], dc_temp_dic['NIR'], dc_temp_dic['MIR2'])
+        dcs_temp.inundation_detection(['AWEI', 'DSWE', 'DT'], DT_std_fig_construction=True)
