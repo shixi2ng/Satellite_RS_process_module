@@ -4539,6 +4539,66 @@ class Landsat_dcs(object):
                 self.files2sdc(inundated_file_folder, method_temp, self.inun_det_method_dic[method_temp + '_' + self.ROI_name] + 'datacube\\')
                 self.append(Landsat_dc(self.inun_det_method_dic[method_temp + '_' + self.ROI_name] + 'datacube\\', sdc_factor=self.sdc_factor))
 
+    def area_statitics(self, index, expression, **kwargs):
+
+        # Input the selected dc
+        if type(index) == str:
+            if index not in self.index_list:
+                raise ValueError('The index is not input!')
+            else:
+                index = [index]
+        elif type(index) == list:
+            for index_temp in index:
+                if index_temp not in self.index_list:
+                    raise ValueError('The index is not input!')
+        else:
+            raise TypeError('Please input the index as a str or list!')
+
+        # Check the threshold
+        thr = None
+        if type(expression) == str:
+            for symbol_temp in ['gte', 'lte', 'gt', 'lt', 'neq', 'eq']:
+                if expression.startswith('symbol'):
+                    try:
+                        symbol = symbol_temp
+                        thr = float(expression.split('symbol')[-1])
+                    except:
+                        raise Exception('Please input a valid num')
+            if thr is None:
+                raise Exception('Please make sure the expression starts with gte lte gt lt eq neq')
+        else:
+            raise TypeError('Please input the expression as a str!')
+
+        # Define the output path
+        output_path = self.work_env + 'Area_statistics\\'
+        bf.create_folder(output_path)
+
+        for index_temp in index:
+            area_list = []
+            output_path_temp = self.work_env + f'Area_statistics\\{index_temp}\\'
+            bf.create_folder(output_path_temp)
+            index_dc = self.Landsat_dcs[self.index_list.index(index_temp)].dcs
+            for doy_index in range(self.dcs_ZSize):
+                index_doy_temp = index_dc[:,:,doy_index]
+                if symbol_temp == 'gte':
+                    area = np.sum(index_doy_temp[index_doy_temp >= thr])
+                elif symbol_temp == 'lte':
+                    area = np.sum(index_doy_temp[index_doy_temp <= thr])
+                elif symbol_temp == 'lt':
+                    area = np.sum(index_doy_temp[index_doy_temp < thr])
+                elif symbol_temp == 'gt':
+                    area = np.sum(index_doy_temp[index_doy_temp > thr])
+                elif symbol_temp == 'eq':
+                    area = np.sum(index_doy_temp[index_doy_temp == thr])
+                elif symbol_temp == 'neq':
+                    area = np.sum(index_doy_temp[index_doy_temp != thr])
+                else:
+                    raise Exception('Code error!')
+                area_list.append(area * 900)
+
+            area_df = pd.DataFrame({'Doy': self.doy_list, f'Area of {index_temp} {symbol_temp} {str(thr)}': area_list})
+            area_df.to_excel(output_path_temp + f'area_{index_temp}{expression}.xlsx')
+
     def _process_file2sdc_para(self, **kwargs):
         pass
 
