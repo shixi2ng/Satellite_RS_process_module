@@ -4558,10 +4558,10 @@ class Landsat_dcs(object):
         thr = None
         if type(expression) == str:
             for symbol_temp in ['gte', 'lte', 'gt', 'lt', 'neq', 'eq']:
-                if expression.startswith('symbol'):
+                if expression.startswith(symbol_temp):
                     try:
                         symbol = symbol_temp
-                        thr = float(expression.split('symbol')[-1])
+                        thr = float(expression.split(symbol_temp)[-1])
                     except:
                         raise Exception('Please input a valid num')
             if thr is None:
@@ -4577,26 +4577,26 @@ class Landsat_dcs(object):
             area_list = []
             output_path_temp = self.work_env + f'Area_statistics\\{index_temp}\\'
             bf.create_folder(output_path_temp)
-            index_dc = self.Landsat_dcs[self.index_list.index(index_temp)].dcs
+            index_dc = self.Landsat_dcs[self.index_list.index(index_temp)].dc
             for doy_index in range(self.dcs_ZSize):
                 index_doy_temp = index_dc[:,:,doy_index]
-                if symbol_temp == 'gte':
+                if symbol == 'gte':
                     area = np.sum(index_doy_temp[index_doy_temp >= thr])
-                elif symbol_temp == 'lte':
+                elif symbol == 'lte':
                     area = np.sum(index_doy_temp[index_doy_temp <= thr])
-                elif symbol_temp == 'lt':
+                elif symbol == 'lt':
                     area = np.sum(index_doy_temp[index_doy_temp < thr])
-                elif symbol_temp == 'gt':
+                elif symbol == 'gt':
                     area = np.sum(index_doy_temp[index_doy_temp > thr])
-                elif symbol_temp == 'eq':
+                elif symbol == 'eq':
                     area = np.sum(index_doy_temp[index_doy_temp == thr])
-                elif symbol_temp == 'neq':
+                elif symbol == 'neq':
                     area = np.sum(index_doy_temp[index_doy_temp != thr])
                 else:
                     raise Exception('Code error!')
                 area_list.append(area * 900)
 
-            area_df = pd.DataFrame({'Doy': self.doy_list, f'Area of {index_temp} {symbol_temp} {str(thr)}': area_list})
+            area_df = pd.DataFrame({'Doy': self.doy_list, f'Area of {index_temp} {symbol} {str(thr)}': area_list})
             area_df.to_excel(output_path_temp + f'area_{index_temp}{expression}.xlsx')
 
     def _process_file2sdc_para(self, **kwargs):
@@ -5826,26 +5826,26 @@ class Landsat_dcs(object):
 
 
 if __name__ == '__main__':
-    roi_name_list = ['baishazhou', 'zhongzhou', 'nanmenzhou', 'nanyangzhou', 'tuanzhou']
-    coord_list = ['EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649']
-    # Landsat main v2 test
-    sample122124 = Landsat_l2_ds('G:\\Landsat\\Sample123039\\Original_zipfiles\\')
-    sample122124.generate_landsat_metadata(unzipped_para=False)
-    # sample122124.sequenced_construct_vi(['OSAVI', 'MNDWI'], cloud_removal_para=True, size_control_factor=True)
-    sample122124.mp_construct_vi(['OSAVI', 'MNDWI', 'AWEI'], cloud_removal_para=True, size_control_factor=True)
-    for roi, coord_sys in zip(roi_name_list,  coord_list):
-        sample122124.mp_clip_vi(['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2'], f'G:\\Landsat\\Jingjiang_shp\\shpfile_123\\Intersect\\{roi}.shp', main_coordinate_system=coord_sys)
-        sample122124.to_datacube(['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2'], remove_nan_layer=True, ROI=f'G:\\Landsat\\Jingjiang_shp\\shpfile_123\\Intersect\\{roi}.shp', ROI_name=roi)
-        dc_temp_dic = {}
-        for vi in ['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2']:
-            dc_temp_dic[vi] = Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\{vi}_datacube\\').to_sdc(sdc_substitued=True)
-        dcs_temp = Landsat_dcs(dc_temp_dic['OSAVI'], dc_temp_dic['MNDWI'], dc_temp_dic['AWEI'], dc_temp_dic['NIR'], dc_temp_dic['MIR2'])
-        dcs_temp.inundation_detection(['AWEI', 'DSWE', 'DT'], DT_std_fig_construction=False, construct_inundated_dc=True)
-        dcs_temp.NIPY_VI_reconstruction('OSAVI', 'DT', add_NIPY_dc=False)
-        NIPY_dcs_temp = Landsat_dcs(Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\OSAVI_NIPY_DT_sequenced_datacube\\'))
-        NIPY_dcs_temp.curve_fitting('OSAVI_NIPY')
-        NIPY_dcs_temp.phenology_metrics_generation('OSAVI_NIPY', ['max_VI', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'])
-        NIPY_dcs_temp.quantify_vegetation_variation('OSAVI_NIPY', ['max_VI', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'])
+    # roi_name_list = ['baishazhou', 'zhongzhou', 'nanmenzhou', 'nanyangzhou', 'tuanzhou']
+    # coord_list = ['EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649']
+    # # Landsat main v2 test
+    # sample122124 = Landsat_l2_ds('G:\\Landsat\\Sample123039\\Original_zipfiles\\')
+    # sample122124.generate_landsat_metadata(unzipped_para=False)
+    # # sample122124.sequenced_construct_vi(['OSAVI', 'MNDWI'], cloud_removal_para=True, size_control_factor=True)
+    # sample122124.mp_construct_vi(['OSAVI', 'MNDWI', 'AWEI'], cloud_removal_para=True, size_control_factor=True)
+    # for roi, coord_sys in zip(roi_name_list,  coord_list):
+    #     sample122124.mp_clip_vi(['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2'], f'G:\\Landsat\\Jingjiang_shp\\shpfile_123\\Intersect\\{roi}.shp', main_coordinate_system=coord_sys)
+    #     sample122124.to_datacube(['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2'], remove_nan_layer=True, ROI=f'G:\\Landsat\\Jingjiang_shp\\shpfile_123\\Intersect\\{roi}.shp', ROI_name=roi)
+    #     dc_temp_dic = {}
+    #     for vi in ['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2']:
+    #         dc_temp_dic[vi] = Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\{vi}_datacube\\').to_sdc(sdc_substitued=True)
+    #     dcs_temp = Landsat_dcs(dc_temp_dic['OSAVI'], dc_temp_dic['MNDWI'], dc_temp_dic['AWEI'], dc_temp_dic['NIR'], dc_temp_dic['MIR2'])
+    #     dcs_temp.inundation_detection(['AWEI', 'DSWE', 'DT'], DT_std_fig_construction=False, construct_inundated_dc=True)
+    #     dcs_temp.NIPY_VI_reconstruction('OSAVI', 'DT', add_NIPY_dc=False)
+    #     NIPY_dcs_temp = Landsat_dcs(Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\OSAVI_NIPY_DT_sequenced_datacube\\'))
+    #     NIPY_dcs_temp.curve_fitting('OSAVI_NIPY')
+    #     NIPY_dcs_temp.phenology_metrics_generation('OSAVI_NIPY', ['max_VI', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'])
+    #     NIPY_dcs_temp.quantify_vegetation_variation('OSAVI_NIPY', ['max_VI', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'])
 
     roi_name_list = ['jinchengzhou', 'daijiazhou', 'dongcaozhou', 'shanjiazhou', 'xinzhou', 'guniuzhou', 'huojianzhou', 'guanzhou', 'mayangzhou', 'wuguizhou', 'liutiaozhou', 'tuqizhou']
     coord_list = ['EPSG:32649', 'EPSG:32650', 'EPSG:32650', 'EPSG:32650', 'EPSG:32650', 'EPSG:32650', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649', 'EPSG:32649']
@@ -5862,9 +5862,9 @@ if __name__ == '__main__':
             dc_temp_dic[vi] = Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\{vi}_datacube\\').to_sdc(sdc_substitued=True)
         dcs_temp = Landsat_dcs(dc_temp_dic['OSAVI'], dc_temp_dic['MNDWI'], dc_temp_dic['AWEI'], dc_temp_dic['NIR'], dc_temp_dic['MIR2'])
         dcs_temp.inundation_detection(['AWEI', 'DSWE', 'DT'], DT_std_fig_construction=False, construct_inundated_dc=True)
-        dcs_temp.NIPY_VI_reconstruction('OSAVI', 'DT', add_NIPY_dc=False)
-        NIPY_dcs_temp = Landsat_dcs(Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\OSAVI_NIPY_DT_sequenced_datacube\\'))
-        NIPY_dcs_temp.curve_fitting('OSAVI_NIPY')
-        NIPY_dcs_temp.phenology_metrics_generation('OSAVI_NIPY', ['max_VI', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'])
-        NIPY_dcs_temp.quantify_vegetation_variation('OSAVI_NIPY', ['max_VI', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'])
-
+        dcs_temp.area_statitics(['AWEI'], 'gt0')
+        # dcs_temp.NIPY_VI_reconstruction('OSAVI', 'DT', add_NIPY_dc=False)
+        # NIPY_dcs_temp = Landsat_dcs(Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\OSAVI_NIPY_DT_sequenced_datacube\\'))
+        # NIPY_dcs_temp.curve_fitting('OSAVI_NIPY')
+        # NIPY_dcs_temp.phenology_metrics_generation('OSAVI_NIPY', ['max_VI', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'])
+        # NIPY_dcs_temp.quantify_vegetation_variation('OSAVI_NIPY', ['max_VI', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI'])
