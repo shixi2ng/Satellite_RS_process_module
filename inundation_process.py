@@ -1,10 +1,63 @@
 import numpy as np
 import Landsat_main_v1
+import gdal
+import scipy.stats as stats
+import pandas as pd
+
+
+a = pd.read_excel('E:\A_Vegetation_Identification\\ks.xlsx')
+stats.ks_2samp(a[2002][31:], a[2016][31:])
+print(stats.ks_2samp(a['2002_28'], a['2016_28']))
 
 # starting time
 import datetime
 # now = datetime.datetime.now()
 # print( now.strftime('%Y-%m-%d %H:%M:%S')  )
+#
+#
+# folder_gsw = 'G:\Landsat\Inundation\GSW\\'
+# folder_roi = 'G:\Landsat\Jingjiang_shp\shpfile\Intersect\\'
+# gdal.Warp('G:\Landsat\Inundation\\20130708.TIF', folder_gsw+'water_2013_07.tif', cutlineDSName=folder_roi+'dongcaozhou.shp',
+#                                           cropToCutline=True, dstSRS='EPSG:32650', xRes=30, yRes=30)
+# gdal.Warp('G:\Landsat\Inundation\\20190802.TIF', folder_gsw+'water_2019_08.tif',cutlineDSName=folder_roi+'dongcaozhou.shp',
+#                                           cropToCutline=True, dstSRS='EPSG:32650', xRes=30, yRes=30)
+# gdal.Warp('G:\Landsat\Inundation\\20121001.TIF', folder_gsw+'water_2012_09.tif',cutlineDSName=folder_roi+'guniuzhou.shp',
+#                                           cropToCutline=True, dstSRS='EPSG:32650', xRes=30, yRes=30)
+# gdal.Warp('G:\Landsat\Inundation\\20170828.TIF', folder_gsw+'water_2017_08.tif',cutlineDSName=folder_roi+'shanjiazhou.shp',
+#                                           cropToCutline=True, dstSRS='EPSG:32650', xRes=30, yRes=30)
+# gdal.Warp('G:\Landsat\Inundation\\20200816_water.TIF', 'E:\A_Vegetation_Identification\Wuhan_Landsat_Original\Sample_123039\Google_Earth_Sample\\nmz\output\\20200816_water.TIF',cutlineDSName= 'E:\A_Vegetation_Identification\Wuhan_Landsat_Original\Sample_123039\study_area_shapefile\\nmz.shp',
+#                                           cropToCutline=True, dstSRS='EPSG:32649', xRes=30, yRes=30)
+# gdal.Warp('G:\Landsat\Inundation\\20200816_all.TIF', 'E:\A_Vegetation_Identification\Wuhan_Landsat_Original\Sample_123039\Google_Earth_Sample\\nmz\output\\20200816_all.TIF',cutlineDSName= 'E:\A_Vegetation_Identification\Wuhan_Landsat_Original\Sample_123039\study_area_shapefile\\nmz.shp',
+#                                           cropToCutline=True, dstSRS='EPSG:32649', xRes=30, yRes=30)
+
+
+gdal.Warp('G:\Landsat\Inundation\GSW\\water_2020_082.tif', 'G:\Landsat\Inundation\GSW\\water_2020_08.tif', cutlineDSName='G:\Landsat\Inundation\shp\\nmz.shp', cropToCutline=True, dstSRS='EPSG:32649', xRes=30, yRes=30)
+
+sample_2013_ds = gdal.Open('G:\Landsat\Inundation\dongcaozhou\output\\20130710.TIF')
+sample_2019_ds = gdal.Open('G:\Landsat\Inundation\dongcaozhou\output\\20190804.TIF')
+sample_2012_ds = gdal.Open('G:\Landsat\Inundation\guniuzhou\output\\20120915.TIF')
+sample_2017_ds = gdal.Open('G:\Landsat\Inundation\shanjiazhou\output\\20170828.TIF')
+sample_2020_ds = gdal.Open('G:\Landsat\Inundation\dongcaozhou\output\\20190804.TIF')
+
+gsw_2013_ds = gdal.Open('G:\Landsat\Inundation\\20130708.TIF')
+gsw_2019_ds = gdal.Open('G:\Landsat\Inundation\\20190802.TIF')
+gsw_2012_ds = gdal.Open('G:\Landsat\Inundation\\20121001.TIF')
+gsw_2017_ds = gdal.Open('G:\Landsat\Inundation\\20170828.TIF')
+gsw_2020_ds = gdal.Open('G:\Landsat\Inundation\\20190802.TIF')
+
+sample_water = gdal.Open('G:\Landsat\Inundation\\20200816_water1.TIF')
+sample_all = gdal.Open('G:\Landsat\Inundation\\20200816_all1.TIF')
+sample_all_raster = sample_all.GetRasterBand(1).ReadAsArray()
+sample_water_raster = sample_water.GetRasterBand(1).ReadAsArray()
+
+sample_all_raster[sample_all_raster == 1] = -2
+sample_all_raster[np.logical_and(sample_water_raster == 0, sample_all_raster != -2)] = 1
+
+landsat_temp_ds = gdal.Open('G:\Landsat\Inundation\\water_2020_081.TIF')
+landsat_temp_raster = landsat_temp_ds.GetRasterBand(1).ReadAsArray()
+landsat_temp_raster [landsat_temp_raster == 1] = 0
+landsat_temp_raster [landsat_temp_raster == 2] = 1
+confusion_matrix_temp = Landsat_main_v1.confusion_matrix_2_raster(landsat_temp_raster, sample_all_raster, nan_value=-2)
 
 np.seterr(divide='ignore', invalid='ignore')
 

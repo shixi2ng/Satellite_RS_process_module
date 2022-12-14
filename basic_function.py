@@ -7,19 +7,23 @@ from osgeo import gdal_array, osr
 import shutil
 import geopandas as gp
 
+
 class Path(object):
     def __init__(self, file_path):
         """
 
         :type file_path: str
         """
+        if type(file_path) is not str:
+            raise TypeError(f'The input file path {file_path} is not a string')
+
         self.path_type = None
         self.path_extension = None
+
         if os.path.exists(file_path):
             self.path_name = file_path
         else:
-            print('Invalid filepath founded!')
-            sys.exit(-1)
+            raise ValueError(f'Invalid filepath {file_path}!')
 
         if os.path.isdir(self.path_name):
             if not self.path_name.endswith('\\'):
@@ -295,7 +299,7 @@ def create_folder(path_name, print_existence=False):
             os.makedirs(path_name)
         except:
             print('Something went wrong during creating new folder')
-            sys.exit(-1)
+            return
     else:
         if print_existence:
             print('Folder already exist  (' + path_name + ')')

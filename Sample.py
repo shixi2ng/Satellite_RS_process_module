@@ -1,38 +1,21 @@
 import gdal
-from osgeo import gdal_array, osr
-import sys
-import collections
-import pandas
 import numpy as np
-import matplotlib.pyplot as plt
-import os
-import zipfile
-import tarfile
-import shutil
-import datetime
-from datetime import date
-import rasterio
-import math
-import copy
-import seaborn as sns
-from scipy.optimize import curve_fit
-from scipy.signal import convolve2d
-import time
-from itertools import chain
-from collections import Counter
-import glob
-import cv2
-from win32.lib import win32con
-import win32api, win32gui, win32print
-from sklearn.metrics import confusion_matrix
-import pyqtgraph as pg
-import pyqtgraph.exporters
-from pyqtgraph.Qt import QtGui, QtCore
-import PyQt5
 import Landsat_main_v1
 import floodplain_geomorph as fg
 gdal.UseExceptions()
 np.seterr(divide='ignore', invalid='ignore')
+
+
+# test_path = 'E:\\A_Vegetation_Identification\\Wuhan_Landsat_Original\\Sample_123039\\Landsat_Ori_TIFF\\'
+# all_tif = Landsat_main_v1.file_filter(test_path, containing_word_list=['.TIF'])
+# while True:
+#     for i in all_tif:
+#         try:
+#             a = gdal.Open(i)
+#             b = a.GetRasterBand(1).ReadAsArray()
+#             a = None
+#         except:
+#             pass
 
 
 ###                Section User defined                      ###
@@ -49,8 +32,7 @@ unzipped_file_path = root_path + 'Landsat_Ori_TIFF\\'
 unzipped_indicator = True
 # 研究区域的基本信息
 # 每一行第一个单引号内的为研究区域的shp文件， 第二个单引号内为研究区域的名字 第三列为原始淹没tif数据路径 第四列为shp输出路径
-study_area_list = np.array([['E:\\DEMO\\studyarea_shpfile\\NYZ.shp', 'NYZ', 'E:\\A_Vegetation_Identification\\Inundation_condition\\studyarea_global\\Individual_tif\\', 'E:\\A_Vegetation_Identification\\Inundation_condition\\studyarea_global\\'],
-                            ['E:\\DEMO\\studyarea_shpfile\\NYZ.shp', 'NYZ', 'E:\\A_Vegetation_Identification\\z_test\\ori_inundated\\']])
+study_area_list = np.array([['E:\\DEMO\\studyarea_shpfile\\NYZ.shp', 'NYZ', 'E:\\A_Vegetation_Identification\\Inundation_condition\\studyarea_global\\Individual_tif\\', 'E:\\A_Vegetation_Identification\\Inundation_condition\\studyarea_global\\']])
 # 需要构建的指数(可以填写 'NDVI', 'OSAVI', 'MNDWI', 'EVI', 'FVC'; 可以选择多个)
 constructed_VI = ['MNDWI']
 # global方法提取水体 (四个数分别对应我给你门的公式里的四个阈值)
@@ -61,11 +43,15 @@ defined_coordinate_system = 'EPSG:32649'
 # 矢量化参数
 land_indicator = 0
 nanvalue_indicator = -2
-curve_smooth_method = ['Chaikin', 'Simplify', 'Buffer']
+curve_smooth_method = ['Chaikin', 'Simplify', 'Buffer', 'Original']
 c_itr = 4
 simplify_t = 30
 buffer_size = 60
-
+z_test = 'E:\\A_Vegetation_Identification\\z_test\\individual_tif\\'
+fg.generate_floodplain_boundary(z_test, 'E:\\A_Vegetation_Identification\\z_test\\', land_indicator, 1, nanvalue_indicator,
+                                'NYZ', implement_sole_array=True, indi_pixel_num_threshold=1, extract_method='area_threshold',
+                                overwritten_factor=True, curve_smooth_method=curve_smooth_method,
+                                Chaikin_itr=c_itr, simplify_tolerance=simplify_t, buffer_size=buffer_size, fix_sliver_para=True, sliver_max_size=100)
 
 ###                     Main Process                         ###
 ################################################################
@@ -87,6 +73,3 @@ for seq in range(study_area_list.shape[0]):
                                                  ROI_mask_f=study_area_list[seq, 0],
                                                  global_local_factor=waterbody_extraction_method,
                                                  global_threshold=global_thr)
-    fg.generate_floodplain_boundary(study_area_list[seq, 2], study_area_list[seq, 3], land_indicator, nanvalue_indicator, study_area_list[seq, 1], implement_sole_array=True,
-                                extract_max_area=True, overwritten_factor=True, curve_smooth_method=curve_smooth_method,
-                                Chaikin_itr=c_itr, simplify_tolerance=simplify_t, buffer_size=buffer_size)

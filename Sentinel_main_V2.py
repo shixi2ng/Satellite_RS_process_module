@@ -20,8 +20,8 @@ import seaborn as sns
 from scipy.optimize import curve_fit
 import time
 from scipy import ndimage
-from Basic_function import Path
-import Basic_function as bf
+from basic_function import Path
+import basic_function as bf
 from functools import wraps
 import concurrent.futures
 from itertools import repeat
@@ -185,10 +185,6 @@ def qi_remove_cloud(processed_filepath, qi_filepath, dst_nodata=0, **kwargs):
 class Sentinel2_ds(object):
 
     def __init__(self, ori_zipfile_folder, work_env=None):
-        """
-
-
-        """
         # Define var
         self.S2_metadata = None
         self.subset_failure_file = []

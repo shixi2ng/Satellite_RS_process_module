@@ -20,8 +20,8 @@ import seaborn as sns
 from scipy.optimize import curve_fit
 import time
 from scipy import ndimage
-from Basic_function import Path
-import Basic_function as bf
+from basic_function import Path
+import basic_function as bf
 from functools import wraps
 import concurrent.futures
 from itertools import repeat
@@ -53,7 +53,7 @@ def get_tiffile_nodata(tif_file: str) -> int:
         sys.exit(-1)
 
 
-def check_kwargs(kwargs_dic, key_list, func_name=None):
+def check_kwargs(kwargs_dic, key_list, func_name=None) -> None:
     for key_temp in key_list:
         if key_temp not in kwargs_dic.keys():
             if func_name is not None:
@@ -64,7 +64,7 @@ def check_kwargs(kwargs_dic, key_list, func_name=None):
                 sys.exit(-1)
 
 
-def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=None, nodatavalue=None):
+def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=None, nodatavalue=None) -> None:
     if raster_datatype is None and nodatavalue is None:
         raster_datatype = gdal.GDT_Float32
         nodatavalue = np.nan
@@ -98,11 +98,10 @@ def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=No
     outds = None
 
 
-def union_list(small_list, big_list):
+def union_list(small_list, big_list) -> list:
     union_list_temp = []
     if type(small_list) != list or type(big_list) != list:
-        print('Please input valid lists')
-        sys.exit(-1)
+        raise TypeError('Please input list for union list')
 
     for i in small_list:
         if i not in big_list:
@@ -117,8 +116,7 @@ def qi_remove_cloud(processed_filepath, qi_filepath, dst_nodata=0, **kwargs):
     if kwargs['cloud_removal_strategy'] == 'QI_all_cloud':
         cloud_indicator = [1, 2, 3, 8, 9, 10, 11]
     else:
-        print('Cloud removal strategy is not supported!')
-        sys.exit(-1)
+        raise ValueError(f'The input Cloud removal strategy is not supported!')
 
     ### Due to the resample issue the sparse matrix is not appicable
     # if 'sparse_matrix_factor' in kwargs.keys():
@@ -134,8 +132,7 @@ def qi_remove_cloud(processed_filepath, qi_filepath, dst_nodata=0, **kwargs):
             cloud_clip_seq = False
         else:
             cloud_clip_seq = False
-            print('Cloud clip sequence para need to input the specific process!')
-            sys.exit(-1)
+            raise ValueError(f'The input Cloud clip sequence para is not supported!')
     else:
         cloud_clip_seq = False
 
@@ -173,8 +170,7 @@ def qi_remove_cloud(processed_filepath, qi_filepath, dst_nodata=0, **kwargs):
     processed_array = processed_ds.GetRasterBand(1).ReadAsArray()
 
     if qi_array.shape[0] != processed_array.shape[0] or qi_array.shape[1] != processed_array.shape[1]:
-        print('Consistency error')
-        sys.exit(-1)
+        raise Exception('Consistency error!')
 
     for indicator in cloud_indicator:
         qi_array[qi_array == indicator] = 64
@@ -226,8 +222,10 @@ class Sentinel2_ds(object):
         self.ROI = None
         self.ROI_name = None
         self.ori_folder = Path(ori_zipfile_folder).path_name
+        self.orifile_list = None
         self.S2_metadata_size = np.nan
         self.date_list = []
+        self.corrupted_file_list = []
 
         # Define key variables for subset (kwargs)
         self.size_control_factor = False
@@ -247,14 +245,6 @@ class Sentinel2_ds(object):
         dup_data = bf.file_filter(self.ori_folder, ['.1.zip'])
         for dup in dup_data:
             os.remove(dup)
-
-        # Generate the original zip file list
-        self.orifile_list = bf.file_filter(self.ori_folder, ['.zip', 'S2'], and_or_factor='and',
-                                           subfolder_detection=True)
-        self.orifile_list = [i for i in self.orifile_list if 'S2' in i.split('\\')[-1] and '.zip' in i.split('\\')[-1]]
-        if not self.orifile_list:
-            print('There has no Sentinel zipfiles in the input dir')
-            sys.exit(-1)
 
         # Initialise the work environment
         if work_env is None:
@@ -339,75 +329,105 @@ class Sentinel2_ds(object):
             log_temp.extend(args_list)
             log_temp.extend(kwargs_list)
             log_file.writelines(log_temp)
-            for func_key, func_processing_name in zip(['metadata', 'subset'], ['constructing metadata', 'executing subset']):
+            for func_key, func_processing_name in zip(['metadata', 'subset', 'merge'], ['constructing metadata', 'executing subset', 'executing merge']):
                 if func_key in func.__name__:
                     if error_inf is None:
                         log_file.writelines([f'Status: Finished {func_processing_name}!\n', '#' * 70 + '\n'])
+                        metadata_line = [q for q in contain_func if func_key in q]
+                        if len(metadata_line) == 0:
+                            para_file.writelines(para_temp)
+                            para_file.close()
+                        elif len(metadata_line) == 1:
+                            for para_ori_temp in para_ori_txt:
+                                if para_ori_temp != '' and metadata_line[0] not in para_ori_temp:
+                                    para_temp.extend(['#' * 70 + '\n', para_ori_temp, '#' * 70 + '\n'])
+                                    para_file.close()
+                                    para_file = open(f"{self.log_filepath}para_file.txt", "w+")
+                                    para_file.writelines(para_temp)
+                                    para_file.close()
+                        elif len(metadata_line) > 1:
+                            print('Code error! ')
+                            sys.exit(-1)
                     else:
                         log_file.writelines([f'Status: Error in {func_processing_name}!\n', 'Error information:\n', error_inf + '\n', '#' * 70 + '\n'])
-
-                    metadata_line = [q for q in contain_func if func_key in q]
-                    if len(metadata_line) == 0:
-                        para_file.writelines(para_temp)
-                        para_file.close()
-                    elif len(metadata_line) == 1:
-                        for para_ori_temp in para_ori_txt:
-                            if para_ori_temp != '' and metadata_line[0] not in para_ori_temp:
-                                para_temp.extend(['#' * 70 + '\n', para_ori_temp, '#' * 70 + '\n'])
-                                para_file.close()
-                                para_file = open(f"{self.log_filepath}para_file.txt", "w+")
-                                para_file.writelines(para_temp)
-                                para_file.close()
-                    elif len(metadata_line) > 1:
-                        print('Code error! ')
-                        sys.exit(-1)
         return wrapper
 
     @save_log_file
     def construct_metadata(self):
         print('---------------------------- Start the construction of Metadata ----------------------------')
         start_temp = time.time()
-        # Input the file and generate the metadata
+
+        # Read the ori S2 zip file
+        self.orifile_list = bf.file_filter(self.ori_folder, ['.zip', 'S2'], and_or_factor='and', subfolder_detection=True)
+        self.orifile_list = [i for i in self.orifile_list if 'S2' in i.split('\\')[-1] and '.zip' in i.split('\\')[-1]]
+        if not self.orifile_list:
+            raise ValueError('There has no valid Sentinel-2 zip files in the input folder')
+
+        # Read the corrupted S2 zip file
+        corrupted_file_folder = os.path.join(self.work_env, 'Corrupted_S2_file\\')
+        bf.create_folder(corrupted_file_folder)
+        corrupted_file_list = bf.file_filter(corrupted_file_folder, ['.zip', 'S2'], and_or_factor='and', subfolder_detection=True)
+        corrupted_file_list = [i for i in corrupted_file_list if 'S2' in i.split('\\')[-1] and '.zip' in i.split('\\')[-1]]
+
+        # Get the detail of current metadata file
         if os.path.exists(self.work_env + 'Metadata.xlsx'):
             metadata_num = pd.read_excel(self.work_env + 'Metadata.xlsx').shape[0]
         else:
             metadata_num = 0
 
-        if not os.path.exists(self.work_env + 'Metadata.xlsx') or metadata_num != len(self.orifile_list):
-            corrupted_ori_file, corrupted_file_date, product_path, product_name, sensor_type, sensing_date, orbit_num, tile_num, width, height = (
-                [] for i in range(10))
-            corrupted_factor = 0
+        # Get the detail of current corrupted metadata file
+        if os.path.exists(self.work_env + 'Corrupted_metadata.xlsx'):
+            corrupted_metadata_num = pd.read_excel(self.work_env + 'Corrupted_metadata.xlsx').shape[0]
+        else:
+            corrupted_metadata_num = 0
+
+        ### Two possible conditions:
+        # 1) The metadata is not generated when the DS is constructed for the first time.
+        # 2) The metadata is not consistent with the real files since corrupted files may be found during the subset.
+        #
+
+        if not os.path.exists(self.work_env + 'Metadata.xlsx') or not os.path.exists(self.work_env + 'Corrupted_metadata.xlsx'):
+            unzip_check_para = True
+            update_factor = True
+        elif metadata_num != len(self.orifile_list) or corrupted_metadata_num != len(corrupted_file_list):
+            unzip_check_para = False
+            update_factor = True
+        else:
+            update_factor = False
+
+        if update_factor:
+            corrupted_ori_file, corrupted_file_date, product_path, product_name, sensor_type, sensing_date, orbit_num, tile_num, width, height = ([] for i in range(10))
             for ori_file in self.orifile_list:
-                try:
-                    unzip_file = zipfile.ZipFile(ori_file)
-                    unzip_file.close()
-                    file_name = ori_file.split('\\')[-1]
-                    product_path.append(ori_file)
-                    sensing_date.append(file_name[file_name.find('_20') + 1: file_name.find('_20') + 9])
-                    orbit_num.append(file_name[file_name.find('_R') + 2: file_name.find('_R') + 5])
-                    tile_num.append(file_name[file_name.find('_T') + 2: file_name.find('_T') + 7])
-                    sensor_type.append(file_name[file_name.find('S2'): file_name.find('S2') + 10])
-                    # print(file_information)
-                except:
-                    if (not os.path.exists(self.work_env + 'Corrupted_S2_file')) and corrupted_factor == 0:
-                        os.makedirs(self.work_env + 'Corrupted_S2_file')
-                        corrupted_factor = 1
-                    print(f'This file is corrupted {ori_file}!')
-                    file_name = ori_file.split('\\')[-1]
-                    corrupted_ori_file.append(file_name)
+                if os.path.join(corrupted_file_folder, ori_file.split('\\')[-1]) in corrupted_file_list:
+                    try:
+                        os.remove(ori_file)
+                    except:
+                        pass
+                else:
+                    try:
+                        if unzip_check_para:
+                            unzip_file = zipfile.ZipFile(ori_file)
+                            unzip_file.close()
+                        file_name = ori_file.split('\\')[-1]
+                        product_path.append(ori_file)
+                        sensing_date.append(file_name[file_name.find('_20') + 1: file_name.find('_20') + 9])
+                        orbit_num.append(file_name[file_name.find('_R') + 2: file_name.find('_R') + 5])
+                        tile_num.append(file_name[file_name.find('_T') + 2: file_name.find('_T') + 7])
+                        sensor_type.append(file_name[file_name.find('S2'): file_name.find('S2') + 10])
+                        # print(file_information)
+                    except:
+                        file_name = ori_file.split('\\')[-1].split('.zip')[0]
+                        corrupted_ori_file.append(file_name)
+                        corrupted_file_date.append(file_name[file_name.find('_20') + 1: file_name.find('_20') + 9])
+                        os.rename(ori_file, self.work_env + 'Corrupted_S2_file\\' + file_name)
 
-                    corrupted_file_date.append(file_name[file_name.find('_20') + 1: file_name.find('_20') + 9])
-                    shutil.move(ori_file, self.work_env + 'Corrupted_S2_file\\' + file_name)
+            for corrupted_file in corrupted_file_list:
+                file_name = corrupted_file.split('\\')[-1].split('.zip')[0]
+                corrupted_ori_file.append(file_name)
+                corrupted_file_date.append(file_name[file_name.find('_20') + 1: file_name.find('_20') + 9])
 
-            Corrupted_metadata = pd.DataFrame(
-                {'Corrupted_file_name': corrupted_ori_file, 'File_Date': corrupted_file_date})
-            if not os.path.exists(self.work_env + 'Corrupted_metadata.xlsx'):
-                Corrupted_metadata.to_excel(self.work_env + 'Corrupted_metadata.xlsx')
-            else:
-                Corrupted_metadata_old_version = pd.read_excel(self.work_env + 'Corrupted_metadata.xlsx')
-                Corrupted_metadata_old_version.append(Corrupted_metadata, ignore_index=True)
-                Corrupted_metadata_old_version.drop_duplicates()
-                Corrupted_metadata_old_version.to_excel(self.work_env + 'Corrupted_metadata.xlsx')
+            Corrupted_metadata = pd.DataFrame({'Corrupted_file_name': corrupted_ori_file, 'File_Date': corrupted_file_date})
+            Corrupted_metadata.to_excel(self.work_env + 'Corrupted_metadata.xlsx')
 
             self.S2_metadata = pd.DataFrame(
                 {'Product_Path': product_path, 'Sensing_Date': sensing_date, 'Orbit_Num': orbit_num,
@@ -423,6 +443,28 @@ class Sentinel2_ds(object):
         self.date_list = self.S2_metadata['Sensing_Date'].drop_duplicates().sort_values().tolist()
         print(f'Finish in {str(time.time() - start_temp)} sec!')
         print('----------------------------  End the construction of Metadata  ----------------------------')
+
+    def process_corrupted_files(self, corrupted_file_list):
+        if type(corrupted_file_list) != list:
+            raise TypeError('argument 0 should be a list')
+
+        for corrupted_file in corrupted_file_list:
+            if os.path.exists(corrupted_file) and self.ori_folder in corrupted_file:
+                bf.create_folder(os.path.join(self.work_env, 'Corrupted_S2_file\\'))
+                if os.path.exists(os.path.join(self.work_env, 'Corrupted_S2_file\\' + os.path.basename(corrupted_file))):
+                    os.remove(corrupted_file)
+                else:
+                    try:
+                        os.rename(corrupted_file, os.path.join(self.work_env, 'Corrupted_S2_file\\' + os.path.basename(corrupted_file)))
+                    except:
+                        try:
+                            shutil.copyfile(corrupted_file, os.path.join(self.work_env, 'Corrupted_S2_file\\' + os.path.basename(corrupted_file)))
+                        except:
+                            zip1 = zipfile.ZipFile(os.path.join(self.work_env, 'Corrupted_S2_file\\' + os.path.basename(corrupted_file)), 'w')
+                            zip1.close()
+            else:
+                raise ValueError('Please input an existing corrupted file!')
+        self.construct_metadata()
 
     def check_metadata_availability(self):
         # Check metadata availability
@@ -441,8 +483,7 @@ class Sentinel2_ds(object):
 
         # Factor configuration
         if True in [band_temp not in self.band_output_list for band_temp in band_name]:
-            print(f'Band {band_name} is not valid!')
-            sys.exit(-1)
+            raise ValueError(f'Band {band_name} is not valid!')
 
         if self.vi_clip_factor:
             output_path = f'{self.output_path}{self.ROI_name}_all_band\\'
@@ -480,6 +521,7 @@ class Sentinel2_ds(object):
         # mp process
         with concurrent.futures.ProcessPoolExecutor() as executor:
             executor.map(self.subset_tiffiles, repeat(args[0]), i, repeat(False), repeat(kwargs))
+        self.process_corrupted_files(self.corrupted_file_list)
 
     @save_log_file
     def sequenced_subset(self, *args, **kwargs):
@@ -489,8 +531,9 @@ class Sentinel2_ds(object):
         # sequenced process
         for i in range(self.S2_metadata.shape[0]):
             self.subset_tiffiles(args[0], i, **kwargs)
+        self.process_corrupted_files(self.corrupted_file_list)
 
-    def subset_indicator_process(self, **kwargs):
+    def process_subset_para(self, **kwargs):
         # Detect whether all the indicator are valid
         for kwarg_indicator in kwargs.keys():
             if kwarg_indicator not in ('ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_strategy', 'large_roi', 'dst_coord'):
@@ -566,6 +609,7 @@ class Sentinel2_ds(object):
         sensing_date = 'Sensing_Date'
         tile_num = 'Tile_Num'
         VI = 'all_band'
+        ds_temp = None
 
         # Define the output path
         if self.vi_clip_factor:
@@ -578,9 +622,9 @@ class Sentinel2_ds(object):
         if self.output_bounds.shape[0] > tiffile_serial_num:
             if True in np.isnan(self.output_bounds[tiffile_serial_num, :]):
                 temp_S2file_path = self.S2_metadata.iat[tiffile_serial_num, 1]
-                zfile = ZipFile(temp_S2file_path, 'r')
                 b2_band_file_name = f'{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_B2'
                 if not os.path.exists(b2_output_path + b2_band_file_name + '.tif'):
+                    zfile = ZipFile(temp_S2file_path, 'r')
                     b2_file = [zfile_temp for zfile_temp in zfile.namelist() if 'B02_10m.jp2' in zfile_temp]
                     if len(b2_file) != 1:
                         print(
@@ -588,7 +632,19 @@ class Sentinel2_ds(object):
                         self.subset_failure_file.append([VI, tiffile_serial_num, temp_S2file_path])
                         return
                     else:
-                        ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, b2_file[0]))
+
+                        try:
+                            ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, b2_file[0]))
+                        except:
+                            zfile = None
+                            self.corrupted_file_list.append(temp_S2file_path)
+                            return
+
+                        if ds_temp is None:
+                            zfile = None
+                            self.corrupted_file_list.append(temp_S2file_path)
+                            return
+
                         if self.large_roi and self.vi_clip_factor:
                             if self.dst_coord is False:
                                 gdal.Warp('/vsimem/' + b2_band_file_name + '.tif', ds_temp, xRes=10, yRes=10,
@@ -618,6 +674,7 @@ class Sentinel2_ds(object):
                         gdal.Translate(b2_output_path + b2_band_file_name + '.tif',
                                        '/vsimem/' + b2_band_file_name + '.tif', options=topts, noData=0)
                         gdal.Unlink('/vsimem/' + b2_band_file_name + '.tif')
+                    zfile.close()
 
                 ds4bounds = gdal.Open(b2_output_path + b2_band_file_name + '.tif')
                 ulx, xres, xskew, uly, yskew, yres = ds4bounds.GetGeoTransform()
@@ -661,6 +718,7 @@ class Sentinel2_ds(object):
         # cloud_remove_strategy = method using to remove clouds, supported methods include QI_all_cloud
 
         # Define local args
+        ds_temp = None
         topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
         time1, time2, time3 = 0, 0, 0
         processed_index_list = union_list(processed_index_list, self.all_supported_index_list)
@@ -670,13 +728,11 @@ class Sentinel2_ds(object):
             kwargs = copy.copy(args[0])
 
         # determine the subset indicator
-        self.subset_indicator_process(**kwargs)
+        self.process_subset_para(**kwargs)
         self.check_metadata_availability()
 
         if processed_index_list != []:
             temp_S2file_path = self.S2_metadata.iat[tiffile_serial_num, 1]
-            zfile = ZipFile(temp_S2file_path, 'r')
-
             for VI in processed_index_list:
                 start_temp = time.time()
                 sensing_date = 'Sensing_Date'
@@ -700,8 +756,8 @@ class Sentinel2_ds(object):
                 file_name = f'{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{VI}'
 
                 # Generate QI layer
-                if (VI == 'QI' and overwritten_para) or (
-                        VI == 'QI' and not overwritten_para and not os.path.exists(qi_path + file_name)):
+                if (VI == 'QI' and overwritten_para) or (VI == 'QI' and not overwritten_para and not os.path.exists(qi_path + file_name)):
+                    zfile = ZipFile(temp_S2file_path, 'r')
                     # Process subset indicator
                     self.generate_10m_output_bounds(tiffile_serial_num, **kwargs)
                     output_limit = (
@@ -716,7 +772,18 @@ class Sentinel2_ds(object):
                         for band_temp in band_all:
 
                             # Method 1
-                            ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
+                            try:
+                                ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
+                            except:
+                                zfile = None
+                                self.corrupted_file_list.append(temp_S2file_path)
+                                return
+
+                            if ds_temp is None:
+                                zfile = None
+                                self.corrupted_file_list.append(temp_S2file_path)
+                                return
+
                             if self.large_roi and self.vi_clip_factor:
                                 if self.dst_coord is False:
                                     gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
@@ -747,39 +814,35 @@ class Sentinel2_ds(object):
                             gdal.Translate(qi_path + file_name + '.tif', '/vsimem/' + file_name + '.tif', options=topts,
                                            noData=0, outputType=gdal.GDT_UInt16)
                             gdal.Unlink('/vsimem/' + file_name + '.tif')
+                    zfile.close()
+                    # Method 2
 
-                            # Method 2
-
-                            # ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
-                            # if self.dst_coord is False:
-                            #     gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10, outputBounds=output_limit, outputType=gdal.GDT_UInt16, dstNodata=0)
-                            # else:
-                            #     gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
-                            #               outputBounds=output_limit, outputType=gdal.GDT_UInt16, dstNodata=0, dstSRS=self.dst_coord)
-                            #
-                            # if self.large_roi and self.vi_clip_factor:
-                            #     gdal.Warp('/vsimem/' + file_name + '2.tif', '/vsimem/' + file_name + '.tif', xRes=10, yRes=10,
-                            #               cutlineDSName=self.ROI,  dstNodata=0)
-                            # elif not self.large_roi and self.vi_clip_factor:
-                            #     gdal.Warp('/vsimem/' + file_name + '2.tif', '/vsimem/' + file_name + '.tif', xRes=10, yRes=10,
-                            #               cutlineDSName=self.ROI,
-                            #               cropToCutline=True, dstNodata=0)
-                            # elif not self.vi_clip_factor:
-                            #     gdal.Warp('/vsimem/' + file_name + '2.tif', '/vsimem/' + file_name + '.tif', xRes=10, yRes=10,
-                            #               outputType=gdal.GDT_UInt16, dstNodata=0)
-                            #
-                            # gdal.Unlink('/vsimem/' + file_name + '.tif')
-                            # gdal.Translate(qi_path + file_name + '.tif', '/vsimem/' + file_name + '2.tif', options=topts,
-                            #                noData=0, outputType=gdal.GDT_UInt16)
-                            # gdal.Unlink('/vsimem/' + file_name + '2.tif')
+                    # ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
+                    # if self.dst_coord is False:
+                    #     gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10, outputBounds=output_limit, outputType=gdal.GDT_UInt16, dstNodata=0)
+                    # else:
+                    #     gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
+                    #               outputBounds=output_limit, outputType=gdal.GDT_UInt16, dstNodata=0, dstSRS=self.dst_coord)
+                    #
+                    # if self.large_roi and self.vi_clip_factor:
+                    #     gdal.Warp('/vsimem/' + file_name + '2.tif', '/vsimem/' + file_name + '.tif', xRes=10, yRes=10,
+                    #               cutlineDSName=self.ROI,  dstNodata=0)
+                    # elif not self.large_roi and self.vi_clip_factor:
+                    #     gdal.Warp('/vsimem/' + file_name + '2.tif', '/vsimem/' + file_name + '.tif', xRes=10, yRes=10,
+                    #               cutlineDSName=self.ROI,
+                    #               cropToCutline=True, dstNodata=0)
+                    # elif not self.vi_clip_factor:
+                    #     gdal.Warp('/vsimem/' + file_name + '2.tif', '/vsimem/' + file_name + '.tif', xRes=10, yRes=10,
+                    #               outputType=gdal.GDT_UInt16, dstNodata=0)
+                    #
+                    # gdal.Unlink('/vsimem/' + file_name + '.tif')
+                    # gdal.Translate(qi_path + file_name + '.tif', '/vsimem/' + file_name + '2.tif', options=topts,
+                    #                noData=0, outputType=gdal.GDT_UInt16)
+                    # gdal.Unlink('/vsimem/' + file_name + '2.tif')
 
                 # Subset band images
                 elif VI == 'all_band' or VI == '4visual' or VI in self.band_output_list:
-                    # Process subset indicator
-                    self.generate_10m_output_bounds(tiffile_serial_num, **kwargs)
-                    output_limit = (
-                        int(self.output_bounds[tiffile_serial_num, 0]), int(self.output_bounds[tiffile_serial_num, 1]),
-                        int(self.output_bounds[tiffile_serial_num, 2]), int(self.output_bounds[tiffile_serial_num, 3]))
+
                     # Check the output band
                     if VI == 'all_band':
                         band_name_list, band_output_list = self.band_name_list, self.band_output_list
@@ -794,10 +857,22 @@ class Sentinel2_ds(object):
 
                     if overwritten_para or False in [os.path.exists(subset_output_path + str(self.S2_metadata[sensing_date][tiffile_serial_num]) + '_' + str(
                                     self.S2_metadata[tile_num][tiffile_serial_num]) + '_' + str(band_temp) + '.tif') for band_temp in band_output_list]:
+
+                        # Process subset indicator
+                        self.generate_10m_output_bounds(tiffile_serial_num, **kwargs)
+                        output_limit = (
+                            int(self.output_bounds[tiffile_serial_num, 0]),
+                            int(self.output_bounds[tiffile_serial_num, 1]),
+                            int(self.output_bounds[tiffile_serial_num, 2]),
+                            int(self.output_bounds[tiffile_serial_num, 3]))
+
+                        # read zipfile
+                        zfile = ZipFile(temp_S2file_path, 'r')
+
                         for band_name, band_output in zip(band_name_list, band_output_list):
                             if band_output != 'B2':
                                 all_band_file_name = f'{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_{str(band_output)}'
-                                if not os.path.exists(all_band_file_name + '.tif') or overwritten_para:
+                                if not os.path.exists(subset_output_path + all_band_file_name + '.tif') or overwritten_para:
                                     band_all = [zfile_temp for zfile_temp in zfile.namelist() if band_name in zfile_temp]
                                     if len(band_all) != 1:
                                         print(
@@ -806,7 +881,19 @@ class Sentinel2_ds(object):
                                     else:
                                         for band_temp in band_all:
                                             t1 = time.time()
-                                            ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
+
+                                            try:
+                                                ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
+                                            except:
+                                                zfile = None
+                                                self.corrupted_file_list.append(temp_S2file_path)
+                                                return
+
+                                            if ds_temp is None:
+                                                zfile = None
+                                                self.corrupted_file_list.append(temp_S2file_path)
+                                                return
+
                                             time1 = time.time() - t1
                                             t2 = time.time()
                                             if self.large_roi and self.vi_clip_factor:
@@ -879,9 +966,9 @@ class Sentinel2_ds(object):
                                         qi_remove_cloud(
                                             f'{subset_output_path}\\{str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])}_B2.tif',
                                             qi_file_path, dst_nodata=0, **kwargs)
+                        zfile.close()
 
-                elif not overwritten_para and not os.path.exists(subset_output_path + file_name + '.tif') and not (
-                        VI == 'QI' or VI == 'all_band' or VI == '4visual' or VI in self.band_output_list):
+                elif not overwritten_para and not os.path.exists(subset_output_path + file_name + '.tif') and not (VI == 'QI' or VI == 'all_band' or VI == '4visual' or VI in self.band_output_list):
                     if VI == 'NDVI':
                         # time1 = time.time()
                         ds_list = self.check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
@@ -1058,10 +1145,11 @@ class Sentinel2_ds(object):
                 print(
                     f'Finish processing {VI} data in {str(time.time() - start_temp)}s ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
         else:
-            print(
-                'Caution! the input variable VI_list should be a list and make sure all of them are in Capital Letter')
-            sys.exit(-1)
+            raise TypeError('Caution! the input variable VI_list should be a list and make sure all of them are in Capital Letter')
         return
+
+    def band_composition(self):
+        pass
 
     def check_subset_integrality(self, indicator: list, **kwargs) -> None:
         self.check_metadata_availability()
@@ -1097,8 +1185,7 @@ class Sentinel2_ds(object):
                         else:
                             roi = ''
                 except:
-                    print('ROI input type is not correct!')
-                    sys.exit(-1)
+                    raise TypeError('The type of ROI is incorrect!')
 
                 # create check path
                 if roi == '':
@@ -1112,6 +1199,14 @@ class Sentinel2_ds(object):
                     if self.S2_metadata_size == len(valid_file):
                         self.merge_indicator_list.append(indicator_temp)
                         self.merge_cor_pathlist.append(check_path)
+                    elif self.S2_metadata_size < len(valid_file):
+                        raise Exception(f'Please make sure the {indicator_temp} was not manually modified!')
+                    elif self.S2_metadata_size > len(valid_file):
+                        all_files = [str(self.S2_metadata['Sensing_Date'][i]) + '_' + self.S2_metadata['Tile_Num'][i] for i in range(self.S2_metadata_size)]
+                        for temp_valid in valid_file:
+                            if temp_valid.split('\\')[-1].split('.')[0][0:14] in all_files:
+                                all_files.remove(temp_valid.split('\\')[-1].split('.')[0][0:14])
+                        raise Exception(f'Mentioned! These files were missing！{all_files}')
 
     def retrieve_para_from_para_file(self, required_para_name_list, **kwargs):
 
@@ -1125,23 +1220,24 @@ class Sentinel2_ds(object):
         for para in required_para_name_list:
             if para in self.__dir__():
                 for q in para_raw_txt:
-                    if q.startswith(str(para)):
-                        if q.split(':')[-1] == 'None':
+                    para = str(para)
+                    if q.startswith(para + ':'):
+                        if q.split(para + ':')[-1] == 'None':
                             self.__dict__[para] = None
-                        elif q.split(':')[-1] == 'True':
+                        elif q.split(para + ':')[-1] == 'True':
                             self.__dict__[para] = True
-                        elif q.split(':')[-1] == 'False':
+                        elif q.split(para + ':')[-1] == 'False':
                             self.__dict__[para] = False
-                        elif q.split(':')[-1].startswith('['):
-                            self.__dict__[para] = list(q.split(':')[-1][1: -1])
-                        elif q.split(':')[-1].startswith('('):
-                            self.__dict__[para] = tuple(q.split(':')[-1][1: -1])
+                        elif q.split(para + ':')[-1].startswith('['):
+                            self.__dict__[para] = list(q.split(para + ':')[-1][1: -1])
+                        elif q.split(para + ':')[-1].startswith('('):
+                            self.__dict__[para] = tuple(q.split(para + ':')[-1][1: -1])
                         else:
                             try:
-                                t = float(q.split(':')[-1])
-                                self.__dict__[para] = float(q.split(':')[-1])
+                                t = float(q.split(para +':')[-1])
+                                self.__dict__[para] = float(q.split(para + ':')[-1])
                             except:
-                                self.__dict__[para] = q.split(':')[-1]
+                                self.__dict__[para] = q.split(para + ':')[-1]
 
     def check_merge_para(self, **kwargs):
 
@@ -1170,8 +1266,9 @@ class Sentinel2_ds(object):
                 self.retrieve_para_from_para_file(['ROI_name'])
             else:
                 self.ROI = None
+        elif 'ROI_name' in kwargs.keys() and self.ROI_name is None:
             self.ROI_name = kwargs['ROI_name']
-        else:
+        elif self.ROI is not None:
             self.ROI_name = self.ROI.split('\\')[-1].split('.')[0]
 
     @save_log_file
@@ -1990,21 +2087,21 @@ if __name__ == '__main__':
     filepath = 'E:\\Z_Phd_Other_stuff\\2022_08_09_Map\\Sentinel_2\\Original_files\\'
     s2_ds_temp = Sentinel2_ds(filepath)
     s2_ds_temp.construct_metadata()
-    s2_ds_temp.mp_subset(['all_band'])
+    s2_ds_temp.mp_subset(['all_band', 'MNDWI'])
 
     # 4Main
     # filepath = 'G:\\Sample_Sentinel2\\Original_file\\'
     # s2_ds_temp = Sentinel2_ds(filepath)
     # s2_ds_temp.construct_metadata()
-    # s2_ds_temp.mp_subset(['all_band', 'NDVI', 'MNDWI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp', ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
-    #                     size_control_factor=True, large_roi=True)
-    # s2_ds_temp.mp_merge(['NDVI', 'MNDWI', 'OSAVI'], herit_from_subset=True)
+    # s2_ds_temp.mp_subset(['all_band', 'NDVI', 'MNDWI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
+    #                      ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud', size_control_factor=True, large_roi=True, dst_coord='EPSG:32649')
+    # s2_ds_temp.mp_merge(['NDVI', 'MNDWI', 'OSAVI'], queried_from_parafile=True)
 
     # 4TEST
     filepath = 'E:\A_Veg_phase2\Sentinel_2_test\Original_file\\'
     s2_ds_temp = Sentinel2_ds(filepath)
     s2_ds_temp.construct_metadata()
-    s2_ds_temp.mp_subset(['all_band', 'NDVI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
+    s2_ds_temp.sequenced_subset(['all_band', 'NDVI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
                                  ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
                                 size_control_factor=True, large_roi=True, dst_coord='EPSG:32649')
     s2_ds_temp.mp_merge(['NDVI'], queried_from_parafile=True)

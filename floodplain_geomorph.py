@@ -3,7 +3,7 @@ import gdal
 import os
 import numpy as np
 import pandas as pd
-import Basic_function as bf
+import basic_function as bf
 import Landsat_main_v1
 import copy
 import rasterio
@@ -214,3 +214,11 @@ def generate_floodplain_boundary(inundation_file, ds_folder, land_indicator, wat
     length_pd = pd.DataFrame.from_dict(length_dic)
     area_pd.to_excel(output_polygon_folder + 'area_info.xlsx')
     length_pd.to_excel(output_polygon_folder + 'length_info.xlsx')
+
+
+def polygonised_river_channel_output(raster_filepath, inundated_indicator=1, noninundated_indicator=0, ):
+    if raster_filepath.endswith('.tif') or raster_filepath.endswith('.TIF'):
+        raster_filelist = [raster_filepath]
+    elif raster_filepath.endswith('\\') and os.path.exists(raster_filepath):
+        raster_filepath = bf.file_filter(raster_filepath, ['.tif'])
+    pass

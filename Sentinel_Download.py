@@ -11,7 +11,7 @@ import time
 import xlrd
 from tqdm import tqdm
 import geopandas as gp
-import Basic_function as bf
+import basic_function as bf
 import os
 import sys
 import numpy as np
@@ -201,7 +201,7 @@ class Queried_Sentinel_ds(object):
 if __name__ == "__main__":
     # Parameters
     IDM = "C:\\Program Files (x86)\\Internet Download Manager\\IDMan.exe"
-    DownPath = 'G:\\Sample_Sentinel2\\'
+    DownPath = 'E:\\Z_Phd_Other_stuff\\2022_08_09_Map\\Sentinel_2\\'
     shpfile_path = 'E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain\\Floodplain_2020_simplified4.shp'
 
     S2_MID_YZR = Queried_Sentinel_ds('shixi2ng', 'shixi2nG', DownPath, IDM_path=IDM)

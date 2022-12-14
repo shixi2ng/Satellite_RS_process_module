@@ -4,7 +4,7 @@ import os
 import numpy as np
 import pandas as pd
 import geopandas as gd
-import Basic_function as bf
+import basic_function as bf
 import sys
 import Landsat_main_v1 as ls
 from matplotlib import pyplot as plt

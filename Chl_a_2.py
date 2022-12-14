@@ -9,7 +9,7 @@ import Sentinel_main_V2
 import numpy
 import os
 import gdal
-import Basic_function
+import basic_function
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error,mean_absolute_error
 from sklearn.model_selection import train_test_split
