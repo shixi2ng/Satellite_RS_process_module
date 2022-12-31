@@ -55,6 +55,7 @@ class Queried_Sentinel_ds(object):
         self.queried_folder = self.work_env + shpfile_path.split('\\')[-1].split('.shp')[0] + '_' + date_range[0] + '_' + date_range[1] + '_' + product_type + '\\queried_log\\'
         self.download_path = self.queried_folder.split('queried_log')[0] + 'download_files\\'
         bf.create_folder(self.queried_folder)
+        bf.create_folder(self.download_path)
         self.downloaded_file = bf.file_filter(self.download_path, ['.zip'])
         # Construct req product
         if not os.path.exists(self.queried_folder + 'queried_products.csv') or overwritten_factor:
@@ -201,10 +202,10 @@ class Queried_Sentinel_ds(object):
 if __name__ == "__main__":
     # Parameters
     IDM = "C:\\Program Files (x86)\\Internet Download Manager\\IDMan.exe"
-    DownPath = 'E:\\Z_Phd_Other_stuff\\2022_08_09_Map\\Sentinel_2\\'
+    DownPath = 'g:\\sentinel2_download\\'
     shpfile_path = 'E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain\\Floodplain_2020_simplified4.shp'
 
     S2_MID_YZR = Queried_Sentinel_ds('shixi2ng', 'shixi2nG', DownPath, IDM_path=IDM)
-    S2_MID_YZR.queried_with_ROI(shpfile_path, ('20200101', '20211231'),'Sentinel-2', 'S2MSI2A',(0, 95), overwritten_factor=True)
+    S2_MID_YZR.queried_with_ROI(shpfile_path, ('20220101', '20221231'),'Sentinel-2', 'S2MSI2A',(0, 95), overwritten_factor=True)
     S2_MID_YZR.download_with_IDM()
 
