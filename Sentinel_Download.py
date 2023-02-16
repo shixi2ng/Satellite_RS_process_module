@@ -179,7 +179,7 @@ class Queried_Sentinel_ds(object):
                         print('Failed for unknown reason!')
 
             else:
-                for _ in tqdm(range(int(1000)), ncols=100):
+                for _ in tqdm(range(int(1500)), ncols=100):
                     time.sleep(2)
 
                 for file_ID in internal_file_list:
@@ -206,6 +206,6 @@ if __name__ == "__main__":
     shpfile_path = 'E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain\\Floodplain_2020_simplified4.shp'
 
     S2_MID_YZR = Queried_Sentinel_ds('shixi2ng', 'shixi2nG', DownPath, IDM_path=IDM)
-    S2_MID_YZR.queried_with_ROI(shpfile_path, ('20220101', '20221231'),'Sentinel-2', 'S2MSI2A',(0, 95), overwritten_factor=True)
+    S2_MID_YZR.queried_with_ROI(shpfile_path, ('20190101', '20191231'),'Sentinel-2', 'S2MSI2A',(0, 95), overwritten_factor=True)
     S2_MID_YZR.download_with_IDM()
 
