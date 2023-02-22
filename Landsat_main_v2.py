@@ -1537,7 +1537,7 @@ class Landsat_l2_ds(object):
         self.construction_failure_files = []
 
         # Define key var for VI clip
-        self.clipped_overwritten_para = False
+        self._clipped_overwritten_para = False
         self.clipped_vi_path_dic = {}
         self.main_coordinate_system = None
         self.ROI = None
@@ -1545,11 +1545,11 @@ class Landsat_l2_ds(object):
 
         # Define key var for to datacube
         self.dc_vi = {}
-        self.dc_overwritten_para = False
-        self.inherit_from_logfile = None
-        self.remove_nan_layer = False
-        self.manually_remove_para = False
-        self.manually_remove_datelist = None
+        self._dc_overwritten_para = False
+        self._inherit_from_logfile = None
+        self._remove_nan_layer = False
+        self._manually_remove_para = False
+        self._manually_remove_datelist = None
 
         # Initialise the work environment
         if work_env is None:
@@ -2242,11 +2242,11 @@ class Landsat_l2_ds(object):
         # process clipped_overwritten_para
         if 'clipped_overwritten_para' in kwargs.keys():
             if type(kwargs['clipped_overwritten_para']) is bool:
-                self.clipped_overwritten_para = kwargs['clipped_overwritten_para']
+                self._clipped_overwritten_para = kwargs['clipped_overwritten_para']
             else:
                 raise TypeError('Please mention the clipped_overwritten_para should be bool type!')
         else:
-            self.clipped_overwritten_para = False
+            self._clipped_overwritten_para = False
 
         # process main_coordinate_system
         if 'main_coordinate_system' in kwargs.keys():
@@ -2407,7 +2407,7 @@ class Landsat_l2_ds(object):
 
                 # Input folder
                 if VI in self.all_supported_vi_list:
-                    if self.clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF'):
+                    if self._clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF'):
                         print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                         # Retrieve the file list
                         constructed_index_list = f'{self.work_env}Landsat_constructed_index\\{VI}\\'
@@ -2436,7 +2436,7 @@ class Landsat_l2_ds(object):
                         print(VI + ' file of the ' + self.ROI_name + ' has already clipped (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
 
                 elif VI in band_list:
-                    if self.clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF'):
+                    if self._clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF'):
                         print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
                         # Check the landsat sensor type
                         if 'LT05' in fileid or 'LE07' in fileid or 'LT04' in fileid:
@@ -2605,45 +2605,45 @@ class Landsat_l2_ds(object):
         # process clipped_overwritten_para
         if 'dc_overwritten_para' in kwargs.keys():
             if type(kwargs['dc_overwritten_para']) is bool:
-                self.dc_overwritten_para = kwargs['dc_overwritten_para']
+                self._dc_overwritten_para = kwargs['dc_overwritten_para']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be bool type!')
         else:
-            self.clipped_overwritten_para = False
+            self._clipped_overwritten_para = False
 
         # process inherit from logfile
         if 'inherit_from_logfile' in kwargs.keys():
             if type(kwargs['inherit_from_logfile']) is bool:
-                self.inherit_from_logfile = kwargs['inherit_from_logfile']
+                self._inherit_from_logfile = kwargs['inherit_from_logfile']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be bool type!')
         else:
-            self.inherit_from_logfile = False
+            self._inherit_from_logfile = False
 
         # process remove_nan_layer
         if 'remove_nan_layer' in kwargs.keys():
             if type(kwargs['remove_nan_layer']) is bool:
-                self.remove_nan_layer = kwargs['remove_nan_layer']
+                self._remove_nan_layer = kwargs['remove_nan_layer']
             else:
                 raise TypeError('Please mention the remove_nan_layer should be bool type!')
         else:
-            self.remove_nan_layer = False
+            self._remove_nan_layer = False
 
         # process remove_nan_layer
         if 'manually_remove_datelist' in kwargs.keys():
             if type(kwargs['manually_remove_datelist']) is list:
-                self.manually_remove_datelist = kwargs['manually_remove_datelist']
-                self.manually_remove_para = True
+                self._manually_remove_datelist = kwargs['manually_remove_datelist']
+                self._manually_remove_para = True
             else:
                 raise TypeError('Please mention the manually_remove_datelist should be list type!')
         else:
-            self.manually_remove_datelist = False
-            self.manually_remove_para = False
+            self._manually_remove_datelist = False
+            self._manually_remove_para = False
 
         # process ROI_NAME
         if 'ROI_name' in kwargs.keys():
             self.ROI_name = kwargs['ROI_name']
-        elif self.ROI_name is None and self.inherit_from_logfile:
+        elif self.ROI_name is None and self._inherit_from_logfile:
             self._retrieve_para(['ROI_name'])
         elif self.ROI_name is None:
             raise Exception('Notice the ROI name was missed!')
@@ -2651,7 +2651,7 @@ class Landsat_l2_ds(object):
         # process ROI
         if 'ROI' in kwargs.keys():
             self.ROI = kwargs['ROI']
-        elif self.ROI is None and self.inherit_from_logfile:
+        elif self.ROI is None and self._inherit_from_logfile:
             self._retrieve_para(['ROI'])
         elif self.ROI is None:
             raise Exception('Notice the ROI was missed!')
@@ -2692,7 +2692,7 @@ class Landsat_l2_ds(object):
                 raise ValueError(f'{VI} of the {self.ROI_name} is not consistent')
 
         for VI in VI_list:
-            if self.dc_overwritten_para or not os.path.exists(self.dc_vi[VI] + VI + '_datacube.npy') or not os.path.exists(self.dc_vi[VI] + 'date.npy') or not os.path.exists(self.dc_vi[VI] + 'header.npy'):
+            if self._dc_overwritten_para or not os.path.exists(self.dc_vi[VI] + VI + '_datacube.npy') or not os.path.exists(self.dc_vi[VI] + 'date.npy') or not os.path.exists(self.dc_vi[VI] + 'header.npy'):
 
                 if self.ROI_name is None:
                     print('Start processing ' + VI + ' datacube.')
@@ -2733,9 +2733,9 @@ class Landsat_l2_ds(object):
                     data_cube_temp[data_cube_temp == -32768] = np.nan
                     data_cube_temp = data_cube_temp / 10000
 
-                if self.manually_remove_para is True and self.manually_remove_datelist is not None:
+                if self._manually_remove_para is True and self._manually_remove_datelist is not None:
                     i_temp = 0
-                    manual_remove_date_list_temp = copy.copy(self.manually_remove_datelist)
+                    manual_remove_date_list_temp = copy.copy(self._manually_remove_datelist)
                     while i_temp < date_cube_temp.shape[0]:
                         if str(date_cube_temp[i_temp]) in manual_remove_date_list_temp:
                             manual_remove_date_list_temp.remove(str(date_cube_temp[i_temp]))
@@ -2747,10 +2747,10 @@ class Landsat_l2_ds(object):
                     if manual_remove_date_list_temp:
                         raise Exception('Some manual input date is not properly removed')
 
-                elif self.manually_remove_para is True and self.manually_remove_datelist is None:
+                elif self._manually_remove_para is True and self._manually_remove_datelist is None:
                     raise ValueError('Please correctly input the manual input datelist')
 
-                if self.remove_nan_layer:
+                if self._remove_nan_layer:
                     i_temp = 0
                     while i_temp < date_cube_temp.shape[0]:
                         if np.isnan(data_cube_temp[:,:,i_temp]).all() == True or (data_cube_temp[:,:,i_temp] == nodata_value).all() == True:
@@ -5999,6 +5999,74 @@ class Landsat_dcs(object):
             for vi_temp in VI:
                 self.append(Landsat_dc(NIPY_para[f'NIPY_{vi_temp}_{self.ROI_name}_dcpath'], sdc_factor=self.sdc_factor))
 
+    def _process_analyse_valid_data(self, **kwargs):
+        # Detect whether all the indicators are valid
+        for kwarg_indicator in kwargs.keys():
+            if kwarg_indicator not in ('selected_index'):
+                raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
+
+        if 'selected_index' in kwargs.keys():
+            if type(kwargs['selected_index']) != str:
+                raise TypeError('Please input the selected_index as a string type!')
+            elif kwargs['selected_index'] in self.index_list:
+                self._valid_data_analyse_index = kwargs['selected_index']
+            else:
+                self._valid_data_analyse_index = self.index_list[0]
+        else:
+            self._valid_data_analyse_index = self.index_list[0]
+
+        if 'NIPY_overwritten_factor' in kwargs.keys():
+            if type(kwargs['NIPY_overwritten_factor']) != bool:
+                raise TypeError('Please input the NIPY_overwritten_factor as a bool type!')
+            else:
+                self._NIPY_overwritten_factor = (kwargs['NIPY_overwritten_factor'])
+        else:
+            self._NIPY_overwritten_factor = False
+        pass
+
+    def analyse_valid_data_distribution(self, valid_threshold=0.5, *args, **kwargs):
+
+        # These algorithm is designed to obtain the temporal distribution of cloud-free data
+        # Hence the cloud should be removed before the analyse
+
+        # Process the parameter
+        self._process_analyse_valid_data(**kwargs)
+
+        # Define local var
+        temp_dc = self.Landsat_dcs[self.index_list.index(self._valid_data_analyse_index)].dc
+        doy_list = self.doy_list
+        sa_map = self.sa_map
+        sa_area = np.sum(self.sa_map != -32768)
+
+        # Retrieve the nandata_value in dc
+        for q in range(temp_dc.shape[0]):
+            for j in range(temp_dc.shape[1]):
+                if sa_map[q, j] == -32768:
+                    nandata_value = temp_dc[q, j, 0]
+                    break
+
+        valid_doy = []
+        i = 0
+        while i < len(doy_list):
+            temp_array = temp_dc[:, :, i]
+            if np.isnan(nandata_value):
+                valid_portion = np.sum(~np.isnan(temp_array)) / sa_area
+            else:
+                valid_portion = np.sum(temp_array != nandata_value) / sa_area
+
+            if valid_portion > valid_threshold:
+                valid_doy.append(doy_list[i])
+            i += 1
+
+        # Output the valid_data_distribution
+        date_list = doy2date(valid_doy)
+        year_list = [int(str(q)[0:4]) for q in date_list]
+        month_list = [int(str(q)[4:6]) for q in date_list]
+        day_list = [int(str(q)[6:8]) for q in date_list]
+
+        pd_temp = pd.DataFrame({'DOY':valid_doy, 'Date': date_list, 'Year': year_list, 'Month': month_list, 'Day': day_list})
+        pd_temp.to_csv(self.work_env + 'valid_data_distribution' + f'_{str(int(valid_threshold * 100))}per_' + '.csv')
+
     def phenology_analyse(self, **kwargs):
         pass
 #     def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, phenology_comparison_factor=True, self._inundation_overwritten_factor=False, inundated_pixel_phe_curve_factor=True, mndwi_threshold=0, VI_list_f=None, self._flood_month_list=None, pixel_limitation_f=None, curve_fitting_algorithm=None, dem_fix_inundated_factor=True, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, self._variance_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, initial_dem_fix_year_interval=1, phenology_overview_factor=False, landsat_detected_inundation_area=True, phenology_individual_factor=True, surveyed_inundation_detection_factor=False):
@@ -6454,15 +6522,15 @@ class Landsat_dcs(object):
 
 if __name__ == '__main__':
 
-    sample_midlow_YZR = Landsat_l2_ds('G:\\Landsat\\midlower_YZR_2002_2020\\Original_zipfile\\')
-    sample_midlow_YZR.generate_landsat_metadata(unzipped_para=False)
-    sample_midlow_YZR.mp_construct_vi(['FVC'], cloud_removal_para=True, size_control_factor=True)
-
-    sample_midlow_YZR.mp_clip_vi(['FVC','MNDWI','NDVI'], f'G:\Landsat\midlower_YZR_2002_2020\yzr_shp\\lower_YZR_final2.shp', main_coordinate_system='EPSG:32649')
-    sample_midlow_YZR.mp_clip_vi(['FVC'], 'G:\Landsat\midlower_YZR_2002_2020\yzr_shp\\mid_YZR_final3.shp', main_coordinate_system='EPSG:32649')
-
-    data_composition('G:\Landsat\midlower_YZR_2002_2020\Landsat_lower_YZR_final2_index\FVC\\', 'G:\Landsat\midlower_YZR_2002_2020\\Metadata.xlsx', time_coverage='monsoon', composition_strategy='max', user_defined_monsoon=[11, 12])
-    data_composition('G:\Landsat\midlower_YZR_2002_2020\Landsat_mid_YZR_final3_index\FVC\\', 'G:\Landsat\midlower_YZR_2002_2020\\Metadata.xlsx', time_coverage='monsoon', composition_strategy='max', user_defined_monsoon=[11, 12])
+    # sample_midlow_YZR = Landsat_l2_ds('G:\\Landsat\\midlower_YZR_2002_2020\\Original_zipfile\\')
+    # sample_midlow_YZR.generate_landsat_metadata(unzipped_para=False)
+    # sample_midlow_YZR.mp_construct_vi(['FVC'], cloud_removal_para=True, size_control_factor=True)
+    #
+    # sample_midlow_YZR.mp_clip_vi(['FVC','MNDWI','NDVI'], f'G:\Landsat\midlower_YZR_2002_2020\yzr_shp\\lower_YZR_final2.shp', main_coordinate_system='EPSG:32649')
+    # sample_midlow_YZR.mp_clip_vi(['FVC'], 'G:\Landsat\midlower_YZR_2002_2020\yzr_shp\\mid_YZR_final3.shp', main_coordinate_system='EPSG:32649')
+    #
+    # data_composition('G:\Landsat\midlower_YZR_2002_2020\Landsat_lower_YZR_final2_index\FVC\\', 'G:\Landsat\midlower_YZR_2002_2020\\Metadata.xlsx', time_coverage='monsoon', composition_strategy='max', user_defined_monsoon=[11, 12])
+    # data_composition('G:\Landsat\midlower_YZR_2002_2020\Landsat_mid_YZR_final3_index\FVC\\', 'G:\Landsat\midlower_YZR_2002_2020\\Metadata.xlsx', time_coverage='monsoon', composition_strategy='max', user_defined_monsoon=[11, 12])
 
     roi_name_list = ['baishazhou' , 'nanmenzhou', 'nanyangzhou', 'zhongzhou' ]
     coord_list = [ 'EPSG:32649', 'EPSG:32649', 'EPSG:32649','EPSG:32649']
@@ -6478,9 +6546,10 @@ if __name__ == '__main__':
         for vi in ['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2']:
             dc_temp_dic[vi] = Landsat_dc(f'G:\\Landsat\\Sample123039\\Landsat_{roi}_datacube\\{vi}_datacube\\').to_sdc(sdc_substitued=True)
         dcs_temp = Landsat_dcs(dc_temp_dic['OSAVI'], dc_temp_dic['MNDWI'], dc_temp_dic['AWEI'], dc_temp_dic['NIR'], dc_temp_dic['MIR2'])
-        dcs_temp.inundation_detection(['AWEI', 'DSWE', 'DT'], DT_std_fig_construction=False, construct_inundated_dc=True)
-        dcs_temp.flood_free_phenology_metrics_extraction(['OSAVI'], 'DT',
-                                                        ['annual_max_VI'])
+        dcs_temp.analyse_valid_data_distribution(valid_threshold=0.9, selected_index='OSAVI')
+        # dcs_temp.inundation_detection(['AWEI', 'DSWE', 'DT'], DT_std_fig_construction=False, construct_inundated_dc=True)
+        # dcs_temp.flood_free_phenology_metrics_extraction(['OSAVI'], 'DT',
+        #                                                 ['annual_max_VI'])
         # dcs_temp.NIPY_VI_reconstruction('OSAVI', 'DT', add_NIPY_dc=False)
         # NIPY_dcs_temp = Landsat_dcs(Landsat_dc(f'G:\\Landsat\\Sample123039\\Landsat_{roi}_datacube\\OSAVI_NIPY_DT_sequenced_datacube\\'))
         # NIPY_dcs_temp.curve_fitting('OSAVI_NIPY')

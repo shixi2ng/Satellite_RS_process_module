@@ -327,6 +327,8 @@ def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=No
             nodatavalue = 65535
         elif raster_datatype is gdal.GDT_Int16:
             nodatavalue = -32768
+        elif raster_datatype is gdal.GDT_Byte:
+            nodatavalue = 255
         else:
             nodatavalue = 0
     elif raster_datatype is None and nodatavalue is not None:

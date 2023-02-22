@@ -138,7 +138,7 @@ class Queried_Sentinel_ds(object):
             print('Add to IDM: ' + self.req_products_df[self.req_products_df[self.req_products_df.keys()[0]] == file_ID]['link'].tolist()[0])
             print('---------------------Start to download-----------------------')
             try:
-                call([self.IDM_path, '/d', self.req_products_df[self.req_products_df[self.req_products_df.keys()[0]] == file_ID]['link'].tolist()[0], '/p', self.download_path, '/n', '/a'])
+                call([self.IDM_path, '/d', self.req_products_df[self.req_products_df[self.req_products_df.keys()[0]] == file_ID]['link'].tolist()[0], '/p', self.download_path,  '/a'])
                 call([self.IDM_path, '/s'])
             except:
                 self.failure_file.append(file_ID)

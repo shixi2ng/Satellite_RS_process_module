@@ -1110,6 +1110,7 @@ def fig11_new_func():
             predicted_y_data = linear_function2(ds_difference_af_list[:, 0], paras1[0], paras1[1])
             r_square1 = (1 - np.sum((predicted_y_data - ds_difference_af_list[:, 1]) ** 2) / np.sum(
                 (ds_difference_af_list[:, 1] - np.mean(ds_difference_af_list[:, 1])) ** 2))
+            slope, intercept, r_value, p_value1, std_err = stats.linregress(ds_difference_af_list[:, 0], ds_difference_af_list[:, 1])
 
         if ds_difference_bf_list.shape[0] != 0:
             ax_dic[ax_all[index]].scatter(ds_difference_bf_list[:, 0], ds_difference_bf_list[:, 1])
@@ -1119,7 +1120,7 @@ def fig11_new_func():
             predicted_y_data = linear_function2(ds_difference_bf_list[:, 0], paras2[0], paras2[1])
             r_square2 = (1 - np.sum((predicted_y_data - ds_difference_bf_list[:, 1]) ** 2) / np.sum(
                 (ds_difference_bf_list[:, 1] - np.mean(ds_difference_bf_list[:, 1])) ** 2))
-
+            slope, intercept, r_value, p_value2, std_err = stats.linregress(ds_difference_bf_list[:, 0],ds_difference_bf_list[:, 1])
 
         if roi == 'nyz':
             ax_dic[ax_all[index]].set_ylim(min(np.nanmin(ds_difference_bf_list[:, 1]), np.nanmin(ds_difference_af_list[:, 1])), max(np.nanmax(ds_difference_bf_list[:, 1]), np.nanmax(ds_difference_af_list[:, 1])))
@@ -1136,7 +1137,7 @@ def fig11_new_func():
              '16', '17',
              '18', '19', '20'], fontname='Times New Roman', fontsize=12, rotation=45)
         index += 1
-        result_dic[roi] = [paras1[0], r_square1, paras2[0], r_square2]
+        result_dic[roi] = [paras1[0], r_square1, p_value1, paras2[0], r_square2, p_value2]
     df_temp = pd.DataFrame(result_dic)
     df_temp.to_excel('G:\\TEMP1.xlsx')
     plt.savefig('G:\\Landsat\\Figure_11.png', dpi=300)
@@ -2285,4 +2286,5 @@ def fig_23_func():
     ax1.set_ylim(-0.3,0.3)
     plt.savefig('E:\A_Vegetation_Identification\Paper\Fig\Fig25\\Fig25.png',dpi=300)
 
-fig11_func()
+fig11_new_func()
+

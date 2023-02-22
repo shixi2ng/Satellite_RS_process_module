@@ -30,6 +30,9 @@ import shapely.geometry
 import geog
 import GEDI_process as gedi
 from rasterstats import zonal_stats
+import pywt
+from Pansharpen import ATWT, ATPRK
+
 
 # Input Snappy data style
 np.seterr(divide='ignore', invalid='ignore')
@@ -142,6 +145,7 @@ class Sentinel2_ds(object):
         self._vi_clip_factor = False
         self._sparsify_matrix_factor = False
         self._cloud_clip_seq = None
+        self._pansharp_factor = True
 
         # Remove all the duplicated data
         dup_data = bf.file_filter(self.ori_folder, ['.1.zip'])
@@ -190,10 +194,10 @@ class Sentinel2_ds(object):
 
         # Constant
         self.band_name_list = ['B01_60m.jp2', 'B02_10m.jp2', 'B03_10m.jp2', 'B04_10m.jp2', 'B05_20m.jp2', 'B06_20m.jp2',
-                               'B07_20m.jp2', 'B8A_20m.jp2', 'B09_60m.jp2', 'B11_20m.jp2', 'B12_20m.jp2']
-        self.band_output_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B11', 'B12']
+                               'B07_20m.jp2', 'B08_10m.jp2', 'B8A_20m.jp2', 'B09_60m.jp2', 'B11_20m.jp2', 'B12_20m.jp2']
+        self.band_output_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12']
         self.all_supported_index_list = ['RGB', 'QI', 'all_band', '4visual', 'NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI',
-                                         'NDVI_RE', 'NDVI_RE2', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9',
+                                         'NDVI_RE', 'NDVI_RE2', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9',
                                          'B11', 'B12']
 
     def save_log_file(func):
@@ -335,9 +339,11 @@ class Sentinel2_ds(object):
                     print(f'This file is corrupted {ori_file}!')
                     file_name = ori_file.split('\\')[-1]
                     corrupted_ori_file.append(file_name)
-
                     corrupted_file_date.append(file_name[file_name.find('_20') + 1: file_name.find('_20') + 9])
-                    shutil.move(ori_file, self.work_env + 'Corrupted_S2_file\\' + file_name)
+
+            # Move the corrupted files
+            for corrupted_file_name in corrupted_ori_file:
+                shutil.move(self.ori_folder + corrupted_file_name, self.work_env + 'Corrupted_S2_file\\' + corrupted_file_name)
 
             # Construct corrupted metadata
             Corrupted_metadata = pd.DataFrame({'Corrupted_file_name': corrupted_ori_file, 'File_Date': corrupted_file_date})
@@ -459,6 +465,8 @@ class Sentinel2_ds(object):
         # Detect whether the required band was generated before
         try:
             if False in [os.path.exists(f'{output_path}{str(sensing_date)}_{str(tile_num)}_{band_temp}.TIF') for band_temp in band_name]:
+                if 'combine_band_factor' in kwargs.keys():
+                    kwargs['combine_band_factor'] = False
                 self.subset_tiffiles(band_name, tiffile_serial_num, **kwargs)
 
             # Return output
@@ -492,10 +500,53 @@ class Sentinel2_ds(object):
             self.subset_tiffiles(args[0], i, **kwargs)
         self._process_subset_failure_file(args[0])
 
+    def _wavelet_pansharpen(self, processed_image, pan_image_list, wavelet_level: int = 1, wavelet_type: str = 'haar'):
+
+        # DataType check
+        if type(pan_image_list) is not list:
+            raise Exception('please input the pan image list as a list of array')
+        elif type(processed_image) is not np.ndarray:
+            raise Exception('please input the processed image as an array')
+
+        # Consistency check
+        for array_temp in pan_image_list:
+            if array_temp.shape != processed_image.shape:
+                raise Exception('Consistency Error')
+
+        # Require the most correlated image
+        time1 = time.time()
+        correlation_list = []
+        temp = processed_image.reshape(-1)
+
+        if np.nansum(temp) == 0:
+            return processed_image
+        else:
+            correlation_list = []
+            for array_temp in pan_image_list:
+                array_temp[array_temp == 0] = np.nan
+                array_temp = array_temp.reshape(-1)
+                msk = (~np.ma.masked_invalid(temp).mask & ~np.ma.masked_invalid(array_temp).mask)
+                correlation_list.append(np.corrcoef(temp[msk], array_temp[msk])[0][1])
+            print(f'Correlation analysis consumes {str(time.time() - time1)} s')
+            most_correlated_image = pan_image_list[np.argmax(np.array(correlation_list))]
+            time2 = time.time()
+            print(f'Correlation analysis consumes {str(time2-time1)} s')
+
+            # Pan sharpening
+            pan_coef = pywt.wavedec2(most_correlated_image, wavelet_type, mode='sym', level=wavelet_level)
+            processed_coef = pywt.wavedec2(processed_image, wavelet_type, mode='sym', level=wavelet_level)
+            time3 = time.time()
+            print(f'Wavelet analysis consumes {str(time3 - time2)} s')
+
+            pan_coef[0] = processed_coef[0]
+            sharped_image = pywt.waverec2(pan_coef, wavelet_type)
+            print(f'Wavelet reconstruction consumes {str(time.time() - time3)} s')
+            return sharped_image
+
     def _subset_indicator_process(self, **kwargs):
         # Detect whether all the indicator are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ['ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_strategy', 'combine_band_factor']:
+            if kwarg_indicator not in ['ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_strategy', 'combine_band_factor', 'pansharp_factor']:
                 print(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clip parameter
@@ -538,6 +589,7 @@ class Sentinel2_ds(object):
             self.main_coordinate_system = 'EPSG:32649'
 
         # process combine band factor
+        # This factor determine whether a TIFFILE with all bands integrated is created
         if 'combine_band_factor' in kwargs.keys():
             if type(kwargs['combine_band_factor']) is bool:
                 self._combine_band_factor = kwargs['combine_band_factor']
@@ -545,6 +597,16 @@ class Sentinel2_ds(object):
                 raise Exception(f'combine band factor is not under the bool type!')
         else:
             self._combine_band_factor = False
+
+        # Process pansharp_factor
+        # This factor control whether low-resolution(60m/120m) bands are sharpened to a high-resolution(10m)
+        if 'pansharp_factor' in kwargs.keys():
+            if type(kwargs['pansharp_factor']) is bool:
+                self._pansharp_factor = kwargs['pansharp_factor']
+            else:
+                raise Exception(f'pansharp_factor is not under the bool type!')
+        else:
+            self._pansharp_factor = False
 
 
     def generate_10m_output_bounds(self, tiffile_serial_num, **kwargs):
@@ -620,6 +682,8 @@ class Sentinel2_ds(object):
             bf.create_folder(self.trash_folder)
             try:
                 for subset_failure_file in self._subset_failure_file:
+                    if 'combine_band_factor' in kwargs.keys():
+                        kwargs['combine_band_factor'] = False
                     self.subset_tiffiles(index_list, subset_failure_file[1], **kwargs)
             except:
                 print(f'The {str(subset_failure_file[1])} is not processed due to code issue!')
@@ -665,13 +729,22 @@ class Sentinel2_ds(object):
 
         # Process subset index list
         processed_index_list = union_list(processed_index_list, self.all_supported_index_list)
+        processed_index_list_temp = copy.copy(processed_index_list)
+        for len_t in range(len(processed_index_list)):
+            if processed_index_list[len_t] in ['B2', 'B3', 'B4', 'B8', 'all_band', '4visual', 'RGB']:
+                processed_index_list_temp.remove(processed_index_list[len_t])
+                temp_list = [processed_index_list[len_t]]
+                temp_list.extend(processed_index_list_temp)
+                processed_index_list_temp = copy.copy(temp_list)
+        processed_index_list = copy.copy(processed_index_list_temp)
+
         combine_index_list = []
         if self._combine_band_factor:
             for q in processed_index_list:
-                if q in ['NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B11', 'B12', 'QI']:
+                if q in ['NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12', 'QI']:
                     combine_index_list.append(q)
                 elif q in ['RGB', 'all_band', '4visual']:
-                    combine_index_list.extend([['B2', 'B3', 'B4'], ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B11', 'B12'], ['B2', 'B3', 'B4', 'B5', 'B8', 'B11']][['RGB', 'all_band', '4visual'].index(q)])
+                    combine_index_list.extend([['B2', 'B3', 'B4'], ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12'], ['B2', 'B3', 'B4', 'B5', 'B8', 'B11']][['RGB', 'all_band', '4visual'].index(q)])
             combine_index_array_list = copy.copy(combine_index_list)
 
         if processed_index_list != []:
@@ -766,7 +839,7 @@ class Sentinel2_ds(object):
                     if index == 'all_band':
                         band_name_list, band_output_list = self.band_name_list, self.band_output_list
                     elif index == '4visual':
-                        band_name_list, band_output_list = ['B02_10m.jp2', 'B03_10m.jp2', 'B04_10m.jp2', 'B05_20m.jp2','B8A_20m.jp2', 'B11_20m.jp2'], ['B2', 'B3', 'B4', 'B5','B8', 'B11']
+                        band_name_list, band_output_list = ['B02_10m.jp2', 'B03_10m.jp2', 'B04_10m.jp2', 'B08_10m.jp2', 'B05_20m.jp2', 'B11_20m.jp2'], ['B2', 'B3', 'B4', 'B8', 'B5', 'B11']
                     elif index == 'RGB':
                         band_name_list, band_output_list = ['B02_10m.jp2', 'B03_10m.jp2', 'B04_10m.jp2'], ['B2', 'B3', 'B4']
                     elif index in self.band_output_list:
@@ -778,62 +851,103 @@ class Sentinel2_ds(object):
                     if overwritten_para or False in [os.path.exists(subset_output_path + str(sensing_date) + '_' + str(tile_num) + '_' + str(band_temp) + '.TIF') for band_temp in band_output_list] or (self._combine_band_factor and True in [band_index_temp in band_output_list for band_index_temp in combine_index_list]):
                         for band_name, band_output in zip(band_name_list, band_output_list):
                             if band_output != 'B2':
-                                all_band_file_name = f'{str(sensing_date)}_{str(tile_num)}_{str(band_output)}'
-                                if not os.path.exists(subset_output_path + all_band_file_name + '.TIF') or overwritten_para:
-                                    band_all = [zfile_temp for zfile_temp in zfile.namelist() if band_name in zfile_temp]
-                                    if len(band_all) != 1:
-                                        print(f'Something error during processing {band_output} of {index} data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
-                                        self._subset_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
+                                if self._pansharp_factor and band_output in ['B1', 'B5', 'B6', 'B7', 'B8A', 'B9', 'B11', 'B12'] and False in [os.path.exists(f'{subset_output_path}{str(sensing_date)}_{str(tile_num)}_{str(band_t)}.TIF') for band_t in ['B2', 'B3', 'B4', 'B8']]:
+                                    band4sharpen = []
+                                    for band_t in ['B2', 'B3', 'B4', 'B8']:
+                                        if not os.path.exists(f'{subset_output_path}{str(sensing_date)}_{str(tile_num)}_{str(band_t)}.TIF'):
+                                            band4sharpen.append(band_t)
+                                    if band4sharpen == []:
+                                        raise Exception('Code Error')
                                     else:
-                                        for band_temp in band_all:
-                                            try:
-                                                ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
-                                                t1 = time.time()
-                                                if self._vi_clip_factor:
-                                                    gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
-                                                              xRes=10, yRes=10, dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI,
-                                                              outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
-                                                              dstNodata=65535)
-                                                else:
-                                                    gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
-                                                              xRes=10, yRes=10, dstSRS=self.main_coordinate_system,
-                                                              outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
-                                                              dstNodata=65535)
-                                                time1 = time.time() - t1
-                                                t2 = time.time()
-                                                if self._cloud_removal_para:
-                                                    qi_file_path = f'{qi_path}{str(sensing_date)}_{str(tile_num)}_QI.TIF'
-                                                    if not os.path.exists(qi_file_path):
-                                                        self.subset_tiffiles(['QI'], tiffile_serial_num, **kwargs)
-                                                    self._qi_remove_cloud('/vsimem/' + all_band_file_name + '.TIF',
-                                                                    qi_file_path, tiffile_serial_num, dst_nodata=65535,
-                                                                    sparse_matrix_factor=self._sparsify_matrix_factor,
-                                                                    **kwargs)
-                                                gdal.Translate(subset_output_path + all_band_file_name + '.TIF',
-                                                               '/vsimem/' + all_band_file_name + '.TIF', options=topts,
-                                                               noData=65535)
+                                        if 'combine_band_factor' in kwargs.keys():
+                                            kwargs['combine_band_factor'] = False
+                                        self.subset_tiffiles(band4sharpen, tiffile_serial_num, *args, **kwargs)
+                                else:
+                                    all_band_file_name = f'{str(sensing_date)}_{str(tile_num)}_{str(band_output)}'
+                                    if not os.path.exists(subset_output_path + all_band_file_name + '.TIF') or overwritten_para:
+                                        band_all = [zfile_temp for zfile_temp in zfile.namelist() if band_name in zfile_temp]
+                                        if len(band_all) != 1:
+                                            print(f'Something error during processing {band_output} of {index} data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
+                                            self._subset_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
+                                        else:
+                                            for band_temp in band_all:
+                                                try:
+                                                    ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
+                                                    t1 = time.time()
+                                                    if self._vi_clip_factor:
+                                                        gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
+                                                                  xRes=10, yRes=10, dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI,
+                                                                  outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
+                                                                  dstNodata=65535)
+                                                    else:
+                                                        gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
+                                                                  xRes=10, yRes=10, dstSRS=self.main_coordinate_system,
+                                                                  outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
+                                                                  dstNodata=65535)
+                                                    time1 = time.time() - t1
+                                                    t2 = time.time()
 
-                                                if self._combine_band_factor and band_output in combine_index_list:
-                                                    temp_ds = gdal.Open(subset_output_path + all_band_file_name + '.TIF')
-                                                    temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
-                                                    temp_array = temp_array.astype(np.float)
-                                                    temp_array[temp_array == 65535] = np.nan
-                                                    combine_index_array_list[combine_index_list.index(band_output)] = temp_array
+                                                    if self._cloud_removal_para:
+                                                        qi_file_path = f'{qi_path}{str(sensing_date)}_{str(tile_num)}_QI.TIF'
+                                                        if not os.path.exists(qi_file_path):
+                                                            if 'combine_band_factor' in kwargs.keys():
+                                                                kwargs['combine_band_factor'] = False
+                                                            self.subset_tiffiles(['QI'], tiffile_serial_num, **kwargs)
+                                                        self._qi_remove_cloud('/vsimem/' + all_band_file_name + '.TIF',
+                                                                        qi_file_path, tiffile_serial_num, dst_nodata=65535,
+                                                                        sparse_matrix_factor=self._sparsify_matrix_factor,
+                                                                        **kwargs)
 
-                                                gdal.Unlink('/vsimem/' + all_band_file_name + '.TIF')
-                                                time2 = time.time() - t2
-                                                print(f'Subset {file_name} of consuming {str(time1)}, remove cloud consuming {str(time2)}!')
-                                            except:
-                                                self._subset_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
-                                                print(f'The {index} of {str(sensing_date)}_{str(tile_num)} is not valid')
-                                                return
+                                                    if self._pansharp_factor and band_output in ['B1', 'B5', 'B6', 'B7', 'B8A', 'B9', 'B11', 'B12']:
+                                                        high_resolution_image_list = []
+                                                        for high_res_band in ['B2', 'B3', 'B4', 'B8']:
+                                                            if os.path.exists(f'{subset_output_path}{str(sensing_date)}_{str(tile_num)}_{high_res_band}.TIF'):
+                                                                ds_t = gdal.Open(f'{subset_output_path}{str(sensing_date)}_{str(tile_num)}_{high_res_band}.TIF')
+                                                                array_t = ds_t.GetRasterBand(1).ReadAsArray()
+                                                                array_t = array_t.astype(np.float)
+                                                                array_t[array_t == 65535] = 0
+                                                                high_resolution_image_list.append(array_t)
 
-                                elif os.path.exists(subset_output_path + all_band_file_name + '.TIF') and self._combine_band_factor and band_output in combine_index_list:
-                                    temp_ds = gdal.Open(subset_output_path + all_band_file_name + '.TIF')
-                                    temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
-                                    temp_array = temp_array.astype(np.float)
-                                    temp_array[temp_array == 65535] = np.nan
-                                    combine_index_array_list[combine_index_list.index(band_output)] = temp_array
+                                                        if high_resolution_image_list == []:
+                                                            print('Something went wrong for the code in pan sharpening')
+                                                        else:
+                                                            process_ds = gdal.Open('/vsimem/' + all_band_file_name + '.TIF', gdal.GA_Update)
+                                                            process_image = process_ds.GetRasterBand(1).ReadAsArray()
+                                                            process_image = process_image.astype(np.float)
+                                                            process_image[process_image == 65535] = 0
+                                                            output_image = self._wavelet_pansharpen(process_image, high_resolution_image_list)
+                                                            # output_image = ATPRK.ATPRK_PANsharpen(process_image, high_resolution_image_list)
+                                                            output_image = np.round(output_image)
+                                                            output_image = output_image.astype(np.int)
+                                                            output_image[output_image == 0] = 65535
+                                                            process_ds.GetRasterBand(1).WriteArray(output_image)
+                                                            process_ds.FlushCache()
+                                                            process_ds = None
+                                                    gdal.Translate(subset_output_path + all_band_file_name + '.TIF',
+                                                                   '/vsimem/' + all_band_file_name + '.TIF', options=topts,
+                                                                   noData=65535)
+
+                                                    if self._combine_band_factor and band_output in combine_index_list:
+                                                        temp_ds = gdal.Open(subset_output_path + all_band_file_name + '.TIF')
+                                                        temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
+                                                        temp_array = temp_array.astype(np.float)
+                                                        temp_array[temp_array == 65535] = np.nan
+                                                        combine_index_array_list[combine_index_list.index(band_output)] = temp_array
+
+                                                    gdal.Unlink('/vsimem/' + all_band_file_name + '.TIF')
+                                                    time2 = time.time() - t2
+                                                    print(f'Subset {file_name} of consuming {str(time1)}, remove cloud consuming {str(time2)}!')
+                                                except:
+                                                    self._subset_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
+                                                    print(f'The {index} of {str(sensing_date)}_{str(tile_num)} is not valid')
+                                                    return
+
+                                    elif os.path.exists(subset_output_path + all_band_file_name + '.TIF') and self._combine_band_factor and band_output in combine_index_list:
+                                        temp_ds = gdal.Open(subset_output_path + all_band_file_name + '.TIF')
+                                        temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
+                                        temp_array = temp_array.astype(np.float)
+                                        temp_array[temp_array == 65535] = np.nan
+                                        combine_index_array_list[combine_index_list.index(band_output)] = temp_array
 
                             else:
                                 if not os.path.exists(f'{subset_output_path}\\{str(sensing_date)}_{str(tile_num)}_B2.TIF'):
@@ -846,6 +960,8 @@ class Sentinel2_ds(object):
                                         if self._cloud_removal_para:
                                             qi_file_path = f'{qi_path}{str(sensing_date)}_{str(tile_num)}_QI.TIF'
                                             if not os.path.exists(qi_file_path):
+                                                if 'combine_band_factor' in kwargs.keys():
+                                                    kwargs['combine_band_factor'] = False
                                                 self.subset_tiffiles(['QI'], tiffile_serial_num, **kwargs)
                                             self._qi_remove_cloud(
                                                 f'{subset_output_path}\\{str(sensing_date)}_{str(tile_num)}_B2.TIF',
@@ -901,22 +1017,60 @@ class Sentinel2_ds(object):
                 elif (not overwritten_para and not os.path.exists(subset_output_path + file_name + '.TIF') and not (index == 'QI' or index == 'all_band' or index == '4visual' or index in self.band_output_list)) or self._combine_band_factor:
                     if index == 'NDVI':
                         # time1 = time.time()
-                        ds_list = self._check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
+                        ds_list = self._check_output_band_statue(['B8A', 'B4'], tiffile_serial_num, **kwargs)
                         # print('process b8 and b4' + str(time.time() - time1))
                         if ds_list is not None:
                             if self._sparsify_matrix_factor:
-                                B8_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                B8A_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
                                 B4_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
                             else:
-                                B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                                B8A_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                                 B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
                             # print(time.time()-time1)
-                            output_array = (B8_array - B4_array) / (B8_array + B4_array)
+                            B8A_array[B8A_array == 65535] = np.nan
+                            B4_array[B4_array == 65535] = np.nan
+                            output_array = (B8A_array - B4_array) / (B8A_array + B4_array)
                             B4_array = None
-                            B8_array = None
+                            B8A_array = None
                             # print(time.time()-time1)
                         else:
                             self._index_construction_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
+                            break
+                    elif index == 'AWEI':
+                        ds_list = self._check_output_band_statue(['B3', 'B11'], tiffile_serial_num, **kwargs)
+                        if ds_list is not None:
+                            if self._sparsify_matrix_factor:
+                                B3_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                B11_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                            else:
+                                B3_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                                B11_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
+                            B3_array[B3_array == 65535] = np.nan
+                            B11_array[B11_array == 65535] = np.nan
+                            output_array = (B3_array - B11_array) / (B3_array + B11_array)
+                            B3_array = None
+                            B11_array = None
+                        else:
+                            self._index_construction_failure_file.append(
+                                [index, tiffile_serial_num, sensing_date, tile_num])
+                            break
+                    elif index == 'AWEInsh':
+                        ds_list = self._check_output_band_statue(['B3', 'B11'], tiffile_serial_num, **kwargs)
+                        if ds_list is not None:
+                            if self._sparsify_matrix_factor:
+                                B3_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                B11_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                            else:
+                                B3_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                                B11_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
+                            B3_array[B3_array == 65535] = np.nan
+                            B11_array[B11_array == 65535] = np.nan
+                            output_array = (B3_array - B11_array) / (B3_array + B11_array)
+                            B3_array = None
+                            B11_array = None
+                        else:
+                            self._index_construction_failure_file.append(
+                                [index, tiffile_serial_num, sensing_date, tile_num])
                             break
                     elif index == 'MNDWI':
                         ds_list = self._check_output_band_statue(['B3', 'B11'], tiffile_serial_num, **kwargs)
@@ -927,6 +1081,8 @@ class Sentinel2_ds(object):
                             else:
                                 B3_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                                 B11_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
+                            B3_array[B3_array == 65535] = np.nan
+                            B11_array[B11_array == 65535] = np.nan
                             output_array = (B3_array - B11_array) / (B3_array + B11_array)
                             B3_array = None
                             B11_array = None
@@ -934,43 +1090,50 @@ class Sentinel2_ds(object):
                             self._index_construction_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
                             break
                     elif index == 'EVI':
-                        ds_list = self._check_output_band_statue(['B2', 'B4', 'B8'], tiffile_serial_num, **kwargs)
+                        ds_list = self._check_output_band_statue(['B2', 'B4', 'B8A'], tiffile_serial_num, **kwargs)
                         if ds_list is not None:
                             B2_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                             B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                            B8_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                            output_array = 2.5 * (B8_array - B4_array) / (B8_array + 6 * B4_array - 7.5 * B2_array + 1)
+                            B8A_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
+                            B8A_array[B8A_array == 65535] = np.nan
+                            B4_array[B4_array == 65535] = np.nan
+                            B2_array[B2_array == 65535] = np.nan
+                            output_array = 2.5 * (B8A_array - B4_array) / (B8A_array + 6 * B4_array - 7.5 * B2_array + 1)
                             B4_array = None
-                            B8_array = None
+                            B8A_array = None
                             B2_array = None
                         else:
                             self._index_construction_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
                             break
                     elif index == 'EVI2':
-                        ds_list = self._check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
+                        ds_list = self._check_output_band_statue(['B8A', 'B4'], tiffile_serial_num, **kwargs)
                         # print('process b8 and b4' + str(time.time() - time1))
                         if ds_list is not None:
-                            B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                            B8A_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                             B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                            output_array = 2.5 * (B8_array - B4_array) / (B8_array + 2.4 * B4_array + 1)
+                            B8A_array[B8A_array == 65535] = np.nan
+                            B4_array[B4_array == 65535] = np.nan
+                            output_array = 2.5 * (B8A_array - B4_array) / (B8A_array + 2.4 * B4_array + 1)
                             B4_array = None
-                            B8_array = None
+                            B8A_array = None
                         else:
                             self._index_construction_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
                             break
                     elif index == 'GNDVI':
-                        ds_list = self._check_output_band_statue(['B8', 'B3'], tiffile_serial_num, **kwargs)
+                        ds_list = self._check_output_band_statue(['B8A', 'B3'], tiffile_serial_num, **kwargs)
                         # print('process b8 and b4' + str(time.time() - time1))
                         if ds_list is not None:
                             if self._sparsify_matrix_factor:
-                                B8_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                B8A_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
                                 B3_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
                             else:
-                                B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                                B8A_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                                 B3_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                            output_array = (B8_array - B3_array) / (B8_array + B3_array)
+                            B8A_array[B8A_array == 65535] = np.nan
+                            B3_array[B3_array == 65535] = np.nan
+                            output_array = (B8A_array - B3_array) / (B8A_array + B3_array)
                             B3_array = None
-                            B8_array = None
+                            B8A_array = None
                         else:
                             self._index_construction_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
                             break
@@ -984,6 +1147,8 @@ class Sentinel2_ds(object):
                             else:
                                 B7_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                                 B5_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
+                            B7_array[B7_array == 65535] = np.nan
+                            B5_array[B5_array == 65535] = np.nan
                             output_array = (B7_array - B5_array) / (B7_array + B5_array)
                             B5_array = None
                             B7_array = None
@@ -991,45 +1156,51 @@ class Sentinel2_ds(object):
                             self._index_construction_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
                             break
                     elif index == 'NDVI_RE2':
-                        ds_list = self._check_output_band_statue(['B8', 'B5'], tiffile_serial_num, **kwargs)
+                        ds_list = self._check_output_band_statue(['B8A', 'B5'], tiffile_serial_num, **kwargs)
                         # print('process b8 and b4' + str(time.time() - time1))
                         if ds_list is not None:
                             if self._sparsify_matrix_factor:
-                                B8_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                B8A_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
                                 B5_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
                             else:
-                                B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                                B8A_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                                 B5_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                            output_array = (B8_array - B5_array) / (B8_array + B5_array)
+                            B8A_array[B8A_array == 65535] = np.nan
+                            B5_array[B5_array == 65535] = np.nan
+                            output_array = (B8A_array - B5_array) / (B8A_array + B5_array)
                             B5_array = None
-                            B8_array = None
+                            B8A_array = None
                         else:
                             self._index_construction_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
                             break
                     elif index == 'OSAVI':
-                        ds_list = self._check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
+                        ds_list = self._check_output_band_statue(['B8A', 'B4'], tiffile_serial_num, **kwargs)
                         # print('Process B8 and B4 in' + str(time.time() - time1))
                         if ds_list is not None:
                             time1 = time.time()
-                            B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                            B8A_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                             B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                            output_array = 1.16 * (B8_array - B4_array) / (B8_array + B4_array + 0.16)
+                            B8A_array[B8A_array == 65535] = np.nan
+                            B4_array[B4_array == 65535] = np.nan
+                            output_array = 1.16 * (B8A_array - B4_array) / (B8A_array + B4_array + 0.16)
                             B4_array = None
-                            B8_array = None
+                            B8A_array = None
                             # print(time.time()-time1)
                         else:
                             self._index_construction_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
                             break
                     elif index == 'IEI':
-                        ds_list = self._check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
+                        ds_list = self._check_output_band_statue(['B8A', 'B4'], tiffile_serial_num, **kwargs)
                         # print('Process B8 and B4 in' + str(time.time() - time1))
                         if ds_list is not None:
                             time1 = time.time()
-                            B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
+                            B8A_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
                             B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                            output_array = 1.5 * (B8_array - B4_array) / (B8_array + B4_array + 0.5)
+                            B8A_array[B8A_array == 65535] = np.nan
+                            B4_array[B4_array == 65535] = np.nan
+                            output_array = 1.5 * (B8A_array - B4_array) / (B8A_array + B4_array + 0.5)
                             B4_array = None
-                            B8_array = None
+                            B8A_array = None
                         else:
                             self._index_construction_failure_file.append([index, tiffile_serial_num, sensing_date, tile_num])
                             break
@@ -2211,14 +2382,15 @@ def curve_fitting(l2a_output_path_f, index_list, study_area_f, pixel_limitation_
 
 if __name__ == '__main__':
     # Create Output folder
-    # filepath = 'G:\A_veg\S2_all\\Original_file\\'
-    filepath = 'G:\A_veg\S2_test\\Orifile\\'
+    filepath = 'G:\A_veg\S2_all\\Original_file\\'
+    # filepath = 'G:\A_veg\S2_test\\Orifile\\'
     s2_ds_temp = Sentinel2_ds(filepath)
     s2_ds_temp.construct_metadata()
-    s2_ds_temp.sequenced_subset(['MNDWI', 'OSAVI'], ROI='E:\\A_Veg_phase2\\Sentinel_2_test\\shpfile\\Floodplain_2020.shp',
-                                ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
-                                size_control_factor=True, combine_band_factor=True)
-    # s2_ds_temp.mp_subset(['all_band', 'NDVI', 'MNDWI', 'OSAVI', 'RGB'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp', ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud', size_control_factor=True)
+    # s2_ds_temp.sequenced_subset(['all_band', 'MNDWI'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp',
+    #                             ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
+    #                             size_control_factor=True, combine_band_factor=False, pansharp_factor=False)
+    s2_ds_temp.mp_subset(['all_band', 'NDVI', 'MNDWI', 'OSAVI', 'RGB'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp',
+                         ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud', size_control_factor=True, combine_band_factor=False, pansharp_factor=True)
     s2_ds_temp.to_datacube(['NDVI', 'MNDWI', 'OSAVI'], inherit_from_logfile=True)
     file_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\Original_Zipfile\\'
     output_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\'
