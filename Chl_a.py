@@ -1,34 +1,21 @@
 # coding=utf-8
-import sys
 from scipy.optimize import curve_fit
 import pandas as pd
 import numpy as np
-import snappy
-from sklearn.neural_network import MLPRegressor
 import Landsat_main_v1
-import Sentinel_main_V2
-import numpy
 import os
 import gdal
-import basic_function
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error,mean_absolute_error
+from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import train_test_split
-from sklearn.datasets import fetch_california_housing
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import SGD
 import torch.utils.data as Data
-from torch.utils.data import DataLoader,Dataset
 import matplotlib.pyplot as plt
 import matplotlib.figure as fg
 import seaborn as sns
 from sklearn.model_selection import KFold
-import copy
 from pylab import mpl
-import openpyxl
-
 
 mpl.rcParams['font.sans-serif'] = ['SimSun'] # 指定默认字体
 mpl.rcParams['axes.unicode_minus'] = False

@@ -198,14 +198,3 @@ class Queried_Sentinel_ds(object):
         failure_file = bf.file_filter(self.work_env, containing_word_list=['failure_file.npy'], subfolder_detection=True)
         self.failure_file = np.load(failure_file[0])
 
-
-if __name__ == "__main__":
-    # Parameters
-    IDM = "C:\\Program Files (x86)\\Internet Download Manager\\IDMan.exe"
-    DownPath = 'g:\\sentinel2_download\\'
-    shpfile_path = 'E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain\\Floodplain_2020_simplified4.shp'
-
-    S2_MID_YZR = Queried_Sentinel_ds('shixi2ng', 'shixi2nG', DownPath, IDM_path=IDM)
-    S2_MID_YZR.queried_with_ROI(shpfile_path, ('20190101', '20191231'),'Sentinel-2', 'S2MSI2A',(0, 95), overwritten_factor=True)
-    S2_MID_YZR.download_with_IDM()
-

@@ -178,16 +178,14 @@ def doy2date(self):
         try:
             return doy2date(int(self))
         except:
-            print('Please input doy with correct data type!')
-            sys.exit(-1)
+            raise TypeError('The doy2date method did not support this data type')
     elif type(self) == int or type(self) == np.int32 or type(self) == np.int16 or type(self) == np.int64:
         if len(str(self)) == 7:
             year_temp = self // 1000
         elif len(str(self)) == 8:
             year_temp = self // 10000
         else:
-            print('The doy length is wrong')
-            sys.exit(-1)
+            raise ValueError('The doy length is not correct!')
         date_temp = datetime.date.fromordinal(datetime.date(year=year_temp, month=1, day=1).toordinal() + np.mod(self, 1000) - 1).month * 100 + datetime.date.fromordinal(datetime.date(year=year_temp, month=1, day=1).toordinal() + np.mod(self, 1000) - 1).day
         return year_temp * 10000 + date_temp
     elif type(self) == list:
@@ -196,15 +194,14 @@ def doy2date(self):
             self[i] = doy2date(self[i])
             i += 1
         return self
-    elif type(self) == np.ndarray:
+    elif type(self) is np.ndarray:
         i = 0
         while i < self.shape[0]:
             self[i] = doy2date(self[i])
             i += 1
         return self
     else:
-        print('The doy2date method did not support this data type')
-        sys.exit(-1)
+        raise TypeError('The doy2date method did not support this data type')
 
 
 def date2doy(self):
@@ -212,14 +209,12 @@ def date2doy(self):
         try:
             return date2doy(int(self))
         except:
-            print('Please input doy with correct data type!')
-            sys.exit(-1)
+            raise TypeError('The date2doy method did not support this data type')
     elif type(self) == int or type(self) == np.int32 or type(self) == np.int16 or type(self) == np.int64:
         if len(str(self)) == 8:
             year_temp = self // 10000
         else:
-            print('The doy length is wrong')
-            sys.exit(-1)
+            raise ValueError('The date length is not correct!')
         date_temp = datetime.date(year=year_temp, month= np.mod(self, 10000) // 100, day=np.mod(self, 100)).toordinal() - datetime.date(year=year_temp, month=1, day=1).toordinal() + 1
         return year_temp * 1000 + date_temp
     elif type(self) == list:
@@ -228,18 +223,20 @@ def date2doy(self):
             self[i] = date2doy(self[i])
             i += 1
         return self
-    elif type(self) == np.ndarray:
+    elif type(self) is np.ndarray:
         i = 0
         while i < self.shape[0]:
             self[i] = date2doy(self[i])
             i += 1
         return self
     else:
-        print('The doy2date method did not support this data type')
-        sys.exit(-1)
+        raise TypeError('The date2doy method did not support this data type')
 
 
 def file_filter(file_path_temp, containing_word_list, subfolder_detection=False, and_or_factor=None, exclude_word_list=[]):
+
+    file_path_temp = Path(file_path_temp).path_name
+
     if and_or_factor is None:
         and_or_factor = 'or'
     elif and_or_factor not in ['and', 'or']:

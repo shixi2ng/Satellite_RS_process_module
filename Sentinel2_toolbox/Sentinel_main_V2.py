@@ -96,7 +96,7 @@ class NDSparseMatrix:
         self._height = len(self.SM_namelist)
         self.shape = [self._rows, self._cols, self._height]
 
-    def append(self, sm_matrix, name=None):
+    def append(self, sm_matrix, name=None, pos=-1):
         if type(sm_matrix) not in (sm.spmatrix, sm.csr_matrix, sm.csc_matrix, sm.coo_matrix, sm.bsr_matrix, sm.dia_matrix, sm.dok_matrix):
             raise TypeError(f'The new sm_matrix is not a sm_matrix')
         elif type(sm_matrix) != self._matrix_type:
@@ -110,7 +110,15 @@ class NDSparseMatrix:
                 name = int(self.SM_namelist[-1]) + 1
             except:
                 name = 0
-        self.SM_namelist.append(name)
+
+        if pos == -1:
+            self.SM_namelist.append(name)
+        elif pos not in range(len(self.SM_namelist)):
+            print(f'The pos{str(pos)} is not in the range')
+            self.SM_namelist.append(name)
+        else:
+            self.SM_namelist.insert(pos, name)
+
         self.SM_group[name] = sm_matrix
         self._update_size_para()
 
@@ -132,6 +140,7 @@ class NDSparseMatrix:
             i += 1
 
     def save(self, output_path):
+        bf.create_folder(output_path)
         output_path = bf.Path(output_path).path_name
         i = 0
         for sm_name in self.SM_namelist:
@@ -169,7 +178,9 @@ class NDSparseMatrix:
                 except:
                     raise Exception(f'file {str(SM_name)} cannot be loaded')
             self.SM_group[SM_name] = SM_arr_temp
+
         self._update_size_para()
+        return self
 
     def replace_layer(self, ori_layer_name, new_layer, new_layer_name = None):
 
@@ -402,8 +413,7 @@ class Sentinel2_ds(object):
 
             #########################################################################
             # Document the log file and para file
-            # The difference between log file and para file is that the log file contains the information for each run/debug
-            # While the para file only comprises of the parameter for the latest run/debug
+            # The log file contained the information for each run and para file documented the args of each func
             #########################################################################
 
             time_start = time.time()
@@ -447,7 +457,7 @@ class Sentinel2_ds(object):
             log_temp.extend(args_list)
             log_temp.extend(kwargs_list)
             log_file.writelines(log_temp)
-            for func_key, func_processing_name in zip(['metadata', 'subset', 'datacube'], ['constructing metadata', 'executing subset and clip', '2dc']):
+            for func_key, func_processing_name in zip(['metadata', 'subset', 'ds2sdc'], ['constructing metadata', 'executing subset and clip', '2sdc']):
                 if func_key in func.__name__:
                     if error_inf is None:
                         log_file.writelines([f'Status: Finished {func_processing_name}!\n', '#' * 70 + '\n'])
@@ -480,26 +490,25 @@ class Sentinel2_ds(object):
             para_raw_txt = para_file.read().split('\n')
 
         for para in required_para_name_list:
-            if para in self.__dir__():
-                for q in para_raw_txt:
-                    para = str(para)
-                    if q.startswith(para + ':'):
-                        if q.split(para + ':')[-1] == 'None':
-                            self.__dict__[para] = None
-                        elif q.split(para + ':')[-1] == 'True':
-                            self.__dict__[para] = True
-                        elif q.split(para + ':')[-1] == 'False':
-                            self.__dict__[para] = False
-                        elif q.split(para + ':')[-1].startswith('['):
-                            self.__dict__[para] = list(q.split(para + ':')[-1][1: -1])
-                        elif q.split(para + ':')[-1].startswith('('):
-                            self.__dict__[para] = tuple(q.split(para + ':')[-1][1: -1])
-                        else:
-                            try:
-                                t = float(q.split(para + ':')[-1])
-                                self.__dict__[para] = float(q.split(para + ':')[-1])
-                            except:
-                                self.__dict__[para] = q.split(para + ':')[-1]
+            for q in para_raw_txt:
+                para = str(para)
+                if q.startswith(para + ':'):
+                    if q.split(para + ':')[-1] == 'None':
+                        self.__dict__[para] = None
+                    elif q.split(para + ':')[-1] == 'True':
+                        self.__dict__[para] = True
+                    elif q.split(para + ':')[-1] == 'False':
+                        self.__dict__[para] = False
+                    elif q.split(para + ':')[-1].startswith('['):
+                        self.__dict__[para] = list(q.split(para + ':')[-1][1: -1])
+                    elif q.split(para + ':')[-1].startswith('('):
+                        self.__dict__[para] = tuple(q.split(para + ':')[-1][1: -1])
+                    else:
+                        try:
+                            t = float(q.split(para + ':')[-1])
+                            self.__dict__[para] = float(q.split(para + ':')[-1])
+                        except:
+                            self.__dict__[para] = q.split(para + ':')[-1]
 
     @save_log_file
     def construct_metadata(self):
@@ -859,15 +868,15 @@ class Sentinel2_ds(object):
                             band_output_limit = (int(self.output_bounds[tiffile_serial_num, 0]), int(self.output_bounds[tiffile_serial_num, 1]),
                                                  int(self.output_bounds[tiffile_serial_num, 2]), int(self.output_bounds[tiffile_serial_num, 3]))
                             if self._vi_clip_factor:
-                                gdal.Warp('/vsimem/' + b2_band_file_name + '.TIF', ds_temp,
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.vrt', ds_temp,
                                           dstSRS=self.main_coordinate_system, xRes=10, yRes=10, cutlineDSName=self.ROI,
                                           outputType=gdal.GDT_UInt16, dstNodata=65535, outputBounds=band_output_limit)
                             else:
-                                gdal.Warp('/vsimem/' + b2_band_file_name + '.TIF', ds_temp,
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.vrt', ds_temp,
                                           dstSRS=self.main_coordinate_system, xRes=10, yRes=10,
                                           outputType=gdal.GDT_UInt16, dstNodata=65535, outputBounds=band_output_limit)
-                            gdal.Translate(output_path + b2_band_file_name + '.TIF', '/vsimem/' + b2_band_file_name + '.TIF', options=topts, noData=65535)
-                            gdal.Unlink('/vsimem/' + b2_band_file_name + '.TIF')
+                            gdal.Translate(output_path + b2_band_file_name + '.TIF', '/vsimem/' + b2_band_file_name + '.vrt', options=topts, noData=65535)
+                            gdal.Unlink('/vsimem/' + b2_band_file_name + '.vrt')
                         except:
                             print(f'The B2 of {str(sensing_date)}_{str(tile_num)} is not valid')
                             return
@@ -981,7 +990,7 @@ class Sentinel2_ds(object):
 
             for index in processed_index_list:
                 start_temp = time.time()
-                print(f'Start processing {index} data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
+                print(f'Start processing \033[1;31m{index}\033[0m data of \033[3;34m{str(sensing_date)} {str(tile_num)}\033[0m ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
 
                 # Generate output folder
                 if self._vi_clip_factor:
@@ -999,6 +1008,7 @@ class Sentinel2_ds(object):
                 else:
                     qi_path = f'{self.output_path}Sentinel2_{self.ROI_name}_index\\QI\\'
 
+                # Combine band to a single
                 if self._combine_band_factor:
                     folder_name = ''
                     for combine_index_temp in combine_index_list:
@@ -1027,12 +1037,13 @@ class Sentinel2_ds(object):
                         for band_temp in band_all:
                             try:
                                 ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
+
                                 if self._vi_clip_factor:
-                                    gdal.Warp('/vsimem/' + file_name + 'temp.TIF', ds_temp, xRes=10, yRes=10, dstSRS=self.main_coordinate_system, outputBounds=band_output_limit, outputType=gdal.GDT_Byte, dstNodata=255)
-                                    gdal.Warp('/vsimem/' + file_name + '.TIF', '/vsimem/' + file_name + 'temp.TIF', xRes=10, yRes=10, outputBounds=band_output_limit, cutlineDSName=self.ROI)
+                                    gdal.Warp('/vsimem/' + file_name + 'temp.vrt', ds_temp, xRes=10, yRes=10, dstSRS=self.main_coordinate_system, outputBounds=band_output_limit, outputType=gdal.GDT_Byte, dstNodata=255)
+                                    gdal.Warp('/vsimem/' + file_name + '.vrt', '/vsimem/' + file_name + 'temp.vrt', xRes=10, yRes=10, outputBounds=band_output_limit, cutlineDSName=self.ROI)
                                 else:
-                                    gdal.Warp('/vsimem/' + file_name + '.TIF', ds_temp, xRes=10, yRes=10, dstSRS=self.main_coordinate_system, outputBounds=band_output_limit, outputType=gdal.GDT_Byte, dstNodata=255)
-                                gdal.Translate(qi_path + file_name + '.TIF', '/vsimem/' + file_name + '.TIF', options=topts, noData=255, outputType=gdal.GDT_Byte)
+                                    gdal.Warp('/vsimem/' + file_name + '.vrt', ds_temp, xRes=10, yRes=10, dstSRS=self.main_coordinate_system, outputBounds=band_output_limit, outputType=gdal.GDT_Byte, dstNodata=255)
+                                gdal.Translate(qi_path + file_name + '.TIF', '/vsimem/' + file_name + '.vrt', options=topts, noData=255, outputType=gdal.GDT_Byte)
 
                                 if self._combine_band_factor and 'QI' in combine_index_list:
                                     temp_ds = gdal.Open(qi_path + file_name + '.TIF')
@@ -1110,23 +1121,23 @@ class Sentinel2_ds(object):
                                                     t1 = time.time()
                                                     if band_output in ['B1', 'B9', 'B11', 'B10', 'B12']:
                                                         if self._vi_clip_factor:
-                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
+                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.vrt', ds_temp,
                                                                       xRes=10, yRes=10, dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI,
                                                                       outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
                                                                       dstNodata=65535, resampleAlg=gdal.GRA_Bilinear)
                                                         else:
-                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
+                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.vrt', ds_temp,
                                                                       xRes=10, yRes=10, dstSRS=self.main_coordinate_system,
                                                                       outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
                                                                       dstNodata=65535, resampleAlg=gdal.GRA_Bilinear)
                                                     else:
                                                         if self._vi_clip_factor:
-                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
+                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.vrt', ds_temp,
                                                                       xRes=10, yRes=10, dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI,
                                                                       outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
                                                                       dstNodata=65535)
                                                         else:
-                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
+                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.vrt', ds_temp,
                                                                       xRes=10, yRes=10, dstSRS=self.main_coordinate_system,
                                                                       outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
                                                                       dstNodata=65535)
@@ -1140,7 +1151,7 @@ class Sentinel2_ds(object):
                                                                 kwargs['combine_band_factor'] = False
                                                             self.subset_tiffiles(['QI'], tiffile_serial_num, **kwargs)
                                                         try:
-                                                            self._qi_remove_cloud('/vsimem/' + all_band_file_name + '.TIF',
+                                                            self._qi_remove_cloud('/vsimem/' + all_band_file_name + '.vrt',
                                                                             qi_file_path, tiffile_serial_num, dst_nodata=65535,
                                                                             sparse_matrix_factor=self._sparsify_matrix_factor,
                                                                             **kwargs)
@@ -1162,7 +1173,7 @@ class Sentinel2_ds(object):
                                                         if high_resolution_image_list == []:
                                                             print('Something went wrong for the code in pan sharpening')
                                                         else:
-                                                            process_ds = gdal.Open('/vsimem/' + all_band_file_name + '.TIF', gdal.GA_Update)
+                                                            process_ds = gdal.Open('/vsimem/' + all_band_file_name + '.vrt', gdal.GA_Update)
                                                             process_image = process_ds.GetRasterBand(1).ReadAsArray()
                                                             process_image = process_image.astype(np.float)
                                                             process_image[process_image == 65535] = 0
@@ -1175,7 +1186,7 @@ class Sentinel2_ds(object):
                                                             process_ds.FlushCache()
                                                             process_ds = None
                                                     gdal.Translate(subset_output_path + all_band_file_name + '.TIF',
-                                                                   '/vsimem/' + all_band_file_name + '.TIF', options=topts,
+                                                                   '/vsimem/' + all_band_file_name + '.vrt', options=topts,
                                                                    noData=65535)
                                                     time3 = time.time() - t3
 
@@ -1586,8 +1597,8 @@ class Sentinel2_ds(object):
 
                     elif self._combine_band_factor and os.path.exists(subset_output_path + file_name + '.TIF'):
                         time3 = time.time()
-                        gdal.Warp('/vsimem/' + file_name + '.TIF', subset_output_path + file_name + '.TIF', outputBounds=band_output_limit, xRes=10, yRes=10)
-                        output_ds = gdal.Open('/vsimem/' + file_name + '.TIF')
+                        gdal.Warp('/vsimem/' + file_name + '.vrt', subset_output_path + file_name + '.TIF', outputBounds=band_output_limit, xRes=10, yRes=10)
+                        output_ds = gdal.Open('/vsimem/' + file_name + '.vrt')
                         output_array = output_ds.GetRasterBand(1).ReadAsArray()
 
                         if array_cube is None:
@@ -1611,21 +1622,21 @@ class Sentinel2_ds(object):
                         if self._size_control_factor is True:
                             output_array[np.isnan(output_array)] = -3.2768
                             output_array = output_array * 10000
-                            write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
+                            write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.vrt', raster_datatype=gdal.GDT_Int16)
                             data_type = gdal.GDT_Int16
                         else:
-                            write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Float32)
+                            write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.vrt', raster_datatype=gdal.GDT_Float32)
                             data_type = gdal.GDT_Float32
 
                         if self._vi_clip_factor:
-                            gdal.Warp('/vsimem/' + file_name + '2.TIF', '/vsimem/' + file_name + '.TIF', xRes=10, yRes=10, cutlineDSName=self.ROI, cropToCutline=True, outputType=data_type)
+                            gdal.Warp('/vsimem/' + file_name + '2.vrt', '/vsimem/' + file_name + '.vrt', xRes=10, yRes=10, cutlineDSName=self.ROI, cropToCutline=True, outputType=data_type)
                         else:
-                            gdal.Warp('/vsimem/' + file_name + '2.TIF', '/vsimem/' + file_name + '.TIF', xRes=10, yRes=10, outputType=data_type)
-                        gdal.Translate(subset_output_path + file_name + '.TIF', '/vsimem/' + file_name + '2.TIF', options=topts)
-                        gdal.Unlink('/vsimem/' + file_name + '.TIF')
-                        gdal.Unlink('/vsimem/' + file_name + '2.TIF')
+                            gdal.Warp('/vsimem/' + file_name + '2.vrt', '/vsimem/' + file_name + '.vrt', xRes=10, yRes=10, outputType=data_type)
+                        gdal.Translate(subset_output_path + file_name + '.TIF', '/vsimem/' + file_name + '2.vrt', options=topts)
+                        gdal.Unlink('/vsimem/' + file_name + '.vrt')
+                        gdal.Unlink('/vsimem/' + file_name + '2.vrt')
 
-                print(f'Finish processing {index} data in {str(time.time() - start_temp)}s ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
+                print(f'Finish processing \033[1;31m{index}\033[0m data of \033[3;34m{str(sensing_date)} {str(tile_num)}\033[0m in \033[1;31m{str(time.time() - start_temp)}\033[0m s ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
 
                 # Generate SA map
                 if not os.path.exists(self.output_path + 'ROI_map\\' + self.ROI_name + '_map.npy'):
@@ -1669,36 +1680,12 @@ class Sentinel2_ds(object):
 
             if self._combine_band_factor:
                 time4 = time.time()
-                np.savez_compressed(f'{combine_band_folder}{str(sensing_date)}_{str(tile_num)}', array_cube)
-                # dst_ds = gdal.GetDriverByName('GTiff').Create(f'{combine_band_folder}{str(sensing_date)}_{str(tile_num)}.TIF', xsize=combine_index_array_list[0].shape[1],
-                #     ysize=combine_index_array_list[0].shape[0], bands=len(combine_index_array_list), eType=gdal.GDT_Float32, options=['COMPRESS=LZW', 'PREDICTOR=2'])
-                #
-                # if self._vi_clip_factor:
-                #     file_list = bf.file_filter(f'{self.output_path}Sentinel2_{self.ROI_name}_index\\all_band\\', [str(sensing_date), str(tile_num), '.TIF'], and_or_factor='and')
-                # else:
-                #     file_list = bf.file_filter(f'{self.output_path}Sentinel2_constructed_index\\all_band\\', [str(sensing_date), str(tile_num), '.TIF'], and_or_factor='and')
-                # ds_temp = gdal.Open(file_list[0])
-                #
-                # dst_ds.SetGeoTransform(ds_temp.GetGeoTransform())  # specify coords
-                # dst_ds.SetProjection(ds_temp.GetProjection())  # export coords to file
-                # for len_t in range(1, len(combine_index_array_list) + 1):
-                #     dst_ds.GetRasterBand(len_t).WriteArray(combine_index_array_list[len_t - 1])
-                #     if len_t == 1:
-                #         dst_ds.GetRasterBand(len_t).SetNoDataValue(np.nan)
-                # dst_ds.FlushCache()  # write to disk
-                # dst_ds = None
-                # ds_temp = None
-                print(f'construct band combination consumes {str(time.time() - time4)}s')
+                np.savez_compressed(f'{combine_band_folder}{str(sensing_date)}_{str(tile_num)}.npz', array_cube)
+                print(f'Write band combination .npz consumes \033[1;31m{str(time.time() - time4)}\033[0m s')
         else:
             print('Caution! the input variable VI_list should be a list and make sure all of them are in Capital Letter')
             sys.exit(-1)
         return [None, None, None, None]
-
-    def create_index_cube(self, band_list):
-        # This function is used to construct index cube for deep learning and image identification
-        supported_band_list = ['NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI',
-                               'NDVI_RE', 'NDVI_RE2', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9',
-                               'B11', 'B12']
 
     def check_subset_intergrality(self, indicator, **kwargs):
         if self.ROI_name is None and ('ROI' not in kwargs.keys() and 'ROI_name' not in kwargs.keys()):
@@ -1774,21 +1761,24 @@ class Sentinel2_ds(object):
             raise Exception('Notice the ROI was missed!')
 
         # Retrieve size control factor
-        self._retrieve_para(['size_control_factor'])
         if 'size_control_factor' in kwargs.keys():
             if type(kwargs['size_control_factor']) is bool:
                 self._size_control_factor = kwargs['size_control_factor']
             else:
                 raise TypeError('Please mention the size_control_factor should be bool type!')
+        elif self._inherit_from_logfile:
+            self._retrieve_para(['size_control_factor'])
         else:
             self._size_control_factor = False
 
+    @save_log_file
     def seq_ds2sdc(self, index_list, *args, **kwargs):
 
         # sequenced process
         for index in index_list:
-            self.ds2sdc(index, *args, **kwargs)
+            self._ds2sdc(index, *args, **kwargs)
 
+    @save_log_file
     def mp_ds2sdc(self, index_list, *args, **kwargs):
 
         if 'chunk_size' in kwargs.keys() and type(kwargs['chunk_size']) is int:
@@ -1799,9 +1789,9 @@ class Sentinel2_ds(object):
 
         # mp process
         with concurrent.futures.ProcessPoolExecutor(max_workers=chunk_size) as executor:
-            executor.map(self.ds2sdc, index_list, repeat(kwargs))
+            executor.map(self._ds2sdc, index_list, repeat(kwargs))
 
-    def ds2sdc(self, index, *args, **kwargs):
+    def _ds2sdc(self, index, *args, **kwargs):
 
         # for the MP
         if args != () and type(args[0]) == dict:
@@ -1811,40 +1801,41 @@ class Sentinel2_ds(object):
         self._process_2sdc_para(**kwargs)
 
         # Remove all files which not meet the requirements
-        if self.ROI_name is None:
-            self.dc_vi[index + 'input_path'] = self.output_path + f'Sentinel2_constructed_index\\{index}\\'
-        else:
-            self.dc_vi[index + 'input_path'] = self.output_path + f'Sentinel2_{self.ROI_name}_index\\{index}\\'
+        band_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B10', 'B11']
+        ROI_midname = 'constructed' if self.ROI_name is None else self.ROI_name
+        self.dc_vi[index + 'input_path'] = self.output_path + f'Sentinel2_{ROI_midname}_index\\all_band\\' if index in band_list else self.output_path + f'Sentinel2_{ROI_midname}_index\\{index}\\'
 
         # path check
         if not os.path.exists(self.dc_vi[index + 'input_path']):
             raise Exception('Please validate the roi name and vi for datacube output!')
 
-        if self.ROI_name is None:
-            self.dc_vi[index] = self.output_path + 'Sentinel2_constructed_datacube\\' + index + '_sequenced_datacube\\'
-        else:
-            self.dc_vi[index] = self.output_path + 'Sentinel2_' + self.ROI_name + '_datacube\\' + index + '_sequenced_datacube\\'
+        self.dc_vi[index] = self.output_path + f'Sentinel2_{ROI_midname}_datacube\\' + index + '_sequenced_datacube\\'
         bf.create_folder(self.dc_vi[index])
 
-        if len(bf.file_filter(self.dc_vi[index + 'input_path'], [index, '.TIF'], and_or_factor='and')) != self.S2_metadata_size:
+        if len(bf.file_filter(self.dc_vi[index + 'input_path'], [f'{index}.TIF'], and_or_factor='and')) != self.S2_metadata_size:
             raise ValueError(f'{index} of the {self.ROI_name} is not consistent')
+
+        print(f'Start convert the dataset of \033[0;31m{index}\033[0m to sdc.')
+        start_time = time.time()
 
         if self._dc_overwritten_para or not os.path.exists(self.dc_vi[index] + 'doy.npy') or not os.path.exists(self.dc_vi[index] + 'header.npy'):
 
             if self.ROI_name is None:
                 print('Start processing ' + index + ' datacube.')
-                header_dic = {'ROI_name': None, 'VI': index, 'Datatype': 'float', 'ROI': None, 'Study_area': None, 'sdc_factor': True, 'coordinate_system': self.main_coordinate_system, 'oritif_folder': self.dc_vi[index + 'input_path']}
+                header_dic = {'ROI_name': None, 'index': index, 'Datatype': 'float', 'ROI': None, 'Study_area': None,
+                              'sdc_factor': True, 'coordinate_system': self.main_coordinate_system,'size_control_factor': self._size_control_factor,
+                              'oritif_folder': self.dc_vi[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
             else:
                 print('Start processing ' + index + ' datacube of the ' + self.ROI_name + '.')
                 sa_map = np.load(bf.file_filter(self.output_path + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
-                header_dic = {'ROI_name': self.ROI_name, 'VI': index, 'Datatype': 'float', 'ROI': self.ROI, 'Study_area': sa_map, 'sdc_factor': True, 'coordinate_system': self.main_coordinate_system, 'oritif_folder': self.dc_vi[index + 'input_path']}
+                header_dic = {'ROI_name': self.ROI_name, 'index': index, 'Datatype': 'float', 'ROI': self.ROI, 'Study_area': sa_map,
+                              'sdc_factor': True, 'coordinate_system': self.main_coordinate_system, 'size_control_factor': self._size_control_factor,
+                              'oritif_folder': self.dc_vi[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
 
-            start_time = time.time()
             VI_stack_list = bf.file_filter(self.dc_vi[index + 'input_path'], [index, '.TIF'], and_or_factor='and')
             VI_stack_list.sort()
-            temp_ds = gdal.Open(VI_stack_list[0])
-            cols, rows = temp_ds.RasterXSize, temp_ds.RasterYSize
-            doy_list = [filepath_temp.split('\\')[-1][0:8] for filepath_temp in VI_stack_list]
+            cols, rows = sa_map.shape[1], sa_map.shape[0]
+            doy_list = [int(filepath_temp.split('\\')[-1][0:8]) for filepath_temp in VI_stack_list]
             doy_list = np.unique(np.array(doy_list))
             doy_list = doy_list.tolist()
 
@@ -1864,12 +1855,20 @@ class Sentinel2_ds(object):
                     i = 0
                     while i < len(doy_list):
                         t1 = time.time()
-                        tiffile_list_temp = [temp for temp in VI_stack_list if str(doy_list[i]) in temp]
+
+                        if index in band_list:
+                            index_req_list = bf.file_filter(self.dc_vi[index + 'input_path'], [str(doy_list[i]), f'{index}.TIF'], and_or_factor='and')
+                            vrt = gdal.BuildVRT(f'/vsimem/{str(doy_list[i])}_{index}.vrt', index_req_list)
+                            gdal.Warp(f'/vsimem/{str(doy_list[i])}_{index}.tif', vrt, cutlineDSName=self.ROI, cropToCutline=True, xRes=10, yRes=10, dstNodata=0)
+                            vrt = None
+                            tiffile_list_temp = [f'/vsimem/{str(doy_list[i])}_{index}.tif']
+                        else:
+                            tiffile_list_temp = [temp for temp in VI_stack_list if str(doy_list[i]) in temp]
 
                         if len(tiffile_list_temp) == 1:
                             ds_temp = gdal.Open(tiffile_list_temp[0], gdal.GA_ReadOnly)
                             array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                            if self._size_control_factor:
+                            if self._size_control_factor and index not in band_list:
                                 array_temp = array_temp.astype(np.uint16) + 32768
                             else:
                                 array_temp[np.isnan(array_temp)] = 0
@@ -1881,7 +1880,7 @@ class Sentinel2_ds(object):
                                 array_list.append(ds_temp.GetRasterBand(1).ReadAsArray())
                                 j += 1
                             array_temp = np.stack(array_list, axis=2)
-                            if self._size_control_factor:
+                            if self._size_control_factor and index not in band_list:
                                 array_temp = np.max(array_temp.astype(np.uint16) + 32768, axis=2)
                             else:
                                 array_temp = np.nanmax(array_temp, axis=2)
@@ -1889,6 +1888,9 @@ class Sentinel2_ds(object):
 
                         else:
                             raise Exception('Code error')
+
+                        if index in band_list:
+                            gdal.Unlink(f'/vsimem/{str(doy_list[i])}_{index}.tif')
 
                         sm_temp = sm.coo_matrix(array_temp)
                         data_cube.append(sm_temp, name=doy_list[i])
@@ -1919,13 +1921,10 @@ class Sentinel2_ds(object):
                                 i_temp -= 1
                             i_temp += 1
 
-                    print('Start writing the ' + index + ' sequenced_datacube.')
-                    start_time = time.time()
+                    # Save the sdc
                     np.save(self.dc_vi[index] + f'doy.npy', doy_list)
                     bf.create_folder(f'{self.dc_vi[index]}{str(index)}_sequenced_datacube\\')
                     data_cube.save(f'{self.dc_vi[index]}{str(index)}_sequenced_datacube\\')
-                    end_time = time.time()
-                    print(f'Finished writing {index} sequenced datacube in {str(end_time - start_time)}s. (Sparse huge datacube)')
 
                 else:
 
@@ -2007,18 +2006,14 @@ class Sentinel2_ds(object):
                                 data_valid_array = np.delete(data_valid_array, i_temp, 0)
                                 i_temp -= 1
                             i_temp += 1
-                    print(f'Finished sdc construction in {str(time.time() - start_time)} s. ({str(dc_num_temp)} of {str(dc_num)})')
 
                     dc_len_list_final.append(doy_list_temp)
-                    # Write the datacube
-                    print('Start writing the ' + index + ' datacube.')
-                    start_time = time.time()
 
+                    # Save the sdc
                     np.save(self.dc_vi[index] + f'date{str(dc_num_temp)}.npy', doy_list_temp)
                     np.savez_compressed(self.dc_vi[index] + str(index) + f'_sequenced_datacube{str(dc_num_temp)}.npz', data_cube_temp)
-                    end_time = time.time()
-                    print(f'Finished writing {index} datacube in {str(end_time - start_time)}s. ({str(dc_num_temp)} of {str(dc_num)})')
                     header_dic['dc_group_list'], header_dic['tiles'] = dc_len_list_final, dc_num
+
             else:
                 nodata_value = -32768 if self._size_control_factor else np.nan
                 data_cube_temp = np.zeros((rows, cols, len(doy_list)), dtype=np.float16)
@@ -2070,18 +2065,16 @@ class Sentinel2_ds(object):
                             data_valid_array = np.delete(data_valid_array, i_temp, 0)
                             i_temp -= 1
                         i_temp += 1
-                print(f'Finished sdc construction in {str(time.time() - start_time)} s.')
 
                 # Write the datacube
-                print('Start writing the ' + index + ' datacube.')
-                start_time = time.time()
                 np.save(self.dc_vi[index] + f'date.npy', doy_list)
                 np.save(self.dc_vi[index] + str(index) + f'_sequenced_datacube.npz', data_cube_temp)
                 end_time = time.time()
-                print(f'Finished writing {index} datacube in {str(end_time - start_time)}s.')
 
             header_dic['ds_file'], header_dic['sparse_matrix'], header_dic['huge_matrix'] = VI_stack_list[0], _sparse_matrix, _huge_matrix
             np.save(self.dc_vi[index] + 'header.npy', header_dic)
+
+        print(f'Finished writing the sdc in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
 
 class Sentinel2_dc(object):
@@ -2105,8 +2098,8 @@ class Sentinel2_dc(object):
                 if type(self.dc_header) is not dict:
                     raise Exception('Please make sure the header file is a dictionary constructed in python!')
 
-                for dic_name in ['ROI_name', 'VI', 'Datatype', 'ROI', 'Study_area', 'ds_file', 'sdc_factor', 'coordinate_system',
-                                 'oritif_folder', 'ds_file', 'sparse_matrix', 'huge_matrix', 'dc_group_list', 'tiles']:
+                for dic_name in ['ROI_name', 'index', 'Datatype', 'ROI', 'Study_area', 'sdc_factor', 'coordinate_system',
+                                 'oritif_folder', 'ds_file', 'sparse_matrix', 'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles']:
                     if dic_name not in self.dc_header.keys():
                         raise Exception(f'The {dic_name} is not in the dc header, double check!')
                     else:
@@ -2117,6 +2110,8 @@ class Sentinel2_dc(object):
             except:
                 raise Exception('Something went wrong when reading the header!')
 
+        start_time = time.time()
+        print(f'Start loading the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
         # Read doy or date file of the Datacube
         try:
             if self.sdc_factor is True:
@@ -2127,7 +2122,8 @@ class Sentinel2_dc(object):
                 elif len(doy_file) > 1:
                     raise ValueError('There has more than one doy file in the dc dir')
                 else:
-                    self.sdc_doylist = np.load(doy_file[0], allow_pickle=True)
+                    sdc_doylist = np.load(doy_file[0], allow_pickle=True)
+                    self.sdc_doylist = [int(sdc_doy) for sdc_doy in sdc_doylist]
             else:
                 raise TypeError('Please input as a sdc')
         except:
@@ -2136,8 +2132,8 @@ class Sentinel2_dc(object):
         # Read datacube
         try:
             if self.sparse_matrix and self.huge_matrix:
-                if os.path.exists(self.dc_filepath + f'{self.VI}_sequenced_datacube\\'):
-                    self.dc = NDSparseMatrix.load(self.dc_filepath + f'{self.VI}_sequenced_datacube\\')
+                if os.path.exists(self.dc_filepath + f'{self.index}_sequenced_datacube\\'):
+                    self.dc = NDSparseMatrix().load(self.dc_filepath + f'{self.index}_sequenced_datacube\\')
                 else:
                     raise Exception('Please double check the code if the sparse huge matrix is generated properply')
             elif not self.huge_matrix:
@@ -2149,13 +2145,12 @@ class Sentinel2_dc(object):
                 else:
                     self.dc = np.load(self.dc_filename[0], allow_pickle=True)
             elif self.huge_matrix and not self.sparse_matrix:
-                self.dc_filename = bf.file_filter(self.dc_filepath, ['sequenced_datacube', '.npy'], and_or_factor = 'and')
+                self.dc_filename = bf.file_filter(self.dc_filepath, ['sequenced_datacube', '.npy'], and_or_factor='and')
         except:
             raise Exception('Something went wrong when reading the datacube!')
 
-        self.dc_XSize = self.dc.shape[0]
-        self.dc_YSize = self.dc.shape[1]
-        self.dc_ZSize = self.dc.shape[2]
+        self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[0], self.dc.shape[1], self.dc.shape[2]
+        print(f'Finish loading the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time()-start_time)}\033[0ms' )
 
         # Check work env
         if work_env is not None:
@@ -2168,21 +2163,46 @@ class Sentinel2_dc(object):
         self._DSWE_threshold = None
         self._flood_month_list = None
         self.flood_mapping_method = []
+        
+    def save(self, output_path):
+
+        start_time = time.time()
+        print(f'Start saving the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+
+        if not os.path.exists(output_path):
+            bf.create_folder(output_path)
+        output_path = bf.Path(output_path).path_name
+
+        header_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI, 'Study_area': self.sa_map,
+                      'sdc_factor': self.sdc_factor, 'coordinate_system': self.coordinate_system, 'ds_file': self.ds_file,
+                      'size_control_factor': self.size_control_factor, 'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
+                      'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles}
+
+        doy = self.sdc_doylist
+        np.save(f'{output_path}doy.npy', doy)
+        np.save(f'{output_path}header.npy', header_dic)
+
+        if self.sparse_matrix:
+            self.dc.save(f'{output_path}{str(self.index)}_sequenced_datacube\\')
+        else:
+            np.save(f'{output_path}{str(self.index)}_sequenced_datacube.npy', self.dc)
+
+        print(f'Finish saving the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
 
 class Sentinel2_dcs(object):
     def __init__(self, *args, work_env=None, auto_harmonised=True):
 
         # Generate the datacubes list
-        self.Sentinel2_dcs = []
+        self._dcs_backup_ = []
         for args_temp in args:
             if type(args_temp) != Sentinel2_dc:
                 raise TypeError('The Landsat datacubes was a bunch of Landsat datacube!')
             else:
-                self.Sentinel2_dcs.append(args_temp)
+                self._dcs_backup_.append(args_temp)
 
         # Validation and consistency check
-        if len(self.Sentinel2_dcs) == 0:
+        if len(self._dcs_backup_) == 0:
             raise ValueError('Please input at least one valid Landsat datacube')
 
         if type(auto_harmonised) != bool:
@@ -2191,9 +2211,9 @@ class Sentinel2_dcs(object):
             harmonised_factor = False
 
         self.index_list, ROI_list, ROI_name_list, Datatype_list, ds_list, study_area_list, sdc_factor_list, doy_list, coordinate_system_list, oritif_folder_list = [], [], [], [], [], [], [], [], [], []
+        self.dcs, huge_matrix_list, sparse_matrix_list, self.size_control_factor_list = [], [], [], []
         x_size, y_size, z_size = 0, 0, 0
-        huge_matrix_para, sparse_matrix_para = None, None
-        for dc_temp in self.Sentinel2_dcs:
+        for dc_temp in self._dcs_backup_:
             if x_size == 0 and y_size == 0 and z_size == 0:
                 x_size, y_size, z_size = dc_temp.dc_XSize, dc_temp.dc_YSize, dc_temp.dc_ZSize
             elif x_size != dc_temp.dc_XSize or y_size != dc_temp.dc_YSize:
@@ -2204,13 +2224,7 @@ class Sentinel2_dcs(object):
                 else:
                     raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised fator as True if wanna avoid this problem!')
 
-            if huge_matrix_para is None and sparse_matrix_para is None:
-                huge_matrix_para = dc_temp.huge_matrix
-                sparse_matrix_para = dc_temp.sparse_matrix
-            elif huge_matrix_para != dc_temp.huge_matrix or sparse_matrix_para != dc_temp.sparse_matrix:
-                raise Exception('Please make sure all the datacube has the same sparse and huge type!')
-
-            self.index_list.append(dc_temp.VI)
+            self.index_list.append(dc_temp.index)
             ROI_name_list.append(dc_temp.ROI_name)
             sdc_factor_list.append(dc_temp.sdc_factor)
             ROI_list.append(dc_temp.ROI)
@@ -2219,6 +2233,10 @@ class Sentinel2_dcs(object):
             Datatype_list.append(dc_temp.Datatype)
             coordinate_system_list.append(dc_temp.coordinate_system)
             oritif_folder_list.append(dc_temp.oritif_folder)
+            huge_matrix_list.append(dc_temp.huge_matrix)
+            sparse_matrix_list.append(dc_temp.sparse_matrix)
+            self.size_control_factor_list.append(dc_temp.size_control_factor)
+            # self.dcs.append(dc_temp.dc)
 
         if x_size != 0 and y_size != 0 and z_size != 0:
             self.dcs_XSize, self.dcs_YSize, self.dcs_ZSize = x_size, y_size, z_size
@@ -2246,6 +2264,10 @@ class Sentinel2_dcs(object):
             raise Exception('Please make sure all dcs were consistent!')
         elif False in [coordinate_system_temp == coordinate_system_list[0] for coordinate_system_temp in coordinate_system_list]:
             raise Exception('Please make sure all coordinate system were consistent!')
+        elif False in [sparse_matrix_temp == sparse_matrix_list[0] for sparse_matrix_temp in sparse_matrix_list]:
+            raise Exception('Please make sure all sparse_matrix were consistent!')
+        elif False in [huge_matrix_temp == huge_matrix_list[0] for huge_matrix_temp in huge_matrix_list]:
+            raise Exception('Please make sure all huge_matrix were consistent!')
 
         # Define the field
         self.ROI = ROI_list[0]
@@ -2254,24 +2276,23 @@ class Sentinel2_dcs(object):
         self.Datatype = Datatype_list[0]
         self.sa_map = study_area_list[0]
         self.ds_file = ds_list[0]
-        self.main_coordinate_system = coordinate_system_list[0]
+        self.coordinate_system = coordinate_system_list[0]
         self.oritif_folder = oritif_folder_list
-        self.sparse_matrix = sparse_matrix_para
-        self.huge_matrix = huge_matrix_para
+        self.sparse_matrix = sparse_matrix_list[0]
+        self.huge_matrix = huge_matrix_list[0]
 
         # Read the doy or date list
         if self.sdc_factor is False:
             raise Exception('Please sequenced the datacubes before further process!')
         else:
-            doy_list = [temp.sdc_doylist for temp in self.Sentinel2_dcs]
-            if False in [temp.shape[0] == doy_list[0].shape[0] for temp in doy_list] or False in [
-                (temp == doy_list[0]).all() for temp in doy_list]:
+            doy_list = [temp.sdc_doylist for temp in self._dcs_backup_]
+            if False in [len(temp) == len(doy_list[0]) for temp in doy_list] or False in [(temp == doy_list[0]) for temp in doy_list]:
                 if auto_harmonised:
                     harmonised_factor = True
                 else:
                     raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
             else:
-                self.doy_list = self.Sentinel2_dcs[0].sdc_doylist
+                self.doy_list = self._dcs_backup_[0].sdc_doylist
 
         # Harmonised the dcs
         if harmonised_factor:
@@ -2279,7 +2300,7 @@ class Sentinel2_dcs(object):
 
         #  Define the output_path
         if work_env is None:
-            self.work_env = Path(os.path.dirname(os.path.dirname(self.Sentinel2_dcs[0].dc_filepath))).path_name
+            self.work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[0].dc_filepath))).path_name
         else:
             self.work_env = work_env
 
@@ -2291,11 +2312,9 @@ class Sentinel2_dcs(object):
         self._DT_std_fig_construction = False
         self._construct_inundated_dc = True
         self._flood_mapping_accuracy_evaluation_factor = False
-        self.inundation_para_folder = self.work_env + '\\Landsat_Inundation_Condition\\Inundation_para\\'
         self._sample_rs_link_list = None
         self._sample_data_path = None
-        self._flood_mapping_method = ['DSWE', 'DT', 'AWEI', 'rs_dem']
-        bf.create_folder(self.inundation_para_folder)
+        self._flood_mapping_method = ['Unet', 'MNDWI_thr', 'DT']
 
         # Define var for the phenological analysis
         self._curve_fitting_algorithm = None
@@ -2318,26 +2337,27 @@ class Sentinel2_dcs(object):
     def _auto_harmonised_dcs(self):
 
         doy_all = np.array([])
-        for dc_temp in self.Sentinel2_dcs:
+        for dc_temp in self._dcs_backup_:
             doy_all = np.concatenate([doy_all, dc_temp.sdc_doylist], axis=0)
         doy_all = np.sort(np.unique(doy_all))
 
         i = 0
-        while i < len(self.Sentinel2_dcs):
+        while i < len(self._dcs_backup_):
             m_factor = False
             for doy in doy_all:
-                if doy not in self.Sentinel2_dcs[i].sdc_doylist:
+                if doy not in self._dcs_backup_[i].sdc_doylist:
                     m_factor = True
-                    self.Sentinel2_dcs[i].dc = np.insert(self.Sentinel2_dcs[i].dc, np.argwhere(doy_all == doy)[0], np.nan * np.zeros([self.Sentinel2_dcs[i].dc_XSize, self.Sentinel2_dcs[i].dc_YSize, 1]), axis=2)
-
+                    if not self.sparse_matrix:
+                        self._dcs_backup_[i].dc = np.insert(self._dcs_backup_[i].dc, np.argwhere(doy_all == doy).flatten()[0], np.nan * np.zeros([self._dcs_backup_[i].dc_XSize, self._dcs_backup_[i].dc_YSize, 1]), axis=2)
+                    else:
+                        self._dcs_backup_[i].dc.append(sm.coo_matrix(np.zeros([self.dcs_XSize, self.dcs_YSize])), name=doy, pos=np.argwhere(doy_all == doy).flatten()[0])
             if m_factor:
-                self.Sentinel2_dcs[i].sdc_doylist = copy.copy(doy_all)
-                self.Sentinel2_dcs[i].dc_ZSize = self.Sentinel2_dcs[i].dc.shape[2]
-
+                self._dcs_backup_[i].sdc_doylist = copy.copy(doy_all)
+                self._dcs_backup_[i].dc_ZSize = self._dcs_backup_[i].dc.shape[2]
             i += 1
 
         z_size, doy_list = 0, []
-        for dc_temp in self.Sentinel2_dcs:
+        for dc_temp in self._dcs_backup_:
             if z_size == 0:
                 z_size = dc_temp.dc_ZSize
             elif z_size != dc_temp.dc_ZSize:
@@ -2354,7 +2374,7 @@ class Sentinel2_dcs(object):
         if type(dc_temp) is not Sentinel2_dc:
             raise TypeError('The appended data should be a Sentinel2_dc!')
 
-        for indicator in ['ROI', 'ROI_name', 'sdc_factor', 'main_coordinate_system']:
+        for indicator in ['ROI', 'ROI_name', 'sdc_factor', 'coordinate_system', 'sparse_matrix', 'huge_matrix']:
             if dc_temp.__dict__[indicator] != self.__dict__[indicator]:
                 raise ValueError('The appended datacube is not consistent with the original datacubes')
 
@@ -2364,9 +2384,9 @@ class Sentinel2_dcs(object):
         if (self.doy_list != dc_temp.sdc_doylist).any():
             raise ValueError('The appended datacube has doy list compared to the original datacubes')
 
-        self.index_list.append(dc_temp.VI)
+        self.index_list.append(dc_temp.index)
         self.oritif_folder.append(dc_temp.oritif_folder)
-        self.Sentinel2_dcs.append(dc_temp)
+        self._dcs_backup_.append(dc_temp)
 
     def extend(self, dcs_temp) -> None:
         if type(dcs_temp) is not Sentinel2_dcs:
@@ -2378,10 +2398,111 @@ class Sentinel2_dcs(object):
 
         self.index_list.extend(dcs_temp.index_list)
         self.oritif_folder.extend(dcs_temp.oritif_folder)
-        self.Sentinel2_dcs.extend(dcs_temp)
+        self._dcs_backup_.extend(dcs_temp)
 
-    def inundation_detection(self):
+    def _inun_det_para(self, **kwargs):
+        self._construct_inundated_dc = True
+        self._inundated_ow_para = False
+
+        for key_temp in kwargs.keys():
+            if key_temp not in ['construct_inundated_dc', 'overwritten_para']:
+                raise ValueError(f'The {str(key_temp)} for func inundation detection is not supported!')
+
+            if key_temp == 'construct_inundated_dc' and type(kwargs['construct_inundated_dc']) is bool:
+                self._construct_inundated_dc = kwargs['construct_inundated_dc']
+            elif key_temp == 'overwritten_para' and type(kwargs['overwritten_para']) is bool:
+                self._inundated_ow_para = kwargs['overwritten_para']
+
+    def _inundation_detection(self, method: str, **kwargs):
+        # process inundation detection method
+        self._inun_det_para(**kwargs)
+
+        start_time = time.time()
+        print(f'Start detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m')
+
+        # Method 1 MNDWI static threshold
+        if method not in self._flood_mapping_method:
+            raise ValueError(f'The inundation detection method {str(method)} is not supported')
+
+        if method == 'MNDWI_thr':
+            if self.size_control_factor_list[self.index_list.index('MNDWI')]:
+                MNDWI_static_thr = 33768
+            else:
+                MNDWI_static_thr = 0.1
+
+            if 'inundation_MNDWI_thr' not in self.index_list or self._inundated_ow_para:
+                if not os.path.exists(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\header.npy'):
+                    bf.create_folder(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                    if 'MNDWI' in self.index_list:
+                        if self.sparse_matrix:
+                            namelist = self._dcs_backup_[self.index_list.index('MNDWI')].dc.SM_namelist
+                            inundation_sm = NDSparseMatrix()
+                            for z_temp in range(self.dcs_ZSize):
+                                inundation_array = self._dcs_backup_[self.index_list.index('MNDWI')].dc.SM_group[namelist[z_temp]].toarray()
+                                inundation_array = np.logical_and(inundation_array <= MNDWI_static_thr, inundation_array != 0)
+                                inundation_array = sm.coo_matrix(inundation_array)
+                                inundation_sm.append(inundation_array, name=namelist[z_temp])
+    
+                            if self._construct_inundated_dc:
+                                inundation_dc = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')])
+                                inundation_dc.dc = inundation_sm
+                                inundation_dc.index = 'inundation_' + method
+                                self.append(inundation_dc)
+    
+                        else:
+                            inundation_array = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')].dc)
+                            inundation_array = inundation_array >= MNDWI_static_thr
+    
+                            if self._construct_inundated_dc:
+                                inundation_dc = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')])
+                                inundation_dc.dc = inundation_array
+                                self.append(inundation_dc)
+                        inundation_dc.save(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                    else:
+                        raise ValueError('Please construct a valid datacube with MNDWI sdc inside!')
+                else:
+                    inundation_dc = Sentinel2_dc(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                    self.append(inundation_dc)
+                
+        print(f'Finish detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time()-start_time)}\033[0m s!')
+
+    def _process_inundation_removal_para(self, **kwargs):
         pass
+
+    def _inundation_removal(self, processed_index, inundation_method, construct_new_dc=True, **kwargs):
+
+        # Identify the inundation pixel
+        self._inundation_detection(inundation_method, construct_inundated_dc=True, **kwargs)
+
+        inundation_index = 'inundation_' + inundation_method
+        self._process_inundation_removal_para(**kwargs)
+
+        if processed_index not in self.index_list or inundation_index not in self.index_list:
+            raise ValueError('The inudnation removal or vegetaion index is not properly generated!')
+
+        inundation_dc = self._dcs_backup_[self.index_list.index(inundation_index)]
+        processed_dc = copy.copy(self._dcs_backup_[self.index_list.index(processed_index)])
+        
+        if not os.path.exists(self.work_env + processed_dc.index + '_noninun_sequenced_datacube\\header.npy'):
+            bf.create_folder(self.work_env + processed_dc.index + '_noninun_sequenced_datacube\\')
+            if self.sparse_matrix:
+                for height in range(self.dcs_ZSize):
+                    processed_dc.dc.SM_group[processed_dc.dc.SM_namelist[height]] = processed_dc.dc.SM_group[processed_dc.dc.SM_namelist[height]].multiply(inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[height]])
+
+                processed_dc.index = processed_dc.index + '_noninun'
+                processed_dc.save(self.work_env + processed_dc.index + '_sequenced_datacube\\')
+
+                if not construct_new_dc:
+                    self._dcs_backup_[self.index_list.index(processed_index)] = processed_dc
+                    self.size_control_factor_list[self.index_list.index(processed_index)] = processed_dc.size_control_factor
+                    self.index_list[self.index_list.index(processed_index)] = processed_dc.index
+                else:
+                    self.append(processed_dc)
+            else:
+               pass
+        else:
+            processed_dc = Sentinel2_dc(self.work_env + processed_dc.index + '_noninun_sequenced_datacube\\')
+            self.append(processed_dc)
 
     def generate_phenology_metric(self):
         pass
@@ -2397,8 +2518,8 @@ class Sentinel2_dcs(object):
 
         # process clipped_overwritten_para
         if 'retrieval_method' in kwargs.keys():
-            if type(kwargs['retrieval_method']) is str and kwargs['dc_overwritten_para'] in ['nearest_neighbor', 'linear_interpolation']:
-                self._GEDI_link_S2_retrieval_method = kwargs['dc_overwritten_para']
+            if type(kwargs['retrieval_method']) is str and kwargs['retrieval_method'] in ['nearest_neighbor', 'linear_interpolation']:
+                self._GEDI_link_S2_retrieval_method = kwargs['retrieval_method']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be str type!')
         else:
@@ -2407,8 +2528,8 @@ class Sentinel2_dcs(object):
     def _extract_value2shpfile(self, shpfile, index, date):
 
         # Define vars
-        ori_folder_temp = self.oritif_folder[self.index_list.index(date)]
-        file_list = bf.file_filter(ori_folder_temp, containing_word_list=[str(date), str(index)])
+        ori_folder_temp = self.oritif_folder[self.index_list.index(index)]
+        file_list = bf.file_filter(ori_folder_temp, containing_word_list=[str(bf.doy2date(date)), str(index)])
         array_mosaic = []
 
         # Mosaic all tiffiles
@@ -2433,12 +2554,17 @@ class Sentinel2_dcs(object):
                                 add_stats={'nanmean': no_nan_mean})
 
         gdal.Unlink('/vsimem/', str(date) + '_' + str(index) + '.tif')
+
+        # if self.sparse_matrix:
+        #     date_temp = bf.doy2date(date)
+        #     layer = self._dcs_backup_[self.index_list.index(index)].dc.SM_matrix[date_temp]
+        # else:
         return info_temp
 
     def link_GEDI_S2_inform(self, GEDI_xlsx_file, index_list, **kwargs):
 
         # Two different method0 Nearest data and linear interpolation
-        self._process_link_GEDI_S2_para()
+        self._process_link_GEDI_S2_para(**kwargs)
 
         # Retrieve GEDI inform
         GEDI_list_temp = gedi.GEDI_list(GEDI_xlsx_file)
@@ -2451,10 +2577,10 @@ class Sentinel2_dcs(object):
 
             if self._GEDI_link_S2_retrieval_method == 'nearest_neighbor':
                 # Link GEDI and S2 inform using nearest data
-                i = 0
+
                 GEDI_list_temp.GEDI_df.insert(loc=len(GEDI_list_temp.GEDI_df.columns), column=f'S2_nearest_{index_temp}_value', value=np.nan)
                 GEDI_list_temp.GEDI_df.insert(loc=len(GEDI_list_temp.GEDI_df.columns), column=f'S2_nearest_{index_temp}_date', value=np.nan)
-
+                i = 0
                 while i <= GEDI_list_temp.df_size:
 
                     # Get the basic inform of the i GEDI point
@@ -2466,12 +2592,12 @@ class Sentinel2_dcs(object):
                     # Draw a circle around a point
                     central_point = shapely.geometry.Point([lat, lon])  # location
                     n_points = 360 * 10
-                    diameter = 30  # meters
+                    diameter = 25  # meters
                     angles = np.linspace(0, 360, n_points)
                     polygon_coordinate = geog.propagate(central_point, angles, diameter)
                     polygon = shapely.geometry.mapping(shapely.geometry.Polygon(polygon_coordinate))
 
-                    doy_list = self.doy_list
+                    doy_list = bf.date2doy(self.doy_list)
 
                     for date_range in range(0, 365):
                         para = False
@@ -2514,9 +2640,9 @@ class Sentinel2_dcs(object):
             elif self._GEDI_link_S2_retrieval_method == 'linear_interpolation':
 
                 # Link GEDI and S2 inform using linear_interpolation
-                i = 0
                 GEDI_list_temp.GEDI_df.insert(loc=len(GEDI_list_temp.GEDI_df.columns), column=f'S2_{index_temp}_linear_interpolation',value=np.nan)
 
+                i = 0
                 while i <= GEDI_list_temp.df_size:
 
                     # Get the basic inform of the i GEDI point
@@ -2533,11 +2659,11 @@ class Sentinel2_dcs(object):
                     polygon_coordinate = geog.propagate(central_point, angles, diameter)
                     polygon = shapely.geometry.mapping(shapely.geometry.Polygon(polygon_coordinate))
 
-                    doy_list = self.doy_list
+                    doy_list = bf.date2doy(self.doy_list)
                     data_postive, date_postive, data_negative, date_negative = None, None, None, None
 
                     for date_interval in range(0, 365):
-                        if date_interval == 0:
+                        if date_interval == 0 and date_interval + date_temp in doy_list:
                             info_temp = self._extract_value2shpfile(polygon, index_temp, date_temp)
                             if ~np.isnan(info_temp[0]['nanmean']):
                                 GEDI_list_temp.GEDI_df[f'S2_{index_temp}_linear_interpolation'][i] = info_temp[0]['nanmean']
@@ -2868,61 +2994,3 @@ def curve_fitting(l2a_output_path_f, index_list, study_area_f, pixel_limitation_
     else:
         print('Please notice that NDWI is essential for inundated pixel removal')
         sys.exit(-1)
-
-
-if __name__ == '__main__':
-    # Create Output folder
-    filepath = 'G:\A_veg\S2_all\\Original_file\\'
-    # filepath = 'G:\A_veg\S2_test\\Orifile\\'
-    s2_ds_temp = Sentinel2_ds(filepath)
-    s2_ds_temp.construct_metadata()
-    # s2_ds_temp.sequenced_subset(['all_band', 'MNDWI'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp',
-    #                             ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
-    #                             size_control_factor=True, combine_band_factor=False, pansharp_factor=False)
-    # s2_ds_temp.ds2sdc([ 'MNDWI'], inherit_from_logfile=True, remove_nan_layer=True, size_control_factor=True)
-    s2_ds_temp.mp_subset(['NDVI_20m', 'OSAVI_20m', 'MNDWI', 'AWEI', 'AWEInsh'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp',
-                         ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud', size_control_factor=True, combine_band_factor=False)
-    s2_ds_temp.seq_ds2sdc(['NDVI_20m', 'OSAVI_20m', 'MNDWI', 'AWEI', 'AWEInsh'], inherit_from_logfile=True, remove_nan_layer=True, size_control_factor=True)
-
-    dc_temp_dic = {}
-    for vi in ['NDVI_20m', 'OSAVI_20m', 'MNDWI', 'AWEI', 'AWEInsh']:
-        dc_temp_dic[vi] = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_index\\{vi}_sequenced_datacube\\')
-    dcs_temp = Sentinel2_dcs(dc_temp_dic['NDVI_20m'], dc_temp_dic['OSAVI_20m'], dc_temp_dic['MNDWI'], dc_temp_dic['AWEI'], dc_temp_dic['AWEInsh'])
-    dcs_temp.inundation_detection(['DT'], DT_std_fig_construction=False, construct_inundated_dc=True)
-
-    file_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\Original_Zipfile\\'
-    output_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\'
-    l2a_output_path = output_path + 'Sentinel2_L2A_output\\'
-    QI_output_path = output_path + 'Sentinel2_L2A_output\\QI\\'
-    bf.create_folder(l2a_output_path)
-    bf.create_folder(QI_output_path)
-
-    # Generate VIs in GEOtiff format
-
-    # # this allows GDAL to throw Python Exceptions
-    # gdal.UseExceptions()
-    # mask_path = 'E:\\A_Vegetation_Identification\\Wuhan_Sentinel_L2_Original\\Arcmap\\shp\\Huxianzhou.shp'
-    # # Check VI file consistency
-    # check_vi_file_consistency(l2a_output_path, VI_list)
-    # study_area = mask_path[mask_path.find('\\shp\\') + 5: mask_path.find('.shp')]
-    # specific_name_list = ['clipped', 'cloud_free', 'data_cube', 'sequenced_data_cube']
-    # # Process files
-    # VI_list = ['NDVI', 'NDWI']
-    # vi_process(l2a_output_path, VI_list, study_area, specific_name_list, overwritten_para_clipped,
-    #            overwritten_para_cloud, overwritten_para_datacube, overwritten_para_sequenced_datacube)
-
-    # Inundated detection
-    # Spectral unmixing
-    # Curve fitting
-    # mndwi_threshold = -0.15
-    # fig_path = l2a_output_path + 'Fig\\'
-    # pixel_limitation = cor_to_pixel([[778602.523, 3322698.324], [782466.937, 3325489.535]],
-    #                                 l2a_output_path + 'NDVI_' + study_area + '\\cloud_free\\')
-    # curve_fitting(l2a_output_path, VI_list, study_area, pixel_limitation, fig_path, mndwi_threshold)
-    # Generate Figure
-    # NDWI_DATA_CUBE = np.load(NDWI_data_cube_path + 'data_cube_inorder.npy')
-    # NDVI_DATA_CUBE = np.load(NDVI_data_cube_path + 'data_cube_inorder.npy')
-    # DOY_LIST = np.load(NDVI_data_cube_path + 'doy_list.npy')
-    # fig_path = output_path + 'Sentinel2_L2A_output\\Fig\\'
-    # create_folder(fig_path)
-    # create_NDWI_NDVI_CURVE(NDWI_DATA_CUBE, NDVI_DATA_CUBE, DOY_LIST, fig_path)

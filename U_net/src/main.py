@@ -143,7 +143,6 @@ class Unet4rs():
 
         scaler = torch.cuda.amp.GradScaler() if self.amp else None
 
-        # 创建学习率更新策略，这里是每个step更新一次(不是每个epoch)
         lr_scheduler = create_lr_scheduler(optimizer, len(train_loader), self.epochs, warmup=True)
 
         if self.resume:
@@ -198,8 +197,6 @@ class Unet4rs():
         print("training time {}".format(total_time_str))
 
 
-
-
 def main(args):
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     batch_size = args.batch_size
@@ -215,9 +212,7 @@ def main(args):
 
     train_dataset = DriveDataset(args.data_path, train=True, transforms=get_transform(train=True, mean=mean, std=std))
 
-    val_dataset = DriveDataset(args.data_path,
-                               train=False,
-                               transforms=get_transform(train=False, mean=mean, std=std))
+    val_dataset = DriveDataset(args.data_path,train=False, transforms=get_transform(train=False, mean=mean, std=std))
 
     num_workers = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])
     train_loader = torch.utils.data.DataLoader(train_dataset,
