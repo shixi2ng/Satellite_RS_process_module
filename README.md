@@ -1,3 +1,3 @@
 ### Satellite RS process module
 ##
-Constructing phenology metrics based on Landsat L2 data
+A series of toolbox processing Sentinel-2, Landsat, GEDI and NCEI data
