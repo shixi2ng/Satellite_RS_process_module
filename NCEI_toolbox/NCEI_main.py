@@ -108,7 +108,7 @@ class NCEI_ds(object):
         if shpfiles == []:
             raise ValueError(f'There are no valid shp files in the {str(shpfile_folder)}!')
 
-        with concurrent.futures.ProcessPoolExecutor() as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=10) as executor:
             executor.map(self._shp2raster, shpfiles, repeat(rasterfile_folder), repeat(zvalue), repeat(clip_shpfile), repeat(raster_size))
 
     def _shp2raster(self, shpfile, output_f, zvalue, clip_shpfile, raster_size):
@@ -117,15 +117,16 @@ class NCEI_ds(object):
         bounds = [374666.34182, 3672978.02321, 1165666.34182, 2863978.02321]
         width = (bounds[2] - bounds[0]) / (raster_size[0] * 20)
         height = (bounds[1] - bounds[3]) / (raster_size[1] * 20)
-        bf.create_folder(output_f + 'ori\\')
+
         print(f"Start generating the raster of \033[1;31m{str(shpfile)}\033[0m")
         for z in zvalue:
             try:
                 if not os.path.exists(output_f + 'ori\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF'):
+                    bf.create_folder(output_f + 'ori\\')
                     temp1 = gdal.Grid(output_f + 'ori\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF', shpfile, zfield=z, algorithm='invdist:power=2:min_points=5:max_points=12', outputBounds=bounds, spatFilter=bounds, width=width, height=height, outputType=gdal.GDT_Int16, noData=-32768)
                     temp1 = None
 
-                if clip_shpfile is not None and type(clip_shpfile) is str and clip_shpfile.endswith('.shp') and not os.path.exists(output_f + clip_shpfile.split('\\')[-1].split('.')[0] + '\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF'):
+                if not os.path.exists(output_f + clip_shpfile.split('\\')[-1].split('.')[0] + '\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF') and clip_shpfile is not None and type(clip_shpfile) is str and clip_shpfile.endswith('.shp'):
                     bf.create_folder(output_f + clip_shpfile.split('\\')[-1].split('.')[0] + '\\')
                     temp2 = gdal.Warp('/vsimem/' + shpfile.split('\\')[-1].split('.')[0] + '_temp.vrt', output_f + 'ori\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF', resampleAlg=gdal.GRA_NearestNeighbour, xRes=raster_size[0], yRes=raster_size[1],  cropToCutline=True, cutlineDSName=clip_shpfile, outputType=gdal.GDT_Int16, dstNodata=-32768)
                     temp3 = gdal.Translate(output_f + clip_shpfile.split('\\')[-1].split('.')[0] + '\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF', '/vsimem/' + shpfile.split('\\')[-1].split('.')[0] + '_temp.vrt', options=topts)
@@ -140,8 +141,5 @@ class NCEI_ds(object):
         print(f'Finish generating the raster of \033[1;31m{str(shpfile)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
 
 
-if __name__ == '__main__':
-    ds_temp = NCEI_ds('G:\A_veg\\NCEI\download\\')
-    ds_temp.ds2raster_idw(['TEMP'], 'G:\A_veg\\NCEI\\', clip_shpfile='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
 
 
