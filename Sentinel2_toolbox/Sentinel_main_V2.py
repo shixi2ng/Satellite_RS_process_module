@@ -1,7 +1,6 @@
 # coding=utf-8
 import gdal
 import sys
-import collections
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,15 +23,13 @@ import concurrent.futures
 from itertools import repeat
 from zipfile import ZipFile
 import traceback
-import shapely.geometry
-import geog
 import GEDI_process as gedi
-from rasterstats import zonal_stats
 import pywt
 import psutil
+import pickle
 import geopandas as gp
 from scipy import sparse as sm
-from utils import no_nan_mean, log_para, retrieve_srs, write_raster, union_list, remove_all_file_and_folder, create_circle_polygon
+from utils import no_nan_mean, log_para, retrieve_srs, write_raster, union_list, remove_all_file_and_folder, create_circle_polygon, extract_value2shpfile
 
 
 # Input Snappy data style
@@ -48,6 +45,7 @@ class NDSparseMatrix:
         self._height = -1
         self.shape = [self._rows, self._cols, self._height]
         self.SM_namelist = None
+        self.file_size = 0
 
         for kw_temp in kwargs.keys():
             if kw_temp not in ['SM_namelist']:
@@ -87,11 +85,13 @@ class NDSparseMatrix:
         self._update_size_para()
 
     def _update_size_para(self):
+        self.size = 0
         for ele in self.SM_group.values():
             if self._cols == -1 or self._rows == -1:
                 self._cols, self._rows = ele.shape[1], ele.shape[0]
             elif ele.shape[1] != self._cols or ele.shape[0] != self._rows:
                 raise Exception(f'Consistency Error for the {str(ele)}')
+            self.size += len(pickle.dumps(ele))
         self._height = len(self.SM_namelist)
         self.shape = [self._rows, self._cols, self._height]
 
@@ -1573,8 +1573,8 @@ class Sentinel2_ds(object):
                         gdal.Warp('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF',
                                   self.cache_folder + 'temp_' + self.ROI_name + '.TIF', cutlineDSName=self.ROI,
                                   cropToCutline=True, dstNodata=-32768, xRes=10, yRes=10)
-                    ds_sa_temp = gdal.Open('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF')
-                    ds_sa_array = ds_sa_temp.GetRasterBand(1).ReadAsArray()
+                    ds_ROI_array = gdal.Open('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF')
+                    ds_sa_array = ds_ROI_array.GetRasterBand(1).ReadAsArray()
 
                     if (ds_sa_array == -32768).all() == False:
                         np.save(self.output_path + 'ROI_map\\' + self.ROI_name + '_map.npy', ds_sa_array)
@@ -1589,7 +1589,7 @@ class Sentinel2_ds(object):
                                       cropToCutline=True, dstNodata=-32768, xRes=10, yRes=10)
                     gdal.Unlink('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF')
                     ds_temp = None
-                    ds_sa_temp = None
+                    ds_ROI_array = None
                     remove_all_file_and_folder(bf.file_filter(self.cache_folder, ['temp', '.TIF'], and_or_factor='and'))
 
             if self._combine_band_factor:
@@ -1736,13 +1736,13 @@ class Sentinel2_ds(object):
 
             if self.ROI_name is None:
                 print('Start processing ' + index + ' datacube.')
-                header_dic = {'ROI_name': None, 'index': index, 'Datatype': 'float', 'ROI': None, 'Study_area': None,
+                header_dic = {'ROI_name': None, 'index': index, 'Datatype': 'float', 'ROI': None, 'ROI_array': None,
                               'sdc_factor': True, 'coordinate_system': self.main_coordinate_system,'size_control_factor': self._size_control_factor,
                               'oritif_folder': self.dc_vi[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
             else:
                 print('Start processing ' + index + ' datacube of the ' + self.ROI_name + '.')
                 sa_map = np.load(bf.file_filter(self.output_path + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
-                header_dic = {'ROI_name': self.ROI_name, 'index': index, 'Datatype': 'float', 'ROI': self.ROI, 'Study_area': sa_map,
+                header_dic = {'ROI_name': self.ROI_name, 'index': index, 'Datatype': 'float', 'ROI': self.ROI, 'ROI_array': self.output_path + 'ROI_map\\' + self.ROI_name + '_map.npy',
                               'sdc_factor': True, 'coordinate_system': self.main_coordinate_system, 'size_control_factor': self._size_control_factor,
                               'oritif_folder': self.dc_vi[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
 
@@ -1985,7 +1985,7 @@ class Sentinel2_ds(object):
                 np.save(self.dc_vi[index] + str(index) + f'_sequenced_datacube.npz', data_cube_temp)
                 end_time = time.time()
 
-            header_dic['ds_file'], header_dic['sparse_matrix'], header_dic['huge_matrix'] = VI_stack_list[0], _sparse_matrix, _huge_matrix
+            header_dic['ds_file'], header_dic['sparse_matrix'], header_dic['huge_matrix'] = self.output_path + 'ROI_map\\' + self.ROI_name + '_map.TIF', _sparse_matrix, _huge_matrix
             np.save(self.dc_vi[index] + 'header.npy', header_dic)
 
         print(f'Finished writing the sdc in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
@@ -2012,15 +2012,12 @@ class Sentinel2_dc(object):
                 if type(self.dc_header) is not dict:
                     raise Exception('Please make sure the header file is a dictionary constructed in python!')
 
-                for dic_name in ['ROI_name', 'index', 'Datatype', 'ROI', 'Study_area', 'sdc_factor', 'coordinate_system',
+                for dic_name in ['ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'sdc_factor', 'coordinate_system',
                                  'oritif_folder', 'ds_file', 'sparse_matrix', 'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles']:
                     if dic_name not in self.dc_header.keys():
                         raise Exception(f'The {dic_name} is not in the dc header, double check!')
                     else:
-                        if dic_name == 'Study_area':
-                            self.__dict__['sa_map'] = self.dc_header[dic_name]
-                        else:
-                            self.__dict__[dic_name] = self.dc_header[dic_name]
+                        self.__dict__[dic_name] = self.dc_header[dic_name]
             except:
                 raise Exception('Something went wrong when reading the header!')
 
@@ -2087,7 +2084,7 @@ class Sentinel2_dc(object):
             bf.create_folder(output_path)
         output_path = bf.Path(output_path).path_name
 
-        header_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI, 'Study_area': self.sa_map,
+        header_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI, 'ROI_array': self.ROI_array,
                       'sdc_factor': self.sdc_factor, 'coordinate_system': self.coordinate_system, 'ds_file': self.ds_file,
                       'size_control_factor': self.size_control_factor, 'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
                       'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles}
@@ -2124,7 +2121,7 @@ class Sentinel2_dcs(object):
         else:
             harmonised_factor = False
 
-        self.index_list, ROI_list, ROI_name_list, Datatype_list, ds_list, study_area_list, sdc_factor_list, doy_list, coordinate_system_list, oritif_folder_list = [], [], [], [], [], [], [], [], [], []
+        self.index_list, ROI_list, ROI_name_list, Datatype_list, ds_list, ROI_array_list, sdc_factor_list, doy_list, coordinate_system_list, oritif_folder_list = [], [], [], [], [], [], [], [], [], []
         self.dcs, huge_matrix_list, sparse_matrix_list, self.size_control_factor_list = [], [], [], []
         x_size, y_size, z_size = 0, 0, 0
         for dc_temp in self._dcs_backup_:
@@ -2143,7 +2140,7 @@ class Sentinel2_dcs(object):
             sdc_factor_list.append(dc_temp.sdc_factor)
             ROI_list.append(dc_temp.ROI)
             ds_list.append(dc_temp.ds_file)
-            study_area_list.append(dc_temp.sa_map)
+            ROI_array_list.append(dc_temp.ROI_array)
             Datatype_list.append(dc_temp.Datatype)
             coordinate_system_list.append(dc_temp.coordinate_system)
             oritif_folder_list.append(dc_temp.oritif_folder)
@@ -2161,8 +2158,8 @@ class Sentinel2_dcs(object):
         if len(ROI_list) == 0 or False in [len(ROI_list) == len(self.index_list),
                                            len(self.index_list) == len(sdc_factor_list),
                                            len(ROI_name_list) == len(sdc_factor_list),
-                                           len(ROI_name_list) == len(ds_list), len(ds_list) == len(study_area_list),
-                                           len(study_area_list) == len(Datatype_list),
+                                           len(ROI_name_list) == len(ds_list), len(ds_list) == len(ROI_array_list),
+                                           len(ROI_array_list) == len(Datatype_list),
                                            len(coordinate_system_list) == len(Datatype_list),
                                            len(oritif_folder_list) == len(coordinate_system_list)]:
             raise Exception('The ROI list or the index list for the datacubes were not properly generated!')
@@ -2172,7 +2169,7 @@ class Sentinel2_dcs(object):
             raise Exception('Please make sure all dcs were consistent!')
         elif False in [roi_name_temp == ROI_name_list[0] for roi_name_temp in ROI_name_list]:
             raise Exception('Please make sure all dcs were consistent!')
-        elif False in [(sa_temp == study_area_list[0]).all() for sa_temp in study_area_list]:
+        elif False in [(ROI_array == ROI_array_list[0]) for ROI_array in ROI_array_list]:
             raise Exception('Please make sure all dcs were consistent!')
         elif False in [dt_temp == Datatype_list[0] for dt_temp in Datatype_list]:
             raise Exception('Please make sure all dcs were consistent!')
@@ -2188,7 +2185,7 @@ class Sentinel2_dcs(object):
         self.ROI_name = ROI_name_list[0]
         self.sdc_factor = sdc_factor_list[0]
         self.Datatype = Datatype_list[0]
-        self.sa_map = study_area_list[0]
+        self.ROI_array = ROI_array_list[0]
         self.ds_file = ds_list[0]
         self.coordinate_system = coordinate_system_list[0]
         self.oritif_folder = oritif_folder_list
@@ -2295,7 +2292,7 @@ class Sentinel2_dcs(object):
         if self.dcs_XSize != dc_temp.dc_XSize or self.dcs_YSize != dc_temp.dc_YSize or self.dcs_ZSize != dc_temp.dc_ZSize:
             raise ValueError('The appended datacube has different size compared to the original datacubes')
 
-        if (self.doy_list != dc_temp.sdc_doylist).any():
+        if self.doy_list != dc_temp.sdc_doylist:
             raise ValueError('The appended datacube has doy list compared to the original datacubes')
 
         self.index_list.append(dc_temp.index)
@@ -2306,7 +2303,7 @@ class Sentinel2_dcs(object):
         if type(dcs_temp) is not Sentinel2_dcs:
             raise TypeError('The appended data should be a Sentinel2_dcs!')
 
-        for indicator in ['ROI', 'ROI_name', 'sdc_factor', 'dcs_XSize', 'dcs_YSize', 'dcs_ZSize', 'doy_list', 'main_coordinate_system']:
+        for indicator in ['ROI', 'ROI_name', 'sdc_factor', 'dcs_XSize', 'dcs_YSize', 'dcs_ZSize', 'doy_list', 'coordinate_system']:
             if dcs_temp.__dict__[indicator] != self.__dict__[indicator]:
                 raise ValueError('The appended datacube is not consistent with the original datacubes')
 
@@ -2445,125 +2442,251 @@ class Sentinel2_dcs(object):
         self._process_link_GEDI_S2_para(**kwargs)
 
         # Retrieve GEDI inform
-        GEDI_list_temp = gedi.GEDI_list(GEDI_xlsx_file)
+        self.GEDI_list_temp = gedi.GEDI_list(GEDI_xlsx_file)
 
         # Retrieve the S2 inform
+        raster_gt = gdal.Open(self.ds_file).GetGeoTransform()
+
+        dc_dic = {}
         for index_temp in index_list:
 
             if index_temp not in self.index_list:
                 raise Exception(f'The {str(index_temp)} is not a valid index or is not inputted into the dcs!')
 
             if self._GEDI_link_S2_retrieval_method == 'nearest_neighbor':
-                # Link GEDI and S2 inform using nearest data
-
-                GEDI_list_temp.GEDI_df.insert(loc=len(GEDI_list_temp.GEDI_df.columns), column=f'S2_nearest_{index_temp}_value', value=np.nan)
-                GEDI_list_temp.GEDI_df.insert(loc=len(GEDI_list_temp.GEDI_df.columns), column=f'S2_nearest_{index_temp}_date', value=np.nan)
-                i = 0
-                while i <= GEDI_list_temp.df_size:
-
-                    # Get the basic inform of the i GEDI point
-                    lat = float(GEDI_list_temp.GEDI_df['Latitude'][i])
-                    lon = float(GEDI_list_temp.GEDI_df['Longitude'][i])
-                    date_temp = GEDI_list_temp.GEDI_df['Date'][i]
-                    year_temp = int(date_temp) // 1000
-
-                    # Reprojection
-                    point_temp = gp.points_from_xy([lon], [lat], crs='epsg:4326')
-                    point_temp = point_temp.to_crs(crs=self.coordinate_system)
-                    point_coords = [point_temp[0].coords[0][0], point_temp[0].coords[0][1]]
-
-                    # Draw a circle around the central point
-                    polygon = create_circle_polygon(point_coords, 25)
-
-                    doy_list = bf.date2doy(self.doy_list)
-
-                    for date_range in range(0, 365):
-                        para = False
-                        indi_temp = None
-                        if True in [dc_doy_temp in range(date_temp - date_range, date_temp + date_range + 1) for dc_doy_temp in doy_list]:
-                            for dc_doy_temp in doy_list:
-                                if dc_doy_temp in range(date_temp - date_range, date_temp + date_range + 1):
-                                    ori_folder_temp = self.oritif_folder[self.index_list.index(index_temp)]
-                                    file_list = bf.file_filter(ori_folder_temp, containing_word_list=[str(index_temp), str(dc_doy_temp)])
-                                    array_mosaic = []
-                                    for file_temp in file_list:
-                                        ds_temp = gdal.Open(file_temp)
-                                        if array_mosaic == []:
-                                            array_mosaic = ds_temp.GetRasterBand(1).ReadAsArray()
-                                            array_mosaic = array_mosaic.astype(np.float)
-                                            array_mosaic[array_mosaic == -32768] = np.nan
-                                        else:
-                                            array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                                            array_temp = array_temp.astype(np.float)
-                                            array_temp[array_temp == -32768] = np.nan
-                                            array_mosaic = np.nanmean(array_temp, array_mosaic)
-                                    bf.write_raster(ds_temp, array_mosaic, '/vsimem/', str(dc_doy_temp) + '_' + str(index_temp) + '.tif', raster_datatype=gdal.GDT_Float32)
-                                    info_temp = zonal_stats(polygon, f'/vsimem/{str(dc_doy_temp)}_{str(index_temp)}.tif', stats=['count', 'min', 'max', 'sum'], add_stats={'nanmean': no_nan_mean})
-                                    gdal.Unlink('/vsimem/', str(dc_doy_temp) + '_' + str(index_temp) + '.tif')
-
-                                    if ~np.isnan(info_temp[0]['nanmean']):
-                                        para = True
-                                        indi_temp = info_temp[0]['nanmean']
-                                        ouput_doy_temp = dc_doy_temp
-                                        break
-                                    else:
-                                        doy_list.remove(dc_doy_temp)
-
-                            if para is True and indi_temp is not None:
-                                GEDI_list_temp.GEDI_df[f'S2_nearest_{index_temp}_value'][i] = indi_temp
-                                GEDI_list_temp.GEDI_df[f'S2_nearest_{index_temp}_date'][i] = ouput_doy_temp
-                                break
-                    i += 1
-
+                self.GEDI_list_temp.GEDI_df.insert(loc=len(self.GEDI_list_temp.GEDI_df.columns), column=f'S2_nearest_{index_temp}_value', value=np.nan)
+                self.GEDI_list_temp.GEDI_df.insert(loc=len(self.GEDI_list_temp.GEDI_df.columns), column=f'S2_nearest_{index_temp}_date', value=np.nan)
             elif self._GEDI_link_S2_retrieval_method == 'linear_interpolation':
+                self.GEDI_list_temp.GEDI_df.insert(loc=len(self.GEDI_list_temp.GEDI_df.columns), column=f'S2_{index_temp}_linear_interpolation', value=np.nan)
 
-                # Link GEDI and S2 inform using linear_interpolation
-                GEDI_list_temp.GEDI_df.insert(loc=len(GEDI_list_temp.GEDI_df.columns), column=f'S2_{index_temp}_linear_interpolation',value=np.nan)
+            dc_dic[index_temp] = self._dcs_backup_[self.index_list.index(index_temp)].dc
 
-                i = 0
-                while i <= GEDI_list_temp.df_size:
+        data_num = [num_temp for num_temp in range(self.GEDI_list_temp.df_size)]
 
-                    # Get the basic inform of the i GEDI point
-                    lat = float(GEDI_list_temp.GEDI_df['Latitude'][i])
-                    lon = float(GEDI_list_temp.GEDI_df['Longitude'][i])
-                    date_temp = GEDI_list_temp.GEDI_df['Date'][i]
-                    year_temp = int(date_temp) // 1000
+        ### Since the dc_dic was too big for most conditions, it will be defined as a global var,
+        ### py3.8 or higher version is required by announcing the dc_dc as a global variable before the mp process
+        with concurrent.futures.ProcessPoolExecutor(initializer=init_globe, initargs=(dc_dic,), max_workers=5) as executor:
+            result = executor.map(link_GEDI_inform, data_num, list(self.GEDI_list_temp.GEDI_df['Latitude']),
+                          list(self.GEDI_list_temp.GEDI_df['Longitude']), list(self.GEDI_list_temp.GEDI_df['Date']),
+                          repeat(bf.date2doy(self.doy_list)), repeat(raster_gt), repeat(index_list), repeat(self.GEDI_list_temp.df_size), repeat(self._GEDI_link_S2_retrieval_method),
+                          repeat(self.sparse_matrix))
 
-                    # Reprojection
-                    point_temp = gp.points_from_xy([lon], [lat], crs='epsg:4326')
-                    point_temp = point_temp.to_crs(crs=self.coordinate_system)
-                    point_coords = [point_temp[0].coords[0][0], point_temp[0].coords[0][1]]
+        result = list(result)
+        for result_temp in result:
+            for index_temp in index_list:
+                try:
+                    self.GEDI_list_temp.GEDI_df[f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}'][result_temp['id']] = result_temp[index_temp]
+                except:
+                    self.GEDI_list_temp.GEDI_df[f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}'][result_temp['id']] = np.nan
 
-                    # Draw a circle around the central point
-                    polygon = create_circle_polygon(point_coords, 25)
+        self.GEDI_list_temp.save(GEDI_xlsx_file.split('.')[0] + '_append.csv')
 
-                    doy_list = bf.date2doy(self.doy_list)
-                    data_postive, date_postive, data_negative, date_negative = None, None, None, None
 
-                    for date_interval in range(0, 365):
-                        if date_interval == 0 and date_interval + date_temp in doy_list:
-                            info_temp = self._extract_value2shpfile(polygon, index_temp, date_temp)
-                            if ~np.isnan(info_temp[0]['nanmean']):
-                                GEDI_list_temp.GEDI_df[f'S2_{index_temp}_linear_interpolation'][i] = info_temp[0]['nanmean']
-                                break
-                        else:
-                            if date_temp - date_interval in doy_list and data_negative is None:
-                                date_temp_temp = date_temp - date_interval
-                                info_temp = self._extract_value2shpfile(polygon, index_temp, date_temp_temp)
-                                if ~np.isnan(info_temp[0]['nanmean']):
-                                    data_negative = info_temp[0]['nanmean']
-                                    date_negative = date_temp_temp
+def init_globe(var):
+    global dc4link_GEDI
+    dc4link_GEDI = var
 
-                            if date_temp + date_interval in doy_list and data_postive is None:
-                                date_temp_temp = date_temp + date_interval
-                                info_temp = self._extract_value2shpfile(polygon, index_temp, date_temp_temp)
-                                if ~np.isnan(info_temp[0]['nanmean']):
-                                    data_postive = info_temp[0]['nanmean']
-                                    date_postive = date_temp_temp
 
-                            if data_postive is not None and data_negative is not None:
-                                GEDI_list_temp.GEDI_df[f'S2_{index_temp}_linear_interpolation'][i] = data_negative + (date_temp - date_negative) * (data_postive - data_negative) / (date_postive - date_negative)
-                                break
+def link_GEDI_inform(*args):
+    [i, lat, lon, date_temp, doy_list, raster_gt, index_list, df_size, GEDI_link_S2_retrieval_method, sparse_matrix] = [args[i] for i in range(9)]
 
-                    i += 1
+    # Get the basic inform of the i GEDI point
+    year_temp = int(date_temp) // 1000
+
+    # Reprojection
+    point_temp = gp.points_from_xy([lon], [lat], crs='epsg:4326')
+    point_temp = point_temp.to_crs(crs='epsg:32649')
+    point_coords = [point_temp[0].coords[0][0], point_temp[0].coords[0][1]]
+
+    # Draw a circle around the central point
+    polygon = create_circle_polygon(point_coords, 25)
+    index_dic = {'id': i}
+
+    for index_temp in index_list:
+
+        t1 = time.time()
+        print(f'Start linking the {index_temp} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
+
+        if GEDI_link_S2_retrieval_method == 'nearest_neighbor':
+
+            # Link GEDI and S2 inform using nearest_neighbor
+            pass
+
+        elif GEDI_link_S2_retrieval_method == 'linear_interpolation':
+
+            # Link GEDI and S2 inform using linear_interpolation
+            data_postive, date_postive, data_negative, date_negative = None, None, None, None
+            index_dic[index_temp] = np.nan
+
+            for date_interval in range(0, 30):
+
+                if date_interval == 0 and date_interval + date_temp in doy_list:
+                    array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp))]
+                    if sparse_matrix:
+                        info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
+                        info_temp = (float(info_temp) - 32768) / 10000
+
+                    if ~np.isnan(info_temp):
+                        index_dic[index_temp] = info_temp
+                        break
+
+                else:
+                    if data_negative is None and date_temp - date_interval in doy_list:
+                        date_temp_temp = date_temp - date_interval
+                        array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp_temp))]
+                        if sparse_matrix:
+                            info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
+                            info_temp = (float(info_temp) - 32768) / 10000
+
+                        if ~np.isnan(info_temp):
+                            data_negative = info_temp
+                            date_negative = date_temp_temp
+
+                    if data_negative is None and date_temp + date_interval in doy_list:
+                        date_temp_temp = date_temp + date_interval
+                        array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp_temp))]
+                        if sparse_matrix:
+                            info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
+                            info_temp = (float(info_temp) - 32768) / 10000
+
+                        if ~np.isnan(info_temp):
+                            data_postive = info_temp
+                            date_postive = date_temp_temp
+
+                    if data_postive is not None and data_negative is not None:
+                        index_dic[index_temp] = data_negative + (date_temp - date_negative) * (data_postive - data_negative) / (date_postive - date_negative)
+                        break
+
+        print(f'Finish linking the {index_temp} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+    return index_dic
+
+
+def link_GEDI_inform4mp(*args):
+    i, lat, lon, dc4link_GEDI, date_temp, doy_list = args[0], args[1], args[2], args[3], args[4], args[5]
+    raster_gt, index_list, df_size, GEDI_link_S2_retrieval_method, sparse_matrix = args[6], args[7], args[8], args[9], args[10]
+
+    # Get the basic inform of the i GEDI point
+    year_temp = int(date_temp) // 1000
+
+    # Reprojection
+    point_temp = gp.points_from_xy([lon], [lat], crs='epsg:4326')
+    point_temp = point_temp.to_crs(crs='epsg:32649')
+    point_coords = [point_temp[0].coords[0][0], point_temp[0].coords[0][1]]
+
+    # Draw a circle around the central point
+    polygon = create_circle_polygon(point_coords, 25)
+    index_dic = {'id': i}
+
+    for index_temp in index_list:
+
+        t1 = time.time()
+        print(f'Start linking the {index_temp} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
+
+        if GEDI_link_S2_retrieval_method == 'nearest_neighbor':
+
+            # Link GEDI and S2 inform using nearest_neighbor
+            pass
+
+        elif GEDI_link_S2_retrieval_method == 'linear_interpolation':
+
+            # Link GEDI and S2 inform using linear_interpolation
+            data_postive, date_postive, data_negative, date_negative = None, None, None, None
+            index_dic[index_temp] = np.nan
+
+            for date_interval in range(0, 60):
+
+                if date_interval == 0 and date_interval + date_temp in doy_list:
+                    array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp))]
+                    if sparse_matrix:
+                        info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
+                        info_temp = (float(info_temp) - 32768) / 10000
+
+                    if ~np.isnan(info_temp):
+                        index_dic[index_temp] = info_temp
+                        break
+
+                else:
+                    if data_negative is None and date_temp - date_interval in doy_list:
+                        date_temp_temp = date_temp - date_interval
+                        array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp_temp))]
+                        if sparse_matrix:
+                            info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
+                            info_temp = (float(info_temp) - 32768) / 10000
+
+                        if ~np.isnan(info_temp):
+                            data_negative = info_temp
+                            date_negative = date_temp_temp
+
+                    if data_negative is None and date_temp + date_interval in doy_list:
+                        date_temp_temp = date_temp + date_interval
+                        array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp_temp))]
+                        if sparse_matrix:
+                            info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
+                            info_temp = (float(info_temp) - 32768) / 10000
+
+                        if ~np.isnan(info_temp):
+                            data_postive = info_temp
+                            date_postive = date_temp_temp
+
+                    if data_postive is not None and data_negative is not None:
+                        index_dic[index_temp] = data_negative + (date_temp - date_negative) * (data_postive - data_negative) / (date_postive - date_negative)
+                        break
+
+        print(f'Finish linking the {index_temp} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+
+
+if __name__ == '__main__':
+
+    #### Download Sentinel-2 data with IDM
+    # IDM = "C:\\Program Files (x86)\\Internet Download Manager\\IDMan.exe"
+    # DownPath = 'g:\\sentinel2_download\\'
+    # shpfile_path = 'E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain\\Floodplain_2020_simplified4.shp'
+    #
+    # S2_MID_YZR = Queried_Sentinel_ds('shixi2ng', 'shixi2nG', DownPath, IDM_path=IDM)
+    # S2_MID_YZR.queried_with_ROI(shpfile_path, ('20190101', '20191231'),'Sentinel-2', 'S2MSI2A',(0, 95), overwritten_factor=True)
+    # S2_MID_YZR.download_with_IDM()
+
+    # Test
+    # filepath = 'G:\A_veg\S2_test\\Orifile\\'
+    # s2_ds_temp = Sentinel2_ds(filepath)
+    # s2_ds_temp.construct_metadata()
+    # s2_ds_temp.sequenced_subset(['all_band', 'MNDWI'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp',
+    #                             ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
+    #                             size_control_factor=True, combine_band_factor=False, pansharp_factor=False)
+    # s2_ds_temp.ds2sdc([ 'MNDWI'], inherit_from_logfile=True, remove_nan_layer=True, size_control_factor=True)
+
+    ######  Main procedure for GEDI Sentinel-2 link
+    ######  Subset and 2sdc
+    # filepath = 'G:\A_veg\S2_all\\Original_file\\'
+    # s2_ds_temp = Sentinel2_ds(filepath)
+    # s2_ds_temp.construct_metadata()
+    #
+    # s2_ds_temp.mp_subset(['NDVI_20m', 'OSAVI_20m', 'MNDWI', 'AWEI', 'AWEInsh'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp',
+    #                      ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud', size_control_factor=True, combine_band_factor=False)
+    # s2_ds_temp.mp_ds2sdc(['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9'], inherit_from_logfile=True, remove_nan_layer=True, chunk_size=9)
+
+    ##### Constuct dcs
+    dc_temp_dic = {}
+    dc_temp_dic['MNDWI'] = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\MNDWI_sequenced_datacube\\')
+    for index in ['B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'OSAVI_20m']:
+        dc_temp = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{index}_sequenced_datacube\\')
+        dcs_temp = Sentinel2_dcs(dc_temp_dic['MNDWI'], dc_temp)
+        dcs_temp._inundation_removal(index, 'MNDWI_thr')
+        dcs_temp = None
+
+    ###### Link S2 inform
+    dc_temp_dic = {}
+    for index in ['NDVI_20m_noninun', 'B2_noninun', 'B3_noninun', 'B4_noninun', 'B5_noninun']:
+        dc_temp_dic[index] = Sentinel2_dc(
+            f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{index}_sequenced_datacube\\')
+    dcs_temp = Sentinel2_dcs(dc_temp_dic['NDVI_20m_noninun'], dc_temp_dic['B2_noninun'], dc_temp_dic['B3_noninun'], dc_temp_dic['B4_noninun'], dc_temp_dic['B5_noninun'])
+    dcs_temp.link_GEDI_S2_inform('G:\A_veg\S2_all\GEDI\\MID_YZR_high_quality.xlsx', ['NDVI_20m_noninun', 'B2_noninun', 'B3_noninun', 'B4_noninun', 'B5_noninun'], retrieval_method='linear_interpolation')
+
+    file_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\Original_Zipfile\\'
+    output_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\'
+    l2a_output_path = output_path + 'Sentinel2_L2A_output\\'
+    QI_output_path = output_path + 'Sentinel2_L2A_output\\QI\\'
+    bf.create_folder(l2a_output_path)
+    bf.create_folder(QI_output_path)
+
 

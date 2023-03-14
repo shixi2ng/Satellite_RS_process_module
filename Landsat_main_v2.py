@@ -22,13 +22,6 @@ import time
 from itertools import chain
 from collections import Counter
 import glob
-import cv2
-from win32.lib import win32con
-import win32api, win32gui, win32print
-import pyqtgraph as pg
-import pyqtgraph.exporters
-from pyqtgraph.Qt import QtGui, QtCore
-import PyQt5
 import subprocess
 import basic_function as bf
 from basic_function import Path

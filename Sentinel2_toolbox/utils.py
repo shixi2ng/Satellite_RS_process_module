@@ -1,4 +1,6 @@
 # coding=utf-8
+import concurrent.futures
+
 import gdal
 import sys
 import collections
@@ -12,7 +14,6 @@ import basic_function as bf
 import osr
 from rasterio import features
 import shapely.geometry
-from rasterstats import zonal_stats
 from osgeo import ogr
 
 
@@ -463,11 +464,11 @@ def create_circle_polygon(center_coordinate: list, diameter):
     return shapely.geometry.Polygon(zip(x, y))
 
 
-def extract_value2shpfile(raster: np.ndarray, proj: list, shpfile: shapely.geometry.Polygon, coords: str, index, date, factor:int = 10):
+def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely.geometry.Polygon, epsg_id: int, factor: int = 10, nodatavalue=-32768):
 
     # Retrieve vars
-    xsize, ysize = raster.shape[0], raster.shape[1]
-    [ulx, uly, lrx, lry, xres, yres] = proj
+    xsize, ysize = raster.shape[1], raster.shape[0]
+    ulx, uly, lrx, lry, xres, yres = raster_gt[0], raster_gt[3], raster_gt[0] + raster.shape[1] * raster_gt[1], raster_gt[3] + raster.shape[0] * raster_gt[5], raster_gt[1], -raster_gt[5]
     
     xres_min = float(xres / factor)
     yres_min = float(yres / factor)
@@ -499,20 +500,25 @@ def extract_value2shpfile(raster: np.ndarray, proj: list, shpfile: shapely.geome
     if out_ymin is None or out_ymax is None or out_xmin is None or out_xmax is None:
         return np.nan
 
-    rasterize_Xsize, rasterize_Ysize = (out_xmax - out_xmin) / xres_min, (out_ymax - out_ymin) / yres_min
-    raster_temp = raster[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi]
+    rasterize_Xsize, rasterize_Ysize = int((out_xmax - out_xmin) / xres_min), int((out_ymax - out_ymin) / yres_min)
+    raster_temp = raster[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].toarray().astype(np.float)
     raster_temp = np.broadcast_to(raster_temp[:, None, :, None], (raster_temp.shape[0], factor, raster_temp.shape[1], factor)).reshape(np.int64(factor * raster_temp.shape[0]), np.int64(factor * raster_temp.shape[1]))
+
+    if [raster_temp == nodatavalue][0].all():
+        return np.nan
 
     if raster_temp.shape[0] != rasterize_Ysize or raster_temp.shape[1] != rasterize_Xsize:
         raise ValueError('The output raster and rasterise raster are not consistent!')
 
-    new_gt = [out_xmin, rasterize_Xsize, xres_min, out_ymax, rasterize_Ysize, -yres_min]
+    new_gt = [out_xmin, xres_min, 0, out_ymax, 0, -yres_min]
     ogr_geom_type = shapely_to_ogr_type(shpfile.type)
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(epsg_id)
 
     # Create a temporary vector layer in memory
     mem_drv = ogr.GetDriverByName(str("Memory"))
     mem_ds = mem_drv.CreateDataSource(str('out'))
-    mem_layer = mem_ds.CreateLayer(str('out'), coords, ogr_geom_type)
+    mem_layer = mem_ds.CreateLayer(str('out'), srs, ogr_geom_type)
     ogr_feature = ogr.Feature(feature_def=mem_layer.GetLayerDefn())
     ogr_geom = ogr.CreateGeometryFromWkt(shpfile.wkt)
     ogr_feature.SetGeometryDirectly(ogr_geom)
@@ -522,20 +528,35 @@ def extract_value2shpfile(raster: np.ndarray, proj: list, shpfile: shapely.geome
     driver = gdal.GetDriverByName(str('MEM'))
     rvds = driver.Create(str('rvds'), rasterize_Xsize, rasterize_Ysize, 1, gdal.GDT_Byte)
     rvds.SetGeoTransform(new_gt)
+    file_temp = gdal.RasterizeLayer(rvds, [1], mem_layer, None, None, burn_values=[1], options=['ALL_TOUCHED=True'])
+    info_temp = rvds.GetRasterBand(1).ReadAsArray()
+    raster_temp[info_temp == 0] = np.nan
+    if np.sum(~np.isnan(raster_temp)) / np.sum(info_temp == 1) > 0.7:
+        return np.nansum(raster_temp) / np.sum(~np.isnan(raster_temp))
+    else:
+        return np.nan
 
-    temp = gdal.RasterizeLayer(rvds, [1], mem_layer, None, None,
-                        burn_values=[1],
-                        options=['ALL_TOUCHED=True'])
 
-    # Extract the value to shpfile
-    info_temp = zonal_stats(shpfile, f'/vsimem/{str(date)}_{str(index)}.tif',
-                            stats=['count', 'min', 'max', 'sum'],
-                            add_stats={'nanmean': no_nan_mean})
+import concurrent.futures
 
-    gdal.Unlink('/vsimem/', str(date) + '_' + str(index) + '.tif')
 
-    return info_temp
+class temp(object):
+
+    def __init__(self):
+        self.dic = {}
+
+    def mp_change_dic(self):
+        with concurrent.futures.ProcessPoolExecutor() as excutor:
+            result = excutor.map(self.change_dic, range(16))
+        a = 1
+
+    def change_dic(self, name):
+        return name
 
 
 if __name__ == '__main__':
-    pass
+    temp1 = temp()
+    temp1.mp_change_dic()
+
+    c = 1
+

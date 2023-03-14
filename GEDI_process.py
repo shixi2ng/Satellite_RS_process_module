@@ -365,10 +365,13 @@ class GEDI_list(object):
                     'Degrade Flag', 'Sensitivity', 'Urban rate', 'Landsat water rate',
                     'Leaf off flag']]:
             raise Exception(f'The {GEDI_inform_xlsx} does not contain all the required inform!')
-        self.df_size = self.GEDI_df.size
+        self.df_size = self.GEDI_df.shape[0]
 
-    def function1(self):
-        pass
+    def save(self, output_filename: str):
+        if output_filename.endswith('.csv'):
+            self.GEDI_df.to_csv(output_filename)
+        elif output_filename.endswith('.xlsx') or output_filename.endswith('.xls') :
+            self.GEDI_df.to_excel(output_filename)
 
 
 if __name__ == '__main__':
