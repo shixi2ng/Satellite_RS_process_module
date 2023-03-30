@@ -6,6 +6,8 @@ import gdal
 from osgeo import gdal_array, osr
 import shutil
 import geopandas as gp
+from types import ModuleType, FunctionType
+from gc import get_referents
 
 
 class Path(object):
@@ -233,7 +235,7 @@ def date2doy(self):
         raise TypeError('The date2doy method did not support this data type')
 
 
-def file_filter(file_path_temp, containing_word_list, subfolder_detection=False, and_or_factor=None, exclude_word_list=[]):
+def file_filter(file_path_temp, containing_word_list: list, subfolder_detection=False, and_or_factor=None, exclude_word_list=[]):
 
     file_path_temp = Path(file_path_temp).path_name
 
@@ -302,7 +304,7 @@ def create_folder(path_name, print_existence=False):
             print('Folder already exist  (' + path_name + ')')
 
 
-def check_file_path(file_path):
+def check_file_path(file_path: str):
     # Check the type of filepath
     if type(file_path) != str:
         print('Please make sure the file path is under string type')
@@ -314,7 +316,7 @@ def check_file_path(file_path):
     return file_path
 
 
-def write_raster(ori_ds, new_array, file_path_f, file_name_f, raster_datatype=None, nodatavalue=None):
+def write_raster(ori_ds: gdal.Dataset, new_array: np.ndarray, file_path_f: str, file_name_f: str, raster_datatype=None, nodatavalue=None):
 
     if raster_datatype is None and nodatavalue is None:
         raster_datatype = gdal.GDT_Float32
@@ -360,3 +362,22 @@ def list_compare(list1, list2):
             for i in list_out:
                 print(str(i) + 'is not supported!')
         return list_in
+
+
+def getsize(obj: object):
+    """sum size of object & members."""
+    BLACKLIST = type, ModuleType, FunctionType,
+    if isinstance(obj, BLACKLIST):
+        raise TypeError('getsize() does not take argument of type: ' + str(type(obj)))
+    seen_ids = set()
+    size = 0
+    objects = [obj]
+    while objects:
+        need_referents = []
+        for obj in objects:
+            if not isinstance(obj, BLACKLIST) and id(obj) not in seen_ids:
+                seen_ids.add(id(obj))
+                size += sys.getsizeof(obj)
+                need_referents.append(obj)
+        objects = get_referents(*need_referents)
+    return size

@@ -28,15 +28,46 @@ import pywt
 import psutil
 import pickle
 import geopandas as gp
+import sympy
 from scipy import sparse as sm
 from utils import no_nan_mean, log_para, retrieve_srs, write_raster, union_list, remove_all_file_and_folder, create_circle_polygon, extract_value2shpfile
+from built_in_index import built_in_index
+from types import ModuleType, FunctionType
+from copy import deepcopy
+from lxml import etree
 
 
-# Input Snappy data style
+global topts
+topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
+
+# Set np para
 np.seterr(divide='ignore', invalid='ignore')
 
 
+# Convert the mathematical expression into python-readable type
+def convert_index_func(expr: str):
+    f = sympy.sympify(expr)
+    dep_list = sorted(f.free_symbols, key=str)
+    num_f = sympy.lambdify(dep_list, f)
+    return dep_list, num_f
+
+
+def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
+    return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
+
+
+def two_term_fourier(x, a0, a1, b1, a2, b2, w):
+    return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x)+b2 * np.sin(2 * w * x)
+
+
 class NDSparseMatrix:
+
+    ### The NDSparseMatrix is a data class specified for the huge and sparse N-dimensional matrix
+    # The code strategy is different from the normal ND-array in the following aspects:
+    # (1) The matrix is sliced by last dimension (Z-axis for the 3D array etc.)
+    # (2) The matrix is not stored in one file but one file per layer in a folder
+    # (3) Due to (2), the NDSparseMatrix is hard to index information in the z-dimension
+
     def __init__(self, *args, **kwargs):
         self.SM_group = {}
         self._matrix_type = None
@@ -84,14 +115,20 @@ class NDSparseMatrix:
 
         self._update_size_para()
 
+    def __sizeof__(self):
+        try:
+            return len(pickle.dumps(self))
+        except MemoryError:
+            size = self.SM_namelist.__sizeof__()
+            for temp in self.SM_group:
+                size += len(pickle.dumps(temp))
+
     def _update_size_para(self):
-        self.size = 0
         for ele in self.SM_group.values():
             if self._cols == -1 or self._rows == -1:
                 self._cols, self._rows = ele.shape[1], ele.shape[0]
             elif ele.shape[1] != self._cols or ele.shape[0] != self._rows:
                 raise Exception(f'Consistency Error for the {str(ele)}')
-            self.size += len(pickle.dumps(ele))
         self._height = len(self.SM_namelist)
         self.shape = [self._rows, self._cols, self._height]
 
@@ -138,12 +175,13 @@ class NDSparseMatrix:
                 self.append(sm_matrix, name=name[i])
             i += 1
 
-    def save(self, output_path):
+    def save(self, output_path, overwritten_para=True):
         bf.create_folder(output_path)
         output_path = bf.Path(output_path).path_name
         i = 0
         for sm_name in self.SM_namelist:
-            sm.save_npz(output_path + sm_name + '.npz', self.SM_group[sm_name])
+            if not os.path.exists(output_path + str(sm_name) + '.npz') or overwritten_para:
+                sm.save_npz(output_path + str(sm_name) + '.npz', self.SM_group[sm_name])
             i += 1
         np.save(output_path + 'SMsequence.npz', np.array(self.SM_namelist))
 
@@ -179,6 +217,7 @@ class NDSparseMatrix:
             self.SM_group[SM_name] = SM_arr_temp
 
         self._update_size_para()
+        self._matrix_type = type(SM_arr_temp)
         return self
 
     def replace_layer(self, ori_layer_name, new_layer, new_layer_name=None):
@@ -223,7 +262,7 @@ class NDSparseMatrix:
             else:
                 raise ValueError('Please input a supported type!')
 
-        elif len(list_temp) >=2 :
+        elif len(list_temp) >= 2 :
             raise ValueError('Please input a supported type!')
 
     def slice_matrix(self, tuple_temp: tuple):
@@ -260,6 +299,7 @@ class Sentinel2_ds(object):
         self.S2_metadata_size = np.nan
         self.date_list = []
         self.main_coordinate_system = None
+        self._index_exprs_dic = {}
 
         # Define key variables (kwargs)
         self._size_control_factor = False
@@ -268,6 +308,18 @@ class Sentinel2_ds(object):
         self._sparsify_matrix_factor = False
         self._cloud_clip_seq = None
         self._pansharp_factor = True
+
+        # Define mosaic para
+        self._mosaic_infr = {}
+        self._mosaic_overwritten_para = False
+
+        # Define 2dc para
+        self._dc_infr = {}
+        self._dc_overwritten_para = False
+        self._inherit_from_logfile = None
+        self._remove_nan_layer = False
+        self._manually_remove_para = False
+        self._manually_remove_datelist = None
 
         # Remove all the duplicated data
         dup_data = bf.file_filter(self.ori_folder, ['.1.zip'])
@@ -287,14 +339,14 @@ class Sentinel2_ds(object):
                 self.work_env = Path(os.path.dirname(os.path.dirname(self.ori_folder)) + '\\').path_name
             except:
                 print('There has no base dir for the ori_folder and the ori_folder will be treated as the work env')
-                self.work_env = self.ori_folder
+                self.work_env = bf.Path(self.ori_folder).path_name
         else:
             self.work_env = Path(work_env).path_name
 
         # Create cache path
         self.cache_folder = self.work_env + 'cache\\'
-        bf.create_folder(self.cache_folder)
         self.trash_folder = self.work_env + 'trash\\'
+        bf.create_folder(self.cache_folder)
         bf.create_folder(self.trash_folder)
         bf.create_folder(self.work_env + 'Corrupted_S2_file\\')
 
@@ -306,29 +358,21 @@ class Sentinel2_ds(object):
         bf.create_folder(self.log_filepath)
         bf.create_folder(self.shpfile_path)
 
-        # define 2dc para
-        self.dc_vi = {}
-        self._dc_overwritten_para = False
-        self._inherit_from_logfile = None
-        self._remove_nan_layer = False
-        self._manually_remove_para = False
-        self._manually_remove_datelist = None
-
         # Constant
-        self.band_name_list = ['B01_60m.jp2', 'B02_10m.jp2', 'B03_10m.jp2', 'B04_10m.jp2', 'B05_20m.jp2', 'B06_20m.jp2',
-                               'B07_20m.jp2', 'B08_10m.jp2', 'B8A_20m.jp2', 'B09_60m.jp2', 'B11_20m.jp2', 'B12_20m.jp2']
-        self.band_output_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12']
-        self.all_supported_index_list = ['RGB', 'QI', 'all_band', '4visual', 'NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI',
-                                         'NDVI_RE', 'NDVI_RE2','AWEI', 'AWEInsh', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9',
-                                         'B11', 'B12', 'NDVI_20m', 'OSAVI_20m']
+        self._band_name_list = ['B01_60m.jp2', 'B02_10m.jp2', 'B03_10m.jp2', 'B04_10m.jp2', 'B05_20m.jp2', 'B06_20m.jp2',
+                                'B07_20m.jp2', 'B08_10m.jp2', 'B8A_20m.jp2', 'B09_60m.jp2', 'B11_20m.jp2', 'B12_20m.jp2']
+        self._band_output_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12']
+        self._all_supported_index_list = ['RGB', 'QI', 'all_band', '4visual', 'NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI',
+                                          'NDVI_RE', 'NDVI_RE2', 'AWEI', 'AWEInsh', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9',
+                                          'B11', 'B12', 'NDVI_20m', 'OSAVI_20m']
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):
 
-            #########################################################################
+            ############################################################################################################
             # Document the log file and para file
             # The log file contained the information for each run and para file documented the args of each func
-            #########################################################################
+            ############################################################################################################
 
             time_start = time.time()
             c_time = time.ctime()
@@ -352,7 +396,7 @@ class Sentinel2_ds(object):
 
             # Header for the log file
             log_temp = ['#' * 70 + '\n', f'Process Func: {func.__name__}\n', f'Start time: {c_time}\n',
-                    f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
+                        f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
 
             # Create args and kwargs list
             args_f = 0
@@ -363,7 +407,7 @@ class Sentinel2_ds(object):
             for k_key in kwargs.keys():
                 kwargs_list.extend([f"{str(k_key)}:{str(kwargs[k_key])}\n"])
             para_temp = ['#' * 70 + '\n', f'Process Func: {func.__name__}\n', f'Start time: {c_time}\n',
-                    f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
+                         f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
             para_temp.extend(args_list)
             para_temp.extend(kwargs_list)
             para_temp.append('#' * 70 + '\n')
@@ -371,7 +415,7 @@ class Sentinel2_ds(object):
             log_temp.extend(args_list)
             log_temp.extend(kwargs_list)
             log_file.writelines(log_temp)
-            for func_key, func_processing_name in zip(['metadata', 'subset', 'ds2sdc'], ['constructing metadata', 'executing subset and clip', '2sdc']):
+            for func_key, func_processing_name in zip(['metadata', 'subset', 'ds2sdc', 'mosaic'], ['constructing metadata', 'executing subset and clip', '2sdc', 'mosaic2seqtif']):
                 if func_key in func.__name__:
                     if error_inf is None:
                         log_file.writelines([f'Status: Finished {func_processing_name}!\n', '#' * 70 + '\n'])
@@ -394,7 +438,7 @@ class Sentinel2_ds(object):
                         log_file.writelines([f'Status: Error in {func_processing_name}!\n', 'Error information:\n', error_inf + '\n', '#' * 70 + '\n'])
         return wrapper
 
-    def _retrieve_para(self, required_para_name_list, **kwargs):
+    def _retrieve_para(self, required_para_name_list: list, protected_var=False,**kwargs):
 
         if not os.path.exists(f'{self.log_filepath}para_file.txt'):
             print('The para file is not established yet')
@@ -408,15 +452,30 @@ class Sentinel2_ds(object):
                 para = str(para)
                 if q.startswith(para + ':'):
                     if q.split(para + ':')[-1] == 'None':
-                        self.__dict__[para] = None
+                        if not protected_var:
+                            self.__dict__[para] = None
+                        else:
+                            self.__dict__['_' + para] = None
                     elif q.split(para + ':')[-1] == 'True':
-                        self.__dict__[para] = True
+                        if not protected_var:
+                            self.__dict__[para] = True
+                        else:
+                            self.__dict__['_' + para] = True
                     elif q.split(para + ':')[-1] == 'False':
-                        self.__dict__[para] = False
+                        if not protected_var:
+                            self.__dict__[para] = False
+                        else:
+                            self.__dict__['_' + para] = True
                     elif q.split(para + ':')[-1].startswith('['):
-                        self.__dict__[para] = list(q.split(para + ':')[-1][1: -1])
+                        if not protected_var:
+                            self.__dict__[para] = list(q.split(para + ':')[-1][1: -1])
+                        else:
+                            self.__dict__['_' + para] = list(q.split(para + ':')[-1][1: -1])
                     elif q.split(para + ':')[-1].startswith('('):
-                        self.__dict__[para] = tuple(q.split(para + ':')[-1][1: -1])
+                        if not protected_var:
+                            self.__dict__[para] = tuple(q.split(para + ':')[-1][1: -1])
+                        else:
+                            self.__dict__['_' + para] = tuple(q.split(para + ':')[-1][1: -1])
                     else:
                         try:
                             t = float(q.split(para + ':')[-1])
@@ -426,6 +485,11 @@ class Sentinel2_ds(object):
 
     @save_log_file
     def construct_metadata(self):
+
+        #########################################################################
+        # Construct the metadata based on the zip file in the ori folders
+        # Whlie the corrupted files will be moved into a trash folder
+        #########################################################################
 
         # Start constructing metadata
         print('---------------------------- Start the construction of Metadata ----------------------------')
@@ -563,6 +627,8 @@ class Sentinel2_ds(object):
             except:
                 print('Please manually construct the S2_metadata before further processing!')
                 sys.exit(-1)
+        else:
+            pass
 
     def _check_output_band_statue(self, band_name, tiffile_serial_num, *args, **kwargs):
 
@@ -571,7 +637,7 @@ class Sentinel2_ds(object):
         tile_num = self.S2_metadata['Tile_Num'][tiffile_serial_num]
 
         # Factor configuration
-        if True in [band_temp not in self.band_output_list for band_temp in band_name]:
+        if True in [band_temp not in self._band_output_list for band_temp in band_name]:
             print(f'Band {band_name} is not valid!')
             sys.exit(-1)
 
@@ -686,7 +752,7 @@ class Sentinel2_ds(object):
     def _subset_indicator_process(self, **kwargs):
         # Detect whether all the indicator are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ['ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_strategy', 'combine_band_factor', 'pansharp_factor']:
+            if kwarg_indicator not in ['ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_strategy', 'combine_band_factor', 'pansharp_factor', 'main_coordinate_system']:
                 print(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clip parameter
@@ -777,20 +843,29 @@ class Sentinel2_ds(object):
                     else:
                         try:
                             ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, b2_file[0]))
-                            ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
-                            self.output_bounds[tiffile_serial_num, :] = np.array([ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize, ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp])
+                            ds_cor = ds_temp.GetSpatialRef().GetAttrValue("AUTHORITY", 0) + ':' + ds_temp.GetSpatialRef().GetAttrValue("AUTHORITY", 1)
+                            if self.main_coordinate_system != ds_cor:
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '_cor.TIF', ds_temp, dstSRS=self.main_coordinate_system)
+                                cor_ds = gdal.Open('/vsimem/' + b2_band_file_name + '_cor.TIF')
+                                ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = cor_ds.GetGeoTransform()
+                                self.output_bounds[tiffile_serial_num, :] = np.array([ulx_temp, uly_temp + yres_temp * cor_ds.RasterYSize, ulx_temp + xres_temp * cor_ds.RasterXSize, uly_temp])
+                                gdal.Unlink('/vsimem/' + b2_band_file_name + '_cor.TIF')
+                            else:
+                                ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
+                                self.output_bounds[tiffile_serial_num, :] = np.array([ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize, ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp])
                             band_output_limit = (int(self.output_bounds[tiffile_serial_num, 0]), int(self.output_bounds[tiffile_serial_num, 1]),
                                                  int(self.output_bounds[tiffile_serial_num, 2]), int(self.output_bounds[tiffile_serial_num, 3]))
+
                             if self._vi_clip_factor:
-                                gdal.Warp('/vsimem/' + b2_band_file_name + '.vrt', ds_temp,
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.TIF', ds_temp,
                                           dstSRS=self.main_coordinate_system, xRes=10, yRes=10, cutlineDSName=self.ROI,
                                           outputType=gdal.GDT_UInt16, dstNodata=65535, outputBounds=band_output_limit)
                             else:
-                                gdal.Warp('/vsimem/' + b2_band_file_name + '.vrt', ds_temp,
+                                gdal.Warp('/vsimem/' + b2_band_file_name + '.TIF', ds_temp,
                                           dstSRS=self.main_coordinate_system, xRes=10, yRes=10,
                                           outputType=gdal.GDT_UInt16, dstNodata=65535, outputBounds=band_output_limit)
-                            gdal.Translate(output_path + b2_band_file_name + '.TIF', '/vsimem/' + b2_band_file_name + '.vrt', options=topts, noData=65535)
-                            gdal.Unlink('/vsimem/' + b2_band_file_name + '.vrt')
+                            gdal.Translate(output_path + b2_band_file_name + '.TIF', '/vsimem/' + b2_band_file_name + '.TIF', options=topts, noData=65535)
+                            gdal.Unlink('/vsimem/' + b2_band_file_name + '.TIF')
                         except:
                             print(f'The B2 of {str(sensing_date)}_{str(tile_num)} is not valid')
                             return
@@ -841,6 +916,36 @@ class Sentinel2_ds(object):
 
             self.construct_metadata()
 
+    def _process_index_list(self, index_list):
+
+        # Process subset index list
+        self._index_exprs_dic = built_in_index()
+        for index in index_list:
+            if index not in self._all_supported_index_list and type(index) is str and '=' in index:
+                try:
+                    self._index_exprs_dic.add_index(index)
+                except:
+                    raise ValueError(f'The expression {index} is wrong')
+                index_list[index_list.index(index)] = index.split('=')[0]
+
+            elif index in self._all_supported_index_list:
+                pass
+
+            else:
+                raise NameError(f'The {index} is not a valid index or the expression is wrong')
+        self._index_exprs_dic = self._index_exprs_dic.index_dic
+
+        index_list_temp = copy.copy(index_list)
+        for len_t in range(len(index_list)):
+            if index_list[len_t] in ['B2', 'B3', 'B4', 'B8', 'all_band', '4visual', 'RGB']:
+                index_list_temp.remove(index_list[len_t])
+                temp_list = [index_list[len_t]]
+                temp_list.extend(index_list_temp)
+                index_list_temp = copy.copy(temp_list)
+        index_list = copy.copy(index_list_temp)
+
+        return index_list
+
     def subset_tiffiles(self, processed_index_list, tiffile_serial_num, overwritten_para=False, *args, **kwargs):
         """
         :type processed_index_list: list
@@ -855,7 +960,7 @@ class Sentinel2_ds(object):
         # cloud_remove_strategy = method using to remove clouds, supported methods include QI_all_cloud
 
         # Define local args
-        topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
+
         time1, time2, time3 = 0, 0, 0
 
         # Retrieve kwargs from args using the mp
@@ -865,40 +970,30 @@ class Sentinel2_ds(object):
         # determine the subset indicator
         self._check_metadata_availability()
         self._subset_indicator_process(**kwargs)
-
-        # Process subset index list
-        processed_index_list = union_list(processed_index_list, self.all_supported_index_list)
-        processed_index_list_temp = copy.copy(processed_index_list)
-        for len_t in range(len(processed_index_list)):
-            if processed_index_list[len_t] in ['B2', 'B3', 'B4', 'B8', 'all_band', '4visual', 'RGB']:
-                processed_index_list_temp.remove(processed_index_list[len_t])
-                temp_list = [processed_index_list[len_t]]
-                temp_list.extend(processed_index_list_temp)
-                processed_index_list_temp = copy.copy(temp_list)
-        processed_index_list = copy.copy(processed_index_list_temp)
+        processed_index_list = self._process_index_list(processed_index_list)
 
         combine_index_list = []
         if self._combine_band_factor:
             array_cube = None
-            for q in processed_index_list:
-                if q in ['NDVI', 'NDVI_20m', 'OSAVI_20m', 'AWEI', 'AWEInsh', 'MNDWI', 'EVI', 'EVI2', 'OSAVI', 'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12', 'QI']:
-                    combine_index_list.append(q)
-                elif q in ['RGB', 'all_band', '4visual']:
-                    combine_index_list.extend([['B2', 'B3', 'B4'], ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12'], ['B2', 'B3', 'B4', 'B5', 'B8', 'B11']][['RGB', 'all_band', '4visual'].index(q)])
+            for i_t in processed_index_list:
+                if i_t in ['RGB', 'all_band', '4visual']:
+                    combine_index_list.extend([['B2', 'B3', 'B4'], ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B11', 'B12'], ['B2', 'B3', 'B4', 'B5', 'B8', 'B11']][['RGB', 'all_band', '4visual'].index(i_t)])
+                else:
+                    combine_index_list.append(i_t)
             combine_index_array_list = copy.copy(combine_index_list)
 
         if processed_index_list != []:
-            # Generate the output boundary
+
             sensing_date = self.S2_metadata['Sensing_Date'][tiffile_serial_num]
             tile_num = self.S2_metadata['Tile_Num'][tiffile_serial_num]
+            temp_S2file_path = self.S2_metadata.iat[tiffile_serial_num, 1]
 
+            # Generate the output boundary
             try:
                 self.generate_10m_output_bounds(tiffile_serial_num, **kwargs)
             except:
                 return 'B2', tiffile_serial_num, sensing_date, tile_num
 
-            temp_S2file_path = self.S2_metadata.iat[tiffile_serial_num, 1]
-            zfile = ZipFile(temp_S2file_path, 'r')
             band_output_limit = (int(self.output_bounds[tiffile_serial_num, 0]), int(self.output_bounds[tiffile_serial_num, 1]),
                                  int(self.output_bounds[tiffile_serial_num, 2]), int(self.output_bounds[tiffile_serial_num, 3]))
 
@@ -909,11 +1004,11 @@ class Sentinel2_ds(object):
                 # Generate output folder
                 if self._vi_clip_factor:
                     subset_output_path = f'{self.output_path}Sentinel2_{self.ROI_name}_index\\{index}\\'
-                    if index in self.band_output_list or index in ['4visual', 'RGB']:
+                    if index in self._band_output_list or index in ['4visual', 'RGB']:
                         subset_output_path = f'{self.output_path}Sentinel2_{self.ROI_name}_index\\all_band\\'
                 else:
                     subset_output_path = f'{self.output_path}Sentinel2_constructed_index\\{index}\\'
-                    if index in self.band_output_list or index in ['4visual', 'RGB']:
+                    if index in self._band_output_list or index in ['4visual', 'RGB']:
                         subset_output_path = f'{self.output_path}Sentinel2_constructed_index\\all_band\\'
 
                 # Generate qi output folder
@@ -922,7 +1017,7 @@ class Sentinel2_ds(object):
                 else:
                     qi_path = f'{self.output_path}Sentinel2_{self.ROI_name}_index\\QI\\'
 
-                # Combine band to a single
+                # Combine bands to a single tif file
                 if self._combine_band_factor:
                     folder_name = ''
                     for combine_index_temp in combine_index_list:
@@ -943,6 +1038,7 @@ class Sentinel2_ds(object):
 
                 # Generate QI layer
                 if (index == 'QI' and overwritten_para) or (index == 'QI' and not overwritten_para and not os.path.exists(qi_path + file_name + '.TIF')):
+                    zfile = ZipFile(temp_S2file_path, 'r')
                     band_all = [zfile_temp for zfile_temp in zfile.namelist() if 'SCL_20m.jp2' in zfile_temp]
                     if len(band_all) != 1:
                         print(f'Something error during processing {index} data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
@@ -953,16 +1049,16 @@ class Sentinel2_ds(object):
                                 ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
 
                                 if self._vi_clip_factor:
-                                    gdal.Warp('/vsimem/' + file_name + 'temp.vrt', ds_temp, xRes=10, yRes=10, dstSRS=self.main_coordinate_system, outputBounds=band_output_limit, outputType=gdal.GDT_Byte, dstNodata=255)
-                                    gdal.Warp('/vsimem/' + file_name + '.vrt', '/vsimem/' + file_name + 'temp.vrt', xRes=10, yRes=10, outputBounds=band_output_limit, cutlineDSName=self.ROI)
+                                    gdal.Warp('/vsimem/' + file_name + 'temp.TIF', ds_temp, xRes=10, yRes=10, dstSRS=self.main_coordinate_system, outputBounds=band_output_limit, outputType=gdal.GDT_Byte, dstNodata=255)
+                                    gdal.Warp('/vsimem/' + file_name + '.TIF', '/vsimem/' + file_name + 'temp.TIF', xRes=10, yRes=10, outputBounds=band_output_limit, cutlineDSName=self.ROI)
                                 else:
-                                    gdal.Warp('/vsimem/' + file_name + '.vrt', ds_temp, xRes=10, yRes=10, dstSRS=self.main_coordinate_system, outputBounds=band_output_limit, outputType=gdal.GDT_Byte, dstNodata=255)
-                                gdal.Translate(qi_path + file_name + '.TIF', '/vsimem/' + file_name + '.vrt', options=topts, noData=255, outputType=gdal.GDT_Byte)
+                                    gdal.Warp('/vsimem/' + file_name + '.TIF', ds_temp, xRes=10, yRes=10, dstSRS=self.main_coordinate_system, outputBounds=band_output_limit, outputType=gdal.GDT_Byte, dstNodata=255)
+                                gdal.Translate(qi_path + file_name + '.TIF', '/vsimem/' + file_name + '.TIF', options=topts, noData=255, outputType=gdal.GDT_Byte)
 
                                 if self._combine_band_factor and 'QI' in combine_index_list:
                                     temp_ds = gdal.Open(qi_path + file_name + '.TIF')
                                     temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
-                                    temp_array = temp_array.astype(np.float)
+                                    temp_array = temp_array.astype(np.float16)
                                     temp_array[temp_array == 255] = np.nan
                                     if array_cube is None:
                                         array_cube = np.zeros([temp_array[0].shape[0], temp_array[0].shape[1], len(combine_index_array_list)], dtype=np.int16)
@@ -981,7 +1077,7 @@ class Sentinel2_ds(object):
                 elif index == 'QI' and os.path.exists(qi_path + file_name + '.TIF') and 'QI' in combine_index_list:
                     temp_ds = gdal.Open(qi_path + file_name + '.TIF')
                     temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
-                    temp_array = temp_array.astype(np.float)
+                    temp_array = temp_array.astype(np.float16)
                     temp_array[temp_array == 255] = np.nan
                     if array_cube is None:
                         array_cube = np.zeros([temp_array[0].shape[0], temp_array[0].shape[1], len(combine_index_array_list)], dtype=np.int16)
@@ -993,16 +1089,16 @@ class Sentinel2_ds(object):
                         return
 
                 # Subset band images
-                elif index == 'all_band' or index == '4visual' or index == 'RGB' or index in self.band_output_list:
+                elif index == 'all_band' or index == '4visual' or index == 'RGB' or index in self._band_output_list:
                     # Check the output band
                     if index == 'all_band':
-                        band_name_list, band_output_list = self.band_name_list, self.band_output_list
+                        band_name_list, band_output_list = self._band_name_list, self._band_output_list
                     elif index == '4visual':
                         band_name_list, band_output_list = ['B02_10m.jp2', 'B03_10m.jp2', 'B04_10m.jp2', 'B08_10m.jp2', 'B05_20m.jp2', 'B11_20m.jp2'], ['B2', 'B3', 'B4', 'B8', 'B5', 'B11']
                     elif index == 'RGB':
                         band_name_list, band_output_list = ['B02_10m.jp2', 'B03_10m.jp2', 'B04_10m.jp2'], ['B2', 'B3', 'B4']
-                    elif index in self.band_output_list:
-                        band_name_list, band_output_list = [self.band_name_list[self.band_output_list.index(index)]], [index]
+                    elif index in self._band_output_list:
+                        band_name_list, band_output_list = [self._band_name_list[self._band_output_list.index(index)]], [index]
                     else:
                         print('Code error!')
                         sys.exit(-1)
@@ -1022,6 +1118,7 @@ class Sentinel2_ds(object):
                                             kwargs['combine_band_factor'] = False
                                         self.subset_tiffiles(band4sharpen, tiffile_serial_num, *args, **kwargs)
                                 else:
+                                    zfile = ZipFile(temp_S2file_path, 'r')
                                     all_band_file_name = f'{str(sensing_date)}_{str(tile_num)}_{str(band_output)}'
                                     if not os.path.exists(subset_output_path + all_band_file_name + '.TIF') or overwritten_para:
                                         band_all = [zfile_temp for zfile_temp in zfile.namelist() if band_name in zfile_temp]
@@ -1035,23 +1132,23 @@ class Sentinel2_ds(object):
                                                     t1 = time.time()
                                                     if band_output in ['B1', 'B9', 'B11', 'B10', 'B12']:
                                                         if self._vi_clip_factor:
-                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.vrt', ds_temp,
+                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
                                                                       xRes=10, yRes=10, dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI,
                                                                       outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
                                                                       dstNodata=65535, resampleAlg=gdal.GRA_Bilinear)
                                                         else:
-                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.vrt', ds_temp,
+                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
                                                                       xRes=10, yRes=10, dstSRS=self.main_coordinate_system,
                                                                       outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
                                                                       dstNodata=65535, resampleAlg=gdal.GRA_Bilinear)
                                                     else:
                                                         if self._vi_clip_factor:
-                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.vrt', ds_temp,
+                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
                                                                       xRes=10, yRes=10, dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI,
                                                                       outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
                                                                       dstNodata=65535)
                                                         else:
-                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.vrt', ds_temp,
+                                                            gdal.Warp('/vsimem/' + all_band_file_name + '.TIF', ds_temp,
                                                                       xRes=10, yRes=10, dstSRS=self.main_coordinate_system,
                                                                       outputBounds=band_output_limit, outputType=gdal.GDT_UInt16,
                                                                       dstNodata=65535)
@@ -1065,10 +1162,10 @@ class Sentinel2_ds(object):
                                                                 kwargs['combine_band_factor'] = False
                                                             self.subset_tiffiles(['QI'], tiffile_serial_num, **kwargs)
                                                         try:
-                                                            self._qi_remove_cloud('/vsimem/' + all_band_file_name + '.vrt',
-                                                                            qi_file_path, tiffile_serial_num, dst_nodata=65535,
-                                                                            sparse_matrix_factor=self._sparsify_matrix_factor,
-                                                                            **kwargs)
+                                                            self._qi_remove_cloud('/vsimem/' + all_band_file_name + '.TIF',
+                                                                                  qi_file_path, tiffile_serial_num, dst_nodata=65535,
+                                                                                  sparse_matrix_factor=self._sparsify_matrix_factor,
+                                                                                  **kwargs)
                                                         except:
                                                             return [None, None, None, None]
                                                     time2 = time.time() - t1
@@ -1080,16 +1177,16 @@ class Sentinel2_ds(object):
                                                             if os.path.exists(f'{subset_output_path}{str(sensing_date)}_{str(tile_num)}_{high_res_band}.TIF'):
                                                                 ds_t = gdal.Open(f'{subset_output_path}{str(sensing_date)}_{str(tile_num)}_{high_res_band}.TIF')
                                                                 array_t = ds_t.GetRasterBand(1).ReadAsArray()
-                                                                array_t = array_t.astype(np.float)
+                                                                array_t = array_t.astype(np.float16)
                                                                 array_t[array_t == 65535] = 0
                                                                 high_resolution_image_list.append(array_t)
 
                                                         if high_resolution_image_list == []:
                                                             print('Something went wrong for the code in pan sharpening')
                                                         else:
-                                                            process_ds = gdal.Open('/vsimem/' + all_band_file_name + '.vrt', gdal.GA_Update)
+                                                            process_ds = gdal.Open('/vsimem/' + all_band_file_name + '.TIF', gdal.GA_Update)
                                                             process_image = process_ds.GetRasterBand(1).ReadAsArray()
-                                                            process_image = process_image.astype(np.float)
+                                                            process_image = process_image.astype(np.float16)
                                                             process_image[process_image == 65535] = 0
                                                             output_image = self._wavelet_pansharpen(process_image, high_resolution_image_list)
                                                             # output_image = ATPRK.ATPRK_PANsharpen(process_image, high_resolution_image_list)
@@ -1100,24 +1197,21 @@ class Sentinel2_ds(object):
                                                             process_ds.FlushCache()
                                                             process_ds = None
                                                     gdal.Translate(subset_output_path + all_band_file_name + '.TIF',
-                                                                   '/vsimem/' + all_band_file_name + '.vrt', options=topts,
+                                                                   '/vsimem/' + all_band_file_name + '.TIF', options=topts,
                                                                    noData=65535)
                                                     time3 = time.time() - t3
 
                                                     if self._combine_band_factor and band_output in combine_index_list:
                                                         temp_ds = gdal.Open(subset_output_path + all_band_file_name + '.TIF')
                                                         temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
-                                                        temp_array = temp_array.astype(np.float)
+                                                        temp_array = temp_array.astype(np.float16)
                                                         temp_array[temp_array == 65535] = np.nan
                                                         if array_cube is None:
-                                                            array_cube = np.zeros(
-                                                                [temp_array[0].shape[0], temp_array[0].shape[1],
-                                                                 len(combine_index_array_list)], dtype=np.int16)
+                                                            array_cube = np.zeros([temp_array[0].shape[0], temp_array[0].shape[1], len(combine_index_array_list)], dtype=np.int16)
 
                                                         if array_cube.shape[0] == temp_array.shape[0] and \
                                                                 array_cube.shape[1] == temp_array.shape[1]:
-                                                            array_cube[:, :,
-                                                            combine_index_list.index(band_output)] = temp_array
+                                                            array_cube[:, :, combine_index_list.index(band_output)] = temp_array
                                                         else:
                                                             print('consistency issuse')
                                                             return
@@ -1132,7 +1226,7 @@ class Sentinel2_ds(object):
                                     elif os.path.exists(subset_output_path + all_band_file_name + '.TIF') and self._combine_band_factor and band_output in combine_index_list:
                                         temp_ds = gdal.Open(subset_output_path + all_band_file_name + '.TIF')
                                         temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
-                                        temp_array = temp_array.astype(np.float)
+                                        temp_array = temp_array.astype(np.float16)
                                         temp_array[temp_array == 65535] = np.nan
                                         if array_cube is None:
                                             array_cube = np.zeros([temp_array[0].shape[0], temp_array[0].shape[1], len(combine_index_array_list)], dtype=np.int16)
@@ -1165,7 +1259,7 @@ class Sentinel2_ds(object):
                                     elif self._combine_band_factor and 'B2' in combine_index_list:
                                         temp_ds = gdal.Open(f'{subset_output_path}\\{str(sensing_date)}_{str(tile_num)}_B2.TIF')
                                         temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
-                                        temp_array = temp_array.astype(np.float)
+                                        temp_array = temp_array.astype(np.float16)
                                         temp_array[temp_array == 65535] = np.nan
                                         if array_cube is None:
                                             array_cube = np.zeros([temp_array[0].shape[0], temp_array[0].shape[1], len(combine_index_array_list)], dtype=np.int16)
@@ -1177,327 +1271,63 @@ class Sentinel2_ds(object):
                                             return
 
                     if index == 'RGB':
+
                         gamma_coef = 1.5
+                        RGB_array = {}
                         if self._vi_clip_factor:
                             rgb_output_path = f'{self.output_path}Sentinel2_{self.ROI_name}_index\\RGB\\'
                         else:
                             rgb_output_path = f'{self.output_path}Sentinel2_constructed_index_index\\RGB\\'
                         bf.create_folder(rgb_output_path)
 
-                        if not os.path.exists(f'{rgb_output_path}{str(sensing_date)}_{str(tile_num)}_RGB.tif') or overwritten_para:
-                            b2_file = bf.file_filter(subset_output_path, containing_word_list=[f'{str(sensing_date)}_{str(tile_num)}_B2'])
-                            b3_file = bf.file_filter(subset_output_path, containing_word_list=[f'{str(sensing_date)}_{str(tile_num)}_B3'])
-                            b4_file = bf.file_filter(subset_output_path, containing_word_list=[f'{str(sensing_date)}_{str(tile_num)}_B4'])
-                            b2_ds = gdal.Open(b2_file[0])
-                            b3_ds = gdal.Open(b3_file[0])
-                            b4_ds = gdal.Open(b4_file[0])
-                            b2_array = b2_ds.GetRasterBand(1).ReadAsArray()
-                            b3_array = b3_ds.GetRasterBand(1).ReadAsArray()
-                            b4_array = b4_ds.GetRasterBand(1).ReadAsArray()
+                        if not os.path.exists(f'{rgb_output_path}{str(sensing_date)}_{str(tile_num)}_RGB.TIF') or overwritten_para:
 
-                            b2_array = ((b2_array / 10000) ** (1/gamma_coef) * 255).astype(np.int)
-                            b3_array = ((b3_array / 10000) ** (1/gamma_coef) * 255).astype(np.int)
-                            b4_array = ((b4_array / 10000) ** (1/gamma_coef) * 255).astype(np.int)
+                            for band_name_temp in ['B2', 'B3', 'B4']:
+                                band_file = bf.file_filter(subset_output_path, containing_word_list=[f'{str(sensing_date)}_{str(tile_num)}_{band_name_temp}'])
+                                ds_temp = gdal.Open(band_file[0])
+                                array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                                array_temp = ((array_temp / 10000) ** (1/gamma_coef) * 255).astype(np.int)
+                                array_temp[array_temp > 255] = 0
+                                RGB_array[band_name_temp] = array_temp
 
-                            b2_array[b2_array > 255] = 0
-                            b3_array[b3_array > 255] = 0
-                            b4_array[b4_array > 255] = 0
-
-                            dst_ds = gdal.GetDriverByName('GTiff').Create(f'{rgb_output_path}{str(sensing_date)}_{str(tile_num)}_RGB.tif', xsize=b2_array.shape[1], ysize=b2_array.shape[0], bands=3, eType=gdal.GDT_Byte, options=['COMPRESS=LZW', 'PREDICTOR=2'])
-                            dst_ds.SetGeoTransform(b2_ds.GetGeoTransform())  # specify coords
-                            dst_ds.SetProjection(b2_ds.GetProjection())  # export coords to file
-                            dst_ds.GetRasterBand(1).WriteArray(b4_array)
-                            dst_ds.GetRasterBand(1).SetNoDataValue(0)# write r-band to the raster
-                            dst_ds.GetRasterBand(2).WriteArray(b3_array)
-                            dst_ds.GetRasterBand(2).SetNoDataValue(0) # write g-band to the raster
-                            dst_ds.GetRasterBand(3).WriteArray(b2_array)
-                            dst_ds.GetRasterBand(3).SetNoDataValue(0)# write b-band to the raster
-                            dst_ds.FlushCache()  # write to disk
+                            dst_ds = gdal.GetDriverByName('GTiff').Create(f'{rgb_output_path}{str(sensing_date)}_{str(tile_num)}_RGB.TIF', xsize=array_temp.shape[1], ysize=array_temp.shape[0], bands=3, eType=gdal.GDT_Byte, options=['COMPRESS=LZW', 'PREDICTOR=2'])
+                            dst_ds.SetGeoTransform(ds_temp.GetGeoTransform())  # specify coords
+                            dst_ds.SetProjection(ds_temp.GetProjection())  # export coords to file
+                            for i, band_name_temp in zip([1,2,3], ['B4', 'B3', 'B2']):
+                                dst_ds.GetRasterBand(i).WriteArray(RGB_array[band_name_temp])
+                                dst_ds.GetRasterBand(i).SetNoDataValue(0)
+                            dst_ds.FlushCache()
                             dst_ds = None
 
-                elif not (index == 'QI' or index == 'all_band' or index == '4visual' or index in self.band_output_list):
+                elif not (index == 'QI' or index == 'all_band' or index == '4visual' or index in self._band_output_list):
                     index_construction_indicator = False
                     if not overwritten_para and not os.path.exists(subset_output_path + file_name + '.TIF'):
-                        if index == 'NDVI':
-                            # time1 = time.time()
-                            ds_list = self._check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
-                            # print('process b8 and b4' + str(time.time() - time1))
+                        if index in self._index_exprs_dic.keys():
+                            dep_list = self._index_exprs_dic[index][0]
+                            dep_list = [str(dep) for dep in dep_list]
+                            ds_list = self._check_output_band_statue(dep_list, tiffile_serial_num, **kwargs)
                             if ds_list is not None:
                                 try:
                                     if self._sparsify_matrix_factor:
-                                        B8_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B4_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
+                                        array_list = []
+                                        for ds_temp in ds_list:
+                                            array_temp = sp.csr_matrix(ds_temp.GetRasterBand(1).ReadAsArray().astype(np.float32))
+                                            array_temp[array_temp == 65535] = np.nan
+                                            array_list.append(array_temp)
                                     else:
-                                        B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    # print(time.time()-time1)
-                                    B8_array[B8_array == 65535] = np.nan
-                                    B4_array[B4_array == 65535] = np.nan
-                                    output_array = (B8_array - B4_array) / (B8_array + B4_array)
-                                    B4_array = None
-                                    B8_array = None
-                                    # print(time.time()-time1)
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'NDVI_20m':
-                            time1 = time.time()
-                            ds_list = self._check_output_band_statue(['B8A', 'B4'], tiffile_serial_num, **kwargs)
-                            print('reload b8 and b4' + str(time.time() - time1))
-                            if ds_list is not None:
-                                time2 = time.time()
-                                try:
-                                    if self._sparsify_matrix_factor:
-                                        B8A_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B4_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                    else:
-                                        B8A_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    # print(time.time()-time1)
-                                    B8A_array[B8A_array == 65535] = np.nan
-                                    B4_array[B4_array == 65535] = np.nan
-                                    output_array = (B8A_array - B4_array) / (B8A_array + B4_array)
-                                    B4_array = None
-                                    B8A_array = None
-                                    print('generate output array' + str(time.time() - time2))
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'OSAVI_20m':
-                            # time1 = time.time()
-                            ds_list = self._check_output_band_statue(['B8A', 'B4'], tiffile_serial_num, **kwargs)
-                            # print('process b8 and b4' + str(time.time() - time1))
-                            if ds_list is not None:
-                                try:
-                                    if self._sparsify_matrix_factor:
-                                        B8A_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B4_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                    else:
-                                        B8A_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    # print(time.time()-time1)
-                                    B8A_array[B8A_array == 65535] = np.nan
-                                    B4_array[B4_array == 65535] = np.nan
-                                    output_array = 1.16 * (B8A_array - B4_array) / (B8A_array + B4_array + 0.16)
-                                    B4_array = None
-                                    B8A_array = None
-                                    # print(time.time()-time1)
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'AWEI':
-                            ds_list = self._check_output_band_statue(['B3', 'B11', 'B8', 'B12'], tiffile_serial_num, **kwargs)
-                            if ds_list is not None:
-                                try:
-                                    if self._sparsify_matrix_factor:
-                                        B3_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B11_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B8_array = sp.csr_matrix(ds_list[2].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B12_array = sp.csr_matrix(ds_list[3].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                    else:
-                                        B3_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B11_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B8_array = ds_list[2].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B12_array = ds_list[3].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B3_array[B3_array == 65535] = np.nan
-                                    B11_array[B11_array == 65535] = np.nan
-                                    B8_array[B8_array == 65535] = np.nan
-                                    B12_array[B12_array == 65535] = np.nan
-                                    output_array = 4 * (B3_array - B11_array) - (0.25 * B8_array + 2.75 * B12_array)
-                                    B3_array = None
-                                    B11_array = None
-                                    B8_array = None
-                                    B12_array = None
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'AWEInsh':
-                            ds_list = self._check_output_band_statue(['B3', 'B11', 'B8', 'B12', 'B2'], tiffile_serial_num,
-                                                                     **kwargs)
-                            if ds_list is not None:
-                                try:
-                                    if self._sparsify_matrix_factor:
-                                        B3_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B11_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B8_array = sp.csr_matrix(ds_list[2].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B12_array = sp.csr_matrix(ds_list[3].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B2_array = sp.csr_matrix(ds_list[4].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                    else:
-                                        B3_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B11_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B8_array = ds_list[2].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B12_array = ds_list[3].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B2_array = ds_list[4].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B3_array[B3_array == 65535] = np.nan
-                                    B11_array[B11_array == 65535] = np.nan
-                                    B8_array[B8_array == 65535] = np.nan
-                                    B12_array[B12_array == 65535] = np.nan
-                                    B2_array[B2_array == 65535] = np.nan
-                                    output_array = B2_array + 2.5 * B3_array - 0.25 * B12_array - 1.5 * (B8_array + B11_array)
-                                    B3_array = None
-                                    B11_array = None
-                                    B8_array = None
-                                    B2_array = None
-                                    B12_array = None
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'MNDWI':
-                            ds_list = self._check_output_band_statue(['B3', 'B11'], tiffile_serial_num, **kwargs)
-                            if ds_list is not None:
-                                try:
-                                    if self._sparsify_matrix_factor:
-                                        B3_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B11_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                    else:
-                                        B3_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B11_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B3_array[B3_array == 65535] = np.nan
-                                    B11_array[B11_array == 65535] = np.nan
-                                    output_array = (B3_array - B11_array) / (B3_array + B11_array)
-                                    B3_array = None
-                                    B11_array = None
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'EVI':
-                            ds_list = self._check_output_band_statue(['B2', 'B4', 'B8'], tiffile_serial_num, **kwargs)
-                            if ds_list is not None:
-                                try:
-                                    B2_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B8_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B8_array[B8_array == 65535] = np.nan
-                                    B4_array[B4_array == 65535] = np.nan
-                                    B2_array[B2_array == 65535] = np.nan
-                                    output_array = 2.5 * (B8_array - B4_array) / (B8_array + 6 * B4_array - 7.5 * B2_array + 1)
-                                    B4_array = None
-                                    B8_array = None
-                                    B2_array = None
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'EVI2':
-                            ds_list = self._check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
-                            # print('process b8 and b4' + str(time.time() - time1))
-                            if ds_list is not None:
-                                try:
-                                    B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B8_array[B8_array == 65535] = np.nan
-                                    B4_array[B4_array == 65535] = np.nan
-                                    output_array = 2.5 * (B8_array - B4_array) / (B8_array + 2.4 * B4_array + 1)
-                                    B4_array = None
-                                    B8_array = None
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'GNDVI':
-                            ds_list = self._check_output_band_statue(['B8', 'B3'], tiffile_serial_num, **kwargs)
-                            # print('process b8 and b4' + str(time.time() - time1))
-                            if ds_list is not None:
-                                try:
-                                    if self._sparsify_matrix_factor:
-                                        B8_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B3_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                    else:
-                                        B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B3_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B8_array[B8_array == 65535] = np.nan
-                                    B3_array[B3_array == 65535] = np.nan
-                                    output_array = (B8_array - B3_array) / (B8_array + B3_array)
-                                    B3_array = None
-                                    B8_array = None
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'NDVI_RE':
-                            ds_list = self._check_output_band_statue(['B7', 'B5'], tiffile_serial_num, **kwargs)
-                            # print('process b8 and b4' + str(time.time() - time1))
-                            if ds_list is not None:
-                                try:
-                                    if self._sparsify_matrix_factor:
-                                        B7_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B5_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                    else:
-                                        B7_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B5_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B7_array[B7_array == 65535] = np.nan
-                                    B5_array[B5_array == 65535] = np.nan
-                                    output_array = (B7_array - B5_array) / (B7_array + B5_array)
-                                    B5_array = None
-                                    B7_array = None
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'NDVI_RE2':
-                            ds_list = self._check_output_band_statue(['B8', 'B5'], tiffile_serial_num, **kwargs)
-                            # print('process b8 and b4' + str(time.time() - time1))
-                            if ds_list is not None:
-                                try:
-                                    if self._sparsify_matrix_factor:
-                                        B8_array = sp.csr_matrix(ds_list[0].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                        B5_array = sp.csr_matrix(ds_list[1].GetRasterBand(1).ReadAsArray()).astype(np.float)
-                                    else:
-                                        B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                        B5_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B8_array[B8_array == 65535] = np.nan
-                                    B5_array[B5_array == 65535] = np.nan
-                                    output_array = (B8_array - B5_array) / (B8_array + B5_array)
-                                    B5_array = None
-                                    B8_array = None
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'OSAVI':
-                            ds_list = self._check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
-                            # print('Process B8 and B4 in' + str(time.time() - time1))
-                            if ds_list is not None:
-                                try:
-                                    time1 = time.time()
-                                    B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B8_array[B8_array == 65535] = np.nan
-                                    B4_array[B4_array == 65535] = np.nan
-                                    output_array = 1.16 * (B8_array - B4_array) / (B8_array + B4_array + 0.16)
-                                    B4_array = None
-                                    B8_array = None
-                                    # print(time.time()-time1)
-                                except:
-                                    index_construction_indicator = True
-                            else:
-                                index_construction_indicator = True
-                        elif index == 'IEI':
-                            ds_list = self._check_output_band_statue(['B8', 'B4'], tiffile_serial_num, **kwargs)
-                            # print('Process B8 and B4 in' + str(time.time() - time1))
-                            if ds_list is not None:
-                                try:
-                                    time1 = time.time()
-                                    B8_array = ds_list[0].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B4_array = ds_list[1].GetRasterBand(1).ReadAsArray().astype(np.float)
-                                    B8_array[B8_array == 65535] = np.nan
-                                    B4_array[B4_array == 65535] = np.nan
-                                    output_array = 1.5 * (B8_array - B4_array) / (B8_array + B4_array + 0.5)
-                                    B4_array = None
-                                    B8A_array = None
+                                        array_list = []
+                                        for ds_temp in ds_list:
+                                            array_temp = ds_temp.GetRasterBand(1).ReadAsArray().astype(np.float32)
+                                            array_temp[array_temp == 65535] = np.nan
+                                            array_list.append(array_temp)
+                                    output_array = self._index_exprs_dic[index][1](*array_list)
+                                    array_list = None
                                 except:
                                     index_construction_indicator = True
                             else:
                                 index_construction_indicator = True
                         else:
-                            print(f'{index} is not supported!')
-                            sys.exit(-1)
+                            raise Exception('Code error concerning the conversion of index expression')
 
                         if self._combine_band_factor:
                             if array_cube is None:
@@ -1511,8 +1341,8 @@ class Sentinel2_ds(object):
 
                     elif self._combine_band_factor and os.path.exists(subset_output_path + file_name + '.TIF'):
                         time3 = time.time()
-                        gdal.Warp('/vsimem/' + file_name + '.vrt', subset_output_path + file_name + '.TIF', outputBounds=band_output_limit, xRes=10, yRes=10)
-                        output_ds = gdal.Open('/vsimem/' + file_name + '.vrt')
+                        gdal.Warp('/vsimem/' + file_name + '.TIF', subset_output_path + file_name + '.TIF', outputBounds=band_output_limit, xRes=10, yRes=10)
+                        output_ds = gdal.Open('/vsimem/' + file_name + '.TIF')
                         output_array = output_ds.GetRasterBand(1).ReadAsArray()
 
                         if array_cube is None:
@@ -1536,28 +1366,31 @@ class Sentinel2_ds(object):
                         if self._size_control_factor is True:
                             output_array[np.isnan(output_array)] = -3.2768
                             output_array = output_array * 10000
-                            write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.vrt', raster_datatype=gdal.GDT_Int16)
+                            output_array.astype(int)
+                            write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
                             data_type = gdal.GDT_Int16
                         else:
-                            write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.vrt', raster_datatype=gdal.GDT_Float32)
+                            write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Float32)
                             data_type = gdal.GDT_Float32
 
                         if self._vi_clip_factor:
-                            gdal.Warp('/vsimem/' + file_name + '2.vrt', '/vsimem/' + file_name + '.vrt', xRes=10, yRes=10, cutlineDSName=self.ROI, cropToCutline=True, outputType=data_type)
+                            gdal.Warp('/vsimem/' + file_name + '2.TIF', '/vsimem/' + file_name + '.TIF', xRes=10, yRes=10, cutlineDSName=self.ROI, cropToCutline=True, outputType=data_type, outputBounds=band_output_limit)
                         else:
-                            gdal.Warp('/vsimem/' + file_name + '2.vrt', '/vsimem/' + file_name + '.vrt', xRes=10, yRes=10, outputType=data_type)
-                        gdal.Translate(subset_output_path + file_name + '.TIF', '/vsimem/' + file_name + '2.vrt', options=topts)
-                        gdal.Unlink('/vsimem/' + file_name + '.vrt')
-                        gdal.Unlink('/vsimem/' + file_name + '2.vrt')
+                            gdal.Warp('/vsimem/' + file_name + '2.TIF', '/vsimem/' + file_name + '.TIF', xRes=10, yRes=10, outputType=data_type, outputBounds=band_output_limit)
+
+                        gdal.Translate(subset_output_path + file_name + '.TIF', '/vsimem/' + file_name + '2.TIF', options=topts)
+                        gdal.Unlink('/vsimem/' + file_name + '.TIF')
+                        gdal.Unlink('/vsimem/' + file_name + '2.TIF')
 
                 print(f'Finish processing \033[1;31m{index}\033[0m data of \033[3;34m{str(sensing_date)} {str(tile_num)}\033[0m in \033[1;31m{str(time.time() - start_temp)}\033[0m s ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata_size)})')
 
-                # Generate SA map
+                # Generate SA map (NEED TO FIX)
                 if not os.path.exists(self.output_path + 'ROI_map\\' + self.ROI_name + '_map.npy'):
+
                     if self._vi_clip_factor:
-                        file_list = bf.file_filter(f'{self.output_path}Sentinel2_{self.ROI_name}_index\\NDVI\\', ['.TIF'], and_or_factor='and')
+                        file_list = bf.file_filter(f'{self.output_path}Sentinel2_{self.ROI_name}_index\\QI\\', ['.TIF'], and_or_factor='and')
                     else:
-                        file_list = bf.file_filter(f'{self.output_path}Sentinel2_constructed_index\\NDVI\\', ['.TIF'], and_or_factor='and')
+                        file_list = bf.file_filter(f'{self.output_path}Sentinel2_constructed_index\\QI\\', ['.TIF'], and_or_factor='and')
                     bf.create_folder(self.output_path + 'ROI_map\\')
                     ds_temp = gdal.Open(file_list[0])
                     array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
@@ -1609,15 +1442,180 @@ class Sentinel2_ds(object):
             if self.ROI_name is None:
                 print()
 
-    def temporal_mosaic(self, indicator, date, **kwargs):
-        self._check_metadata_availability()
-        self.check_subset_intergrality(indicator)
-        pass
+    def _process_mosaic2seqtif_para(self, **kwargs):
+        # Detect whether all the indicators are valid
+        for kwarg_indicator in kwargs.keys():
+            if kwarg_indicator not in (
+                    'inherit_from_logfile', 'ROI', 'ROI_name', 'overwritten_para', 'size_control_factor'):
+                raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
+
+        # process clipped_overwritten_para
+        if 'overwritten_para' in kwargs.keys():
+            if type(kwargs['overwritten_para']) is bool:
+                self._dc_overwritten_para = kwargs['overwritten_para']
+            else:
+                raise TypeError('Please mention the overwritten_para should be bool type!')
+        else:
+            self._mosaic_overwritten_para = False
+
+        # process inherit from logfile
+        if 'inherit_from_logfile' in kwargs.keys():
+            if type(kwargs['inherit_from_logfile']) is bool:
+                self._inherit_from_logfile = kwargs['inherit_from_logfile']
+            else:
+                raise TypeError('Please mention the dc_overwritten_para should be bool type!')
+        else:
+            self._inherit_from_logfile = False
+
+        # process ROI_NAME
+        if 'ROI_name' in kwargs.keys():
+            self.ROI_name = kwargs['ROI_name']
+        elif self.ROI_name is None and self._inherit_from_logfile:
+            self._retrieve_para(['ROI_name'])
+        elif self.ROI_name is None:
+            raise Exception('Notice the ROI name was missed!')
+
+        # process ROI
+        if 'ROI' in kwargs.keys():
+            self.ROI = kwargs['ROI']
+        elif self.ROI is None and self._inherit_from_logfile:
+            self._retrieve_para(['ROI'])
+        elif self.ROI is None:
+            raise Exception('Notice the ROI was missed!')
+
+        # Retrieve size control factor
+        if 'size_control_factor' in kwargs.keys():
+            if type(kwargs['size_control_factor']) is bool:
+                self._size_control_factor = kwargs['size_control_factor']
+            else:
+                raise TypeError('Please mention the size_control_factor should be bool type!')
+        elif self._inherit_from_logfile:
+            self._retrieve_para(['size_control_factor'], protected_var=True)
+        else:
+            self._size_control_factor = False
+
+    @save_log_file
+    def seq_mosaic2seqtif(self, index_list, *args, **kwargs):
+
+        # sequenced process
+        for index in index_list:
+            self._mosaic2seqtif(index, *args, **kwargs)
+
+    @save_log_file
+    def mp_mosaic2seqtif(self, index_list, *args, **kwargs):
+
+        # Define the Chunk size based on the computer
+        if 'chunk_size' in kwargs.keys() and type(kwargs['chunk_size']) is int:
+            chunk_size = min(os.cpu_count(), kwargs['chunk_size'])
+            del kwargs['chunk_size']
+        elif 'chunk_size' in kwargs.keys() and kwargs['chunk_size'] == 'auto':
+            chunk_size = os.cpu_count()
+        else:
+            chunk_size = os.cpu_count()
+
+        # MP process
+        with concurrent.futures.ProcessPoolExecutor(max_workers=chunk_size) as executor:
+            executor.map(self._mosaic2seqtif, index_list, repeat(kwargs))
+    
+    def _mosaic2seqtif(self, index, *args, **kwargs):
+        
+        # for the MP
+        if args != () and type(args[0]) == dict:
+            kwargs = copy.copy(args[0])
+
+        # process para
+        self._process_mosaic2seqtif_para(**kwargs)
+
+        # Remove all files which not meet the requirements
+        band_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B10', 'B11']
+        ROI_midname = 'constructed' if self.ROI_name is None else self.ROI_name
+        self._mosaic_infr[index + 'input_path'] = self.output_path + f'Sentinel2_{ROI_midname}_index\\all_band\\' if index in band_list else self.output_path + f'Sentinel2_{ROI_midname}_index\\{index}\\'
+
+        # Path check
+        if not os.path.exists(self._mosaic_infr[index + 'input_path']):
+            raise Exception('Please validate the roi name and vi for datacube output!')
+
+        # Create vrt and seqtif output folder
+        self._mosaic_infr[index + 'seq_output_path'] = self.output_path + f'Sentinel2_{ROI_midname}_index\\all_band_seq\\' if index in band_list else self.output_path + f'Sentinel2_{ROI_midname}_index\\{index}_seq\\'
+        self._mosaic_infr[index + 'vrt_output_path'] = self.output_path + f'Sentinel2_{ROI_midname}_index\\all_band_vrt\\' if index in band_list else self.output_path + f'Sentinel2_{ROI_midname}_index\\{index}_vrt\\'
+        bf.create_folder(self._mosaic_infr[index + 'seq_output_path'])
+        bf.create_folder(self._mosaic_infr[index + 'vrt_output_path'])
+
+        # Consistency check
+        if len(bf.file_filter(self._mosaic_infr[index + 'input_path'], [f'{index}.TIF'], and_or_factor='and')) != self.S2_metadata_size:
+            raise Exception(f'{index} of the {self.ROI_name} is not consistent')
+
+        # Start Mosaic
+        print(f'Start mosaic all the tiffiles of \033[0;31m{index}\033[0m.')
+        start_time = time.time()
+
+        # Retrieve VAR
+        VI_stack_list = bf.file_filter(self._mosaic_infr[index + 'input_path'], [index, '.TIF'], and_or_factor='and')
+        VI_stack_list.sort()
+        doy_list = [int(filepath_temp.split('\\')[-1][0:8]) for filepath_temp in VI_stack_list]
+        doy_list = np.unique(np.array(doy_list))
+        doy_list = doy_list.tolist()
+        ds_temp = gdal.Open(VI_stack_list[0])
+        nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
+        ds_temp = gdal.Open(self.output_path + 'ROI_map\\' + self.ROI_name + '_map.TIF')
+        ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
+        output_bounds = (ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize, ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp)
+
+        int_min = np.iinfo(int).min
+        i = 0
+        while i < len(doy_list):
+
+            t1 = time.time()
+            if not os.path.exists(f"{self._mosaic_infr[index + 'seq_output_path']}{str(doy_list[i])}_{index}.TIF") or self._mosaic_overwritten_para:
+
+                tiffile_list_temp = [temp for temp in VI_stack_list if str(doy_list[i]) in temp]
+                if len(tiffile_list_temp) == 1:
+                    vrt = gdal.BuildVRT(f"{self._mosaic_infr[index + 'vrt_output_path']}{str(doy_list[i])}_{index}.vrt",
+                                        tiffile_list_temp, outputBounds=output_bounds, xRes=10, yRes=10,
+                                        srcNodata=nodata_value, VRTNodata=nodata_value)
+                    vrt = None
+
+                elif len(tiffile_list_temp) > 1:
+                    vrt = gdal.BuildVRT(f"{self._mosaic_infr[index + 'vrt_output_path']}{str(doy_list[i])}_{index}.vrt",
+                                        tiffile_list_temp, outputBounds=output_bounds, xRes=10, yRes=10,
+                                        srcNodata=nodata_value, VRTNodata=nodata_value)
+                    vrt = None
+
+                    vrt_tree = etree.parse(f"{self._mosaic_infr[index + 'vrt_output_path']}{str(doy_list[i])}_{index}.vrt")
+                    vrt_root = vrt_tree.getroot()
+                    vrtband1 = vrt_root.findall(".//VRTRasterBand[@band='1']")[0]
+
+                    vrtband1.set("subClass", "VRTDerivedRasterBand")
+                    pixelFunctionType = etree.SubElement(vrtband1, 'PixelFunctionType')
+                    pixelFunctionType.text = "find_max"
+                    pixelFunctionLanguage = etree.SubElement(vrtband1, 'PixelFunctionLanguage')
+                    pixelFunctionLanguage.text = "Python"
+                    pixelFunctionCode = etree.SubElement(vrtband1, 'PixelFunctionCode')
+                    pixelFunctionCode.text = etree.CDATA("""
+                    import numpy as np
+
+                    def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
+                         np.amin(in_ar, axis=0, initial=255, out=out_ar)
+                    """)
+
+                else:
+                    raise Exception('Code error')
+
+                gdal.Translate(f"{self._mosaic_infr[index + 'seq_output_path']}{str(doy_list[i])}_{index}.TIF",
+                               f"{self._mosaic_infr[index + 'vrt_output_path']}{str(doy_list[i])}_{index}.vrt",
+                               options=topts, noData=nodata_value)
+
+            print(f'Mosaic the \033[0;34m{str(doy_list[i])}\033[0m \033[0;31m{index}\033[0m Tif file in {str(time.time() - t1)[0:5]}s (layer {str(i + 1)} of {str(len(doy_list))})')
+            i += 1
+
+        print(f'Finish mosaic all the tiffiles of \033[0;31m{index}\033[0m.')
 
     def _process_2sdc_para(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('inherit_from_logfile', 'ROI', 'ROI_name', 'dc_overwritten_para', 'remove_nan_layer', 'manually_remove_datelist', 'size_control_factor'):
+            if kwarg_indicator not in (
+            'inherit_from_logfile', 'ROI', 'ROI_name', 'dc_overwritten_para', 'remove_nan_layer',
+            'manually_remove_datelist', 'size_control_factor'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clipped_overwritten_para
@@ -1681,7 +1679,7 @@ class Sentinel2_ds(object):
             else:
                 raise TypeError('Please mention the size_control_factor should be bool type!')
         elif self._inherit_from_logfile:
-            self._retrieve_para(['size_control_factor'])
+            self._retrieve_para(['size_control_factor'], protected_var=True)
         else:
             self._size_control_factor = False
 
@@ -1698,12 +1696,76 @@ class Sentinel2_ds(object):
         if 'chunk_size' in kwargs.keys() and type(kwargs['chunk_size']) is int:
             chunk_size = min(os.cpu_count(), kwargs['chunk_size'])
             del kwargs['chunk_size']
+        # elif 'chunk_size' in kwargs.keys() and kwargs['chunk_size'] == 'auto':
+        #     chunk_size = os.cpu_count()
         else:
             chunk_size = os.cpu_count()
 
         # mp process
         with concurrent.futures.ProcessPoolExecutor(max_workers=chunk_size) as executor:
             executor.map(self._ds2sdc, index_list, repeat(kwargs))
+
+        self._sdc_consistency_check(index_list, **kwargs)
+
+    def _sdc_consistency_check(self, index_list, **kwargs):
+
+        self._process_2sdc_para(**kwargs)
+
+        doy_list = []
+        ROI_midname = 'constructed' if self.ROI_name is None else self.ROI_name
+        for index_temp in index_list:
+            self._dc_infr[index_temp] = self.output_path + f'Sentinel2_{ROI_midname}_datacube\\' + index_temp + '_sequenced_datacube\\'
+            if index_temp in ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B10', 'B11']:
+                self._dc_infr[index_temp + '_input'] = self.output_path + f'Sentinel2_{ROI_midname}_index\\all_band_seq\\'
+            else:
+                self._dc_infr[index_temp + '_input'] = self.output_path + f'Sentinel2_{ROI_midname}_index\\' + index_temp + '_seq\\'
+
+            doy_temp = np.load(self._dc_infr[index_temp] + 'doy.npy')
+            for i in doy_temp:
+                if i not in doy_list:
+                    doy_list.append(i)
+
+        for index_temp in index_list:
+            doy_temp = np.load(self._dc_infr[index_temp] + 'doy.npy')
+            doy_fail = []
+            for q in doy_list:
+                if q not in doy_temp:
+                    doy_fail.append(q)
+
+            for doy_fail_temp in doy_fail:
+                files = bf.file_filter(self._dc_infr[index_temp + '_input'], containing_word_list=[str(doy_fail_temp), str(index_temp), '.TIF'], and_or_factor='and')
+                for file in files:
+                    try:
+                        os.remove(file)
+                    except:
+                        raise Exception(f'Please manually delete {file}')
+
+            self._mosaic2seqtif(index_temp)
+            ND_matrix = NDSparseMatrix()
+            ND_matrix.load(self._dc_infr[index_temp] + index_temp + '_sequenced_datacube\\')
+            for doy_fail_temp in doy_fail:
+                files = bf.file_filter(self._dc_infr[index_temp + '_input'], containing_word_list=[str(doy_fail_temp), str(index_temp), '.TIF'], and_or_factor='and')
+                if len(files) != 1:
+                    raise Exception('Code Error in sdc consistency check')
+                else:
+                    ds_temp = gdal.Open(files[0])
+                    array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                    nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
+
+                    if self._size_control_factor and index_temp not in ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B10', 'B11']:
+                        array_temp = array_temp.astype(np.uint16) + 32768
+                    elif np.isnan(nodata_value):
+                        array_temp[np.isnan(array_temp)] = 0
+                    else:
+                        array_temp[array_temp == nodata_value] = 0
+
+                ND_matrix.append(ND_matrix._matrix_type(array_temp), doy_fail_temp)
+
+            if len(doy_list) == ND_matrix.shape[2]:
+                ND_matrix.save(self._dc_infr[index_temp] + index_temp + '_sequenced_datacube\\', overwritten_para=False)
+                np.save(self._dc_infr[index_temp] + 'doy.npy', doy_list)
+            else:
+                raise Exception('Code Error in sdc consistency check')
 
     def _ds2sdc(self, index, *args, **kwargs):
 
@@ -1714,103 +1776,88 @@ class Sentinel2_ds(object):
         # process clip parameter
         self._process_2sdc_para(**kwargs)
 
-        # Remove all files which not meet the requirements
+        # Inputfile path
         band_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'B10', 'B11']
         ROI_midname = 'constructed' if self.ROI_name is None else self.ROI_name
-        self.dc_vi[index + 'input_path'] = self.output_path + f'Sentinel2_{ROI_midname}_index\\all_band\\' if index in band_list else self.output_path + f'Sentinel2_{ROI_midname}_index\\{index}\\'
+        self._dc_infr[index + 'input_path'] = self.output_path + f'Sentinel2_{ROI_midname}_index\\all_band_seq\\' if index in band_list else self.output_path + f'Sentinel2_{ROI_midname}_index\\{index}_seq\\'
 
         # path check
-        if not os.path.exists(self.dc_vi[index + 'input_path']):
+        if not os.path.exists(self._dc_infr[index + 'input_path']):
             raise Exception('Please validate the roi name and vi for datacube output!')
 
-        self.dc_vi[index] = self.output_path + f'Sentinel2_{ROI_midname}_datacube\\' + index + '_sequenced_datacube\\'
-        bf.create_folder(self.dc_vi[index])
+        # Create output folder
+        self._dc_infr[index] = self.output_path + f'Sentinel2_{ROI_midname}_datacube\\' + index + '_sequenced_datacube\\'
+        bf.create_folder(self._dc_infr[index])
 
-        if len(bf.file_filter(self.dc_vi[index + 'input_path'], [f'{index}.TIF'], and_or_factor='and')) != self.S2_metadata_size:
+        if len(bf.file_filter(self._dc_infr[index + 'input_path'], [f'{index}.TIF'], and_or_factor='and')) != np.unique(np.array(self.S2_metadata['Sensing_Date'])).shape[0]:
             raise ValueError(f'{index} of the {self.ROI_name} is not consistent')
 
-        print(f'Start convert the dataset of \033[0;31m{index}\033[0m to sdc.')
+        print(f'Start output the Sentinel2 dataset of \033[0;31m{index}\033[0m to sequenced datacube.')
         start_time = time.time()
 
-        if self._dc_overwritten_para or not os.path.exists(self.dc_vi[index] + 'doy.npy') or not os.path.exists(self.dc_vi[index] + 'header.npy'):
+        if self._dc_overwritten_para or not os.path.exists(self._dc_infr[index] + 'doy.npy') or not os.path.exists(self._dc_infr[index] + 'header.npy'):
 
+            sa_map = np.load(bf.file_filter(self.output_path + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
             if self.ROI_name is None:
                 print('Start processing ' + index + ' datacube.')
-                header_dic = {'ROI_name': None, 'index': index, 'Datatype': 'float', 'ROI': None, 'ROI_array': None,
-                              'sdc_factor': True, 'coordinate_system': self.main_coordinate_system,'size_control_factor': self._size_control_factor,
-                              'oritif_folder': self.dc_vi[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
+                header_dic = {'ROI_name': None, 'index': index, 'Datatype': 'float', 'ROI': None, 'ROI_array': None, 'ROI_tif': None,
+                              'sdc_factor': True, 'coordinate_system': self.main_coordinate_system, 'size_control_factor': self._size_control_factor,
+                              'oritif_folder': self._dc_infr[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
             else:
                 print('Start processing ' + index + ' datacube of the ' + self.ROI_name + '.')
-                sa_map = np.load(bf.file_filter(self.output_path + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
-                header_dic = {'ROI_name': self.ROI_name, 'index': index, 'Datatype': 'float', 'ROI': self.ROI, 'ROI_array': self.output_path + 'ROI_map\\' + self.ROI_name + '_map.npy',
+                header_dic = {'ROI_name': self.ROI_name, 'index': index, 'Datatype': 'float', 'ROI': self.ROI, 'ROI_array': self.output_path + 'ROI_map\\' + self.ROI_name + '_map.npy', 'ROI_tif': self.output_path + 'ROI_map\\' + self.ROI_name + '_map.TIF',
                               'sdc_factor': True, 'coordinate_system': self.main_coordinate_system, 'size_control_factor': self._size_control_factor,
-                              'oritif_folder': self.dc_vi[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
+                              'oritif_folder': self._dc_infr[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
 
-            VI_stack_list = bf.file_filter(self.dc_vi[index + 'input_path'], [index, '.TIF'], and_or_factor='and')
+            # Retrieve Var
+            VI_stack_list = bf.file_filter(self._dc_infr[index + 'input_path'], [f'{index}.TIF'], and_or_factor='and', exclude_word_list=['aux', 'xml'])
             VI_stack_list.sort()
-            cols, rows = sa_map.shape[1], sa_map.shape[0]
             doy_list = [int(filepath_temp.split('\\')[-1][0:8]) for filepath_temp in VI_stack_list]
             doy_list = np.unique(np.array(doy_list))
-            doy_list = doy_list.tolist()
+            doy_list = list(doy_list)
+            nodata_value = gdal.Open(VI_stack_list[0])
+            nodata_value = nodata_value.GetRasterBand(1).GetNoDataValue()
 
             # Evaluate the size and sparsity of sdc
             mem = psutil.virtual_memory()
             dc_max_size = int((mem.free) * 0.90)
-            nodata_value = -32768 if sa_map.dtype == np.int16 else np.nan
-            sparsify = np.sum(sa_map == nodata_value) / (sa_map.shape[0] * sa_map.shape[1])
+            cols, rows = sa_map.shape[1], sa_map.shape[0]
+            sparsify = np.sum(sa_map == -32768) / (sa_map.shape[0] * sa_map.shape[1])
             _huge_matrix = True if len(doy_list) * cols * rows * 2 > dc_max_size else False
             _sparse_matrix = True if sparsify > 0.9 else False
 
             if _huge_matrix:
                 if _sparse_matrix:
-                    data_cube = NDSparseMatrix()
-                    nodata_value = -32768 if self._size_control_factor else np.nan
-                    data_valid_array = np.zeros([len(doy_list)], dtype=np.int16)
+
                     i = 0
+                    data_cube = NDSparseMatrix()
+                    data_valid_array = np.zeros([len(doy_list)], dtype=int)
                     while i < len(doy_list):
-                        t1 = time.time()
 
-                        if index in band_list:
-                            index_req_list = bf.file_filter(self.dc_vi[index + 'input_path'], [str(doy_list[i]), f'{index}.TIF'], and_or_factor='and')
-                            vrt = gdal.BuildVRT(f'/vsimem/{str(doy_list[i])}_{index}.vrt', index_req_list)
-                            gdal.Warp(f'/vsimem/{str(doy_list[i])}_{index}.tif', vrt, cutlineDSName=self.ROI, cropToCutline=True, xRes=10, yRes=10, dstNodata=0)
-                            vrt = None
-                            tiffile_list_temp = [f'/vsimem/{str(doy_list[i])}_{index}.tif']
-                        else:
-                            tiffile_list_temp = [temp for temp in VI_stack_list if str(doy_list[i]) in temp]
+                        try:
+                            t1 = time.time()
+                            if not os.path.exists(f"{self._dc_infr[index + 'input_path']}{str(doy_list[i])}_{index}.TIF"):
+                                raise Exception(f'The {str(doy_list[i])}_{index} is not properly generated!')
+                            else:
+                                array_temp = gdal.Open(f"{self._dc_infr[index + 'input_path']}{str(doy_list[i])}_{index}.TIF")
+                                array_temp = array_temp.GetRasterBand(1).ReadAsArray()
 
-                        if len(tiffile_list_temp) == 1:
-                            ds_temp = gdal.Open(tiffile_list_temp[0], gdal.GA_ReadOnly)
-                            array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
                             if self._size_control_factor and index not in band_list:
                                 array_temp = array_temp.astype(np.uint16) + 32768
-                            else:
+                            elif np.isnan(nodata_value):
                                 array_temp[np.isnan(array_temp)] = 0
-
-                        elif len(tiffile_list_temp) > 1:
-                            j, array_list = 0, []
-                            while j < len(tiffile_list_temp):
-                                ds_temp = gdal.Open(tiffile_list_temp[j], gdal.GA_ReadOnly)
-                                array_list.append(ds_temp.GetRasterBand(1).ReadAsArray())
-                                j += 1
-                            array_temp = np.stack(array_list, axis=2)
-                            if self._size_control_factor and index not in band_list:
-                                array_temp = np.max(array_temp.astype(np.uint16) + 32768, axis=2)
                             else:
-                                array_temp = np.nanmax(array_temp, axis=2)
-                                array_temp[np.isnan(array_temp)] = 0
+                                array_temp[array_temp == nodata_value] = 0
 
-                        else:
-                            raise Exception('Code error')
+                            sm_temp = sm.coo_matrix(array_temp)
+                            data_cube.append(sm_temp, name=doy_list[i])
+                            data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
 
-                        if index in band_list:
-                            gdal.Unlink(f'/vsimem/{str(doy_list[i])}_{index}.tif')
-
-                        sm_temp = sm.coo_matrix(array_temp)
-                        data_cube.append(sm_temp, name=doy_list[i])
-                        data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
-                        print(f'Input the {str(doy_list[i])} into the sdc using {str(time.time()-t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
-                        i += 1
+                            print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time()-t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
+                            i += 1
+                        except:
+                            error_inf = traceback.format_exc()
+                            print(error_inf)
 
                     # remove nan layer
                     if self._manually_remove_para is True and self._manually_remove_datelist is not None:
@@ -1836,135 +1883,49 @@ class Sentinel2_ds(object):
                             i_temp += 1
 
                     # Save the sdc
-                    np.save(self.dc_vi[index] + f'doy.npy', doy_list)
-                    bf.create_folder(f'{self.dc_vi[index]}{str(index)}_sequenced_datacube\\')
-                    data_cube.save(f'{self.dc_vi[index]}{str(index)}_sequenced_datacube\\')
+                    np.save(self._dc_infr[index] + f'doy.npy', doy_list)
+                    bf.create_folder(f'{self._dc_infr[index]}{str(index)}_sequenced_datacube\\')
+                    data_cube.save(f'{self._dc_infr[index]}{str(index)}_sequenced_datacube\\')
 
                 else:
-
-                    if len(doy_list) * cols * rows * 2 > dc_max_size:
-                        _huge_matrix = True
-                        dc_len = int(np.floor(dc_max_size / (rows * cols * 2)))
-                        dc_num = int(np.ceil(len(doy_list) / dc_len))
-                        dc_len_list = [int(np.ceil(len(doy_list) / dc_num)) for i_temp in range(dc_num - 1)]
-                        dc_len_list.append(len(doy_list) - np.sum(np.array(dc_len_list)))
-                    else:
-                        dc_num = 1
-                        dc_len_list = [len(doy_list)]
-
-                    # Method 1 create multiple array
-                    # Define var
-                    dtype_temp = np.int16 if self._size_control_factor else np.float16
-                    nodata_value = -32768 if self._size_control_factor else np.nan
-                    band_nodata_value, dc_initial, dc_len_list_final = np.nan, 0, []
-                    sa_map[sa_map == -32768] = 0
-
-                    for dc_num_temp in range(dc_num):
-                        doy_list_temp = doy_list[dc_initial: dc_initial + dc_len_list[dc_num_temp]]
-                        data_cube_temp = np.zeros((rows, cols, dc_len_list[dc_num_temp]), dtype=np.float16)
-                        data_valid_array = np.zeros([dc_len_list[dc_num_temp]], dtype=np.int16)
-                        i = 0
-                        while i < len(doy_list_temp):
-                            tiffile_list_temp = [temp for temp in VI_stack_list if str(doy_list_temp[i]) in temp]
-                            if len(tiffile_list_temp) == 1:
-                                t1 = time.time()
-                                ds_temp = gdal.Open(tiffile_list_temp[0])
-                                array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                                data_cube_temp[:, :, i] = np.ma.masked_array(array_temp, mask=[sa_map])
-                                t2 = time.time()
-                                print(f'input array consumes {str(t2 - t1)}s')
-                                data_valid_array[i] = np.all(array_temp.flatten() == nodata_value)
-                                print(f'detect valid or not {str(time.time() - t2)}s')
-                            elif len(tiffile_list_temp) > 1:
-                                t1 = time.time()
-                                data_cube_temp_temp = np.zeros((rows, cols, len(tiffile_list_temp)),
-                                                               dtype=np.float16)
-                                j = 0
-                                while j < len(tiffile_list_temp):
-                                    ds_temp = gdal.Open(tiffile_list_temp[j])
-                                    array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                                    data_cube_temp_temp[:, :, j] = array_temp
-                                    j += 1
-                                data_cube_temp[:, :, i] = np.nanmax(data_cube_temp_temp, axis=2)
-                                data_cube_temp_temp = None
-                                t2 = time.time()
-                                print(f'input array consumes {str(t2 - t1)}s')
-                                data_valid_array[i] = np.all(data_cube_temp[:, :, i].flatten() == nodata_value)
-                                print(f'detect valid or not {str(time.time() - t2)}s')
-                            else:
-                                raise Exception('Code error')
-                            i += 1
-                        dc_initial += dc_len_list[dc_num_temp]
-
-                    if self._size_control_factor:
-                        data_cube_temp[data_cube_temp == -32768] = np.nan
-                        data_cube_temp = data_cube_temp / 10000
-
-                    if self._manually_remove_para is True and self._manually_remove_datelist is not None:
-                        i_temp = 0
-                        while i_temp < len(doy_list_temp):
-                            if str(doy_list_temp[i_temp]) in self._manually_remove_datelist:
-                                data_valid_array[i] = 1
-                                self._manually_remove_datelist.remove(str(doy_list_temp[i_temp]))
-                            i_temp += 1
-
-                    elif self._manually_remove_para is True and self._manually_remove_datelist is None:
-                        raise ValueError('Please correctly input the manual input date list')
-
-                    if self._remove_nan_layer or self._manually_remove_para:
-                        i_temp = 0
-                        while i_temp < len(doy_list_temp):
-                            if data_valid_array[i_temp]:
-                                doy_list_temp = doy_list_temp.remove(doy_list_temp[i_temp])
-                                data_cube_temp = np.delete(data_cube_temp, i_temp, 2)
-                                data_valid_array = np.delete(data_valid_array, i_temp, 0)
-                                i_temp -= 1
-                            i_temp += 1
-
-                    dc_len_list_final.append(doy_list_temp)
-
-                    # Save the sdc
-                    np.save(self.dc_vi[index] + f'date{str(dc_num_temp)}.npy', doy_list_temp)
-                    np.savez_compressed(self.dc_vi[index] + str(index) + f'_sequenced_datacube{str(dc_num_temp)}.npz', data_cube_temp)
-                    header_dic['dc_group_list'], header_dic['tiles'] = dc_len_list_final, dc_num
+                    pass
 
             else:
-                nodata_value = -32768 if self._size_control_factor else np.nan
-                data_cube_temp = np.zeros((rows, cols, len(doy_list)), dtype=np.float16)
-                data_valid_array = np.zeros([len(doy_list)], dtype=np.int16)
                 i = 0
+                data_cube = NDSparseMatrix()
+                data_valid_array = np.zeros([len(doy_list)], dtype=int)
                 while i < len(doy_list):
-                    tiffile_list_temp = [temp for temp in VI_stack_list if str(doy_list[i]) in temp]
-                    if len(tiffile_list_temp) == 1:
-                        ds_temp = gdal.Open(tiffile_list_temp[0])
-                        array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                        data_cube_temp[:, :, i] = array_temp
-                        data_valid_array[i] = np.all(array_temp.flatten() == nodata_value)
-                    elif len(tiffile_list_temp) > 1:
-                        data_cube_temp_temp = np.zeros((rows, cols, len(tiffile_list_temp)), dtype=np.float16)
-                        j = 0
-                        while j < len(tiffile_list_temp):
-                            ds_temp = gdal.Open(tiffile_list_temp[j])
-                            array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                            data_cube_temp_temp[:, :, j] = array_temp
-                            j += 1
-                        data_cube_temp[:, :, i] = np.nanmax(data_cube_temp_temp, axis=2)
-                        data_cube_temp_temp = None
-                        data_valid_array[i] = np.all(data_cube_temp[:, :, i].flatten() == nodata_value)
+
+                    t1 = time.time()
+                    if not os.path.exists(f"{self._dc_infr[index + 'input_path']}{str(doy_list[i])}_{index}.TIF"):
+                        raise Exception(f'The {str(doy_list[i])}_{index} is not properly generated!')
                     else:
-                        raise Exception('Code error')
+                        array_temp = gdal.Open(
+                            f"{self._dc_infr[index + 'input_path']}{str(doy_list[i])}_{index}.TIF")
+                        array_temp = array_temp.GetRasterBand(1).ReadAsArray()
+
+                    if self._size_control_factor and index not in band_list:
+                        array_temp = array_temp.astype(np.uint16) + 32768
+                    elif np.isnan(nodata_value):
+                        array_temp[np.isnan(array_temp)] = 0
+                    else:
+                        array_temp[array_temp == nodata_value] = 0
+
+                    sm_temp = sm.coo_matrix(array_temp)
+                    data_cube.append(sm_temp, name=doy_list[i])
+                    data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
+
+                    print(
+                        f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
                     i += 1
 
-                if self._size_control_factor:
-                    data_cube_temp[data_cube_temp == -32768] = np.nan
-                    data_cube_temp = data_cube_temp / 10000
-
+                # remove nan layer
                 if self._manually_remove_para is True and self._manually_remove_datelist is not None:
                     i_temp = 0
                     while i_temp < len(doy_list):
-                        if str(doy_list[i_temp]) in self._manually_remove_datelist:
+                        if doy_list[i_temp] in self._manually_remove_datelist:
                             data_valid_array[i] = 1
-                            self._manually_remove_datelist.remove(str(doy_list[i_temp]))
+                            self._manually_remove_datelist.remove(doy_list[i_temp])
                         i_temp += 1
 
                 elif self._manually_remove_para is True and self._manually_remove_datelist is None:
@@ -1974,33 +1935,43 @@ class Sentinel2_ds(object):
                     i_temp = 0
                     while i_temp < len(doy_list):
                         if data_valid_array[i_temp]:
-                            doy_list = doy_list.remove(doy_list[i_temp])
-                            data_cube_temp = np.delete(data_cube_temp, i_temp, 2)
+                            if doy_list[i_temp] in data_cube.SM_namelist:
+                                data_cube.remove_layer(doy_list[i_temp])
+                            doy_list.remove(doy_list[i_temp])
                             data_valid_array = np.delete(data_valid_array, i_temp, 0)
                             i_temp -= 1
                         i_temp += 1
 
-                # Write the datacube
-                np.save(self.dc_vi[index] + f'date.npy', doy_list)
-                np.save(self.dc_vi[index] + str(index) + f'_sequenced_datacube.npz', data_cube_temp)
-                end_time = time.time()
+                # Save the sdc
+                np.save(self._dc_infr[index] + f'doy.npy', doy_list)
+                bf.create_folder(f'{self._dc_infr[index]}{str(index)}_sequenced_datacube\\')
+                data_cube.save(f'{self._dc_infr[index]}{str(index)}_sequenced_datacube\\')
 
             header_dic['ds_file'], header_dic['sparse_matrix'], header_dic['huge_matrix'] = self.output_path + 'ROI_map\\' + self.ROI_name + '_map.TIF', _sparse_matrix, _huge_matrix
-            np.save(self.dc_vi[index] + 'header.npy', header_dic)
+            np.save(self._dc_infr[index] + 'header.npy', header_dic)
 
         print(f'Finished writing the sdc in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
 
 class Sentinel2_dc(object):
     def __init__(self, dc_filepath, work_env=None):
-        # define var
-        if os.path.exists(dc_filepath) and os.path.isdir(dc_filepath):
-            self.dc_filepath = dc_filepath
-        else:
-            raise ValueError('Please input a valid dc filepath')
-        # eliminating_all_not_required_file(self.dc_filepath, filename_extension=['npy'])
 
-        # Read header
+        # Check the dcfile path
+        self.dc_filepath = bf.Path(dc_filepath).path_name
+
+        # Check work env
+        if work_env is not None:
+            self.work_env = Path(work_env).path_name
+        else:
+            self.work_env = Path(os.path.dirname(os.path.dirname(self.dc_filepath))).path_name
+        self.root_path = Path(os.path.dirname(os.path.dirname(self.work_env))).path_name
+
+        # Define the basic var name
+        self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'sdc_factor',
+                             'coordinate_system', 'oritif_folder', 'ds_file', 'sparse_matrix',
+                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles')
+
+        # Read the header file
         header_file = bf.file_filter(self.dc_filepath, ['header.npy'])
         if len(header_file) == 0:
             raise ValueError('There has no valid sdc or the header file of the sdc was missing!')
@@ -2008,21 +1979,21 @@ class Sentinel2_dc(object):
             raise ValueError('There has more than one header file in the dir')
         else:
             try:
-                self.dc_header = np.load(header_file[0], allow_pickle=True).item()
-                if type(self.dc_header) is not dict:
+                dc_header = np.load(header_file[0], allow_pickle=True).item()
+                if dc_header.__class__ is not dict:
                     raise Exception('Please make sure the header file is a dictionary constructed in python!')
-
-                for dic_name in ['ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'sdc_factor', 'coordinate_system',
-                                 'oritif_folder', 'ds_file', 'sparse_matrix', 'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles']:
-                    if dic_name not in self.dc_header.keys():
-                        raise Exception(f'The {dic_name} is not in the dc header, double check!')
-                    else:
-                        self.__dict__[dic_name] = self.dc_header[dic_name]
+                else:
+                    for dic_name in self._fund_factor:
+                        if dic_name not in dc_header.keys():
+                            raise Exception(f'The {dic_name} is not in the dc header, double check!')
+                        else:
+                            self.__dict__[dic_name] = dc_header[dic_name]
             except:
                 raise Exception('Something went wrong when reading the header!')
 
         start_time = time.time()
         print(f'Start loading the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+
         # Read doy or date file of the Datacube
         try:
             if self.sdc_factor is True:
@@ -2060,23 +2031,15 @@ class Sentinel2_dc(object):
         except:
             raise Exception('Something went wrong when reading the datacube!')
 
+        # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[0], self.dc.shape[1], self.dc.shape[2]
-        print(f'Finish loading the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time()-start_time)}\033[0ms' )
 
-        # Check work env
-        if work_env is not None:
-            self.work_env = Path(work_env).path_name
-        else:
-            self.work_env = Path(os.path.dirname(os.path.dirname(self.dc_filepath))).path_name
-        self.root_path = Path(os.path.dirname(os.path.dirname(self.work_env))).path_name
+        print(f'Finish loading the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
-        # Inundation parameter process
-        self._DSWE_threshold = None
-        self._flood_month_list = None
-        self.flood_mapping_method = []
-        
-    def save(self, output_path):
+    def __sizeof__(self):
+        return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()
 
+    def save(self, output_path: str):
         start_time = time.time()
         print(f'Start saving the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
 
@@ -2085,7 +2048,7 @@ class Sentinel2_dc(object):
         output_path = bf.Path(output_path).path_name
 
         header_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI, 'ROI_array': self.ROI_array,
-                      'sdc_factor': self.sdc_factor, 'coordinate_system': self.coordinate_system, 'ds_file': self.ds_file,
+                      'sdc_factor': self.sdc_factor, 'coordinate_system': self.coordinate_system, 'ds_file': self.ROI_tif,
                       'size_control_factor': self.size_control_factor, 'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
                       'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles}
 
@@ -2102,29 +2065,37 @@ class Sentinel2_dc(object):
 
 
 class Sentinel2_dcs(object):
-    def __init__(self, *args, work_env=None, auto_harmonised=True):
+
+    def __init__(self, *args, work_env: str = None, auto_harmonised: bool = True, space_optimised: bool = True):
 
         # Generate the datacubes list
         self._dcs_backup_ = []
+        self._doys_backup_ = []
         for args_temp in args:
             if type(args_temp) != Sentinel2_dc:
-                raise TypeError('The Landsat datacubes was a bunch of Landsat datacube!')
+                raise TypeError('The Sentinel2 datacubes was a bunch of Sentinel2 datacube!')
             else:
                 self._dcs_backup_.append(args_temp)
+                self._doys_backup_.append(args_temp.sdc_doylist)
 
-        # Validation and consistency check
         if len(self._dcs_backup_) == 0:
-            raise ValueError('Please input at least one valid Landsat datacube')
+            raise ValueError('Please input at least one valid Sentinel2 datacube')
 
         if type(auto_harmonised) != bool:
             raise TypeError('Please input the auto harmonised factor as bool type!')
         else:
             harmonised_factor = False
 
-        self.index_list, ROI_list, ROI_name_list, Datatype_list, ds_list, ROI_array_list, sdc_factor_list, doy_list, coordinate_system_list, oritif_folder_list = [], [], [], [], [], [], [], [], [], []
-        self.dcs, huge_matrix_list, sparse_matrix_list, self.size_control_factor_list = [], [], [], []
+        # Check the consistency of the dcs
+        factor_dic = {}
+        self.index_list, self.dcs, self.size_control_factor_list, doy_list, self.oritif_folder_list = [], [], [], [], []
         x_size, y_size, z_size = 0, 0, 0
+
+        for factor_temp in self._dcs_backup_[0]._fund_factor:
+            factor_dic[f'{factor_temp}_list'] = []
+
         for dc_temp in self._dcs_backup_:
+            # Retrieve the shape inform
             if x_size == 0 and y_size == 0 and z_size == 0:
                 x_size, y_size, z_size = dc_temp.dc_XSize, dc_temp.dc_YSize, dc_temp.dc_ZSize
             elif x_size != dc_temp.dc_XSize or y_size != dc_temp.dc_YSize:
@@ -2133,87 +2104,58 @@ class Sentinel2_dcs(object):
                 if auto_harmonised:
                     harmonised_factor = True
                 else:
-                    raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised fator as True if wanna avoid this problem!')
-
-            self.index_list.append(dc_temp.index)
-            ROI_name_list.append(dc_temp.ROI_name)
-            sdc_factor_list.append(dc_temp.sdc_factor)
-            ROI_list.append(dc_temp.ROI)
-            ds_list.append(dc_temp.ds_file)
-            ROI_array_list.append(dc_temp.ROI_array)
-            Datatype_list.append(dc_temp.Datatype)
-            coordinate_system_list.append(dc_temp.coordinate_system)
-            oritif_folder_list.append(dc_temp.oritif_folder)
-            huge_matrix_list.append(dc_temp.huge_matrix)
-            sparse_matrix_list.append(dc_temp.sparse_matrix)
-            self.size_control_factor_list.append(dc_temp.size_control_factor)
-            # self.dcs.append(dc_temp.dc)
+                    raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
+            # Retrieve the factor
+            for factor_temp in self._dcs_backup_[0]._fund_factor:
+                factor_dic[f'{factor_temp}_list'].append(dc_temp.__dict__[factor_temp])
+            # Construct the datacube list
+            self.dcs.append(dc_temp.dc)
+            # Construct the doy list
+            doy_list.append(dc_temp.sdc_doylist)
 
         if x_size != 0 and y_size != 0 and z_size != 0:
             self.dcs_XSize, self.dcs_YSize, self.dcs_ZSize = x_size, y_size, z_size
         else:
             raise Exception('Please make sure all the datacubes was not void')
 
-        # Check the consistency of the roi list
-        if len(ROI_list) == 0 or False in [len(ROI_list) == len(self.index_list),
-                                           len(self.index_list) == len(sdc_factor_list),
-                                           len(ROI_name_list) == len(sdc_factor_list),
-                                           len(ROI_name_list) == len(ds_list), len(ds_list) == len(ROI_array_list),
-                                           len(ROI_array_list) == len(Datatype_list),
-                                           len(coordinate_system_list) == len(Datatype_list),
-                                           len(oritif_folder_list) == len(coordinate_system_list)]:
-            raise Exception('The ROI list or the index list for the datacubes were not properly generated!')
-        elif False in [roi_temp == ROI_list[0] for roi_temp in ROI_list]:
-            raise Exception('Please make sure all datacubes were in the same roi!')
-        elif False in [sdc_temp == sdc_factor_list[0] for sdc_temp in sdc_factor_list]:
-            raise Exception('Please make sure all dcs were consistent!')
-        elif False in [roi_name_temp == ROI_name_list[0] for roi_name_temp in ROI_name_list]:
-            raise Exception('Please make sure all dcs were consistent!')
-        elif False in [(ROI_array == ROI_array_list[0]) for ROI_array in ROI_array_list]:
-            raise Exception('Please make sure all dcs were consistent!')
-        elif False in [dt_temp == Datatype_list[0] for dt_temp in Datatype_list]:
-            raise Exception('Please make sure all dcs were consistent!')
-        elif False in [coordinate_system_temp == coordinate_system_list[0] for coordinate_system_temp in coordinate_system_list]:
-            raise Exception('Please make sure all coordinate system were consistent!')
-        elif False in [sparse_matrix_temp == sparse_matrix_list[0] for sparse_matrix_temp in sparse_matrix_list]:
-            raise Exception('Please make sure all sparse_matrix were consistent!')
-        elif False in [huge_matrix_temp == huge_matrix_list[0] for huge_matrix_temp in huge_matrix_list]:
-            raise Exception('Please make sure all huge_matrix were consistent!')
+        for factor_temp in self._dcs_backup_[0]._fund_factor:
+            if len(factor_dic[f'{factor_temp}_list']) != len(factor_dic[f'{self._dcs_backup_[0]._fund_factor[0]}_list']):
+                raise ImportError('The factor of some dcs is not properly imported!')
 
-        # Define the field
-        self.ROI = ROI_list[0]
-        self.ROI_name = ROI_name_list[0]
-        self.sdc_factor = sdc_factor_list[0]
-        self.Datatype = Datatype_list[0]
-        self.ROI_array = ROI_array_list[0]
-        self.ds_file = ds_list[0]
-        self.coordinate_system = coordinate_system_list[0]
-        self.oritif_folder = oritif_folder_list
-        self.sparse_matrix = sparse_matrix_list[0]
-        self.huge_matrix = huge_matrix_list[0]
+            if factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'coordinate_system', 'sparse_matrix', 'huge_matrix', 'sdc_factor', 'ds_file', 'dc_group_list', 'tiles']:
+                if False in [factor_t == factor_dic[f'{factor_temp}_list'][0] for factor_t in factor_dic[f'{factor_temp}_list']]:
+                    raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
+                else:
+                    self.__dict__[factor_temp] = factor_dic[f'{factor_temp}_list'][0]
+
+            if factor_temp in ['size_control_factor', 'index', 'oritif_folder']:
+                self.__dict__[f'{factor_temp}_list'] = factor_dic[f'{factor_temp}_list']
 
         # Read the doy or date list
         if self.sdc_factor is False:
             raise Exception('Please sequenced the datacubes before further process!')
         else:
-            doy_list = [temp.sdc_doylist for temp in self._dcs_backup_]
             if False in [len(temp) == len(doy_list[0]) for temp in doy_list] or False in [(temp == doy_list[0]) for temp in doy_list]:
                 if auto_harmonised:
                     harmonised_factor = True
                 else:
                     raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
             else:
-                self.doy_list = self._dcs_backup_[0].sdc_doylist
+                self.doy_list = doy_list[0]
 
         # Harmonised the dcs
         if harmonised_factor:
             self._auto_harmonised_dcs()
 
-        #  Define the output_path
+        # Define the output_path
         if work_env is None:
             self.work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[0].dc_filepath))).path_name
         else:
             self.work_env = work_env
+
+        if space_optimised is True:
+            for tt in self._dcs_backup_:
+                tt.dc = None
 
         # Define var for the flood mapping
         self.inun_det_method_dic = {}
@@ -2221,7 +2163,7 @@ class Sentinel2_dcs(object):
         self._inundation_overwritten_factor = False
         self._DEM_path = None
         self._DT_std_fig_construction = False
-        self._construct_inundated_dc = True
+        self._append_inundated_dc = True
         self._flood_mapping_accuracy_evaluation_factor = False
         self._sample_rs_link_list = None
         self._sample_data_path = None
@@ -2244,42 +2186,36 @@ class Sentinel2_dcs(object):
 
         # Define var for flood_free_phenology_metrics
         self._flood_free_pm = ['annual_max_VI', 'average_VI_between_max_and_flood']
-    
+
+    def __sizeof__(self):
+        size = 0
+        for dc in self.dcs:
+            size += dc.__sizeof__()
+        return size
+
     def _auto_harmonised_dcs(self):
 
         doy_all = np.array([])
-        for dc_temp in self._dcs_backup_:
-            doy_all = np.concatenate([doy_all, dc_temp.sdc_doylist], axis=0)
+        for doy_temp in self._doys_backup_:
+            doy_all = np.concatenate([doy_all, doy_temp], axis=0)
         doy_all = np.sort(np.unique(doy_all))
 
         i = 0
-        while i < len(self._dcs_backup_):
-            m_factor = False
+        while i < len(self._doys_backup_):
             for doy in doy_all:
-                if doy not in self._dcs_backup_[i].sdc_doylist:
+                if doy not in self._doys_backup_[i]:
                     m_factor = True
                     if not self.sparse_matrix:
-                        self._dcs_backup_[i].dc = np.insert(self._dcs_backup_[i].dc, np.argwhere(doy_all == doy).flatten()[0], np.nan * np.zeros([self._dcs_backup_[i].dc_XSize, self._dcs_backup_[i].dc_YSize, 1]), axis=2)
+                        self.dcs[i] = np.insert(self.dcs[i], np.argwhere(doy_all == doy).flatten()[0], np.nan * np.zeros([self.dcs_XSize, self.dcs_YSize, 1]), axis=2)
                     else:
-                        self._dcs_backup_[i].dc.append(sm.coo_matrix(np.zeros([self.dcs_XSize, self.dcs_YSize])), name=doy, pos=np.argwhere(doy_all == doy).flatten()[0])
-            if m_factor:
-                self._dcs_backup_[i].sdc_doylist = copy.copy(doy_all)
-                self._dcs_backup_[i].dc_ZSize = self._dcs_backup_[i].dc.shape[2]
+                        self.dcs[i].append(sm.coo_matrix(np.zeros([self.dcs_XSize, self.dcs_YSize])), name=doy, pos=np.argwhere(doy_all == doy).flatten()[0])
             i += 1
 
-        z_size, doy_list = 0, []
-        for dc_temp in self._dcs_backup_:
-            if z_size == 0:
-                z_size = dc_temp.dc_ZSize
-            elif z_size != dc_temp.dc_ZSize:
-                raise Exception('Auto harmonised failure!')
-            doy_list.append(dc_temp.sdc_doylist)
+        if False in [len(doy_all) == self.dcs[i].shape[2] for i in range(len(self.dcs))]:
+            raise ValueError('The autoharmised is failed')
 
-        if False in [temp.shape[0] == doy_list[0].shape[0] for temp in doy_list] or False in [(temp == doy_list[0]).all() for temp in doy_list]:
-            raise Exception('Auto harmonised failure!')
-
-        self.dcs_ZSize = z_size
-        self.doy_list = doy_list[0]
+        self.dcs_ZSize = len(doy_all)
+        self.doy_list = doy_all
 
     def append(self, dc_temp: Sentinel2_dc) -> None:
         if type(dc_temp) is not Sentinel2_dc:
@@ -2296,8 +2232,11 @@ class Sentinel2_dcs(object):
             raise ValueError('The appended datacube has doy list compared to the original datacubes')
 
         self.index_list.append(dc_temp.index)
-        self.oritif_folder.append(dc_temp.oritif_folder)
+        self.oritif_folder_list.append(dc_temp.oritif_folder)
+        self.dcs.append(dc_temp.dc)
+        self._doys_backup_.append(dc_temp.sdc_doylist)
         self._dcs_backup_.append(dc_temp)
+        self._dcs_backup_[-1].dc = None
 
     def extend(self, dcs_temp) -> None:
         if type(dcs_temp) is not Sentinel2_dcs:
@@ -2309,24 +2248,25 @@ class Sentinel2_dcs(object):
 
         self.index_list.extend(dcs_temp.index_list)
         self.oritif_folder.extend(dcs_temp.oritif_folder)
-        self._dcs_backup_.extend(dcs_temp)
+        self._doys_backup_.extend(dcs_temp._doys_backup_)
+        self.dcs.extend(dcs_temp.dcs)
 
-    def _inun_det_para(self, **kwargs):
-        self._construct_inundated_dc = True
+    def _process_inun_det_para(self, **kwargs):
+        self._append_inundated_dc = True
         self._inundated_ow_para = False
 
         for key_temp in kwargs.keys():
-            if key_temp not in ['construct_inundated_dc', 'overwritten_para']:
+            if key_temp not in ['append_inundated_dc', 'overwritten_para']:
                 raise ValueError(f'The {str(key_temp)} for func inundation detection is not supported!')
 
-            if key_temp == 'construct_inundated_dc' and type(kwargs['construct_inundated_dc']) is bool:
-                self._construct_inundated_dc = kwargs['construct_inundated_dc']
+            if key_temp == 'append_inundated_dc' and type(kwargs['append_inundated_dc']) is bool:
+                self._append_inundated_dc = kwargs['append_inundated_dc']
             elif key_temp == 'overwritten_para' and type(kwargs['overwritten_para']) is bool:
                 self._inundated_ow_para = kwargs['overwritten_para']
 
     def _inundation_detection(self, method: str, **kwargs):
         # process inundation detection method
-        self._inun_det_para(**kwargs)
+        self._process_inun_det_para(**kwargs)
 
         start_time = time.time()
         print(f'Start detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m')
@@ -2346,29 +2286,33 @@ class Sentinel2_dcs(object):
                     bf.create_folder(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
                     if 'MNDWI' in self.index_list:
                         if self.sparse_matrix:
-                            namelist = self._dcs_backup_[self.index_list.index('MNDWI')].dc.SM_namelist
+                            namelist = self.dcs[self.index_list.index('MNDWI')].SM_namelist
                             inundation_sm = NDSparseMatrix()
                             for z_temp in range(self.dcs_ZSize):
-                                inundation_array = self._dcs_backup_[self.index_list.index('MNDWI')].dc.SM_group[namelist[z_temp]].toarray()
+                                inundation_array = self.dcs[self.index_list.index('MNDWI')].SM_group[namelist[z_temp]].toarray()
                                 inundation_array = np.logical_and(inundation_array <= MNDWI_static_thr, inundation_array != 0)
                                 inundation_array = sm.coo_matrix(inundation_array)
                                 inundation_sm.append(inundation_array, name=namelist[z_temp])
-    
-                            if self._construct_inundated_dc:
-                                inundation_dc = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')])
-                                inundation_dc.dc = inundation_sm
-                                inundation_dc.index = 'inundation_' + method
+
+                            inundation_dc = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')])
+                            inundation_dc.dc = inundation_sm
+                            inundation_dc.index = 'inundation_' + method
+                            inundation_dc.save(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+
+                            if self._append_inundated_dc:
                                 self.append(inundation_dc)
-    
+
                         else:
-                            inundation_array = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')].dc)
+                            inundation_array = copy.copy(self.dcs[self.index_list.index('MNDWI')])
                             inundation_array = inundation_array >= MNDWI_static_thr
-    
-                            if self._construct_inundated_dc:
-                                inundation_dc = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')])
-                                inundation_dc.dc = inundation_array
+
+                            inundation_dc = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')])
+                            inundation_dc.dc = inundation_array
+                            inundation_dc.index = 'inundation_' + method
+                            inundation_dc.save(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+
+                            if self._append_inundated_dc:
                                 self.append(inundation_dc)
-                        inundation_dc.save(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
                     else:
                         raise ValueError('Please construct a valid datacube with MNDWI sdc inside!')
                 else:
@@ -2380,40 +2324,478 @@ class Sentinel2_dcs(object):
     def _process_inundation_removal_para(self, **kwargs):
         pass
 
-    def _inundation_removal(self, processed_index, inundation_method, construct_new_dc=True, **kwargs):
+    def _inundation_removal(self, processed_index, inundation_method, append_new_dc=True, **kwargs):
 
         # Identify the inundation pixel
-        self._inundation_detection(inundation_method, construct_inundated_dc=True, **kwargs)
+        self._inundation_detection(inundation_method, append_inundated_dc=True, **kwargs)
 
+        # process arguments
         inundation_index = 'inundation_' + inundation_method
         self._process_inundation_removal_para(**kwargs)
 
         if processed_index not in self.index_list or inundation_index not in self.index_list:
             raise ValueError('The inudnation removal or vegetaion index is not properly generated!')
 
-        inundation_dc = self._dcs_backup_[self.index_list.index(inundation_index)]
-        processed_dc = copy.copy(self._dcs_backup_[self.index_list.index(processed_index)])
+        inundation_dc = self.dcs[self.index_list.index(inundation_index)]
+        processed_dc = copy.copy(self.dcs[self.index_list.index(processed_index)])
+        processed_dc4save = copy.copy(self._dcs_backup_[self.index_list.index(processed_index)])
         
-        if not os.path.exists(self.work_env + processed_dc.index + '_noninun_sequenced_datacube\\header.npy'):
-            bf.create_folder(self.work_env + processed_dc.index + '_noninun_sequenced_datacube\\')
+        if not os.path.exists(self.work_env + processed_index + '_noninun_sequenced_datacube\\header.npy'):
+            bf.create_folder(self.work_env + processed_index + '_noninun_sequenced_datacube\\')
             if self.sparse_matrix:
+
                 for height in range(self.dcs_ZSize):
-                    processed_dc.dc.SM_group[processed_dc.dc.SM_namelist[height]] = processed_dc.dc.SM_group[processed_dc.dc.SM_namelist[height]].multiply(inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[height]])
+                    processed_dc.SM_group[processed_dc.SM_namelist[height]] = processed_dc.SM_group[processed_dc.SM_namelist[height]].multiply(inundation_dc.SM_group[inundation_dc.SM_namelist[height]])
 
-                processed_dc.index = processed_dc.index + '_noninun'
-                processed_dc.save(self.work_env + processed_dc.index + '_sequenced_datacube\\')
+                processed_index = processed_index + '_noninun'
+                processed_dc4save.index = processed_index
+                processed_dc4save.dc = processed_dc
+                processed_dc4save.save(self.work_env + processed_index + '_sequenced_datacube\\')
 
-                if not construct_new_dc:
-                    self._dcs_backup_[self.index_list.index(processed_index)] = processed_dc
-                    self.size_control_factor_list[self.index_list.index(processed_index)] = processed_dc.size_control_factor
-                    self.index_list[self.index_list.index(processed_index)] = processed_dc.index
-                else:
-                    self.append(processed_dc)
+                if append_new_dc:
+                    self.append(processed_dc4save)
             else:
                pass
         else:
-            processed_dc = Sentinel2_dc(self.work_env + processed_dc.index + '_noninun_sequenced_datacube\\')
+            processed_dc = Sentinel2_dc(self.work_env + processed_index + '_noninun_sequenced_datacube\\')
             self.append(processed_dc)
+
+    def _process_curve_fitting_para(self, **kwargs):
+
+        # Curve fitting method
+        all_supported_curve_fitting_method = ['seven_para_logistic', 'two_term_fourier']
+
+        if 'curve_fitting_algorithm' in kwargs.keys():
+            self._curve_fitting_algorithm = kwargs['curve_fitting_algorithm']
+
+        if self._curve_fitting_algorithm is None or self._curve_fitting_algorithm == 'seven_para_logistic':
+            self._curve_fitting_dic['CFM'] = 'SPL'
+            self._curve_fitting_dic['para_num'] = 7
+            self._curve_fitting_dic['initial_para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
+            self._curve_fitting_dic['initial_para_boundary'] = (
+                [0, 0.3, 0, 3, 180, 3, 0.00001], [0.5, 1, 180, 17, 330, 17, 0.01])
+            self._curve_fitting_dic['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
+            self._curve_fitting_dic['para_boundary'] = (
+                [0.08, 0.7, 90, 6.2, 285, 4.5, 0.0015], [0.20, 1.0, 130, 11.5, 330, 8.8, 0.0028])
+            self._curve_fitting_algorithm = seven_para_logistic_function
+        elif self._curve_fitting_algorithm == 'two_term_fourier':
+            self._curve_fitting_dic['CFM'] = 'TTF'
+            self._curve_fitting_dic['para_num'] = 6
+            self._curve_fitting_dic['para_ori'] = [0, 0, 0, 0, 0, 0.017]
+            self._curve_fitting_dic['para_boundary'] = (
+                [0, -0.5, -0.5, -0.05, -0.05, 0.015], [1, 0.5, 0.5, 0.05, 0.05, 0.019])
+            self._curve_fitting_algorithm = two_term_fourier
+        elif self._curve_fitting_algorithm not in all_supported_curve_fitting_method:
+            ValueError(f'The curve fitting method {self._curve_fitting_algorithm} is not supported!')
+
+        # Determine inundation removal method
+        if 'flood_removal_method' in kwargs.keys():
+            self._flood_removal_method = kwargs['flood_removal_method']
+
+            if self._flood_removal_method not in self._flood_mapping_method:
+                raise ValueError(f'The flood removal method {self._flood_removal_method} is not supported!')
+        else:
+            self._flood_removal_method = None
+
+    def curve_fitting(self, index, **kwargs):
+        # check vi
+        if index not in self.index_list:
+            raise ValueError('Please make sure the vi datacube is constructed!')
+
+        # Process paras
+        self._process_curve_fitting_para(**kwargs)
+
+        # Define the vi dc
+        index_dc = copy.copy(self.dcs[self.index_list.index(index)])
+        doy_dc = copy.copy(self.doy_list)
+
+        # Create output path
+        sa_map = np.load(self.ROI_array)
+        curfit_output_path = self.work_env + index + '_curfit_datacube\\'
+        output_path = curfit_output_path + str(self._curve_fitting_dic['CFM']) + '\\'
+        bf.create_folder(curfit_output_path)
+        bf.create_folder(output_path)
+        self._curve_fitting_dic[str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = output_path
+
+        # Generate the initial parameter
+        if not os.path.exists(output_path + 'para_boundary.npy'):
+            doy_all_s = np.mod(doy_dc, 1000)
+            for y_t in range(index_dc.shape[0]):
+                for x_t in range(index_dc.shape[1]):
+                    if sa_map[y_t, x_t] != -32768:
+
+                        if self.sparse_matrix:
+                            vi_all = index_dc.slice_matrix(([y_t], [x_t], ['all'])).flatten()
+                        else:
+                            vi_all = index_dc[y_t, x_t, :].flatten()
+
+                        if self.size_control_factor_list[self.index_list.index(index)]:
+                            vi_all = vi_all / 10000
+
+                        doy_all = copy.copy(doy_all_s)
+                        vi_index = 0
+                        while vi_index < vi_all.shape[0]:
+                            if not self.sparse_matrix and np.isnan(vi_all[vi_index]):
+                                vi_all = np.delete(vi_all, vi_index)
+                                doy_all = np.delete(doy_all, vi_index)
+                                vi_index -= 1
+                            elif self.sparse_matrix and vi_all[vi_index] == 0:
+                                vi_all = np.delete(vi_all, vi_index)
+                                doy_all = np.delete(doy_all, vi_index)
+                                vi_index -= 1
+                            vi_index += 1
+
+                        if doy_all.shape[0] >= 7:
+                            paras, extras = curve_fit(self._curve_fitting_algorithm, doy_all, vi_all, maxfev=500000, p0=self._curve_fitting_dic['initial_para_ori'], bounds=self._curve_fitting_dic['initial_para_boundary'])
+                            self._curve_fitting_dic[str(x_t) + '_' + str(y_t) + '_para_ori'] = paras
+                            vi_dormancy, doy_dormancy, vi_max, doy_max = [], [], [], []
+                            doy_index_max = np.argmax(self._curve_fitting_algorithm(np.linspace(0, 366, 365), paras[0], paras[1], paras[2],paras[3], paras[4], paras[5], paras[6]))
+
+                            # Generate the parameter boundary
+                            senescence_t = paras[4] - 4 * paras[5]
+                            for doy_index in range(doy_all.shape[0]):
+                                if 0 < doy_all[doy_index] < paras[2] or paras[4] < doy_all[doy_index] < 366:
+                                    vi_dormancy.append(vi_all[doy_index])
+                                    doy_dormancy.append(doy_all[doy_index])
+                                if doy_index_max - 5 < doy_all[doy_index] < doy_index_max + 5:
+                                    vi_max.append(vi_all[doy_index])
+                                    doy_max.append(doy_all[doy_index])
+
+                            if vi_max == []:
+                                vi_max = [np.max(vi_all)]
+                                doy_max = [doy_all[np.argmax(vi_all)]]
+
+                            itr = 5
+                            while itr < 10:
+                                doy_senescence, vi_senescence = [], []
+                                for doy_index in range(doy_all.shape[0]):
+                                    if senescence_t - itr < doy_all[doy_index] < senescence_t + itr:
+                                        vi_senescence.append(vi_all[doy_index])
+                                        doy_senescence.append(doy_all[doy_index])
+                                if doy_senescence != [] and vi_senescence != []:
+                                    break
+                                else:
+                                    itr += 1
+
+                            # define the para1
+                            if vi_dormancy != []:
+                                vi_dormancy_sort = np.sort(vi_dormancy)
+                                vi_max_sort = np.sort(vi_max)
+                                paras1_max = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.95))]
+                                paras1_min = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.05))]
+                                paras1_max = min(paras1_max, 0.5)
+                                paras1_min = max(paras1_min, 0)
+                            else:
+                                paras1_max, paras1_min= 0.5, 0
+
+                            # define the para2
+                            paras2_max = vi_max[-1] - paras1_min
+                            paras2_min = vi_max[0] - paras1_max
+                            if paras2_min < 0.2:
+                                paras2_min = 0.2
+                            if paras2_max > 0.7 or paras2_max < 0.2:
+                                paras2_max = 0.7
+
+                            # define the para3
+                            paras3_max = 0
+                            for doy_index in range(len(doy_all)):
+                                if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] < 180:
+                                    paras3_max = max(float(paras3_max), doy_all[doy_index])
+
+                            paras3_min = 180
+                            for doy_index in range(len(doy_all)):
+                                if vi_all[doy_index] > paras1_max:
+                                    paras3_min = min(paras3_min, doy_all[doy_index])
+
+                            if paras3_min > paras[2] or paras3_min < paras[2] - 15:
+                                paras3_min = paras[2] - 15
+
+                            if paras3_max < paras[2] or paras3_max > paras[2] + 15:
+                                paras3_max = paras[2] + 15
+
+                            # define the para5
+                            paras5_max = 0
+                            for doy_index in range(len(doy_all)):
+                                if vi_all[doy_index] > paras1_max:
+                                    paras5_max = max(paras5_max, doy_all[doy_index])
+                            paras5_min = 365
+                            for doy_index in range(len(doy_all)):
+                                if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] > 180:
+                                    paras5_min = min(paras5_min, doy_all[doy_index])
+                            if paras5_min > paras[4] or paras5_min < paras[4] - 15:
+                                paras5_min = paras[4] - 15
+
+                            if paras5_max < paras[4] or paras5_max > paras[4] + 15:
+                                paras5_max = paras[4] + 15
+
+                            # define the para 4
+                            if len(doy_max) != 1:
+                                paras4_max = (np.nanmax(doy_max) - paras3_min) / 4
+                                paras4_min = (np.nanmin(doy_max) - paras3_max) / 4
+                            else:
+                                paras4_max = (np.nanmax(doy_max) + 5 - paras3_min) / 4
+                                paras4_min = (np.nanmin(doy_max) - 5 - paras3_max) / 4
+                            paras4_min = max(3, paras4_min)
+                            paras4_max = min(17, paras4_max)
+                            if paras4_min > 17:
+                                paras4_min = 3
+                            if paras4_max < 3:
+                                paras4_max = 17
+                            paras6_max = paras4_max
+                            paras6_min = paras4_min
+                            if doy_senescence == [] or vi_senescence == []:
+                                paras7_max = 0.01
+                                paras7_min = 0.00001
+                            else:
+                                paras7_max = (np.nanmax(vi_max) - np.nanmin(vi_senescence)) / (
+                                            doy_senescence[np.argmin(vi_senescence)] - doy_max[np.argmax(vi_max)])
+                                paras7_min = (np.nanmin(vi_max) - np.nanmax(vi_senescence)) / (
+                                            doy_senescence[np.argmax(vi_senescence)] - doy_max[np.argmin(vi_max)])
+                            if np.isnan(paras7_min):
+                                paras7_min = 0.00001
+                            if np.isnan(paras7_max):
+                                paras7_max = 0.01
+                            paras7_max = min(paras7_max, 0.01)
+                            paras7_min = max(paras7_min, 0.00001)
+                            if paras7_max < 0.00001:
+                                paras7_max = 0.01
+                            if paras7_min > 0.01:
+                                paras7_min = 0.00001
+                            if paras1_min > paras[0]:
+                                paras1_min = paras[0] - 0.01
+                            if paras1_max < paras[0]:
+                                paras1_max = paras[0] + 0.01
+                            if paras2_min > paras[1]:
+                                paras2_min = paras[1] - 0.01
+                            if paras2_max < paras[1]:
+                                paras2_max = paras[1] + 0.01
+                            if paras3_min > paras[2]:
+                                paras3_min = paras[2] - 1
+                            if paras3_max < paras[2]:
+                                paras3_max = paras[2] + 1
+                            if paras4_min > paras[3]:
+                                paras4_min = paras[3] - 0.1
+                            if paras4_max < paras[3]:
+                                paras4_max = paras[3] + 0.1
+                            if paras5_min > paras[4]:
+                                paras5_min = paras[4] - 1
+                            if paras5_max < paras[4]:
+                                paras5_max = paras[4] + 1
+                            if paras6_min > paras[5]:
+                                paras6_min = paras[5] - 0.5
+                            if paras6_max < paras[5]:
+                                paras6_max = paras[5] + 0.5
+                            if paras7_min > paras[6]:
+                                paras7_min = paras[6] - 0.00001
+                            if paras7_max < paras[6]:
+                                paras7_max = paras[6] + 0.00001
+                            self._curve_fitting_dic['para_boundary_' + str(y_t) + '_' + str(x_t)] = (
+                            [paras1_min, paras2_min, paras3_min, paras4_min, paras5_min, paras6_min, paras7_min],
+                            [paras1_max, paras2_max, paras3_max, paras4_max, paras5_max, paras6_max, paras7_max])
+                            self._curve_fitting_dic['para_ori_' + str(y_t) + '_' + str(x_t)] = [paras[0], paras[1],
+                                                                                                paras[2], paras[3],
+                                                                                                paras[4], paras[5],
+                                                                                                paras[6]]
+            np.save(output_path + 'para_boundary.npy', self._curve_fitting_dic)
+        else:
+            self._curve_fitting_dic = np.load(output_path + 'para_boundary.npy', allow_pickle=True).item()
+
+        # Generate the year list
+        if not os.path.exists(output_path + 'annual_cf_para.npy') or not os.path.exists(output_path + 'year.npy'):
+            year_list = np.sort(np.unique(doy_dc // 1000))
+            annual_cf_para_dic = {}
+            for year in year_list:
+                year = int(year)
+                annual_para_dc = np.zeros([self.dcs_XSize, self.dcs_YSize, self._curve_fitting_dic['para_num'] + 1])
+
+                if self.sparse_matrix:
+                    annual_vi = index_dc.slice_matrix((['all'], ['all'], [np.min(np.argwhere(doy_dc // 1000 == year)), np.max(np.argwhere(doy_dc // 1000 == year)) + 1]))
+                else:
+                    annual_vi = index_dc[:, :, np.min(np.argwhere(doy_dc // 1000 == year)): np.max(np.argwhere(doy_dc // 1000 == year)) + 1]
+
+                if self.size_control_factor_list[self.index_list.index(index)]:
+                    annual_vi = annual_vi / 10000
+
+                annual_doy = doy_dc[np.min(np.argwhere(doy_dc // 1000 == year)): np.max(np.argwhere(doy_dc // 1000 == year)) + 1]
+                annual_doy = np.mod(annual_doy, 1000)
+
+                for y_temp in range(annual_vi.shape[0]):
+                    for x_temp in range(annual_vi.shape[1]):
+                        if sa_map[y_temp, x_temp] != -32768:
+                            vi_temp = annual_vi[y_temp, x_temp, :]
+
+                            if not self.sparse_matrix:
+                                nan_index = np.argwhere(np.isnan(vi_temp))
+                                vi_temp = np.delete(vi_temp, nan_index)
+                                doy_temp = np.delete(annual_doy, nan_index)
+                            elif self.sparse_matrix:
+                                zero_index = np.argwhere(vi_temp == 0)
+                                vi_temp = np.delete(vi_temp, zero_index)
+                                doy_temp = np.delete(annual_doy, zero_index)
+
+                            if np.sum(~np.isnan(vi_temp)) >= self._curve_fitting_dic['para_num']:
+                                try:
+                                    paras, extras = curve_fit(self._curve_fitting_algorithm, doy_temp, vi_temp, maxfev=50000,
+                                                              p0=self._curve_fitting_dic['para_ori_' + str(y_temp) + '_' + str(x_temp)],
+                                                              bounds=self._curve_fitting_dic['para_boundary_' + str(y_temp) + '_' + str(x_temp)])
+                                    predicted_y_data = self._curve_fitting_algorithm(doy_temp, paras[0], paras[1],
+                                                                                     paras[2], paras[3], paras[4],
+                                                                                     paras[5], paras[6])
+                                    R_square = (1 - np.sum((predicted_y_data - vi_temp) ** 2) / np.sum(
+                                        (vi_temp - np.mean(vi_temp)) ** 2))
+                                    annual_para_dc[y_temp, x_temp, :] = np.append(paras, R_square)
+                                except:
+                                    pass
+                            else:
+                                annual_para_dc[y_temp, x_temp, :] = np.nan
+                        else:
+                            annual_para_dc[y_temp, x_temp, :] = np.nan
+                annual_cf_para_dic[str(year) + '_cf_para'] = annual_para_dc
+            np.save(output_path + 'annual_cf_para.npy', annual_cf_para_dic)
+            np.save(output_path + 'year.npy', year_list)
+
+    def _process_phenology_metrics_para(self, **kwargs):
+
+        self._curve_fitting_algorithm = None
+        if 'curve_fitting_algorithm' in kwargs.keys():
+            self._curve_fitting_algorithm = kwargs['curve_fitting_algorithm']
+
+        # Curve fitting method
+        all_supported_curve_fitting_method = ['seven_para_logistic', 'two_term_fourier']
+        self._curve_fitting_dic = {}
+        if self._curve_fitting_algorithm is None or self._curve_fitting_algorithm == 'seven_para_logistic':
+            self._curve_fitting_dic['CFM'] = 'SPL'
+            self._curve_fitting_dic['para_num'] = 7
+            self._curve_fitting_algorithm = seven_para_logistic_function
+        elif self._curve_fitting_algorithm == 'two_term_fourier':
+            self._curve_fitting_dic['CFM'] = 'TTF'
+            self._curve_fitting_dic['para_num'] = 6
+            self._curve_fitting_algorithm = two_term_fourier
+        elif self._curve_fitting_algorithm not in all_supported_curve_fitting_method:
+            print('Please double check the curve fitting method')
+            sys.exit(-1)
+
+    def phenology_metrics_generation(self, index_list, phenology_index, **kwargs):
+
+        # Check the VI method
+        if type(index_list) is str and index_list in self.index_list:
+            index_list = [index_list]
+        elif type(index_list) is list and False not in [VI_temp in self.index_list for VI_temp in index_list]:
+            pass
+        else:
+            raise TypeError(f'The input VI {index_list} was not in supported type (list or str) or some input VI is not in the Landsat_dcs!')
+
+        # Detect the para
+        self._process_phenology_metrics_para(**kwargs)
+
+        # Determine the phenology metrics extraction method
+        if phenology_index is None:
+            phenology_index = ['annual_ave_VI']
+        elif type(phenology_index) == str:
+            if phenology_index in self._phenology_index_all:
+                phenology_index = [phenology_index]
+            elif phenology_index not in self._phenology_index_all:
+                raise NameError(f'{phenology_index} is not supported!')
+        elif type(phenology_index) == list:
+            for phenology_index_temp in phenology_index:
+                if phenology_index_temp not in self._phenology_index_all:
+                    phenology_index.remove(phenology_index_temp)
+            if len(phenology_index) == 0:
+                print('Please choose the correct phenology index!')
+                sys.exit(-1)
+        else:
+            print('Please choose the correct phenology index!')
+            sys.exit(-1)
+
+        sa_map = np.load(self.ROI_array, allow_pickle=True)
+        for index_temp in index_list:
+            # input the cf dic
+            input_annual_file = self.work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic[
+                'CFM'] + '\\annual_cf_para.npy'
+            input_year_file = self.work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic['CFM'] + '\\year.npy'
+            if not os.path.exists(input_annual_file) or not os.path.exists(input_year_file):
+                raise Exception('Please generate the cf para before the generation of phenology metrics')
+            else:
+                cf_para_dc = np.load(input_annual_file, allow_pickle=True).item()
+                year_list = np.load(input_year_file)
+
+            phenology_metrics_inform_dic = {}
+            root_output_folder = self.work_env + index_temp + '_phenology_metrics\\' + str(
+                self._curve_fitting_dic['CFM']) + '\\'
+            bf.create_folder(root_output_folder)
+            for phenology_index_temp in phenology_index:
+                phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
+                    self._curve_fitting_dic['CFM']) + '_path'] = root_output_folder + phenology_index_temp + '\\'
+                phenology_metrics_inform_dic[
+                    phenology_index_temp + '_' + index_temp + '_' + str(self._curve_fitting_dic['CFM']) + '_year'] = year_list
+                bf.create_folder(phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
+                    self._curve_fitting_dic['CFM']) + '_path'])
+
+            # Main procedure
+            doy_temp = np.linspace(1, 365, 365)
+            for year in year_list:
+                year = int(year)
+                annual_para = cf_para_dc[str(year) + '_cf_para']
+                if not os.path.exists(root_output_folder + 'annual\\' + str(year) + '_phe_metrics.npy'):
+                    annual_phe = np.zeros([annual_para.shape[0], annual_para.shape[1], 365])
+
+                    for y_temp in range(annual_para.shape[0]):
+                        for x_temp in range(annual_para.shape[1]):
+                            if sa_map[y_temp, x_temp] == -32768:
+                                annual_phe[y_temp, x_temp, :] = np.nan
+                            else:
+                                if self._curve_fitting_dic['para_num'] == 7:
+                                    annual_phe[y_temp, x_temp, :] = self._curve_fitting_algorithm(
+                                        doy_temp, annual_para[y_temp, x_temp, 0], annual_para[y_temp, x_temp, 1],
+                                        annual_para[y_temp, x_temp, 2], annual_para[y_temp, x_temp, 3],
+                                        annual_para[y_temp, x_temp, 4], annual_para[y_temp, x_temp, 5],
+                                        annual_para[y_temp, x_temp, 6]).reshape([1, 1, 365])
+                                elif self._curve_fitting_dic['para_num'] == 6:
+                                    annual_phe[y_temp, x_temp, :] = self._curve_fitting_algorithm(
+                                        doy_temp, annual_para[y_temp, x_temp, 0], annual_para[y_temp, x_temp, 1],
+                                        annual_para[y_temp, x_temp, 2], annual_para[y_temp, x_temp, 3],
+                                        annual_para[y_temp, x_temp, 4], annual_para[y_temp, x_temp, 5]).reshape([1, 1, 365])
+                    bf.create_folder(root_output_folder + 'annual\\')
+                    np.save(root_output_folder + 'annual\\' + str(year) + '_phe_metrics.npy', annual_phe)
+                else:
+                    annual_phe = np.load(root_output_folder + 'annual\\' + str(year) + '_phe_metrics.npy')
+
+                # Generate the phenology metrics
+                for phenology_index_temp in phenology_index:
+                    phe_metrics = np.zeros([self.dcs_XSize, self.dcs_YSize])
+                    phe_metrics[sa_map == -32768] = np.nan
+
+                    if not os.path.exists(phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
+                            self._curve_fitting_dic['CFM']) + '_path'] + str(year) + '_phe_metrics.TIF'):
+                        if phenology_index_temp == 'annual_ave_VI':
+                            phe_metrics = np.mean(annual_phe, axis=2)
+                        elif phenology_index_temp == 'flood_ave_VI':
+                            phe_metrics = np.mean(annual_phe[:, :, 182: 302], axis=2)
+                        elif phenology_index_temp == 'unflood_ave_VI':
+                            phe_metrics = np.mean(
+                                np.concatenate((annual_phe[:, :, 0:181], annual_phe[:, :, 302:364]), axis=2), axis=2)
+                        elif phenology_index_temp == 'max_VI':
+                            phe_metrics = np.max(annual_phe, axis=2)
+                        elif phenology_index_temp == 'max_VI_doy':
+                            phe_metrics = np.argmax(annual_phe, axis=2) + 1
+                        elif phenology_index_temp == 'bloom_season_ave_VI':
+                            phe_temp = copy.copy(annual_phe)
+                            phe_temp[phe_temp < 0.3] = np.nan
+                            phe_metrics = np.nanmean(phe_temp, axis=2)
+                        elif phenology_index_temp == 'well_bloom_season_ave_VI':
+                            phe_temp = copy.copy(annual_phe)
+                            max_index = np.argmax(annual_phe, axis=2)
+                            for y_temp_temp in range(phe_temp.shape[0]):
+                                for x_temp_temp in range(phe_temp.shape[1]):
+                                    phe_temp[y_temp_temp, x_temp_temp, 0: max_index[y_temp_temp, x_temp_temp]] = np.nan
+                            phe_temp[phe_temp < 0.3] = np.nan
+                            phe_metrics = np.nanmean(phe_temp, axis=2)
+                        phe_metrics = phe_metrics.astype(np.float)
+                        phe_metrics[sa_map == -32768] = np.nan
+                        write_raster(gdal.Open(self.ROI_tif), phe_metrics, phenology_metrics_inform_dic[
+                            phenology_index_temp + '_' + index_temp + '_' + str(self._curve_fitting_dic['CFM']) + '_path'],
+                                     str(year) + '_phe_metrics.TIF', raster_datatype=gdal.GDT_Float32)
+            np.save(self.work_env + index_temp + '_phenology_metrics\\' + str(self._curve_fitting_dic['CFM']) + '_phenology_metrics.npy', phenology_metrics_inform_dic)
 
     def generate_phenology_metric(self):
         pass
@@ -2442,7 +2824,7 @@ class Sentinel2_dcs(object):
         self._process_link_GEDI_S2_para(**kwargs)
 
         # Retrieve GEDI inform
-        self.GEDI_list_temp = gedi.GEDI_list(GEDI_xlsx_file)
+        self.GEDI_list = gedi.GEDI_list(GEDI_xlsx_file)
 
         # Retrieve the S2 inform
         raster_gt = gdal.Open(self.ds_file).GetGeoTransform()
@@ -2454,44 +2836,56 @@ class Sentinel2_dcs(object):
                 raise Exception(f'The {str(index_temp)} is not a valid index or is not inputted into the dcs!')
 
             if self._GEDI_link_S2_retrieval_method == 'nearest_neighbor':
-                self.GEDI_list_temp.GEDI_df.insert(loc=len(self.GEDI_list_temp.GEDI_df.columns), column=f'S2_nearest_{index_temp}_value', value=np.nan)
-                self.GEDI_list_temp.GEDI_df.insert(loc=len(self.GEDI_list_temp.GEDI_df.columns), column=f'S2_nearest_{index_temp}_date', value=np.nan)
+                self.GEDI_list.GEDI_df.insert(loc=len(self.GEDI_list.GEDI_df.columns), column=f'S2_nearest_{index_temp}_value', value=np.nan)
+                self.GEDI_list.GEDI_df.insert(loc=len(self.GEDI_list.GEDI_df.columns), column=f'S2_nearest_{index_temp}_date', value=np.nan)
             elif self._GEDI_link_S2_retrieval_method == 'linear_interpolation':
-                self.GEDI_list_temp.GEDI_df.insert(loc=len(self.GEDI_list_temp.GEDI_df.columns), column=f'S2_{index_temp}_linear_interpolation', value=np.nan)
-
+                self.GEDI_list.GEDI_df.insert(loc=len(self.GEDI_list.GEDI_df.columns), column=f'S2_{index_temp}_linear_interpolation', value=np.nan)
+                self.GEDI_list.GEDI_df.insert(loc=len(self.GEDI_list.GEDI_df.columns), column=f'S2_{index_temp}_linear_interpolation_reliability', value=np.nan)
             dc_dic[index_temp] = self._dcs_backup_[self.index_list.index(index_temp)].dc
 
-        data_num = [num_temp for num_temp in range(self.GEDI_list_temp.df_size)]
+        data_num = [num_temp for num_temp in range(self.GEDI_list.df_size)]
 
         ### Since the dc_dic was too big for most conditions, it will be defined as a global var,
         ### py3.8 or higher version is required by announcing the dc_dc as a global variable before the mp process
-        with concurrent.futures.ProcessPoolExecutor(initializer=init_globe, initargs=(dc_dic,), max_workers=5) as executor:
-            result = executor.map(link_GEDI_inform, data_num, list(self.GEDI_list_temp.GEDI_df['Latitude']),
-                          list(self.GEDI_list_temp.GEDI_df['Longitude']), list(self.GEDI_list_temp.GEDI_df['Date']),
-                          repeat(bf.date2doy(self.doy_list)), repeat(raster_gt), repeat(index_list), repeat(self.GEDI_list_temp.df_size), repeat(self._GEDI_link_S2_retrieval_method),
-                          repeat(self.sparse_matrix))
 
-        result = list(result)
-        for result_temp in result:
-            for index_temp in index_list:
-                try:
-                    self.GEDI_list_temp.GEDI_df[f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}'][result_temp['id']] = result_temp[index_temp]
-                except:
-                    self.GEDI_list_temp.GEDI_df[f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}'][result_temp['id']] = np.nan
+        # Calculate the chunk size based on memory
+        mem = psutil.virtual_memory()[1]
+        dcs_mem = self.__sizeof__()
+        work_num = int(np.floor(mem/dcs_mem)) - 1
+        try:
+            with concurrent.futures.ProcessPoolExecutor(initializer=init_globe, initargs=(self.dcs,), max_workers=work_num) as executor:
+                lat_temp, lon_temp, date_temp, doy_temp = list(self.GEDI_list.GEDI_df['Latitude']), list(self.GEDI_list.GEDI_df['Longitude']),list(self.GEDI_list.GEDI_df['Date']), bf.date2doy(self.doy_list)
+                result = executor.map(link_GEDI_inform, data_num, lat_temp, lon_temp, date_temp, repeat(doy_temp), repeat(raster_gt), repeat(index_list), repeat(self.GEDI_list.df_size), repeat(self._GEDI_link_S2_retrieval_method), repeat(self.sparse_matrix), repeat(self.index_list))
+        except MemoryError:
+            work_num = int(np.floor(mem / dcs_mem)) - 1
+            with concurrent.futures.ProcessPoolExecutor(initializer=init_globe, initargs=(self.dcs,), max_workers=work_num) as executor:
+                lat_temp, lon_temp, date_temp, doy_temp = list(self.GEDI_list.GEDI_df['Latitude']), list(self.GEDI_list.GEDI_df['Longitude']), list(self.GEDI_list.GEDI_df['Date']), bf.date2doy(self.doy_list)
+                result = executor.map(link_GEDI_inform, data_num, lat_temp, lon_temp, date_temp, repeat(doy_temp), repeat(raster_gt), repeat(index_list), repeat(self.GEDI_list.df_size), repeat(self._GEDI_link_S2_retrieval_method), repeat(self.sparse_matrix), repeat(self.index_list))
 
-        self.GEDI_list_temp.save(GEDI_xlsx_file.split('.')[0] + '_append.csv')
+        try:
+            result = list(result)
+            index_combined_name = '_'
+            index_combined_name = index_combined_name.join(index_list)
+            for result_temp in result:
+                for index_temp in index_list:
+                    try:
+                        self.GEDI_list.GEDI_df.loc[result_temp['id'], (f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}')] = result_temp[index_temp]
+                        self.GEDI_list.GEDI_df.loc[result_temp['id'], (f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}_reliability')] = result_temp[index_temp + '_reliability']
+                    except:
+                        self.GEDI_list.GEDI_df.loc[result_temp['id'], (f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}')] = np.nan
+                        self.GEDI_list.GEDI_df.loc[result_temp['id'], (f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}_reliability')] = np.nan
+
+            self.GEDI_list.save(GEDI_xlsx_file.split('.')[0] + f'_{index_combined_name}.csv')
+        except:
+            a = 1
 
 
 def init_globe(var):
     global dc4link_GEDI
     dc4link_GEDI = var
 
-
-def link_GEDI_inform(*args):
-    [i, lat, lon, date_temp, doy_list, raster_gt, index_list, df_size, GEDI_link_S2_retrieval_method, sparse_matrix] = [args[i] for i in range(9)]
-
-    # Get the basic inform of the i GEDI point
-    year_temp = int(date_temp) // 1000
+def link_GEDI_inform(*args, search_window:int = 40):
+    [i, lat, lon, date_temp, doy_list, raster_gt, index_list, df_size, GEDI_link_S2_retrieval_method, sparse_matrix, index_all] = [args[i] for i in range(11)]
 
     # Reprojection
     point_temp = gp.points_from_xy([lon], [lat], crs='epsg:4326')
@@ -2506,9 +2900,9 @@ def link_GEDI_inform(*args):
 
         t1 = time.time()
         print(f'Start linking the {index_temp} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
+        index_num = index_all.index(index_temp)
 
         if GEDI_link_S2_retrieval_method == 'nearest_neighbor':
-
             # Link GEDI and S2 inform using nearest_neighbor
             pass
 
@@ -2517,23 +2911,24 @@ def link_GEDI_inform(*args):
             # Link GEDI and S2 inform using linear_interpolation
             data_postive, date_postive, data_negative, date_negative = None, None, None, None
             index_dic[index_temp] = np.nan
+            index_dic[index_temp + '_reliability'] = np.nan
 
-            for date_interval in range(0, 30):
-
+            for date_interval in range(search_window):
                 if date_interval == 0 and date_interval + date_temp in doy_list:
-                    array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp))]
+                    array_temp = dc4link_GEDI[index_num].SM_group[bf.doy2date(date_temp)]
                     if sparse_matrix:
                         info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
                         info_temp = (float(info_temp) - 32768) / 10000
 
                     if ~np.isnan(info_temp):
                         index_dic[index_temp] = info_temp
+                        index_dic[index_temp + '_reliability'] = 1
                         break
 
                 else:
                     if data_negative is None and date_temp - date_interval in doy_list:
                         date_temp_temp = date_temp - date_interval
-                        array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp_temp))]
+                        array_temp = dc4link_GEDI[index_num].SM_group[bf.doy2date(date_temp_temp)]
                         if sparse_matrix:
                             info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
                             info_temp = (float(info_temp) - 32768) / 10000
@@ -2542,9 +2937,9 @@ def link_GEDI_inform(*args):
                             data_negative = info_temp
                             date_negative = date_temp_temp
 
-                    if data_negative is None and date_temp + date_interval in doy_list:
+                    if data_postive is None and date_temp + date_interval in doy_list:
                         date_temp_temp = date_temp + date_interval
-                        array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp_temp))]
+                        array_temp = dc4link_GEDI[index_num].SM_group[bf.doy2date(date_temp_temp)]
                         if sparse_matrix:
                             info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
                             info_temp = (float(info_temp) - 32768) / 10000
@@ -2555,6 +2950,7 @@ def link_GEDI_inform(*args):
 
                     if data_postive is not None and data_negative is not None:
                         index_dic[index_temp] = data_negative + (date_temp - date_negative) * (data_postive - data_negative) / (date_postive - date_negative)
+                        index_dic[index_temp + '_reliability'] = 1 - ((date_postive - date_negative) / (2 * search_window))
                         break
 
         print(f'Finish linking the {index_temp} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
@@ -2636,57 +3032,8 @@ def link_GEDI_inform4mp(*args):
 
 
 if __name__ == '__main__':
-
-    #### Download Sentinel-2 data with IDM
-    # IDM = "C:\\Program Files (x86)\\Internet Download Manager\\IDMan.exe"
-    # DownPath = 'g:\\sentinel2_download\\'
-    # shpfile_path = 'E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain\\Floodplain_2020_simplified4.shp'
-    #
-    # S2_MID_YZR = Queried_Sentinel_ds('shixi2ng', 'shixi2nG', DownPath, IDM_path=IDM)
-    # S2_MID_YZR.queried_with_ROI(shpfile_path, ('20190101', '20191231'),'Sentinel-2', 'S2MSI2A',(0, 95), overwritten_factor=True)
-    # S2_MID_YZR.download_with_IDM()
-
-    # Test
-    # filepath = 'G:\A_veg\S2_test\\Orifile\\'
-    # s2_ds_temp = Sentinel2_ds(filepath)
-    # s2_ds_temp.construct_metadata()
-    # s2_ds_temp.sequenced_subset(['all_band', 'MNDWI'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp',
-    #                             ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud',
-    #                             size_control_factor=True, combine_band_factor=False, pansharp_factor=False)
-    # s2_ds_temp.ds2sdc([ 'MNDWI'], inherit_from_logfile=True, remove_nan_layer=True, size_control_factor=True)
-
-    ######  Main procedure for GEDI Sentinel-2 link
-    ######  Subset and 2sdc
-    # filepath = 'G:\A_veg\S2_all\\Original_file\\'
-    # s2_ds_temp = Sentinel2_ds(filepath)
-    # s2_ds_temp.construct_metadata()
-    #
-    # s2_ds_temp.mp_subset(['NDVI_20m', 'OSAVI_20m', 'MNDWI', 'AWEI', 'AWEInsh'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp',
-    #                      ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud', size_control_factor=True, combine_band_factor=False)
-    # s2_ds_temp.mp_ds2sdc(['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9'], inherit_from_logfile=True, remove_nan_layer=True, chunk_size=9)
-
-    ##### Constuct dcs
     dc_temp_dic = {}
-    dc_temp_dic['MNDWI'] = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\MNDWI_sequenced_datacube\\')
-    for index in ['B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'OSAVI_20m']:
-        dc_temp = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{index}_sequenced_datacube\\')
-        dcs_temp = Sentinel2_dcs(dc_temp_dic['MNDWI'], dc_temp)
-        dcs_temp._inundation_removal(index, 'MNDWI_thr')
-        dcs_temp = None
-
-    ###### Link S2 inform
-    dc_temp_dic = {}
-    for index in ['NDVI_20m_noninun', 'B2_noninun', 'B3_noninun', 'B4_noninun', 'B5_noninun']:
-        dc_temp_dic[index] = Sentinel2_dc(
-            f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{index}_sequenced_datacube\\')
-    dcs_temp = Sentinel2_dcs(dc_temp_dic['NDVI_20m_noninun'], dc_temp_dic['B2_noninun'], dc_temp_dic['B3_noninun'], dc_temp_dic['B4_noninun'], dc_temp_dic['B5_noninun'])
-    dcs_temp.link_GEDI_S2_inform('G:\A_veg\S2_all\GEDI\\MID_YZR_high_quality.xlsx', ['NDVI_20m_noninun', 'B2_noninun', 'B3_noninun', 'B4_noninun', 'B5_noninun'], retrieval_method='linear_interpolation')
-
-    file_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\Original_Zipfile\\'
-    output_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\'
-    l2a_output_path = output_path + 'Sentinel2_L2A_output\\'
-    QI_output_path = output_path + 'Sentinel2_L2A_output\\QI\\'
-    bf.create_folder(l2a_output_path)
-    bf.create_folder(QI_output_path)
-
-
+    dc_temp_dic['OSAVI_20m_noninun'] = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_sequenced_datacube\\')
+    dcs_temp = Sentinel2_dcs(dc_temp_dic['OSAVI_20m_noninun'])
+    dcs_temp.curve_fitting('OSAVI_20m_noninun', curve_fitting_algorithm='seven_para_logistic')
+    dcs_temp = None

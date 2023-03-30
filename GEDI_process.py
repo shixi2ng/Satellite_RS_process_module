@@ -226,7 +226,7 @@ class GEDI_L2_ds(object):
                                 append_time += time.time() - time_sta_2
                                 # print(f'append consumes ca. {str(append_time)} seconds.')
                     detection_time += time.time() - time_sta
-                    print(f'Finished in {str(time.time()-start_time)} seconds {beam_temp} of {file_name} ({file_itr + 1} of {self._file_num})).')
+                print(f'Finished in {str(time.time()-start_time)} seconds {beam_temp} of {file_name} ({file_itr + 1} of {self._file_num})).')
         except:
             print(f'The {file_name} has some issues')
 
@@ -249,8 +249,34 @@ class GEDI_L2_ds(object):
             self._lat_min, self._lat_max, self._lon_min, self._lon_max = self._shpfile_gp.bounds['miny'][0], self._shpfile_gp.bounds['maxy'][0], self._shpfile_gp.bounds['minx'][0], self._shpfile_gp.bounds['maxx'][0]
 
         # Define inform list
-        shotNum_all, dem_all, zElevation_all, zHigh_all, zLat_all, zLon_all, rh25_all, rh98_all, rh100_all, quality_all, degrade_all, sensitivity_all, beamI_all, urban_rate_all, Landsat_water_rate_all, leaf_off_flag_all = ([] for i in range(16))
-        file_itr = range(1, self._file_num + 1)
+        date_all, shotNum_all, dem_all, zElevation_all, zHigh_all, zLat_all, zLon_all, rh25_all, rh98_all, rh100_all, quality_all, degrade_all, sensitivity_all, beamI_all, urban_rate_all, Landsat_water_rate_all, leaf_off_flag_all = ([] for i in range(17))
+        file_itr = range(0, self._file_num)
+        for i in file_itr:
+            date, shotNum, dem, zElevation, zHigh, zLat, zLon, rh25, rh98, rh100, quality, degrade, sensitivity, beamI, urban_rate, Landsat_water_rate, leaf_off_flag = self.extract_shots_indi(i)
+            date_all.extend(date)
+            shotNum_all.extend(shotNum)
+            dem_all.extend(dem)
+            zElevation_all.extend(zElevation)
+            zHigh_all.extend(zHigh)
+            zLat_all.extend(zLat)
+            zLon_all.extend(zLon)
+            rh25_all.extend(rh25)
+            rh98_all.extend(rh98)
+            rh100_all.extend(rh100)
+            quality_all.extend(quality)
+            degrade_all.extend(degrade)
+            sensitivity_all.extend(sensitivity)
+            beamI_all.extend(beamI)
+            urban_rate_all.extend(urban_rate)
+            Landsat_water_rate_all.extend(Landsat_water_rate)
+            leaf_off_flag_all.extend(leaf_off_flag)
+
+        self.GEDI_inform_DF = pd.DataFrame(
+            {'Date': date_all, 'Shot Number': shotNum_all, 'Beam': beamI_all, 'Latitude': zLat_all, 'Longitude': zLon_all,
+             'Tandem-X DEM': dem_all, 'Elevation (m)': zElevation_all, 'Canopy Elevation (m)': zHigh_all,
+             'Canopy Height (rh100)': rh100_all, 'RH 98': rh98_all, 'RH 25': rh25_all, 'Quality Flag': quality_all,
+             'Degrade Flag': degrade_all, 'Sensitivity': sensitivity_all, 'Urban rate': urban_rate_all,
+             'Landsat water rate': Landsat_water_rate_all, 'Leaf off flag': leaf_off_flag_all})
 
     def mp_extract_shots_elevation_infor(self, output_df_factor=True, *args, **kwargs):
 
@@ -268,24 +294,28 @@ class GEDI_L2_ds(object):
         file_itr = range(0, self._file_num)
 
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            for date, shotNum, dem, zElevation, zHigh, zLat, zLon, rh25, rh98, rh100, quality, degrade, sensitivity, beamI, urban_rate, Landsat_water_rate, leaf_off_flag in executor.map(self.extract_shots_indi, file_itr):
-                date_all.extend(date)
-                shotNum_all.extend(shotNum)
-                dem_all.extend(dem)
-                zElevation_all.extend(zElevation)
-                zHigh_all.extend(zHigh)
-                zLat_all.extend(zLat)
-                zLon_all.extend(zLon)
-                rh25_all.extend(rh25)
-                rh98_all.extend(rh98)
-                rh100_all.extend(rh100)
-                quality_all.extend(quality)
-                degrade_all.extend(degrade)
-                sensitivity_all.extend(sensitivity)
-                beamI_all.extend(beamI)
-                urban_rate_all.extend(urban_rate)
-                Landsat_water_rate_all.extend(Landsat_water_rate)
-                leaf_off_flag_all.extend(leaf_off_flag)
+            result = executor.map(self.extract_shots_indi, file_itr)
+
+        result = list(result)
+        for result_temp in result:
+            date_all.extend(result_temp[0])
+            shotNum_all.extend(result_temp[1])
+            dem_all.extend(result_temp[2])
+            zElevation_all.extend(result_temp[3])
+            zHigh_all.extend(result_temp[4])
+            zLat_all.extend(result_temp[5])
+            zLon_all.extend(result_temp[6])
+            rh25_all.extend(result_temp[7])
+            rh98_all.extend(result_temp[8])
+            rh100_all.extend(result_temp[9])
+            quality_all.extend(result_temp[10])
+            degrade_all.extend(result_temp[11])
+            sensitivity_all.extend(result_temp[12])
+            beamI_all.extend(result_temp[13])
+            urban_rate_all.extend(result_temp[14])
+            Landsat_water_rate_all.extend(result_temp[15])
+            leaf_off_flag_all.extend(result_temp[16])
+
         self.GEDI_inform_DF = pd.DataFrame(
             {'Date': date_all, 'Shot Number': shotNum_all, 'Beam': beamI_all, 'Latitude': zLat_all, 'Longitude': zLon_all,
              'Tandem-X DEM': dem_all, 'Elevation (m)': zElevation_all, 'Canopy Elevation (m)': zHigh_all,
@@ -377,7 +407,7 @@ class GEDI_list(object):
 if __name__ == '__main__':
     sample_YTR = GEDI_L2_ds('G:\\GEDI_MYR\\Ori_file')
     sample_YTR.generate_metadata()
-    sample_YTR.mp_extract_shots_elevation_infor(shp_file='E:\\A_Veg_phase2\\Entire_YTR\\shpfile\\MID_YZR.shp')
+    sample_YTR.mp_extract_shots_elevation_infor(shp_file='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
 
 
 

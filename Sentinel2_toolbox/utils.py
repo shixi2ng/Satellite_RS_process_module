@@ -1,12 +1,13 @@
 # coding=utf-8
 import concurrent.futures
-
+import os
+os.environ['PROJ_LIB'] = 'C:\\Users\\sx199\\Anaconda3\\envs\\py38\\Library\\share\\proj'
+os.environ['GDAL_DATA'] = 'C:\\Users\\sx199\\Anaconda3\\envs\\py38\\Library\\share\\gdal'
 import gdal
 import sys
 import collections
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 import shutil
 import copy
 from scipy.optimize import curve_fit
@@ -488,6 +489,7 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
         if ulx + i * xres < shp_xmax < ulx + (i + 1) * xres:
             out_xmax = (i + 1) * xres + ulx
             ras_xmax_indi = i + 1
+            break
 
     for q in range(ysize):
         if uly - q * yres > shp_ymax > uly - (q + 1) * yres:
@@ -496,12 +498,13 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
         if uly - q * yres > shp_ymin > uly - (q + 1) * yres:
             out_ymin = uly - (q + 1) * yres
             ras_ymax_indi = q + 1
+            break
     
     if out_ymin is None or out_ymax is None or out_xmin is None or out_xmax is None:
         return np.nan
 
     rasterize_Xsize, rasterize_Ysize = int((out_xmax - out_xmin) / xres_min), int((out_ymax - out_ymin) / yres_min)
-    raster_temp = raster[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].toarray().astype(np.float)
+    raster_temp = raster.toarray()[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].astype(np.float64)
     raster_temp = np.broadcast_to(raster_temp[:, None, :, None], (raster_temp.shape[0], factor, raster_temp.shape[1], factor)).reshape(np.int64(factor * raster_temp.shape[0]), np.int64(factor * raster_temp.shape[1]))
 
     if [raster_temp == nodatavalue][0].all():
@@ -511,7 +514,7 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
         raise ValueError('The output raster and rasterise raster are not consistent!')
 
     new_gt = [out_xmin, xres_min, 0, out_ymax, 0, -yres_min]
-    ogr_geom_type = shapely_to_ogr_type(shpfile.type)
+    ogr_geom_type = shapely_to_ogr_type(shpfile.geom_type)
     srs = osr.SpatialReference()
     srs.ImportFromEPSG(epsg_id)
 
@@ -531,32 +534,8 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
     file_temp = gdal.RasterizeLayer(rvds, [1], mem_layer, None, None, burn_values=[1], options=['ALL_TOUCHED=True'])
     info_temp = rvds.GetRasterBand(1).ReadAsArray()
     raster_temp[info_temp == 0] = np.nan
-    if np.sum(~np.isnan(raster_temp)) / np.sum(info_temp == 1) > 0.7:
+    if np.sum(~np.isnan(raster_temp)) / np.sum(info_temp == 1) > 0.5:
         return np.nansum(raster_temp) / np.sum(~np.isnan(raster_temp))
     else:
         return np.nan
-
-
-import concurrent.futures
-
-
-class temp(object):
-
-    def __init__(self):
-        self.dic = {}
-
-    def mp_change_dic(self):
-        with concurrent.futures.ProcessPoolExecutor() as excutor:
-            result = excutor.map(self.change_dic, range(16))
-        a = 1
-
-    def change_dic(self, name):
-        return name
-
-
-if __name__ == '__main__':
-    temp1 = temp()
-    temp1.mp_change_dic()
-
-    c = 1
 

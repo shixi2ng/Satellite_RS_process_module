@@ -1,7 +1,3 @@
-from subprocess import call
-from sentinelsat import SentinelAPI
-import time
-from tqdm import tqdm
 from xml.dom.minidom import parse
 from subprocess import call
 from sentinelsat import SentinelAPI, read_geojson, geojson_to_wkt, LTAError, ServerError

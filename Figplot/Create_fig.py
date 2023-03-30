@@ -830,6 +830,8 @@ def fig5_patent_func():
     fig4_df = pd.DataFrame(data=fig4_dic)
     fig4, ax4 = plt.subplots(figsize=(12, 6.5), constrained_layout=True)
 
+    ax4.yaxis.grid(True, lw=1)
+    ax4.xaxis.grid(True, lw=1)
     ax4.set_axisbelow(True)
     ax4.set_xlim(0, 365)
     ax4.set_ylim(0, 0.8)
