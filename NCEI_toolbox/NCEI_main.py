@@ -11,8 +11,10 @@ from itertools import repeat
 import copy
 import traceback
 import sys
+from utils import shp2raster_idw
+from osgeo import ogr
 
-
+global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
 
 
@@ -29,25 +31,20 @@ class NCEI_ds(object):
         else:
             self.work_env = bf.Path(work_env).path_name
 
-        # key variable
-        self.ROI = None
+        # Init key variable
+        self.ROI, self.ROI_name = None, None
         csv_files = bf.file_filter(file_path, ['.csv'], subfolder_detection=True)
         self.year_range = list(set([int(temp.split('.csv')[0].split('_')[-1]) for temp in csv_files]))
         self.station_list = list(set([int(temp.split('\\')[-1].split('_')[0]) for temp in csv_files]))
-        self.files_content_dic = {}
-        self.valid_inform = []
-        self.index = []
+        self.files_content_dic, self.valid_inform, self.index = {}, [], []
 
         # Define cache folder
-        self.cache_folder = self.work_env + 'cache\\'
-        self.trash_folder = self.work_env + 'trash\\'
+        self.cache_folder, self.trash_folder = self.work_env + 'cache\\', self.work_env + 'trash\\'
         bf.create_folder(self.cache_folder)
         bf.create_folder(self.trash_folder)
 
         # Create output path
-        self.output_path = f'{self.work_env}NCEI_Output\\'
-        self.shpfile_path = f'{self.work_env}shpfile\\'
-        self.log_filepath = f'{self.work_env}logfile\\'
+        self.output_path, self.shpfile_path, self.log_filepath = f'{self.work_env}NCEI_Output\\', f'{self.work_env}shpfile\\', f'{self.work_env}logfile\\'
         bf.create_folder(self.output_path)
         bf.create_folder(self.log_filepath)
         bf.create_folder(self.shpfile_path)
@@ -60,16 +57,16 @@ class NCEI_ds(object):
         self._temporal_div_str = ['year', 'month']
 
         for year in self.year_range:
-            ava_inform_list = []
+            valid_inform_list = []
             self.files_content_dic[year] = []
             current_year_files = bf.file_filter(file_path, ['.csv', str(year)], and_or_factor='and', subfolder_detection=True)
 
             for csv_file_path in current_year_files:
                 df_temp = pd.read_csv(csv_file_path)
                 self.files_content_dic[year].append(df_temp)
-                ava_inform_list.extend(list(df_temp.keys()))
+                valid_inform_list.extend(list(df_temp.keys()))
 
-            self.valid_inform.extend(ava_inform_list)
+            self.valid_inform.extend(valid_inform_list)
 
         self.valid_inform = list(set(self.valid_inform))
 
@@ -190,26 +187,26 @@ class NCEI_ds(object):
         return wrapper
 
     @save_log_file
-    def ds2pointshp(self, zvalue: list, output_path: str):
+    def ds2pointshp(self, zvalue_list: list, output_path: str):
 
         output_path = bf.Path(output_path).path_name
         bf.create_folder(output_path)
 
-        for z in zvalue:
+        for z in zvalue_list:
             if z not in self.valid_inform:
                 raise ValueError(f'The zvalue {str(z)} is not valid!')
 
         index_all = ''
-        for index in zvalue:
+        for index in zvalue_list:
             index_all = f'{index_all}_{str(index)}'
 
-        z_4point = copy.copy(zvalue)
+        basic_inform4point = copy.copy(zvalue_list)
         for z in ['LATITUDE', 'LONGITUDE', 'STATION', 'DATE']:
-            if z not in z_4point:
-                z_4point.append(z)
+            if z not in basic_inform4point:
+                basic_inform4point.append(z)
 
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            executor.map(self._ds2point, self.year_range, repeat(output_path), repeat(z_4point), repeat(index_all))
+            executor.map(self._ds2point, self.year_range, repeat(output_path), repeat(basic_inform4point), repeat(index_all))
 
     def _ds2point(self, year, output_path, z_4point, index_all):
 
@@ -234,7 +231,7 @@ class NCEI_ds(object):
                             else:
                                 z_dic[z].append(current_year_file_content[current_year_file_content['DATE'] == datetime.date.strftime(date, "%Y-%m-%d")][z].values[0])
                         except:
-                            break
+                            raise Exception(f'Fail to construct the attribute table of point feature!')
 
                 geodf_temp = gp.GeoDataFrame(z_dic, geometry=gp.points_from_xy(z_dic['LONGITUDE'], z_dic['LATITUDE']), crs="EPSG:4326")
                 geodf_temp = geodf_temp.to_crs('EPSG:32649')
@@ -245,8 +242,9 @@ class NCEI_ds(object):
                     print(f'Finish generating the shpfile of \033[1;31m{str(datetime.date.strftime(date, "%Y_%m_%d"))}\033[0m in \033[1;34m{str(time.time()-t1)[0:7]}\033[0m s')
 
     @ save_log_file
-    def ds2raster(self, zvalue: list, ROI=None, raster_size=None, ds2ras_method=None):
+    def ds2raster(self, zvalue_list: list, raster_size=None, ds2ras_method=None, bounds=None, ROI=None):
 
+        # Process ds2raster para
         if ds2ras_method is None:
             self._ds2raster_method = 'idw'
         elif ds2ras_method not in self._ds2raster_method_tup:
@@ -256,51 +254,56 @@ class NCEI_ds(object):
 
         if raster_size is None:
             raster_size = [10, 10]
+        elif isinstance(raster_size, list) and len(raster_size) == 2:
+            raster_size = raster_size
+        else:
+            raise TypeError(f'raster size should under the list type!')
 
-        if ds2ras_method == 'idw':
-            output_folder = self.output_path + 'idw_raster\\'
-            bf.create_folder(output_folder)
-            shpfile_folder = output_folder + 'shpfile\\'
-            rasterfile_folder = output_folder + 'idwfile\\'
-            bf.create_folder(shpfile_folder)
+        if isinstance(ROI, str):
+            if not ROI.endswith('.shp'):
+                raise TypeError(f'The ROI should be a valid shpfile!')
+            else:
+                self.ROI = ROI
+                self.ROI_name = self.ROI.split('\\')[-1].split('.')[0]
+        else:
+            raise TypeError(f'The ROI should be a valid shpfile!')
+
+        if isinstance(bounds, list):
+            if len(bounds) != 4 and False in [type(temp) in [float, np.float, int, np.int16] for temp in bounds]:
+                raise TypeError(f'bounds should be under the list type with num-coord in it!')
+        elif bounds is not None:
+            raise TypeError(f'bounds should be under the list type!')
+
+        # Create the point shpfiles
+        shpfile_folder = self.output_path + 'shpfile\\'
+        bf.create_folder(shpfile_folder)
+        self.ds2pointshp(zvalue_list, shpfile_folder)
+
+        for zvalue_temp in zvalue_list:
+
+            # Create output raster folders
+            rasterfile_folder = f'{self.output_path}\\{str(self._ds2raster_method)}_{str(zvalue_temp)}_rsfile\\'
             bf.create_folder(rasterfile_folder)
-            self.ds2pointshp(zvalue, shpfile_folder)
 
+            # Generate output bounds based on the point bounds
+            if bounds is None:
+                shp_temp = ogr.Open(bf.file_filter(shpfile_folder, ['.shp'])[0])
+                bounds = shp_temp.GetLayer(1).GetExtent()
+                bounds = (bounds[0], bounds[1], bounds[2], bounds[3])
+
+            # Retrieve all the point shpfiles
             shpfiles = bf.file_filter(shpfile_folder, ['.shp'])
             if shpfiles == []:
                 raise ValueError(f'There are no valid shp files in the {str(shpfile_folder)}!')
 
-            with concurrent.futures.ProcessPoolExecutor(max_workers=10) as executor:
-                executor.map(self._shp2raster, shpfiles, repeat(rasterfile_folder), repeat(zvalue), repeat(ROI), repeat(raster_size))
+            # Generate the raster
+            if ds2ras_method == 'idw':
 
-    def _shp2raster(self, shpfile: str, output_f: str, zvalue: list, clip_shpfile: str, raster_size: list):
+                with concurrent.futures.ProcessPoolExecutor(max_workers=10) as executor:
+                    executor.map(shp2raster_idw, shpfiles, repeat(rasterfile_folder), repeat(zvalue_temp), repeat(raster_size), repeat(bounds), repeat(self.ROI))
 
-        t1 = time.time()
-        bounds = [374666.34182, 3672978.02321, 1165666.34182, 2863978.02321]
-        width = (bounds[2] - bounds[0]) / (raster_size[0] * 20)
-        height = (bounds[1] - bounds[3]) / (raster_size[1] * 20)
-
-        print(f"Start generating the raster of \033[1;31m{str(shpfile)}\033[0m")
-        for z in zvalue:
-            try:
-                if not os.path.exists(output_f + 'ori\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF'):
-                    bf.create_folder(output_f + 'ori\\')
-                    temp1 = gdal.Grid(output_f + 'ori\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF', shpfile, zfield=z, algorithm='invdist:power=2:min_points=5:max_points=12', outputBounds=bounds, spatFilter=bounds, width=width, height=height, outputType=gdal.GDT_Int16, noData=-32768)
-                    temp1 = None
-
-                if not os.path.exists(output_f + clip_shpfile.split('\\')[-1].split('.')[0] + '\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF') and clip_shpfile is not None and type(clip_shpfile) is str and clip_shpfile.endswith('.shp'):
-                    bf.create_folder(output_f + clip_shpfile.split('\\')[-1].split('.')[0] + '\\')
-                    temp2 = gdal.Warp('/vsimem/' + shpfile.split('\\')[-1].split('.')[0] + '_temp.vrt', output_f + 'ori\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF', resampleAlg=gdal.GRA_NearestNeighbour, xRes=raster_size[0], yRes=raster_size[1],  cropToCutline=True, cutlineDSName=clip_shpfile, outputType=gdal.GDT_Int16, dstNodata=-32768)
-                    temp3 = gdal.Translate(output_f + clip_shpfile.split('\\')[-1].split('.')[0] + '\\' + shpfile.split('\\')[-1].split('.')[0] + '.TIF', '/vsimem/' + shpfile.split('\\')[-1].split('.')[0] + '_temp.vrt', options=topts)
-                    temp2 = None
-                    temp3 = None
-                    gdal.Unlink('/vsimem/' + shpfile.split('\\')[-1].split('.')[0] + '_temp.vrt')
-                # else:
-                #     # Unfinish part
-                #     gdal.Translate(output_f + shpfile.split('\\')[-1].split('.')[0] + '.TIF', '/vsimem/' + shpfile.split('\\')[-1].split('.')[0] + '_temp.TIF', xRes=raster_size[0], yRes=raster_size[1], options=topts)
-            except:
+            else:
                 pass
-        print(f'Finish generating the raster of \033[1;31m{str(shpfile)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
 
     def _process_raster2dc_para(self, **kwargs):
         # Detect whether all the indicators are valid
@@ -312,7 +315,7 @@ class NCEI_ds(object):
 
         # process clipped_overwritten_para
         if 'dc_overwritten_para' in kwargs.keys():
-            if type(kwargs['dc_overwritten_para']) is bool:
+            if isinstance(kwargs['dc_overwritten_para'], bool):
                 self._dc_overwritten_para = kwargs['dc_overwritten_para']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be bool type!')
@@ -321,7 +324,7 @@ class NCEI_ds(object):
 
         # process inherit from logfile
         if 'inherit_from_logfile' in kwargs.keys():
-            if type(kwargs['inherit_from_logfile']) is bool:
+            if isinstance(kwargs['inherit_from_logfile'], bool):
                 self._inherit_from_logfile = kwargs['inherit_from_logfile']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be bool type!')
@@ -356,30 +359,36 @@ class NCEI_ds(object):
             raise TypeError('Please mention the ds2ras_method should be supported!')
 
     @save_log_file
-    def raster2dc(self, temporal_division=None, ROI=None, **kwargs):
+    def raster2dc(self, zvalue_list:list, temporal_division=None, ROI=None, **kwargs):
 
         self._process_raster2dc_para(**kwargs)
 
-        if temporal_division is None:
-            temporal_division = 'year'
+        if temporal_division is not None and isinstance(temporal_division, str):
+            raise TypeError(f'The {temporal_division} should be a str!')
         elif temporal_division not in self._temporal_div_str:
             raise ValueError(f'The {temporal_division} is not supported!')
 
-        if ROI == 'inherit_from_logfile':
-            self._retrieve_para(['ROI'])
-        elif ROI is None:
-            self.ROI = 'ori'
-        else:
+        if ROI is not None:
             self.ROI = ROI
+            self.ROI_name = self.ROI.split('\\')[-1].split('.')[0]
 
-        if temporal_division == 'year':
-            for year in self.year_range:
-                input_folder = ssss
 
+        for zvalue in zvalue_list
         header_dic = {'ROI_name': None, 'index': index, 'Datatype': 'float', 'ROI': None, 'ROI_array': None,
-                      'ROI_tif': None,
-                      'sdc_factor': True, 'coordinate_system': self.main_coordinate_system,
+                      'ROI_tif': None, 'sdc_factor': True, 'coordinate_system': self.main_coordinate_system,
                       'size_control_factor': self._size_control_factor,
                       'oritif_folder': self._dc_infr[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
 
+        if temporal_division == 'year':
+            for year in self.year_range:
+                input_folder =
 
+
+
+    def
+
+if __name__ == '__main__':
+    bounds_ds = bf.raster_ds2bounds('G:\A_veg\S2_all\Sentinel2_L2A_Output\ROI_map\\MYZR_FP_2020_map.TIF')
+    bounds_temp = bf.raster_ds2bounds(bounds_ds)
+    ds_temp = NCEI_ds('G:\A_veg\\NDCI_temperature\\NCEI_19_22\\download\\')
+    ds_temp.ds2raster(['TEMP'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp', ds2ras_method='idw', bounds=bounds_temp)

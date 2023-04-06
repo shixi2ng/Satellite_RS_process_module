@@ -3,61 +3,44 @@ import gdal
 import sys
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import os
 import zipfile
 import shutil
 import scipy.sparse as sp
-from datetime import date
-import rasterio
-import math
 import copy
-import seaborn as sns
-from scipy.optimize import curve_fit
 import time
-from scipy import ndimage
 from basic_function import Path
 import basic_function as bf
-from functools import wraps
 import concurrent.futures
 from itertools import repeat
 from zipfile import ZipFile
 import traceback
-import GEDI_process as gedi
+from GEDI_toolbox import GEDI_main as gedi
 import pywt
 import psutil
 import pickle
-import geopandas as gp
 import sympy
 from scipy import sparse as sm
-from utils import no_nan_mean, log_para, retrieve_srs, write_raster, union_list, remove_all_file_and_folder, create_circle_polygon, extract_value2shpfile
+from utils import retrieve_srs, write_raster, remove_all_file_and_folder, create_circle_polygon, extract_value2shpfile
+from utils import init_annual_index_dc, init_curfit_dc, seven_para_logistic_function, two_term_fourier, curfit4bound_slice
 from built_in_index import built_in_index
-from types import ModuleType, FunctionType
-from copy import deepcopy
 from lxml import etree
 
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
 
+
 # Set np para
 np.seterr(divide='ignore', invalid='ignore')
 
 
-# Convert the mathematical expression into python-readable type
+# Convert the str-type mathematical expression into python-readable type
 def convert_index_func(expr: str):
     f = sympy.sympify(expr)
     dep_list = sorted(f.free_symbols, key=str)
     num_f = sympy.lambdify(dep_list, f)
     return dep_list, num_f
-
-
-def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
-    return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
-
-
-def two_term_fourier(x, a0, a1, b1, a2, b2, w):
-    return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x)+b2 * np.sin(2 * w * x)
 
 
 class NDSparseMatrix:
@@ -86,7 +69,7 @@ class NDSparseMatrix:
 
         if 'SM_namelist' in self.__dict__.keys():
             if self.SM_namelist is not None:
-                if type(self.SM_namelist) is list:
+                if isinstance(self.SM_namelist, list):
                     if len(args) == len(self.SM_namelist):
                         raise ValueError(f'Please make sure the sm name list is consistent with the SM_group')
                 else:
@@ -139,7 +122,7 @@ class NDSparseMatrix:
             if self._matrix_type is None:
                 self._matrix_type = type(sm_matrix)
             else:
-                raise TypeError(f'The new sm_matirx is not under the same type within the 3d sm matrix')
+                raise TypeError(f'The new sm matrix is not under the same type within the 3d sm matrix')
 
         if name is None:
             try:
@@ -196,11 +179,11 @@ class NDSparseMatrix:
             raise ValueError('There are more than one header file！')
         else:
             try:
-                header_file = np.load(file_list[0], allow_pickle=True)
+                header_file = np.load(file_list[0], allow_pickle=True).astype(int)
             except:
                 raise Exception('file cannot be loaded')
 
-        self.SM_namelist = header_file.tolist()
+        self.SM_namelist = np.sort(header_file).tolist()
         self.SM_group = {}
 
         for SM_name in self.SM_namelist:
@@ -232,40 +215,42 @@ class NDSparseMatrix:
                 raise ValueError(f'The {ori_layer_name} cannot be found')
             else:
                 self.SM_group[ori_layer_name] = new_layer
-                self._update_size_para()
         else:
             self.SM_group[ori_layer_name] = new_layer
             self.SM_namelist[self.SM_namelist.index(ori_layer_name)] = new_layer_name
-            self._update_size_para()
+        self._update_size_para()
 
     def remove_layer(self, layer_name):
+
         if layer_name not in self.SM_namelist:
             raise ValueError(f'The {layer_name} cannot be found')
         else:
             self.SM_group.pop(layer_name)
             self.SM_namelist.remove(layer_name)
+        self._update_size_para()
 
     def _understand_range(self, list_temp: list, range_temp: range):
 
         if len(list_temp) == 1:
             if list_temp[0] == 'all':
                 return [min(range_temp), max(range_temp) + 1]
-            elif type(list_temp[0]) is int and list_temp[0] in range_temp:
+            elif (isinstance(list_temp[0], int) or isinstance(list_temp[0], np.int16) or isinstance(list_temp[0], np.int32)) and list_temp[0] in range_temp:
                 return [list_temp[0], list_temp[0] + 1]
             else:
                 raise ValueError('Please input a supported type!')
 
         elif len(list_temp) == 2:
-            if type(list_temp[0]) is int and type(list_temp[1]) is int:
+            if (isinstance(list_temp[0], int) or isinstance(list_temp[0], np.int16) or isinstance(list_temp[0], np.int32)) and (isinstance(list_temp[1], int) or isinstance(list_temp[1], np.int16) or isinstance(list_temp[1], np.int32)):
                 if list_temp[0] in range_temp and list_temp[1] in range_temp and list_temp[0] <= list_temp[1]:
                     return [list_temp[0], list_temp[1] + 1]
             else:
                 raise ValueError('Please input a supported type!')
 
-        elif len(list_temp) >= 2 :
+        elif len(list_temp) >= 2:
             raise ValueError('Please input a supported type!')
 
     def slice_matrix(self, tuple_temp: tuple):
+
         if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
             raise TypeError(f'Please input the index array in a 3D tuple')
         else:
@@ -283,6 +268,84 @@ class NDSparseMatrix:
             array_out = array_temp[rows_range[0]:rows_range[1], cols_range[0]: cols_range[1]]
             output_array[:, :, height - heights_range[0]] = array_out.toarray()
         return output_array
+
+    def extract_matrix(self, tuple_temp: tuple):
+
+        if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
+            raise TypeError(f'Please input the index array in a 3D tuple')
+        else:
+            rows_range = self._understand_range(tuple_temp[0], range(self._rows))
+            cols_range = self._understand_range(tuple_temp[1], range(self._cols))
+            heights_range = self._understand_range(tuple_temp[2], range(self._height))
+
+        try:
+            output_array = copy.deepcopy(self)
+        except MemoryError:
+            return None
+
+        height_temp = 0
+        while height_temp < output_array._height:
+            if height_temp not in range(heights_range[0], heights_range[1]):
+                output_array.remove_layer(output_array.SM_namelist[height_temp])
+                height_temp -= 1
+            else:
+                output_array.SM_group[output_array.SM_namelist[height_temp]] = output_array.SM_group[output_array.SM_namelist[height_temp]][rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]]
+            height_temp += 1
+
+        output_array._cols, output_array._rows = -1, -1
+        output_array._update_size_para()
+
+        if output_array._cols != cols_range[1] - cols_range[0] or output_array._rows != rows_range[1] - rows_range[0] or output_array._height != heights_range[1] - heights_range[0]:
+            raise Exception('Code error for the NDsparsematrix extraction')
+        return output_array
+
+    def _extract_matrix_y1x1zh(self, tuple_temp: tuple, nodata_export= False):
+
+        # tt0, tt1, tt2 = 0, 0, 0
+        # start_time = time.time()
+        if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
+            raise TypeError(f'Please input the index array in a 3D tuple')
+        elif len(tuple_temp[0]) != 1 or len(tuple_temp[1]) != 1:
+            raise TypeError(f'This func is for y1x1zh datacube!')
+        else:
+            heights_range = self._understand_range(tuple_temp[2], range(self._height))
+            rows_extract = tuple_temp[0][0]
+            cols_extract = tuple_temp[1][0]
+        # tt0 += time.time() - start_time
+
+        date_temp, index_temp = [], []
+        for height_temp in range(self._height):
+            if height_temp in range(heights_range[0], heights_range[1]):
+                date_tt = self.SM_namelist[height_temp]
+                temp = self.SM_group[date_tt][rows_extract, cols_extract]
+                if nodata_export:
+                    date_temp.append(date_tt)
+                    index_temp.append(temp)
+                elif not nodata_export and temp != 0 and temp > 0:
+                    date_temp.append(date_tt)
+                    index_temp.append(temp)
+
+        # tt1 += time.time() - start_time
+        year_doy_all = np.array(bf.date2doy(date_temp))
+        date_temp = np.mod(year_doy_all, 1000)
+        index_temp = np.array(index_temp)
+
+        # tt2 += time.time() - start_time
+        # print(f'tt0:{str(tt0)}, tt1:{str(tt1)}, tt2:{str(tt2)}')
+        return date_temp, index_temp, year_doy_all
+
+    def drop_nanlayer(self):
+
+        i = 0
+        while i < len(self.SM_namelist):
+            name = self.SM_namelist[i]
+            if self.SM_group[name].data.shape[0] == 0:
+                self.remove_layer(name)
+                i -= 1
+            i += 1
+        self._update_size_para()
+
+        return self
 
 
 class Sentinel2_ds(object):
@@ -488,7 +551,7 @@ class Sentinel2_ds(object):
 
         #########################################################################
         # Construct the metadata based on the zip file in the ori folders
-        # Whlie the corrupted files will be moved into a trash folder
+        # While the corrupted files will be moved into a trash folder
         #########################################################################
 
         # Start constructing metadata
@@ -817,7 +880,6 @@ class Sentinel2_ds(object):
     def generate_10m_output_bounds(self, tiffile_serial_num, **kwargs):
 
         # Define local var
-        topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
         sensing_date = self.S2_metadata['Sensing_Date'][tiffile_serial_num]
         tile_num = self.S2_metadata['Tile_Num'][tiffile_serial_num]
         VI = 'all_band'
@@ -946,13 +1008,8 @@ class Sentinel2_ds(object):
 
         return index_list
 
-    def subset_tiffiles(self, processed_index_list, tiffile_serial_num, overwritten_para=False, *args, **kwargs):
-        """
-        :type processed_index_list: list
-        :type tiffile_serial_num: int
-        :type overwritten_para: bool
+    def subset_tiffiles(self, processed_index_list: list, tiffile_serial_num: int, overwritten_para: bool = False, *args, **kwargs):
 
-        """
         # subset_tiffiles is the core function in subsetting, resampling, clipping images as well as extracting VI and removing clouds.
         # The argument includes
         # ROI = define the path of a .shp file using for clipping all the sentinel-2 images
@@ -1066,7 +1123,7 @@ class Sentinel2_ds(object):
                                     if array_cube.shape[0] == temp_array.shape[0] and array_cube.shape[1] == temp_array.shape[1]:
                                         array_cube[:, :, combine_index_list.index('QI')] = temp_array
                                     else:
-                                        print('consistency issuse')
+                                        print('consistency issuses')
                                         return
                                 gdal.Unlink('/vsimem/' + file_name + '.TIF')
 
@@ -1085,7 +1142,7 @@ class Sentinel2_ds(object):
                     if array_cube.shape[0] == temp_array.shape[0] and array_cube.shape[1] == temp_array.shape[1]:
                         array_cube[:, :, combine_index_list.index('QI')] = temp_array
                     else:
-                        print('consistency issuse')
+                        print('consistency issuses')
                         return
 
                 # Subset band images
@@ -1213,7 +1270,7 @@ class Sentinel2_ds(object):
                                                                 array_cube.shape[1] == temp_array.shape[1]:
                                                             array_cube[:, :, combine_index_list.index(band_output)] = temp_array
                                                         else:
-                                                            print('consistency issuse')
+                                                            print('consistency issuses')
                                                             return
 
                                                     gdal.Unlink('/vsimem/' + all_band_file_name + '.TIF')
@@ -1234,7 +1291,7 @@ class Sentinel2_ds(object):
                                         if array_cube.shape[0] == temp_array.shape[0] and array_cube.shape[1] == temp_array.shape[1]:
                                             array_cube[:, :, combine_index_list.index(band_output)] = temp_array
                                         else:
-                                            print('consistency issuse')
+                                            print('consistency issuses')
                                             return
 
                             else:
@@ -1267,7 +1324,7 @@ class Sentinel2_ds(object):
                                         if array_cube.shape[0] == temp_array.shape[0] and array_cube.shape[1] == temp_array.shape[1]:
                                             array_cube[:, :, combine_index_list.index('B2')] = temp_array
                                         else:
-                                            print('consistency issuse')
+                                            print('consistency issuses')
                                             return
 
                     if index == 'RGB':
@@ -1336,7 +1393,7 @@ class Sentinel2_ds(object):
                             if array_cube.shape[0] == output_array.shape[0] and array_cube.shape[1] == output_array.shape[1]:
                                 array_cube[:, :, combine_index_list.index(index)] = output_array
                             else:
-                                print('consistency issuse')
+                                print('consistency issuses')
                                 return
 
                     elif self._combine_band_factor and os.path.exists(subset_output_path + file_name + '.TIF'):
@@ -1351,7 +1408,7 @@ class Sentinel2_ds(object):
                         if array_cube.shape[0] == output_array.shape[0] and array_cube.shape[1] == output_array.shape[1]:
                             array_cube[:, :, combine_index_list.index(index)] = output_array
                         else:
-                            print('consistency issuse')
+                            print('consistency issuses')
                             return
                         print(f'copy array to list consumes {str(time.time() - time3)}')
                         gdal.Unlink('/vsimem/' + file_name + '.TIF')
@@ -1789,7 +1846,7 @@ class Sentinel2_ds(object):
         self._dc_infr[index] = self.output_path + f'Sentinel2_{ROI_midname}_datacube\\' + index + '_sequenced_datacube\\'
         bf.create_folder(self._dc_infr[index])
 
-        if len(bf.file_filter(self._dc_infr[index + 'input_path'], [f'{index}.TIF'], and_or_factor='and')) != np.unique(np.array(self.S2_metadata['Sensing_Date'])).shape[0]:
+        if len(bf.file_filter(self._dc_infr[index + 'input_path'], [f'{index}.TIF'], and_or_factor='and', exclude_word_list=['xml', 'aux'])) != np.unique(np.array(self.S2_metadata['Sensing_Date'])).shape[0]:
             raise ValueError(f'{index} of the {self.ROI_name} is not consistent')
 
         print(f'Start output the Sentinel2 dataset of \033[0;31m{index}\033[0m to sequenced datacube.')
@@ -1843,13 +1900,13 @@ class Sentinel2_ds(object):
                                 array_temp = array_temp.GetRasterBand(1).ReadAsArray()
 
                             if self._size_control_factor and index not in band_list:
-                                array_temp = array_temp.astype(np.uint16) + 32768
+                                array_temp = array_temp.astype(int) + 32768
                             elif np.isnan(nodata_value):
                                 array_temp[np.isnan(array_temp)] = 0
                             else:
                                 array_temp[array_temp == nodata_value] = 0
 
-                            sm_temp = sm.coo_matrix(array_temp)
+                            sm_temp = sm.coo_matrix(array_temp.astype(np.uint16))
                             data_cube.append(sm_temp, name=doy_list[i])
                             data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
 
@@ -1959,6 +2016,12 @@ class Sentinel2_dc(object):
         # Check the dcfile path
         self.dc_filepath = bf.Path(dc_filepath).path_name
 
+        # Init key var
+        self.ROI_name, self.ROI, self.ROI_tif = None, None, None
+        self.index, self.Datatype, self.coordinate_system = None, None, None
+        self.dc_group_list, self.tiles = None, None
+        self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
+
         # Check work env
         if work_env is not None:
             self.work_env = Path(work_env).path_name
@@ -1968,7 +2031,7 @@ class Sentinel2_dc(object):
 
         # Define the basic var name
         self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'sdc_factor',
-                             'coordinate_system', 'oritif_folder', 'ds_file', 'sparse_matrix',
+                             'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
                              'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles')
 
         # Read the header file
@@ -2032,7 +2095,7 @@ class Sentinel2_dc(object):
             raise Exception('Something went wrong when reading the datacube!')
 
         # Size calculation and shape definition
-        self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[0], self.dc.shape[1], self.dc.shape[2]
+        self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
 
         print(f'Finish loading the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
@@ -2048,8 +2111,8 @@ class Sentinel2_dc(object):
         output_path = bf.Path(output_path).path_name
 
         header_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI, 'ROI_array': self.ROI_array,
-                      'sdc_factor': self.sdc_factor, 'coordinate_system': self.coordinate_system, 'ds_file': self.ROI_tif,
-                      'size_control_factor': self.size_control_factor, 'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
+                      'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor, 'coordinate_system': self.coordinate_system,
+                      'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix, 'size_control_factor': self.size_control_factor,
                       'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles}
 
         doy = self.sdc_doylist
@@ -2067,6 +2130,11 @@ class Sentinel2_dc(object):
 class Sentinel2_dcs(object):
 
     def __init__(self, *args, work_env: str = None, auto_harmonised: bool = True, space_optimised: bool = True):
+
+        # init_key_var
+        self.sparse_matrix, self.huge_matrix, self.ROI, self.ROI_name, self.sdc_factor = False, False, None, None, False
+        self.doy_list, self.size_control_factor_list, self.oritif_folder_list = [], [], []
+        self.ROI_tif = None
 
         # Generate the datacubes list
         self._dcs_backup_ = []
@@ -2105,6 +2173,7 @@ class Sentinel2_dcs(object):
                     harmonised_factor = True
                 else:
                     raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
+
             # Retrieve the factor
             for factor_temp in self._dcs_backup_[0]._fund_factor:
                 factor_dic[f'{factor_temp}_list'].append(dc_temp.__dict__[factor_temp])
@@ -2122,7 +2191,7 @@ class Sentinel2_dcs(object):
             if len(factor_dic[f'{factor_temp}_list']) != len(factor_dic[f'{self._dcs_backup_[0]._fund_factor[0]}_list']):
                 raise ImportError('The factor of some dcs is not properly imported!')
 
-            if factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'coordinate_system', 'sparse_matrix', 'huge_matrix', 'sdc_factor', 'ds_file', 'dc_group_list', 'tiles']:
+            if factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'coordinate_system', 'sparse_matrix', 'huge_matrix', 'sdc_factor', 'ROI_tif', 'dc_group_list', 'tiles']:
                 if False in [factor_t == factor_dic[f'{factor_temp}_list'][0] for factor_t in factor_dic[f'{factor_temp}_list']]:
                     raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
                 else:
@@ -2179,8 +2248,7 @@ class Sentinel2_dcs(object):
         self._NIPY_overwritten_factor = False
 
         # Define var for phenology metrics generation
-        self._phenology_index_all = ['annual_ave_VI', 'flood_ave_VI', 'unflood_ave_VI', 'max_VI', 'max_VI_doy',
-                                     'bloom_season_ave_VI', 'well_bloom_season_ave_VI']
+        self._phenology_index_all = ['annual_ave_VI', 'flood_ave_VI', 'unflood_ave_VI', 'max_VI', 'max_VI_doy', 'bloom_season_ave_VI', 'well_bloom_season_ave_VI']
         self._curve_fitting_dic = {}
         self._all_quantify_str = None
 
@@ -2206,16 +2274,23 @@ class Sentinel2_dcs(object):
                 if doy not in self._doys_backup_[i]:
                     m_factor = True
                     if not self.sparse_matrix:
-                        self.dcs[i] = np.insert(self.dcs[i], np.argwhere(doy_all == doy).flatten()[0], np.nan * np.zeros([self.dcs_XSize, self.dcs_YSize, 1]), axis=2)
+                        self.dcs[i] = np.insert(self.dcs[i], np.argwhere(doy_all == doy).flatten()[0], np.nan * np.zeros([self.dcs_YSize, self.dcs_XSize, 1]), axis=2)
                     else:
-                        self.dcs[i].append(sm.coo_matrix(np.zeros([self.dcs_XSize, self.dcs_YSize])), name=doy, pos=np.argwhere(doy_all == doy).flatten()[0])
+                        self.dcs[i].append(sm.coo_matrix(np.zeros([self.dcs_YSize, self.dcs_XSize])), name=int(doy), pos=np.argwhere(doy_all == doy).flatten()[0])
             i += 1
 
-        if False in [len(doy_all) == self.dcs[i].shape[2] for i in range(len(self.dcs))]:
+        if False in [doy_all.shape[0] == self.dcs[i].shape[2] for i in range(len(self.dcs))]:
             raise ValueError('The autoharmised is failed')
 
         self.dcs_ZSize = len(doy_all)
-        self.doy_list = doy_all
+        self.doy_list = doy_all.tolist()
+
+        for t in range(len(self._doys_backup_)):
+            self._doys_backup_[t] = self.doy_list
+
+        for tt in self._dcs_backup_:
+            tt.sdc_doylist = self.doy_list
+            tt.dc_ZSize = self.dcs_ZSize
 
     def append(self, dc_temp: Sentinel2_dc) -> None:
         if type(dc_temp) is not Sentinel2_dc:
@@ -2237,6 +2312,16 @@ class Sentinel2_dcs(object):
         self._doys_backup_.append(dc_temp.sdc_doylist)
         self._dcs_backup_.append(dc_temp)
         self._dcs_backup_[-1].dc = None
+
+    def remove(self, index):
+        if index not in self.index_list:
+            raise ValueError(f'The {index} is not in the index list!')
+
+        num = self.index_list.index(index)
+        self.dcs.remove(self.dcs[num])
+        self.size_control_factor_list.remove(self.size_control_factor_list[num])
+        self.oritif_folder_list.remove(self.oritif_folder_list[num])
+        self.index_list.remove(self.index_list[num])
 
     def extend(self, dcs_temp) -> None:
         if type(dcs_temp) is not Sentinel2_dcs:
@@ -2264,7 +2349,7 @@ class Sentinel2_dcs(object):
             elif key_temp == 'overwritten_para' and type(kwargs['overwritten_para']) is bool:
                 self._inundated_ow_para = kwargs['overwritten_para']
 
-    def _inundation_detection(self, method: str, **kwargs):
+    def inundation_detection(self, method: str, **kwargs):
         # process inundation detection method
         self._process_inun_det_para(**kwargs)
 
@@ -2289,56 +2374,56 @@ class Sentinel2_dcs(object):
                             namelist = self.dcs[self.index_list.index('MNDWI')].SM_namelist
                             inundation_sm = NDSparseMatrix()
                             for z_temp in range(self.dcs_ZSize):
-                                inundation_array = self.dcs[self.index_list.index('MNDWI')].SM_group[namelist[z_temp]].toarray()
-                                inundation_array = np.logical_and(inundation_array <= MNDWI_static_thr, inundation_array != 0)
-                                inundation_array = sm.coo_matrix(inundation_array)
+                                inundation_array = self.dcs[self.index_list.index('MNDWI')].SM_group[namelist[z_temp]]
+                                inundation_array.data[inundation_array.data < MNDWI_static_thr] = -1
+                                inundation_array.data[inundation_array.data > MNDWI_static_thr] = 0
+                                inundation_array.data[inundation_array.data == -1] = 1
                                 inundation_sm.append(inundation_array, name=namelist[z_temp])
 
-                            inundation_dc = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')])
+                            inundation_dc = copy.deepcopy(self._dcs_backup_[self.index_list.index('MNDWI')])
                             inundation_dc.dc = inundation_sm
                             inundation_dc.index = 'inundation_' + method
+                            inundation_dc.sdc_doylist = self.doy_list
                             inundation_dc.save(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
 
-                            if self._append_inundated_dc:
-                                self.append(inundation_dc)
-
                         else:
-                            inundation_array = copy.copy(self.dcs[self.index_list.index('MNDWI')])
+                            inundation_array = copy.deepcopy(self.dcs[self.index_list.index('MNDWI')])
                             inundation_array = inundation_array >= MNDWI_static_thr
 
-                            inundation_dc = copy.copy(self._dcs_backup_[self.index_list.index('MNDWI')])
+                            inundation_dc = copy.deepcopy(self._dcs_backup_[self.index_list.index('MNDWI')])
                             inundation_dc.dc = inundation_array
                             inundation_dc.index = 'inundation_' + method
                             inundation_dc.save(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
 
-                            if self._append_inundated_dc:
-                                self.append(inundation_dc)
+                        if self._append_inundated_dc:
+                            self.append(inundation_dc)
+                            self.remove('MNDWI')
                     else:
                         raise ValueError('Please construct a valid datacube with MNDWI sdc inside!')
                 else:
                     inundation_dc = Sentinel2_dc(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
                     self.append(inundation_dc)
+                    self.remove('MNDWI')
                 
         print(f'Finish detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time()-start_time)}\033[0m s!')
 
     def _process_inundation_removal_para(self, **kwargs):
         pass
 
-    def _inundation_removal(self, processed_index, inundation_method, append_new_dc=True, **kwargs):
+    def inundation_removal(self, processed_index, inundation_method, append_new_dc=True, **kwargs):
 
-        # Identify the inundation pixel
-        self._inundation_detection(inundation_method, append_inundated_dc=True, **kwargs)
+        start_time = time.time()
 
         # process arguments
-        inundation_index = 'inundation_' + inundation_method
+        inundation_index =  inundation_method
         self._process_inundation_removal_para(**kwargs)
 
         if processed_index not in self.index_list or inundation_index not in self.index_list:
-            raise ValueError('The inudnation removal or vegetaion index is not properly generated!')
+            raise ValueError('The inundation removal or index is not properly generated!')
 
         inundation_dc = self.dcs[self.index_list.index(inundation_index)]
-        processed_dc = copy.copy(self.dcs[self.index_list.index(processed_index)])
-        processed_dc4save = copy.copy(self._dcs_backup_[self.index_list.index(processed_index)])
+        processed_dc = copy.deepcopy(self.dcs[self.index_list.index(processed_index)])
+        processed_dc4save = copy.deepcopy(self._dcs_backup_[self.index_list.index(processed_index)])
         
         if not os.path.exists(self.work_env + processed_index + '_noninun_sequenced_datacube\\header.npy'):
             bf.create_folder(self.work_env + processed_index + '_noninun_sequenced_datacube\\')
@@ -2346,6 +2431,17 @@ class Sentinel2_dcs(object):
 
                 for height in range(self.dcs_ZSize):
                     processed_dc.SM_group[processed_dc.SM_namelist[height]] = processed_dc.SM_group[processed_dc.SM_namelist[height]].multiply(inundation_dc.SM_group[inundation_dc.SM_namelist[height]])
+
+                # if self._remove_nan_layer or self._manually_remove_para:
+                #     i_temp = 0
+                #     while i_temp < len(doy_list):
+                #         if data_valid_array[i_temp]:
+                #             if doy_list[i_temp] in data_cube.SM_namelist:
+                #                 data_cube.remove_layer(doy_list[i_temp])
+                #             doy_list.remove(doy_list[i_temp])
+                #             data_valid_array = np.delete(data_valid_array, i_temp, 0)
+                #             i_temp -= 1
+                #         i_temp += 1
 
                 processed_index = processed_index + '_noninun'
                 processed_dc4save.index = processed_index
@@ -2358,7 +2454,10 @@ class Sentinel2_dcs(object):
                pass
         else:
             processed_dc = Sentinel2_dc(self.work_env + processed_index + '_noninun_sequenced_datacube\\')
-            self.append(processed_dc)
+            if append_new_dc:
+                self.append(processed_dc)
+
+        print(f'Finish remove the inundation area of the \033[1;34m{processed_index}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0m s!')
 
     def _process_curve_fitting_para(self, **kwargs):
 
@@ -2371,12 +2470,12 @@ class Sentinel2_dcs(object):
         if self._curve_fitting_algorithm is None or self._curve_fitting_algorithm == 'seven_para_logistic':
             self._curve_fitting_dic['CFM'] = 'SPL'
             self._curve_fitting_dic['para_num'] = 7
-            self._curve_fitting_dic['initial_para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
+            self._curve_fitting_dic['initial_para_ori'] = [0.4, 0.55, 108.2, 7.596, 280.4, 7.473, 0.00225]
             self._curve_fitting_dic['initial_para_boundary'] = (
-                [0, 0.3, 0, 3, 180, 3, 0.00001], [0.5, 1, 180, 17, 330, 17, 0.01])
+                [0, 0.1, 0, 3, 180, 3, 0.0001], [0.8, 1, 180, 17, 330, 17, 0.01])
             self._curve_fitting_dic['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
             self._curve_fitting_dic['para_boundary'] = (
-                [0.08, 0.7, 90, 6.2, 285, 4.5, 0.0015], [0.20, 1.0, 130, 11.5, 330, 8.8, 0.0028])
+                [0.08, 0.0, 50, 6.2, 285, 4.5, 0.0015], [0.20, 0.8, 130, 11.5, 350, 8.8, 0.0028])
             self._curve_fitting_algorithm = seven_para_logistic_function
         elif self._curve_fitting_algorithm == 'two_term_fourier':
             self._curve_fitting_dic['CFM'] = 'TTF'
@@ -2405,12 +2504,19 @@ class Sentinel2_dcs(object):
         # Process paras
         self._process_curve_fitting_para(**kwargs)
 
-        # Define the vi dc
+        # Get the index/doy dc
         index_dc = copy.copy(self.dcs[self.index_list.index(index)])
         doy_dc = copy.copy(self.doy_list)
+        doy_all = np.mod(doy_dc, 1000)
+        size_control_fac = self.size_control_factor_list[self.index_list.index(index)]
+
+        # Define the study region
+        sa_map = np.load(self.ROI_array)
+        pos_df = pd.DataFrame(np.argwhere(sa_map != -32768), columns=['y', 'x'])
+        pos_df = pos_df.sort_values(['x', 'y'], ascending=[True, True])
+        pos_df = pos_df.reset_index()
 
         # Create output path
-        sa_map = np.load(self.ROI_array)
         curfit_output_path = self.work_env + index + '_curfit_datacube\\'
         output_path = curfit_output_path + str(self._curve_fitting_dic['CFM']) + '\\'
         bf.create_folder(curfit_output_path)
@@ -2418,241 +2524,50 @@ class Sentinel2_dcs(object):
         self._curve_fitting_dic[str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = output_path
 
         # Generate the initial parameter
-        if not os.path.exists(output_path + 'para_boundary.npy'):
-            doy_all_s = np.mod(doy_dc, 1000)
-            for y_t in range(index_dc.shape[0]):
-                for x_t in range(index_dc.shape[1]):
-                    if sa_map[y_t, x_t] != -32768:
+        if not os.path.exists(output_path + 'curfit_all.csv'):
 
-                        if self.sparse_matrix:
-                            vi_all = index_dc.slice_matrix(([y_t], [x_t], ['all'])).flatten()
-                        else:
-                            vi_all = index_dc[y_t, x_t, :].flatten()
+            if self.huge_matrix:
 
-                        if self.size_control_factor_list[self.index_list.index(index)]:
-                            vi_all = vi_all / 10000
+                # Slice into several tasks/blocks to use all cores
+                work_num = os.cpu_count()
+                doy_all_list, pos_list,  xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(np.ceil(pos_df.shape[0] / work_num))
+                for i_size in range(work_num):
+                    if i_size != work_num - 1:
+                        pos_list.append(pos_df[indi_size * i_size: indi_size * (i_size + 1)])
+                    else:
+                        pos_list.append(pos_df[indi_size * i_size: -1])
 
-                        doy_all = copy.copy(doy_all_s)
-                        vi_index = 0
-                        while vi_index < vi_all.shape[0]:
-                            if not self.sparse_matrix and np.isnan(vi_all[vi_index]):
-                                vi_all = np.delete(vi_all, vi_index)
-                                doy_all = np.delete(doy_all, vi_index)
-                                vi_index -= 1
-                            elif self.sparse_matrix and vi_all[vi_index] == 0:
-                                vi_all = np.delete(vi_all, vi_index)
-                                doy_all = np.delete(doy_all, vi_index)
-                                vi_index -= 1
-                            vi_index += 1
+                    index_size_list.append([int(max(0, pos_list[-1]['y'].min())), int(min(sa_map.shape[0], pos_list[-1]['y'].max())), int(max(0, pos_list[-1]['x'].min())), int(min(sa_map.shape[1], pos_list[-1]['x'].max()))])
+                    xy_offset_list.append([int(max(0, pos_list[-1]['y'].min())), int(max(0, pos_list[-1]['x'].min()))])
 
-                        if doy_all.shape[0] >= 7:
-                            paras, extras = curve_fit(self._curve_fitting_algorithm, doy_all, vi_all, maxfev=500000, p0=self._curve_fitting_dic['initial_para_ori'], bounds=self._curve_fitting_dic['initial_para_boundary'])
-                            self._curve_fitting_dic[str(x_t) + '_' + str(y_t) + '_para_ori'] = paras
-                            vi_dormancy, doy_dormancy, vi_max, doy_max = [], [], [], []
-                            doy_index_max = np.argmax(self._curve_fitting_algorithm(np.linspace(0, 366, 365), paras[0], paras[1], paras[2],paras[3], paras[4], paras[5], paras[6]))
+                    if self.sparse_matrix:
+                        dc_temp = index_dc.extract_matrix(([index_size_list[-1][0], index_size_list[-1][1]], [index_size_list[-1][2], index_size_list[-1][3]], ['all']))
+                        index_dc_list.append(dc_temp.drop_nanlayer())
+                        doy_all_list.append(bf.date2doy(index_dc_list[-1].SM_namelist))
+                    else:
+                        index_dc_list.append(index_dc[index_size_list[-1][0]: index_size_list[-1][2], index_size_list[-1][1]: index_size_list[-1][3], :])
 
-                            # Generate the parameter boundary
-                            senescence_t = paras[4] - 4 * paras[5]
-                            for doy_index in range(doy_all.shape[0]):
-                                if 0 < doy_all[doy_index] < paras[2] or paras[4] < doy_all[doy_index] < 366:
-                                    vi_dormancy.append(vi_all[doy_index])
-                                    doy_dormancy.append(doy_all[doy_index])
-                                if doy_index_max - 5 < doy_all[doy_index] < doy_index_max + 5:
-                                    vi_max.append(vi_all[doy_index])
-                                    doy_max.append(doy_all[doy_index])
+                with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as executor:
+                    result = executor.map(curfit4bound_slice, pos_list, index_dc_list, doy_all_list, repeat(self._curve_fitting_dic), repeat(self.sparse_matrix), repeat(size_control_fac), xy_offset_list)
 
-                            if vi_max == []:
-                                vi_max = [np.max(vi_all)]
-                                doy_max = [doy_all[np.argmax(vi_all)]]
+                result_list = list(result)
 
-                            itr = 5
-                            while itr < 10:
-                                doy_senescence, vi_senescence = [], []
-                                for doy_index in range(doy_all.shape[0]):
-                                    if senescence_t - itr < doy_all[doy_index] < senescence_t + itr:
-                                        vi_senescence.append(vi_all[doy_index])
-                                        doy_senescence.append(doy_all[doy_index])
-                                if doy_senescence != [] and vi_senescence != []:
-                                    break
-                                else:
-                                    itr += 1
+            else:
+                result_list = []
+                for pos in pos_df:
+                    result_list.append(curfit4bound_slice(pos, doy_all, self._curve_fitting_dic, self.sparse_matrix, size_control_fac))
 
-                            # define the para1
-                            if vi_dormancy != []:
-                                vi_dormancy_sort = np.sort(vi_dormancy)
-                                vi_max_sort = np.sort(vi_max)
-                                paras1_max = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.95))]
-                                paras1_min = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.05))]
-                                paras1_max = min(paras1_max, 0.5)
-                                paras1_min = max(paras1_min, 0)
-                            else:
-                                paras1_max, paras1_min= 0.5, 0
-
-                            # define the para2
-                            paras2_max = vi_max[-1] - paras1_min
-                            paras2_min = vi_max[0] - paras1_max
-                            if paras2_min < 0.2:
-                                paras2_min = 0.2
-                            if paras2_max > 0.7 or paras2_max < 0.2:
-                                paras2_max = 0.7
-
-                            # define the para3
-                            paras3_max = 0
-                            for doy_index in range(len(doy_all)):
-                                if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] < 180:
-                                    paras3_max = max(float(paras3_max), doy_all[doy_index])
-
-                            paras3_min = 180
-                            for doy_index in range(len(doy_all)):
-                                if vi_all[doy_index] > paras1_max:
-                                    paras3_min = min(paras3_min, doy_all[doy_index])
-
-                            if paras3_min > paras[2] or paras3_min < paras[2] - 15:
-                                paras3_min = paras[2] - 15
-
-                            if paras3_max < paras[2] or paras3_max > paras[2] + 15:
-                                paras3_max = paras[2] + 15
-
-                            # define the para5
-                            paras5_max = 0
-                            for doy_index in range(len(doy_all)):
-                                if vi_all[doy_index] > paras1_max:
-                                    paras5_max = max(paras5_max, doy_all[doy_index])
-                            paras5_min = 365
-                            for doy_index in range(len(doy_all)):
-                                if paras1_min < vi_all[doy_index] < paras1_max and doy_all[doy_index] > 180:
-                                    paras5_min = min(paras5_min, doy_all[doy_index])
-                            if paras5_min > paras[4] or paras5_min < paras[4] - 15:
-                                paras5_min = paras[4] - 15
-
-                            if paras5_max < paras[4] or paras5_max > paras[4] + 15:
-                                paras5_max = paras[4] + 15
-
-                            # define the para 4
-                            if len(doy_max) != 1:
-                                paras4_max = (np.nanmax(doy_max) - paras3_min) / 4
-                                paras4_min = (np.nanmin(doy_max) - paras3_max) / 4
-                            else:
-                                paras4_max = (np.nanmax(doy_max) + 5 - paras3_min) / 4
-                                paras4_min = (np.nanmin(doy_max) - 5 - paras3_max) / 4
-                            paras4_min = max(3, paras4_min)
-                            paras4_max = min(17, paras4_max)
-                            if paras4_min > 17:
-                                paras4_min = 3
-                            if paras4_max < 3:
-                                paras4_max = 17
-                            paras6_max = paras4_max
-                            paras6_min = paras4_min
-                            if doy_senescence == [] or vi_senescence == []:
-                                paras7_max = 0.01
-                                paras7_min = 0.00001
-                            else:
-                                paras7_max = (np.nanmax(vi_max) - np.nanmin(vi_senescence)) / (
-                                            doy_senescence[np.argmin(vi_senescence)] - doy_max[np.argmax(vi_max)])
-                                paras7_min = (np.nanmin(vi_max) - np.nanmax(vi_senescence)) / (
-                                            doy_senescence[np.argmax(vi_senescence)] - doy_max[np.argmin(vi_max)])
-                            if np.isnan(paras7_min):
-                                paras7_min = 0.00001
-                            if np.isnan(paras7_max):
-                                paras7_max = 0.01
-                            paras7_max = min(paras7_max, 0.01)
-                            paras7_min = max(paras7_min, 0.00001)
-                            if paras7_max < 0.00001:
-                                paras7_max = 0.01
-                            if paras7_min > 0.01:
-                                paras7_min = 0.00001
-                            if paras1_min > paras[0]:
-                                paras1_min = paras[0] - 0.01
-                            if paras1_max < paras[0]:
-                                paras1_max = paras[0] + 0.01
-                            if paras2_min > paras[1]:
-                                paras2_min = paras[1] - 0.01
-                            if paras2_max < paras[1]:
-                                paras2_max = paras[1] + 0.01
-                            if paras3_min > paras[2]:
-                                paras3_min = paras[2] - 1
-                            if paras3_max < paras[2]:
-                                paras3_max = paras[2] + 1
-                            if paras4_min > paras[3]:
-                                paras4_min = paras[3] - 0.1
-                            if paras4_max < paras[3]:
-                                paras4_max = paras[3] + 0.1
-                            if paras5_min > paras[4]:
-                                paras5_min = paras[4] - 1
-                            if paras5_max < paras[4]:
-                                paras5_max = paras[4] + 1
-                            if paras6_min > paras[5]:
-                                paras6_min = paras[5] - 0.5
-                            if paras6_max < paras[5]:
-                                paras6_max = paras[5] + 0.5
-                            if paras7_min > paras[6]:
-                                paras7_min = paras[6] - 0.00001
-                            if paras7_max < paras[6]:
-                                paras7_max = paras[6] + 0.00001
-                            self._curve_fitting_dic['para_boundary_' + str(y_t) + '_' + str(x_t)] = (
-                            [paras1_min, paras2_min, paras3_min, paras4_min, paras5_min, paras6_min, paras7_min],
-                            [paras1_max, paras2_max, paras3_max, paras4_max, paras5_max, paras6_max, paras7_max])
-                            self._curve_fitting_dic['para_ori_' + str(y_t) + '_' + str(x_t)] = [paras[0], paras[1],
-                                                                                                paras[2], paras[3],
-                                                                                                paras[4], paras[5],
-                                                                                                paras[6]]
-            np.save(output_path + 'para_boundary.npy', self._curve_fitting_dic)
-        else:
-            self._curve_fitting_dic = np.load(output_path + 'para_boundary.npy', allow_pickle=True).item()
-
-        # Generate the year list
-        if not os.path.exists(output_path + 'annual_cf_para.npy') or not os.path.exists(output_path + 'year.npy'):
-            year_list = np.sort(np.unique(doy_dc // 1000))
-            annual_cf_para_dic = {}
-            for year in year_list:
-                year = int(year)
-                annual_para_dc = np.zeros([self.dcs_XSize, self.dcs_YSize, self._curve_fitting_dic['para_num'] + 1])
-
-                if self.sparse_matrix:
-                    annual_vi = index_dc.slice_matrix((['all'], ['all'], [np.min(np.argwhere(doy_dc // 1000 == year)), np.max(np.argwhere(doy_dc // 1000 == year)) + 1]))
+            # Integrate all the result into the para dict
+            self._para_bound = None
+            for result_temp in result_list:
+                if self._para_bound is None:
+                    self._para_bound = copy.copy(self._para_bound)
                 else:
-                    annual_vi = index_dc[:, :, np.min(np.argwhere(doy_dc // 1000 == year)): np.max(np.argwhere(doy_dc // 1000 == year)) + 1]
+                    self._para_bound = pd.concat([self._para_bound, result_temp])
 
-                if self.size_control_factor_list[self.index_list.index(index)]:
-                    annual_vi = annual_vi / 10000
-
-                annual_doy = doy_dc[np.min(np.argwhere(doy_dc // 1000 == year)): np.max(np.argwhere(doy_dc // 1000 == year)) + 1]
-                annual_doy = np.mod(annual_doy, 1000)
-
-                for y_temp in range(annual_vi.shape[0]):
-                    for x_temp in range(annual_vi.shape[1]):
-                        if sa_map[y_temp, x_temp] != -32768:
-                            vi_temp = annual_vi[y_temp, x_temp, :]
-
-                            if not self.sparse_matrix:
-                                nan_index = np.argwhere(np.isnan(vi_temp))
-                                vi_temp = np.delete(vi_temp, nan_index)
-                                doy_temp = np.delete(annual_doy, nan_index)
-                            elif self.sparse_matrix:
-                                zero_index = np.argwhere(vi_temp == 0)
-                                vi_temp = np.delete(vi_temp, zero_index)
-                                doy_temp = np.delete(annual_doy, zero_index)
-
-                            if np.sum(~np.isnan(vi_temp)) >= self._curve_fitting_dic['para_num']:
-                                try:
-                                    paras, extras = curve_fit(self._curve_fitting_algorithm, doy_temp, vi_temp, maxfev=50000,
-                                                              p0=self._curve_fitting_dic['para_ori_' + str(y_temp) + '_' + str(x_temp)],
-                                                              bounds=self._curve_fitting_dic['para_boundary_' + str(y_temp) + '_' + str(x_temp)])
-                                    predicted_y_data = self._curve_fitting_algorithm(doy_temp, paras[0], paras[1],
-                                                                                     paras[2], paras[3], paras[4],
-                                                                                     paras[5], paras[6])
-                                    R_square = (1 - np.sum((predicted_y_data - vi_temp) ** 2) / np.sum(
-                                        (vi_temp - np.mean(vi_temp)) ** 2))
-                                    annual_para_dc[y_temp, x_temp, :] = np.append(paras, R_square)
-                                except:
-                                    pass
-                            else:
-                                annual_para_dc[y_temp, x_temp, :] = np.nan
-                        else:
-                            annual_para_dc[y_temp, x_temp, :] = np.nan
-                annual_cf_para_dic[str(year) + '_cf_para'] = annual_para_dc
-            np.save(output_path + 'annual_cf_para.npy', annual_cf_para_dic)
-            np.save(output_path + 'year.npy', year_list)
+            self._para_bound.to_csv(output_path + 'curfit_all.csv')
+        else:
+            self._para_bound = pd.read_csv(output_path + 'curfit_all.csv')
 
     def _process_phenology_metrics_para(self, **kwargs):
 
@@ -2762,7 +2677,7 @@ class Sentinel2_dcs(object):
 
                 # Generate the phenology metrics
                 for phenology_index_temp in phenology_index:
-                    phe_metrics = np.zeros([self.dcs_XSize, self.dcs_YSize])
+                    phe_metrics = np.zeros([self.dcs_YSize, self.dcs_XSize])
                     phe_metrics[sa_map == -32768] = np.nan
 
                     if not os.path.exists(phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
@@ -2806,7 +2721,7 @@ class Sentinel2_dcs(object):
     def _process_link_GEDI_S2_para(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('retrieval_method'):
+            if kwarg_indicator != 'retrieval_method':
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clipped_overwritten_para
@@ -2823,84 +2738,88 @@ class Sentinel2_dcs(object):
         # Two different method0 Nearest data and linear interpolation
         self._process_link_GEDI_S2_para(**kwargs)
 
-        # Retrieve GEDI inform
-        self.GEDI_list = gedi.GEDI_list(GEDI_xlsx_file)
-
         # Retrieve the S2 inform
-        raster_gt = gdal.Open(self.ds_file).GetGeoTransform()
+        raster_gt = gdal.Open(self.ROI_tif).GetGeoTransform()
+        raster_proj = retrieve_srs(gdal.Open(self.ROI_tif))
 
-        dc_dic = {}
+        # Retrieve GEDI inform
+        GEDI_list = gedi.GEDI_list(GEDI_xlsx_file)
+        GEDI_list.reprojection(raster_proj, name='EPSG')
+
         for index_temp in index_list:
 
             if index_temp not in self.index_list:
                 raise Exception(f'The {str(index_temp)} is not a valid index or is not inputted into the dcs!')
 
-            if self._GEDI_link_S2_retrieval_method == 'nearest_neighbor':
-                self.GEDI_list.GEDI_df.insert(loc=len(self.GEDI_list.GEDI_df.columns), column=f'S2_nearest_{index_temp}_value', value=np.nan)
-                self.GEDI_list.GEDI_df.insert(loc=len(self.GEDI_list.GEDI_df.columns), column=f'S2_nearest_{index_temp}_date', value=np.nan)
-            elif self._GEDI_link_S2_retrieval_method == 'linear_interpolation':
-                self.GEDI_list.GEDI_df.insert(loc=len(self.GEDI_list.GEDI_df.columns), column=f'S2_{index_temp}_linear_interpolation', value=np.nan)
-                self.GEDI_list.GEDI_df.insert(loc=len(self.GEDI_list.GEDI_df.columns), column=f'S2_{index_temp}_linear_interpolation_reliability', value=np.nan)
-            dc_dic[index_temp] = self._dcs_backup_[self.index_list.index(index_temp)].dc
+            # Divide the GEDI and dc into different blocks
+            block_amount = os.cpu_count()
+            indi_block_size = int(np.ceil(GEDI_list.df_size / block_amount))
 
-        data_num = [num_temp for num_temp in range(self.GEDI_list.df_size)]
+            # Allocate the GEDI_list and dc
+            GEDI_list_blocked, dc_blocked, raster_gt_list, doy_list_temp = [], [], [], []
+            for i in range(block_amount):
+                if i != block_amount - 1:
+                    GEDI_list_blocked.append(GEDI_list.GEDI_df[i * indi_block_size: (i + 1) * indi_block_size])
+                else:
+                    GEDI_list_blocked.append(GEDI_list.GEDI_df[i * indi_block_size: -1])
 
-        ### Since the dc_dic was too big for most conditions, it will be defined as a global var,
-        ### py3.8 or higher version is required by announcing the dc_dc as a global variable before the mp process
+                ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_list_blocked[-1].EPSG_lat.max() + 12.5, GEDI_list_blocked[-1].EPSG_lat.min() - 12.5, GEDI_list_blocked[-1].EPSG_lon.min() - 12.5, GEDI_list_blocked[-1].EPSG_lon.max() + 12.5
+                cube_ymin, cube_ymax, cube_xmin, cube_xmax = int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))), int(min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5]))), int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))), int(min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1])))
 
-        # Calculate the chunk size based on memory
-        mem = psutil.virtual_memory()[1]
-        dcs_mem = self.__sizeof__()
-        work_num = int(np.floor(mem/dcs_mem)) - 1
-        try:
-            with concurrent.futures.ProcessPoolExecutor(initializer=init_globe, initargs=(self.dcs,), max_workers=work_num) as executor:
-                lat_temp, lon_temp, date_temp, doy_temp = list(self.GEDI_list.GEDI_df['Latitude']), list(self.GEDI_list.GEDI_df['Longitude']),list(self.GEDI_list.GEDI_df['Date']), bf.date2doy(self.doy_list)
-                result = executor.map(link_GEDI_inform, data_num, lat_temp, lon_temp, date_temp, repeat(doy_temp), repeat(raster_gt), repeat(index_list), repeat(self.GEDI_list.df_size), repeat(self._GEDI_link_S2_retrieval_method), repeat(self.sparse_matrix), repeat(self.index_list))
-        except MemoryError:
-            work_num = int(np.floor(mem / dcs_mem)) - 1
-            with concurrent.futures.ProcessPoolExecutor(initializer=init_globe, initargs=(self.dcs,), max_workers=work_num) as executor:
-                lat_temp, lon_temp, date_temp, doy_temp = list(self.GEDI_list.GEDI_df['Latitude']), list(self.GEDI_list.GEDI_df['Longitude']), list(self.GEDI_list.GEDI_df['Date']), bf.date2doy(self.doy_list)
-                result = executor.map(link_GEDI_inform, data_num, lat_temp, lon_temp, date_temp, repeat(doy_temp), repeat(raster_gt), repeat(index_list), repeat(self.GEDI_list.df_size), repeat(self._GEDI_link_S2_retrieval_method), repeat(self.sparse_matrix), repeat(self.index_list))
+                if self.sparse_matrix:
+                    sm_temp = self.dcs[self.index_list.index(index_temp)].extract_matrix(([cube_ymin, cube_ymax], [cube_xmin, cube_xmax], ['all']))
+                    dc_blocked.append(sm_temp.drop_nanlayer())
+                    doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
+                else:
+                    dc_blocked.append(self.dcs[self.index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
+                    doy_list_temp.append(bf.date2doy(self.doy_list))
+                raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2], raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
 
-        try:
-            result = list(result)
-            index_combined_name = '_'
-            index_combined_name = index_combined_name.join(index_list)
-            for result_temp in result:
-                for index_temp in index_list:
-                    try:
-                        self.GEDI_list.GEDI_df.loc[result_temp['id'], (f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}')] = result_temp[index_temp]
-                        self.GEDI_list.GEDI_df.loc[result_temp['id'], (f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}_reliability')] = result_temp[index_temp + '_reliability']
-                    except:
-                        self.GEDI_list.GEDI_df.loc[result_temp['id'], (f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}')] = np.nan
-                        self.GEDI_list.GEDI_df.loc[result_temp['id'], (f'S2_{index_temp}_{self._GEDI_link_S2_retrieval_method}_reliability')] = np.nan
+            try:
+                # Sequenced code for debug
+                # for i in range(block_amount):
+                #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(self.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', self.size_control_factor_list[self.index_list.index(index_temp)])
+                with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
+                    result = executor.map(link_GEDI_inform, dc_blocked, GEDI_list_blocked, doy_list_temp, raster_gt_list, repeat('EPSG'), repeat(index_temp), repeat('linear_interpolation'), repeat(self.size_control_factor_list[self.index_list.index(index_temp)]))
+            except:
+                raise Exception('The link procedure was interrupted by error!')
 
-            self.GEDI_list.save(GEDI_xlsx_file.split('.')[0] + f'_{index_combined_name}.csv')
-        except:
-            a = 1
+            try:
+                result = list(result)
+                index_combined_name = '_'
+                index_combined_name = index_combined_name.join(index_list)
+                gedi_list_output = None
+
+                for result_temp in result:
+                    if gedi_list_output is None:
+                        gedi_list_output = copy.copy(result_temp)
+                    else:
+                        gedi_list_output = pd.concat([gedi_list_output, result_temp])
+
+                gedi_list_output.to_csv(GEDI_xlsx_file.split('.')[0] + f'_{index_combined_name}.csv')
+            except:
+                raise Exception('The df output procedure was interrupted by error!')
 
 
-def init_globe(var):
-    global dc4link_GEDI
-    dc4link_GEDI = var
+def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GEDI_link_S2_retrieval_method, size_control_factor, search_window: int = 40):
 
-def link_GEDI_inform(*args, search_window:int = 40):
-    [i, lat, lon, date_temp, doy_list, raster_gt, index_list, df_size, GEDI_link_S2_retrieval_method, sparse_matrix, index_all] = [args[i] for i in range(11)]
+    df_size = gedi_list.shape[0]
+    furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
+    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2_{index_name}_{GEDI_link_S2_retrieval_method}', value=np.nan)
+    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability', value=np.nan)
+    sparse_matrix = True if isinstance(dc, NDSparseMatrix) else False
+    gedi_list = gedi_list.reset_index()
 
-    # Reprojection
-    point_temp = gp.points_from_xy([lon], [lat], crs='epsg:4326')
-    point_temp = point_temp.to_crs(crs='epsg:32649')
-    point_coords = [point_temp[0].coords[0][0], point_temp[0].coords[0][1]]
+    # itr through the gedi_list
+    for i in range(df_size):
+        lat, lon, date_temp = gedi_list[furlat][i], gedi_list[furlon][i], gedi_list['Date'][i]
 
-    # Draw a circle around the central point
-    polygon = create_circle_polygon(point_coords, 25)
-    index_dic = {'id': i}
-
-    for index_temp in index_list:
+        # Draw a circle around the central point
+        point_coords = [lon, lat]
+        polygon = create_circle_polygon(point_coords, 25)
 
         t1 = time.time()
-        print(f'Start linking the {index_temp} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
-        index_num = index_all.index(index_temp)
+        print(f'Start linking the {index_name} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
 
         if GEDI_link_S2_retrieval_method == 'nearest_neighbor':
             # Link GEDI and S2 inform using nearest_neighbor
@@ -2909,126 +2828,67 @@ def link_GEDI_inform(*args, search_window:int = 40):
         elif GEDI_link_S2_retrieval_method == 'linear_interpolation':
 
             # Link GEDI and S2 inform using linear_interpolation
-            data_postive, date_postive, data_negative, date_negative = None, None, None, None
-            index_dic[index_temp] = np.nan
-            index_dic[index_temp + '_reliability'] = np.nan
+            data_positive, date_positive, data_negative, date_negative = None, None, None, None
+            gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = np.nan
+            gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = np.nan
 
             for date_interval in range(search_window):
                 if date_interval == 0 and date_interval + date_temp in doy_list:
-                    array_temp = dc4link_GEDI[index_num].SM_group[bf.doy2date(date_temp)]
                     if sparse_matrix:
+                        array_temp = dc.SM_group[bf.doy2date(date_temp)]
                         info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-                        info_temp = (float(info_temp) - 32768) / 10000
+
+                        if size_control_factor:
+                            info_temp = (float(info_temp) - 32768) / 10000
+                        else:
+                            info_temp = float(info_temp)
 
                     if ~np.isnan(info_temp):
-                        index_dic[index_temp] = info_temp
-                        index_dic[index_temp + '_reliability'] = 1
+                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = info_temp
+                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = 1
                         break
 
                 else:
                     if data_negative is None and date_temp - date_interval in doy_list:
                         date_temp_temp = date_temp - date_interval
-                        array_temp = dc4link_GEDI[index_num].SM_group[bf.doy2date(date_temp_temp)]
                         if sparse_matrix:
+                            array_temp = dc.SM_group[bf.doy2date(date_temp_temp)]
                             info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-                            info_temp = (float(info_temp) - 32768) / 10000
+
+                            if size_control_factor:
+                                info_temp = (float(info_temp) - 32768) / 10000
+                            else:
+                                info_temp = float(info_temp)
 
                         if ~np.isnan(info_temp):
                             data_negative = info_temp
                             date_negative = date_temp_temp
 
-                    if data_postive is None and date_temp + date_interval in doy_list:
+                    if data_positive is None and date_temp + date_interval in doy_list:
                         date_temp_temp = date_temp + date_interval
-                        array_temp = dc4link_GEDI[index_num].SM_group[bf.doy2date(date_temp_temp)]
                         if sparse_matrix:
+                            array_temp = dc.SM_group[bf.doy2date(date_temp_temp)]
                             info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-                            info_temp = (float(info_temp) - 32768) / 10000
+
+                            if size_control_factor:
+                                info_temp = (float(info_temp) - 32768) / 10000
+                            else:
+                                info_temp = float(info_temp)
 
                         if ~np.isnan(info_temp):
-                            data_postive = info_temp
-                            date_postive = date_temp_temp
+                            data_positive = info_temp
+                            date_positive = date_temp_temp
 
-                    if data_postive is not None and data_negative is not None:
-                        index_dic[index_temp] = data_negative + (date_temp - date_negative) * (data_postive - data_negative) / (date_postive - date_negative)
-                        index_dic[index_temp + '_reliability'] = 1 - ((date_postive - date_negative) / (2 * search_window))
+                    if data_positive is not None and data_negative is not None:
+                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = data_negative + (date_temp - date_negative) * (data_positive - data_negative) / (date_positive - date_negative)
+                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = 1 - ((date_positive - date_negative) / (2 * search_window))
                         break
 
-        print(f'Finish linking the {index_temp} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
-    return index_dic
+            print(f'Finish linking the {index_name} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+        else:
+            raise TypeError(f'{str(GEDI_link_S2_retrieval_method)} is not supported!')
 
-
-def link_GEDI_inform4mp(*args):
-    i, lat, lon, dc4link_GEDI, date_temp, doy_list = args[0], args[1], args[2], args[3], args[4], args[5]
-    raster_gt, index_list, df_size, GEDI_link_S2_retrieval_method, sparse_matrix = args[6], args[7], args[8], args[9], args[10]
-
-    # Get the basic inform of the i GEDI point
-    year_temp = int(date_temp) // 1000
-
-    # Reprojection
-    point_temp = gp.points_from_xy([lon], [lat], crs='epsg:4326')
-    point_temp = point_temp.to_crs(crs='epsg:32649')
-    point_coords = [point_temp[0].coords[0][0], point_temp[0].coords[0][1]]
-
-    # Draw a circle around the central point
-    polygon = create_circle_polygon(point_coords, 25)
-    index_dic = {'id': i}
-
-    for index_temp in index_list:
-
-        t1 = time.time()
-        print(f'Start linking the {index_temp} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
-
-        if GEDI_link_S2_retrieval_method == 'nearest_neighbor':
-
-            # Link GEDI and S2 inform using nearest_neighbor
-            pass
-
-        elif GEDI_link_S2_retrieval_method == 'linear_interpolation':
-
-            # Link GEDI and S2 inform using linear_interpolation
-            data_postive, date_postive, data_negative, date_negative = None, None, None, None
-            index_dic[index_temp] = np.nan
-
-            for date_interval in range(0, 60):
-
-                if date_interval == 0 and date_interval + date_temp in doy_list:
-                    array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp))]
-                    if sparse_matrix:
-                        info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-                        info_temp = (float(info_temp) - 32768) / 10000
-
-                    if ~np.isnan(info_temp):
-                        index_dic[index_temp] = info_temp
-                        break
-
-                else:
-                    if data_negative is None and date_temp - date_interval in doy_list:
-                        date_temp_temp = date_temp - date_interval
-                        array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp_temp))]
-                        if sparse_matrix:
-                            info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-                            info_temp = (float(info_temp) - 32768) / 10000
-
-                        if ~np.isnan(info_temp):
-                            data_negative = info_temp
-                            date_negative = date_temp_temp
-
-                    if data_negative is None and date_temp + date_interval in doy_list:
-                        date_temp_temp = date_temp + date_interval
-                        array_temp = dc4link_GEDI[index_temp].SM_group[str(bf.doy2date(date_temp_temp))]
-                        if sparse_matrix:
-                            info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-                            info_temp = (float(info_temp) - 32768) / 10000
-
-                        if ~np.isnan(info_temp):
-                            data_postive = info_temp
-                            date_postive = date_temp_temp
-
-                    if data_postive is not None and data_negative is not None:
-                        index_dic[index_temp] = data_negative + (date_temp - date_negative) * (data_postive - data_negative) / (date_postive - date_negative)
-                        break
-
-        print(f'Finish linking the {index_temp} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+    return gedi_list
 
 
 if __name__ == '__main__':

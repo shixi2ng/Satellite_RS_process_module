@@ -1,6 +1,9 @@
 # coding=utf-8
 import concurrent.futures
 import os
+
+import pandas as pd
+
 os.environ['PROJ_LIB'] = 'C:\\Users\\sx199\\Anaconda3\\envs\\py38\\Library\\share\\proj'
 os.environ['GDAL_DATA'] = 'C:\\Users\\sx199\\Anaconda3\\envs\\py38\\Library\\share\\gdal'
 import gdal
@@ -16,6 +19,15 @@ import osr
 from rasterio import features
 import shapely.geometry
 from osgeo import ogr
+import time
+
+
+def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
+    return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
+
+
+def two_term_fourier(x, a0, a1, b1, a2, b2, w):
+    return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x)+b2 * np.sin(2 * w * x)
 
 
 def shapely_to_ogr_type(shapely_type):
@@ -539,3 +551,274 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
     else:
         return np.nan
 
+
+def init_annual_index_dc(var):
+    global annual_index_dc
+    annual_index_dc = var
+
+
+def init_curfit_dc(var):
+    global curfit_dc
+    curfit_dc = var
+
+
+def curfit4bound_slice(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curfit_dic: dict, sparse_matrix_factor: bool, size_control_factor: bool, xy_offset: list):
+
+    # Set up initial var
+    start_time = time.time()
+    q_all = 0
+    q_temp = 0
+    year_all = np.unique(np.array([temp // 1000 for temp in doy_all]))
+    year_range = range(np.min(year_all), np.max(year_all) + 1)
+    pos_len = pos_df.shape[0]
+    pos_df = pos_df.reset_index()
+
+    # Define the fitting curve algorithm
+    if curfit_dic['CFM'] == 'SPL':
+        curfit_algorithm = seven_para_logistic_function
+    elif curfit_dic['CFM'] == 'TTF':
+        curfit_algorithm = two_term_fourier
+
+    # insert columns
+    for i in range(curfit_dic['para_num']):
+        pos_df.insert(loc=len(pos_df.columns), column=f'para_ori_{str(i)}', value=np.nan)
+
+    for i in range(curfit_dic['para_num']):
+        pos_df.insert(loc=len(pos_df.columns), column=f'para_bound_min_{str(i)}', value=np.nan)
+
+    for i in range(curfit_dic['para_num']):
+        pos_df.insert(loc=len(pos_df.columns), column=f'para_bound_max_{str(i)}', value=np.nan)
+
+    for year_temp in year_range:
+        for i in range(curfit_dic['para_num']):
+            pos_df.insert(loc=len(pos_df.columns), column=f'{str(year_temp)}_para_{str(i)}', value=np.nan)
+        pos_df.insert(loc=len(pos_df.columns), column=f'{str(year_temp)}_Rsquare', value=np.nan)
+
+    # Start generate the boundary and paras based on curve fitting
+    for pos_len_temp in range(pos_len):
+
+        # Define the key var
+        y_t, x_t = pos_df.loc[pos_len_temp, 'y'], pos_df.loc[pos_len_temp, 'x']
+        y_t = y_t - xy_offset[0]
+        x_t = x_t - xy_offset[1]
+
+        if not sparse_matrix_factor:
+            vi_all = index_dc_temp[y_t, x_t, :].flatten()
+            nan_index = np.argwhere(np.isnan(vi_all))
+            vi_all = np.delete(vi_all, nan_index)
+            doy_temp = copy.copy(doy_all)
+            doy_temp = np.delete(doy_temp, nan_index)
+        elif sparse_matrix_factor:
+            doy_temp, vi_all, year_doy_all = index_dc_temp._extract_matrix_y1x1zh(([y_t], [x_t], ['all']))
+
+        if size_control_factor:
+            vi_all = (vi_all - 32768) / 10000
+
+        # t1 += time.time() - start_time
+        paras_max_dic = {}
+        paras_min_dic = {}
+
+        if doy_temp.shape[0] >= 7:
+            try:
+                paras, extras = curve_fit(curfit_algorithm, doy_temp, vi_all, maxfev=50000, p0=curfit_dic['initial_para_ori'], bounds=curfit_dic['initial_para_boundary'], ftol=0.00001)
+                # t2 += time.time() - start_time
+
+                vi_dormancy, doy_dormancy, vi_max, doy_max = [], [], [], []
+                doy_index_max = np.argmax(curfit_algorithm(np.linspace(0, 366, 365), paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]))
+
+                # Generate the parameter boundary
+                senescence_t = paras[4] - 4 * paras[5]
+
+                for doy_index in range(doy_temp.shape[0]):
+                    if 0 < doy_temp[doy_index] < paras[2] or paras[4] < doy_temp[doy_index] < 366:
+                        vi_dormancy.append(vi_all[doy_index])
+                        doy_dormancy.append(doy_temp[doy_index])
+                    if doy_index_max - 5 < doy_temp[doy_index] < doy_index_max + 5:
+                        vi_max.append(vi_all[doy_index])
+                        doy_max.append(doy_temp[doy_index])
+
+                if vi_max == []:
+                    vi_max = [np.max(vi_all)]
+                    doy_max = [doy_temp[np.argmax(vi_all)]]
+
+                itr = 5
+                while itr < 10:
+                    doy_senescence, vi_senescence = [], []
+                    for doy_index in range(doy_temp.shape[0]):
+                        if senescence_t - itr < doy_temp[doy_index] < senescence_t + itr:
+                            vi_senescence.append(vi_all[doy_index])
+                            doy_senescence.append(doy_temp[doy_index])
+                    if doy_senescence != [] and vi_senescence != []:
+                        break
+                    else:
+                        itr += 1
+
+                # define the para1
+                if vi_dormancy != []:
+                    vi_dormancy_sort = np.sort(vi_dormancy)
+                    vi_max_sort = np.sort(vi_max)
+                    paras_max_dic[0] = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.95))]
+                    paras_min_dic[0] = vi_dormancy_sort[int(np.fix(vi_dormancy_sort.shape[0] * 0.05))]
+                    paras_max_dic[0] = min(paras_max_dic[0], 0.5)
+                    paras_min_dic[0] = max(paras_min_dic[0], 0)
+                else:
+                    paras_max_dic[0], paras_min_dic[0] = 0.5, 0
+
+                # define the para2
+                paras_max_dic[1] = vi_max[-1] - paras_min_dic[0]
+                paras_min_dic[1] = vi_max[0] - paras_max_dic[0]
+                if paras_min_dic[1] < 0.2:
+                    paras_min_dic[1] = 0.2
+                if paras_max_dic[1] > 0.7 or paras_max_dic[1] < 0.2:
+                    paras_max_dic[1] = 0.7
+
+                # define the para3
+                paras_max_dic[2] = 0
+                for doy_index in range(len(doy_temp)):
+                    if paras_min_dic[0] < vi_all[doy_index] < paras_max_dic[0] and doy_temp[doy_index] < 180:
+                        paras_max_dic[2] = max(float(paras_max_dic[2]), doy_temp[doy_index])
+
+                paras_min_dic[2] = 180
+                for doy_index in range(len(doy_temp)):
+                    if vi_all[doy_index] > paras_max_dic[0]:
+                        paras_min_dic[2] = min(paras_min_dic[2], doy_temp[doy_index])
+
+                if paras_min_dic[2] > paras[2] or paras_min_dic[2] < paras[2] - 15:
+                    paras_min_dic[2] = paras[2] - 15
+
+                if paras_max_dic[2] < paras[2] or paras_max_dic[2] > paras[2] + 15:
+                    paras_max_dic[2] = paras[2] + 15
+
+                # define the para5
+                paras_max_dic[4] = 0
+                for doy_index in range(len(doy_temp)):
+                    if vi_all[doy_index] > paras_max_dic[0]:
+                        paras_max_dic[4] = max(paras_max_dic[4], doy_temp[doy_index])
+                paras_min_dic[4] = 365
+                for doy_index in range(len(doy_temp)):
+                    if paras_min_dic[0] < vi_all[doy_index] < paras_max_dic[0] and doy_temp[doy_index] > 180:
+                        paras_min_dic[4] = min(paras_min_dic[4], doy_temp[doy_index])
+                if paras_min_dic[4] > paras[4] or paras_min_dic[4] < paras[4] - 15:
+                    paras_min_dic[4] = paras[4] - 15
+
+                if paras_max_dic[4] < paras[4] or paras_max_dic[4] > paras[4] + 15:
+                    paras_max_dic[4] = paras[4] + 15
+
+                # define the para 4
+                if len(doy_max) != 1:
+                    paras_max_dic[3] = (np.nanmax(doy_max) - paras_min_dic[2]) / 4
+                    paras_min_dic[3] = (np.nanmin(doy_max) - paras_max_dic[2]) / 4
+                else:
+                    paras_max_dic[3] = (np.nanmax(doy_max) + 5 - paras_min_dic[2]) / 4
+                    paras_min_dic[3] = (np.nanmin(doy_max) - 5 - paras_max_dic[2]) / 4
+                paras_min_dic[3] = max(3, paras_min_dic[3])
+                paras_max_dic[3] = min(17, paras_max_dic[3])
+                if paras_min_dic[3] > 17:
+                    paras_min_dic[3] = 3
+                if paras_max_dic[3] < 3:
+                    paras_max_dic[3] = 17
+                paras_max_dic[5] = paras_max_dic[3]
+                paras_min_dic[5] = paras_min_dic[3]
+                if doy_senescence == [] or vi_senescence == []:
+                    paras_max_dic[6] = 0.01
+                    paras_min_dic[6] = 0.00001
+                else:
+                    paras_max_dic[6] = (np.nanmax(vi_max) - np.nanmin(vi_senescence)) / (
+                            doy_senescence[np.argmin(vi_senescence)] - doy_max[np.argmax(vi_max)])
+                    paras_min_dic[6] = (np.nanmin(vi_max) - np.nanmax(vi_senescence)) / (
+                            doy_senescence[np.argmax(vi_senescence)] - doy_max[np.argmin(vi_max)])
+                if np.isnan(paras_min_dic[6]):
+                    paras_min_dic[6] = 0.00001
+                if np.isnan(paras_max_dic[6]):
+                    paras_max_dic[6] = 0.01
+                paras_max_dic[6] = min(paras_max_dic[6], 0.01)
+                paras_min_dic[6] = max(paras_min_dic[6], 0.00001)
+                if paras_max_dic[6] < 0.00001:
+                    paras_max_dic[6] = 0.01
+                if paras_min_dic[6] > 0.01:
+                    paras_min_dic[6] = 0.00001
+                if paras_min_dic[0] > paras[0]:
+                    paras_min_dic[0] = paras[0] - 0.01
+                if paras_max_dic[0] < paras[0]:
+                    paras_max_dic[0] = paras[0] + 0.01
+                if paras_min_dic[1] > paras[1]:
+                    paras_min_dic[1] = paras[1] - 0.01
+                if paras_max_dic[1] < paras[1]:
+                    paras_max_dic[1] = paras[1] + 0.01
+                if paras_min_dic[2] > paras[2]:
+                    paras_min_dic[2] = paras[2] - 1
+                if paras_max_dic[2] < paras[2]:
+                    paras_max_dic[2] = paras[2] + 1
+                if paras_min_dic[3] > paras[3]:
+                    paras_min_dic[3] = paras[3] - 0.1
+                if paras_max_dic[3] < paras[3]:
+                    paras_max_dic[3] = paras[3] + 0.1
+                if paras_min_dic[4] > paras[4]:
+                    paras_min_dic[4] = paras[4] - 1
+                if paras_max_dic[4] < paras[4]:
+                    paras_max_dic[4] = paras[4] + 1
+                if paras_min_dic[5] > paras[5]:
+                    paras_min_dic[5] = paras[5] - 0.5
+                if paras_max_dic[5] < paras[5]:
+                    paras_max_dic[5] = paras[5] + 0.5
+                if paras_min_dic[6] > paras[6]:
+                    paras_min_dic[6] = paras[6] - 0.00001
+                if paras_max_dic[6] < paras[6]:
+                    paras_max_dic[6] = paras[6] + 0.00001
+
+                for num in range(curfit_dic['para_num']):
+                    pos_df.loc[pos_len_temp, f'para_bound_max_{str(num)}'] = paras_max_dic[num]
+                    pos_df.loc[pos_len_temp, f'para_bound_min_{str(num)}'] = paras_min_dic[num]
+                    pos_df.loc[pos_len_temp, f'para_ori_{str(num)}'] = paras[num]
+            except:
+                para_ori = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
+                para_upbound = [1, 0.5, 0.5, 0.05, 0.05, 0.019]
+                para_lowerbound = [0, -0.5, -0.5, -0.05, -0.05, 0.015]
+                for num in range(curfit_dic['para_num']):
+                    pos_df.loc[pos_len_temp, f'para_bound_max_{str(num)}'] = para_upbound[num]
+                    pos_df.loc[pos_len_temp, f'para_bound_min_{str(num)}'] = para_lowerbound[num]
+                    pos_df.loc[pos_len_temp, f'para_ori_{str(num)}'] = para_ori[num]
+
+            for year_temp in year_range:
+                annual_vi = []
+                annual_doy = []
+
+                for q in year_doy_all:
+                    if q // 1000 == year_temp:
+                        annual_doy.append(int(np.mod(q, 1000)))
+                        annual_vi.append(vi_all[np.argwhere(year_doy_all == q)].flatten()[0])
+
+                annual_vi = np.array(annual_vi)
+                annual_doy = np.array(annual_doy)
+                ori_temp = [pos_df.loc[pos_len_temp, f'para_ori_{str(num)}'] for num in range(curfit_dic['para_num'])]
+                bounds_temp = ([pos_df.loc[pos_len_temp, f'para_bound_min_{str(num)}'] for num in range(curfit_dic['para_num'])], [pos_df.loc[pos_len_temp, f'para_bound_max_{str(num)}'] for num in range(curfit_dic['para_num'])])
+
+                if np.sum(~np.isnan(annual_vi)) >= curfit_dic['para_num']:
+                    try:
+                        paras, extras = curve_fit(curfit_algorithm, annual_doy, annual_vi, maxfev=50000, p0=ori_temp, bounds=bounds_temp)
+                        predicted_y_data = curfit_algorithm(annual_doy, paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6])
+                        R_square = (1 - np.sum((predicted_y_data - annual_vi) ** 2) / np.sum((annual_vi - np.mean(annual_vi)) ** 2))
+                        for num in range(curfit_dic['para_num']):
+                            pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_{str(num)}'] = paras[num]
+                            pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_Rsquare'] = R_square
+                    except:
+                        for num in range(curfit_dic['para_num']):
+                            pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_{str(num)}'] = -1
+                            pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_Rsquare'] = -1
+                else:
+                    for num in range(curfit_dic['para_num']):
+                        pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_{str(num)}'] = -1
+                        pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_Rsquare'] = -1
+
+        if q_temp == 100:
+            print(f'Finish generating the last 100 data in \033[1;31m{str(time.time() - start_time)} s\033[0m  ({str(q_all)} of {pos_df.shape[0]})')
+            q_temp = 0
+            start_time = time.time()
+
+        if np.mod(q_all, 100000) == 0 and q_all != 0:
+            pos_df.to_csv(f'G:\A_veg\S2_all\Sentinel2_L2A_Output\Sentinel2_MYZR_FP_2020_datacube\OSAVI_20m_noninun_curfit_datacube\\postemp_{str(xy_offset[0])}.csv')
+
+        q_all += 1
+        q_temp += 1
+
+    return pos_df
