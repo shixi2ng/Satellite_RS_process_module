@@ -11,6 +11,7 @@ import requests as r
 import os
 import time
 import concurrent.futures
+from Sentinel2_toolbox.utils import create_circle_polygon
 
 
 # def pointVisual(features, vdims):
@@ -382,6 +383,7 @@ class GEDI_L2_ds(object):
 class GEDI_list(object):
 
     def __init__(self, GEDI_inform_xlsx):
+
         if not os.path.exists(GEDI_inform_xlsx):
             raise Exception(f'The {GEDI_inform_xlsx} is not a valid file name')
         elif GEDI_inform_xlsx.endswith('.xlsx'):
@@ -390,11 +392,11 @@ class GEDI_list(object):
             raise Exception(f'The {GEDI_inform_xlsx} is not a valid xlsx file')
 
         if False in [q in self.GEDI_df.keys() for q in ['Shot Number', 'Beam', 'Latitude', 'Longitude',
-                    'Tandem-X DEM', 'Elevation (m)', 'Canopy Elevation (m)',
-                    'Canopy Height (rh100)', 'RH 98', 'RH 25', 'Quality Flag',
-                    'Degrade Flag', 'Sensitivity', 'Urban rate', 'Landsat water rate',
-                    'Leaf off flag']]:
+                    'Tandem-X DEM', 'Elevation (m)', 'Canopy Elevation (m)','Canopy Height (rh100)',
+                    'RH 98', 'RH 25', 'Quality Flag','Degrade Flag', 'Sensitivity', 'Urban rate',
+                    'Landsat water rate', 'Leaf off flag']]:
             raise Exception(f'The {GEDI_inform_xlsx} does not contain all the required inform!')
+
         self.df_size = self.GEDI_df.shape[0]
 
     def save(self, output_filename: str):
@@ -403,11 +405,43 @@ class GEDI_list(object):
         elif output_filename.endswith('.xlsx') or output_filename.endswith('.xls') :
             self.GEDI_df.to_excel(output_filename)
 
+    def generate_boundary(self, ):
+        pass
+
+    def reprojection(self, proj: str, name: str = 'new'):
+
+        if not isinstance(name, str):
+            raise TypeError
+
+        lat, lon, lon_left, lon_right, lat_upper, lat_lower = [], [], [], [], [], []
+        for i in range(self.df_size):
+
+            lon_temp, lat_temp = self.GEDI_df.Longitude[i], self.GEDI_df.Latitude[i]
+            point_temp = gp.points_from_xy([lon_temp], [lat_temp], crs='epsg:4326')
+
+            try:
+                point_temp = point_temp.to_crs(crs=proj)
+            except:
+                raise Exception(f'The proj {proj} is not valid')
+
+            lon.append(point_temp[0].coords[0][0])
+            lat.append(point_temp[0].coords[0][1])
+
+        for data_temp, name_temp in zip([lat, lon], [name + '_' + temp for temp in ['lat', 'lon']]):
+            self.GEDI_df.insert(len(self.GEDI_df.columns), name_temp, data_temp)
+
+        # Sort it according to lat and lon
+        self.GEDI_df = self.GEDI_df.sort_values([f'{name}_lon', f'{name}_lat'], ascending=[True, False])
+        self.GEDI_df = self.GEDI_df.reset_index()
+
 
 if __name__ == '__main__':
-    sample_YTR = GEDI_L2_ds('G:\\GEDI_MYR\\Ori_file')
-    sample_YTR.generate_metadata()
-    sample_YTR.mp_extract_shots_elevation_infor(shp_file='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
 
+    # sample_YTR = GEDI_L2_ds('G:\\GEDI_MYR\\Ori_file')
+    # sample_YTR.generate_metadata()
+    # sample_YTR.mp_extract_shots_elevation_infor(shp_file='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
+
+    YTR_list = GEDI_list('G:\A_veg\S2_all\GEDI_v3\\floodplain_2020_high_quality.xlsx')
+    YTR_list.reprojection('EPSG:32649')
 
 

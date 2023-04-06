@@ -1,3 +1,4 @@
+import copy
 import os
 import sys
 import numpy as np
@@ -176,61 +177,65 @@ def query_with_cor(dataset, xcord, ycord, half_width=0, srcnanvalue=np.nan, dstn
 
 
 def doy2date(self):
-    if type(self) == str:
+
+    self_temp = copy.deepcopy(self)
+    if type(self_temp) == str:
         try:
-            return doy2date(int(self))
+            return doy2date(int(self_temp))
         except:
             raise TypeError('The doy2date method did not support this data type')
-    elif type(self) == int or type(self) == np.int32 or type(self) == np.int16 or type(self) == np.int64:
-        if len(str(self)) == 7:
-            year_temp = self // 1000
-        elif len(str(self)) == 8:
-            year_temp = self // 10000
+    elif type(self_temp) == int or type(self_temp) == np.int32 or type(self_temp) == np.int16 or type(self_temp) == np.int64:
+        if len(str(self_temp)) == 7:
+            year_temp = self_temp // 1000
+        elif len(str(self_temp)) == 8:
+            year_temp = self_temp // 10000
         else:
             raise ValueError('The doy length is not correct!')
-        date_temp = datetime.date.fromordinal(datetime.date(year=year_temp, month=1, day=1).toordinal() + np.mod(self, 1000) - 1).month * 100 + datetime.date.fromordinal(datetime.date(year=year_temp, month=1, day=1).toordinal() + np.mod(self, 1000) - 1).day
+        date_temp = datetime.date.fromordinal(datetime.date(year=year_temp, month=1, day=1).toordinal() + np.mod(self_temp, 1000) - 1).month * 100 + datetime.date.fromordinal(datetime.date(year=year_temp, month=1, day=1).toordinal() + np.mod(self_temp, 1000) - 1).day
         return year_temp * 10000 + date_temp
-    elif type(self) == list:
+    elif type(self_temp) == list:
         i = 0
-        while i < len(self):
-            self[i] = doy2date(self[i])
+        while i < len(self_temp):
+            self_temp[i] = doy2date(self_temp[i])
             i += 1
-        return self
-    elif type(self) is np.ndarray:
+        return self_temp
+    elif type(self_temp) is np.ndarray:
         i = 0
-        while i < self.shape[0]:
-            self[i] = doy2date(self[i])
+        while i < self_temp.shape[0]:
+            self_temp[i] = doy2date(self_temp[i])
             i += 1
-        return self
+        return self_temp
     else:
         raise TypeError('The doy2date method did not support this data type')
 
 
 def date2doy(self):
-    if type(self) == str:
+
+    self_temp = copy.deepcopy(self)
+    if type(self_temp) == str:
         try:
-            return date2doy(int(self))
+            return date2doy(int(self_temp))
         except:
             raise TypeError('The date2doy method did not support this data type')
-    elif type(self) == int or type(self) == np.int32 or type(self) == np.int16 or type(self) == np.int64:
-        if len(str(self)) == 8:
-            year_temp = self // 10000
+    elif type(self_temp) == int or type(self_temp) == np.int32 or type(self_temp) == np.int16 or type(self_temp) == np.int64:
+        if len(str(self_temp)) == 8:
+            year_temp = self_temp // 10000
         else:
             raise ValueError('The date length is not correct!')
-        date_temp = datetime.date(year=year_temp, month= np.mod(self, 10000) // 100, day=np.mod(self, 100)).toordinal() - datetime.date(year=year_temp, month=1, day=1).toordinal() + 1
+        date_temp = datetime.date(year=year_temp, month= np.mod(self_temp, 10000) // 100, day=np.mod(self_temp, 100)).toordinal() - datetime.date(year=year_temp, month=1, day=1).toordinal() + 1
         return year_temp * 1000 + date_temp
-    elif type(self) == list:
+    elif type(self_temp) == list:
         i = 0
-        while i < len(self):
-            self[i] = date2doy(self[i])
+        while i < len(self_temp):
+            self_temp[i] = date2doy(self_temp[i])
             i += 1
-        return self
-    elif type(self) is np.ndarray:
+        return self_temp
+    elif type(self_temp) is np.ndarray:
         i = 0
-        while i < self.shape[0]:
-            self[i] = date2doy(self[i])
+        while i < self_temp.shape[0]:
+            self_temp[i] = date2doy(self_temp[i])
             i += 1
-        return self
+        return self_temp
     else:
         raise TypeError('The date2doy method did not support this data type')
 
@@ -381,3 +386,18 @@ def getsize(obj: object):
                 need_referents.append(obj)
         objects = get_referents(*need_referents)
     return size
+
+
+def raster_ds2bounds(filename: str):
+    
+    # Read raster file
+    ds_temp = gdal.Open(filename)
+    if ds_temp is None:
+        raise TypeError(f'The filename is not a valid raster file')
+
+    # Calculate the raster bounds
+    raster_gt = ds_temp.GetGeoTransform()
+    raster_bounds = (raster_gt[0], raster_gt[3] + ds_temp.RasterYSize * raster_gt[5], raster_gt[0] + ds_temp.RasterXSize * raster_gt[1], raster_gt[3])
+
+    return raster_bounds
+    
