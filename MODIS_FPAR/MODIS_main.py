@@ -8,7 +8,7 @@ class MODIS_ds(object):
     def __init__(self, file_path, work_env=None):
 
         if work_env is None:
-            try:s
+            try:
                 self.work_env = bf.Path(os.path.dirname(os.path.dirname(file_path)) + '\\').path_name
             except:
                 print('There has no base dir for the ori_folder and the ori_folder will be treated as the work env')
