@@ -400,4 +400,13 @@ def raster_ds2bounds(filename: str):
     raster_bounds = (raster_gt[0], raster_gt[3] + ds_temp.RasterYSize * raster_gt[5], raster_gt[0] + ds_temp.RasterXSize * raster_gt[1], raster_gt[3])
 
     return raster_bounds
+
+
+def file_rename(files):
+    for file in files:
+        file_name = file.split('\\')[-1]
+        path_name = file.split(file_name)[0]
+        file_name = file_name.split('_')[0] + file_name.split('_')[1] + file_name.split('_')[2] + '_' + \
+                    file_name.split('__')[-1]
+        os.rename(file, path_name + file_name)
     

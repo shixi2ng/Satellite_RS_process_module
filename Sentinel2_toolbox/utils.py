@@ -551,27 +551,40 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
     else:
         return np.nan
 
-
-def init_annual_index_dc(var):
-    global annual_index_dc
-    annual_index_dc = var
-
-
-def init_curfit_dc(var):
-    global curfit_dc
-    curfit_dc = var
-
-
-def curfit4bound_slice(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curfit_dic: dict, sparse_matrix_factor: bool, size_control_factor: bool, xy_offset: list):
+def curfit4bound_annual(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curfit_dic: dict, sparse_matrix_factor: bool, size_control_factor: bool, xy_offset: list, cache_folder: str):
 
     # Set up initial var
     start_time = time.time()
-    q_all = 0
-    q_temp = 0
     year_all = np.unique(np.array([temp // 1000 for temp in doy_all]))
     year_range = range(np.min(year_all), np.max(year_all) + 1)
     pos_len = pos_df.shape[0]
     pos_df = pos_df.reset_index()
+
+    # Set up the Cache folder
+    cache_folder = bf.Path(cache_folder).path_name
+    if os.path.exists(f'{cache_folder}postemp_{str(xy_offset[1])}.csv'):
+        pos_df = pd.read_csv(f'{cache_folder}postemp_{str(xy_offset[1])}.csv')
+        pos_init = int(np.ceil(max(pos_df.loc[~np.isnan(pos_df.para_ori_0)].index) / 100000) * 100000) - 1
+        q_all = pos_init
+        q_temp = np.mod(q_all, 100)
+    else:
+        # insert columns
+        for i in range(curfit_dic['para_num']):
+            pos_df.insert(loc=len(pos_df.columns), column=f'para_ori_{str(i)}', value=np.nan)
+
+        for i in range(curfit_dic['para_num']):
+            pos_df.insert(loc=len(pos_df.columns), column=f'para_bound_min_{str(i)}', value=np.nan)
+
+        for i in range(curfit_dic['para_num']):
+            pos_df.insert(loc=len(pos_df.columns), column=f'para_bound_max_{str(i)}', value=np.nan)
+
+        for year_temp in year_range:
+            for i in range(curfit_dic['para_num']):
+                pos_df.insert(loc=len(pos_df.columns), column=f'{str(year_temp)}_para_{str(i)}', value=np.nan)
+            pos_df.insert(loc=len(pos_df.columns), column=f'{str(year_temp)}_Rsquare', value=np.nan)
+        q_all = 0
+        q_temp = 0
+        pos_init = 0
 
     # Define the fitting curve algorithm
     if curfit_dic['CFM'] == 'SPL':
@@ -579,23 +592,8 @@ def curfit4bound_slice(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curfi
     elif curfit_dic['CFM'] == 'TTF':
         curfit_algorithm = two_term_fourier
 
-    # insert columns
-    for i in range(curfit_dic['para_num']):
-        pos_df.insert(loc=len(pos_df.columns), column=f'para_ori_{str(i)}', value=np.nan)
-
-    for i in range(curfit_dic['para_num']):
-        pos_df.insert(loc=len(pos_df.columns), column=f'para_bound_min_{str(i)}', value=np.nan)
-
-    for i in range(curfit_dic['para_num']):
-        pos_df.insert(loc=len(pos_df.columns), column=f'para_bound_max_{str(i)}', value=np.nan)
-
-    for year_temp in year_range:
-        for i in range(curfit_dic['para_num']):
-            pos_df.insert(loc=len(pos_df.columns), column=f'{str(year_temp)}_para_{str(i)}', value=np.nan)
-        pos_df.insert(loc=len(pos_df.columns), column=f'{str(year_temp)}_Rsquare', value=np.nan)
-
     # Start generate the boundary and paras based on curve fitting
-    for pos_len_temp in range(pos_len):
+    for pos_len_temp in range(pos_init, pos_len):
 
         # Define the key var
         y_t, x_t = pos_df.loc[pos_len_temp, 'y'], pos_df.loc[pos_len_temp, 'x']
@@ -816,7 +814,7 @@ def curfit4bound_slice(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curfi
             start_time = time.time()
 
         if np.mod(q_all, 100000) == 0 and q_all != 0:
-            pos_df.to_csv(f'G:\A_veg\S2_all\Sentinel2_L2A_Output\Sentinel2_MYZR_FP_2020_datacube\OSAVI_20m_noninun_curfit_datacube\\postemp_{str(xy_offset[0])}.csv')
+            pos_df.to_csv(f'{cache_folder}postemp_{str(xy_offset[1])}.csv')
 
         q_all += 1
         q_temp += 1
