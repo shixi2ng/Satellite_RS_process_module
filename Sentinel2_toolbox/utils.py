@@ -551,10 +551,11 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
     else:
         return np.nan
 
+
 def curfit4bound_annual(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curfit_dic: dict, sparse_matrix_factor: bool, size_control_factor: bool, xy_offset: list, cache_folder: str):
 
     # Set up initial var
-    start_time = time.time()
+    start_time1 = time.time()
     year_all = np.unique(np.array([temp // 1000 for temp in doy_all]))
     year_range = range(np.min(year_all), np.max(year_all) + 1)
     pos_len = pos_df.shape[0]
@@ -564,7 +565,7 @@ def curfit4bound_annual(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curf
     cache_folder = bf.Path(cache_folder).path_name
     if os.path.exists(f'{cache_folder}postemp_{str(xy_offset[1])}.csv'):
         pos_df = pd.read_csv(f'{cache_folder}postemp_{str(xy_offset[1])}.csv')
-        pos_init = int(np.ceil(max(pos_df.loc[~np.isnan(pos_df.para_ori_0)].index) / 100000) * 100000) - 1
+        pos_init = int(np.ceil(max(pos_df.loc[~np.isnan(pos_df.para_ori_0)].index) / 100000) * 100000) + 1
         q_all = pos_init
         q_temp = np.mod(q_all, 100)
     else:
@@ -591,10 +592,28 @@ def curfit4bound_annual(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curf
         curfit_algorithm = seven_para_logistic_function
     elif curfit_dic['CFM'] == 'TTF':
         curfit_algorithm = two_term_fourier
+    t1, t2, t3, t4, t5 = 0, 0, 0, 0, 0
+
+    # # Create name_dic
+    # name_dic = {}
+    # col_list = [f'para_bound_max_{str(num)}' for num in range(curfit_dic['para_num'])]
+    # col_list.extend([f'para_bound_min_{str(num)}' for num in range(curfit_dic['para_num'])])
+    # col_list.extend([f'para_ori_{str(num)}' for num in range(curfit_dic['para_num'])])
+    # name_dic['bounds'] = col_list
+    # for year_temp in year_range:
+    #     col_list = [f'{str(year_temp)}_para_{str(num)}' for num in range(curfit_dic['para_num'])]
+    #     col_list.append(f'{str(year_temp)}_Rsquare')
+    #     name_dic[year_temp] = col_list
+
+    # Define var
+    para_ori = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
+    para_upbound = [1, 0.5, 0.5, 0.05, 0.05, 0.019]
+    para_lowerbound = [0, -0.5, -0.5, -0.05, -0.05, 0.015]
 
     # Start generate the boundary and paras based on curve fitting
     for pos_len_temp in range(pos_init, pos_len):
 
+        start_time = time.time()
         # Define the key var
         y_t, x_t = pos_df.loc[pos_len_temp, 'y'], pos_df.loc[pos_len_temp, 'x']
         y_t = y_t - xy_offset[0]
@@ -612,13 +631,20 @@ def curfit4bound_annual(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curf
         if size_control_factor:
             vi_all = (vi_all - 32768) / 10000
 
+        t1 += time.time() - start_time
+
+        vi_pos = np.argwhere(vi_all < 0)
+        doy_temp = np.delete(doy_temp, vi_pos)
+        year_doy_all = np.delete(year_doy_all, vi_pos)
+        vi_all = np.delete(vi_all, vi_pos)
+
         # t1 += time.time() - start_time
-        paras_max_dic = {}
-        paras_min_dic = {}
+        paras_max_dic = [np.nan for _ in range(curfit_dic['para_num'])]
+        paras_min_dic = [np.nan for _ in range(curfit_dic['para_num'])]
 
         if doy_temp.shape[0] >= 7:
             try:
-                paras, extras = curve_fit(curfit_algorithm, doy_temp, vi_all, maxfev=50000, p0=curfit_dic['initial_para_ori'], bounds=curfit_dic['initial_para_boundary'], ftol=0.00001)
+                paras, extras = curve_fit(curfit_algorithm, doy_temp, vi_all, maxfev=50000, p0=curfit_dic['initial_para_ori'], bounds=curfit_dic['initial_para_boundary'], ftol=0.01)
                 # t2 += time.time() - start_time
 
                 vi_dormancy, doy_dormancy, vi_max, doy_max = [], [], [], []
@@ -763,57 +789,56 @@ def curfit4bound_annual(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curf
                     paras_min_dic[6] = paras[6] - 0.00001
                 if paras_max_dic[6] < paras[6]:
                     paras_max_dic[6] = paras[6] + 0.00001
-
+                t2 += time.time() - start_time
+                start_time = time.time()
                 for num in range(curfit_dic['para_num']):
                     pos_df.loc[pos_len_temp, f'para_bound_max_{str(num)}'] = paras_max_dic[num]
                     pos_df.loc[pos_len_temp, f'para_bound_min_{str(num)}'] = paras_min_dic[num]
                     pos_df.loc[pos_len_temp, f'para_ori_{str(num)}'] = paras[num]
+                t3 += time.time() - start_time
             except:
-                para_ori = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
-                para_upbound = [1, 0.5, 0.5, 0.05, 0.05, 0.019]
-                para_lowerbound = [0, -0.5, -0.5, -0.05, -0.05, 0.015]
                 for num in range(curfit_dic['para_num']):
                     pos_df.loc[pos_len_temp, f'para_bound_max_{str(num)}'] = para_upbound[num]
                     pos_df.loc[pos_len_temp, f'para_bound_min_{str(num)}'] = para_lowerbound[num]
                     pos_df.loc[pos_len_temp, f'para_ori_{str(num)}'] = para_ori[num]
 
+            ori_temp = [pos_df.loc[pos_len_temp, f'para_ori_{str(num)}'] for num in range(curfit_dic['para_num'])]
+            bounds_temp = ([pos_df.loc[pos_len_temp, f'para_bound_min_{str(num)}'] for num in range(curfit_dic['para_num'])],
+                           [pos_df.loc[pos_len_temp, f'para_bound_max_{str(num)}'] for num in range(curfit_dic['para_num'])])
+
             for year_temp in year_range:
-                annual_vi = []
-                annual_doy = []
-
-                for q in year_doy_all:
-                    if q // 1000 == year_temp:
-                        annual_doy.append(int(np.mod(q, 1000)))
-                        annual_vi.append(vi_all[np.argwhere(year_doy_all == q)].flatten()[0])
-
-                annual_vi = np.array(annual_vi)
-                annual_doy = np.array(annual_doy)
-                ori_temp = [pos_df.loc[pos_len_temp, f'para_ori_{str(num)}'] for num in range(curfit_dic['para_num'])]
-                bounds_temp = ([pos_df.loc[pos_len_temp, f'para_bound_min_{str(num)}'] for num in range(curfit_dic['para_num'])], [pos_df.loc[pos_len_temp, f'para_bound_max_{str(num)}'] for num in range(curfit_dic['para_num'])])
-
+                year_pos = np.argwhere(np.floor(year_doy_all / 1000) == year_temp)
+                annual_doy = doy_temp[year_pos].flatten()
+                annual_vi = vi_all[year_pos].flatten()
                 if np.sum(~np.isnan(annual_vi)) >= curfit_dic['para_num']:
+
                     try:
-                        paras, extras = curve_fit(curfit_algorithm, annual_doy, annual_vi, maxfev=50000, p0=ori_temp, bounds=bounds_temp)
+                        start_time = time.time()
+                        paras, extras = curve_fit(curfit_algorithm, annual_doy, annual_vi, maxfev=50000, p0=ori_temp, bounds=bounds_temp, ftol=0.01)
                         predicted_y_data = curfit_algorithm(annual_doy, paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6])
                         R_square = (1 - np.sum((predicted_y_data - annual_vi) ** 2) / np.sum((annual_vi - np.mean(annual_vi)) ** 2))
+                        t4 += time.time()-start_time
+                        start_time = time.time()
                         for num in range(curfit_dic['para_num']):
                             pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_{str(num)}'] = paras[num]
-                            pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_Rsquare'] = R_square
+                            pos_df.loc[pos_len_temp, f'{str(year_temp)}_Rsquare'] = R_square
+                        t5 += time.time()-start_time
                     except:
                         for num in range(curfit_dic['para_num']):
                             pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_{str(num)}'] = -1
-                            pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_Rsquare'] = -1
+                            pos_df.loc[pos_len_temp, f'{str(year_temp)}_Rsquare'] = -1
                 else:
                     for num in range(curfit_dic['para_num']):
                         pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_{str(num)}'] = -1
-                        pos_df.loc[pos_len_temp, f'{str(year_temp)}_para_Rsquare'] = -1
+                        pos_df.loc[pos_len_temp, f'{str(year_temp)}_Rsquare'] = -1
 
         if q_temp == 100:
-            print(f'Finish generating the last 100 data in \033[1;31m{str(time.time() - start_time)} s\033[0m  ({str(q_all)} of {pos_df.shape[0]})')
+            print(f'Finish generating the last 100 data in \033[1;31m{str(time.time() - start_time1)} s\033[0m  ({str(q_all)} of {pos_df.shape[0]}), t1: {str(t1)}, t2: {str(t2)}, t3: {str(t3)}, t4: {str(t4)}, t5: {str(t5)}')
             q_temp = 0
-            start_time = time.time()
+            start_time1 = time.time()
+            t1, t2, t3, t4, t5 = 0, 0, 0, 0, 0
 
-        if np.mod(q_all, 100000) == 0 and q_all != 0:
+        if (np.mod(q_all, 100000) == 0 and q_all != 0) or q_all == pos_len - 1:
             pos_df.to_csv(f'{cache_folder}postemp_{str(xy_offset[1])}.csv')
 
         q_all += 1

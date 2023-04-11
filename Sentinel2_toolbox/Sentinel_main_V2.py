@@ -1927,6 +1927,7 @@ class Sentinel2_dcs(object):
         self._curve_fitting_algorithm = None
         self._flood_removal_method = None
         self._curve_fitting_dic = {}
+        self._curfit_result = None
 
         # Define var for NIPY reconstruction
         self._add_NIPY_dc = True
@@ -2155,9 +2156,9 @@ class Sentinel2_dcs(object):
         if self._curve_fitting_algorithm is None or self._curve_fitting_algorithm == 'seven_para_logistic':
             self._curve_fitting_dic['CFM'] = 'SPL'
             self._curve_fitting_dic['para_num'] = 7
-            self._curve_fitting_dic['initial_para_ori'] = [0.4, 0.55, 108.2, 7.596, 280.4, 7.473, 0.00225]
+            self._curve_fitting_dic['initial_para_ori'] = [0.3, 0.5, 108.2, 7.596, 280.4, 7.473, 0.00225]
             self._curve_fitting_dic['initial_para_boundary'] = (
-                [0, 0.1, 0, 3, 180, 3, 0.0001], [0.8, 1, 180, 17, 330, 17, 0.01])
+                [0.2, 0.2, 40, 3, 180, 3, 0.001], [0.6, 0.8, 180, 17, 330, 17, 0.01])
             self._curve_fitting_dic['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
             self._curve_fitting_dic['para_boundary'] = (
                 [0.08, 0.0, 50, 6.2, 285, 4.5, 0.0015], [0.20, 0.8, 130, 11.5, 350, 8.8, 0.0028])
@@ -2197,9 +2198,6 @@ class Sentinel2_dcs(object):
 
         # Define the study region
         sa_map = np.load(self.ROI_array)
-        pos_df = pd.DataFrame(np.argwhere(sa_map != -32768), columns=['y', 'x'])
-        pos_df = pos_df.sort_values(['x', 'y'], ascending=[True, True])
-        pos_df = pos_df.reset_index()
 
         # Create output path
         curfit_output_path = self.work_env + index + '_curfit_datacube\\'
@@ -2208,13 +2206,47 @@ class Sentinel2_dcs(object):
         bf.create_folder(output_path)
         self._curve_fitting_dic[str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = output_path
 
+        # Define the cache folder
+        cache_folder = f'{curfit_output_path}cache\\'
+        bf.create_folder(cache_folder)
+
+        # Read pos_df
+        if not os.path.exists(f'{cache_folder}pos_df.csv'):
+            pos_df = pd.DataFrame(np.argwhere(sa_map != -32768), columns=['y', 'x'])
+            pos_df = pos_df.sort_values(['x', 'y'], ascending=[True, True])
+            pos_df = pos_df.reset_index()
+        else:
+            pos_df = pd.read_csv(f'{cache_folder}pos_df.csv')
+
+        # Process all the cache-related inform
+        # itr_num = 100000
+        # cache_files = bf.file_filter(cache_folder, ['.csv'])
+        # pos_df.insert(len(pos_df.keys()), 'Cal_factor', 0)
+        # for _ in cache_files:
+        #     df_temp = pd.read_csv(_)
+        #     key_list = []
+        #     for key_temp in df_temp.keys():
+        #         if key_temp not in pos_df.keys() and 'para' in key_temp:
+        #             pos_df.insert(len(pos_df.keys()), key_temp, np.nan)
+        #             key_list.append(key_temp)
+        #
+        #     pos_max = int(np.ceil(max(df_temp.loc[~np.isnan(df_temp.para_ori_0)].index) / itr_num) * itr_num)
+        #     for num in range(pos_max):
+        #         num_pos_df = pos_df[pos_df['index'] == df_temp.loc[num, 'index']].index.tolist()[0]
+        #         for key in key_list:
+        #             pos_df.loc[num_pos_df, key] = df_temp.loc[num, key]
+        #             pos_df.loc[num_pos_df, 'Cal_factor'] = 1
+        # pos_df.to_csv(f'{cache_folder}pos_df.csv')
+        # pos_df_unprocessed = pos_df[pos_df['Cal_factor'] == 0]
+        # pos_df_unprocessed = pos_df_unprocessed.reset_index()
+
         # Generate the initial parameter
         if not os.path.exists(output_path + 'curfit_all.csv'):
 
             if self.huge_matrix:
 
                 # Slice into several tasks/blocks to use all cores
-                work_num = os.cpu_count()
+                work_num = 16
                 doy_all_list, pos_list,  xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(np.ceil(pos_df.shape[0] / work_num))
                 for i_size in range(work_num):
                     if i_size != work_num - 1:
@@ -2232,27 +2264,38 @@ class Sentinel2_dcs(object):
                     else:
                         index_dc_list.append(index_dc[index_size_list[-1][0]: index_size_list[-1][2], index_size_list[-1][1]: index_size_list[-1][3], :])
 
-                with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as executor:
-                    result = executor.map(curfit4bound_annual, pos_list, index_dc_list, doy_all_list, repeat(self._curve_fitting_dic), repeat(self.sparse_matrix), repeat(size_control_fac), xy_offset_list, repeat(curfit_output_path))
+                with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
+                    result = executor.map(curfit4bound_annual, pos_list, index_dc_list, doy_all_list, repeat(self._curve_fitting_dic), repeat(self.sparse_matrix), repeat(size_control_fac), xy_offset_list, repeat(cache_folder))
 
                 result_list = list(result)
 
             else:
                 result_list = []
-                for pos in pos_df:
-                    result_list.append(curfit4bound_annual(pos, doy_all, self._curve_fitting_dic, self.sparse_matrix, size_control_fac, [0, 0], curfit_output_path))
+                result_list.append(curfit4bound_annual(pos_df, index_dc, doy_all, self._curve_fitting_dic, self.sparse_matrix, size_control_fac, [0, 0], curfit_output_path))
 
             # Integrate all the result into the para dict
-            self._para_bound = None
+            self._curfit_result = None
             for result_temp in result_list:
-                if self._para_bound is None:
-                    self._para_bound = copy.copy(self._para_bound)
+                if self._curfit_result is None:
+                    self._curfit_result = copy.copy(self._curfit_result)
                 else:
-                    self._para_bound = pd.concat([self._para_bound, result_temp])
+                    self._curfit_result = pd.concat([self._curfit_result, result_temp])
 
-            self._para_bound.to_csv(output_path + 'curfit_all.csv')
+            key_list = []
+            for key_temp in self._curfit_result.keys():
+                if key_temp not in pos_df.keys() and 'para' in key_temp:
+                    pos_df.insert(len(pos_df.keys()), key_temp, np.nan)
+                    key_list.append(key_temp)
+
+            for num in range(len(self._curfit_result)):
+                num_pos_df = pos_df[pos_df['index'] == self._curfit_result.loc[num, 'index']].index.tolist()[0]
+                for key in key_list:
+                    pos_df.loc[num_pos_df, key] = self._curfit_result.loc[num, key]
+                    pos_df.loc[num_pos_df, 'Cal_factor'] = 1
+
+            self._curfit_result.to_csv(output_path + 'curfit_all.csv')
         else:
-            self._para_bound = pd.read_csv(output_path + 'curfit_all.csv')
+            self._curfit_result = pd.read_csv(output_path + 'curfit_all.csv')
 
     def _process_phenology_metrics_para(self, **kwargs):
 

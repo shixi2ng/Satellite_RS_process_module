@@ -564,8 +564,7 @@ class NCEI_ds(object):
             header_dic['sparse_matrix'], header_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
             np.save(f'{yearly_output_path}header.npy', header_dic)
 
-        print(
-            f'Finish constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name} in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
+        print(f'Finish constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name} in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
 
 if __name__ == '__main__':

@@ -45,6 +45,10 @@ class MODIS_ds(object):
         bf.create_folder(self.log_filepath)
         bf.create_folder(self.shpfile_path)
 
+    def seq_hdf2tif(self, subname):
+        for i in self.doy_list:
+            self._hdf2tif(self.output_path, [q for q in self.hdf_files if f'.A{str(i)}.' in q], i, subname)
+
     def _hdf2tif(self, output_path: str, files: list, doy: int, subname_list: list, merge_factor=True, ROI: str = None, bounds: list=None, ras_size: list=None, crs: str=None):
 
         # Process the hdf file
@@ -64,17 +68,23 @@ class MODIS_ds(object):
         elif merge_factor is False and self.ROI is not None:
             raise TypeError(f'The merge factor should properly be set as True since the ROI has input!')
 
-        if not isinstance(bounds, list):
+        if bounds is None:
+            bounds = None
+        elif not isinstance(bounds, list):
             raise TypeError(f'The bounds should under list type!')
         elif len(bounds) != 4:
             raise TypeError(f'The bounds should under list type (Xmin, Ymin, Xmax, Ymax)!')
 
-        if not isinstance(ras_size, list):
+        if ras_size is None:
+            ras_size = None
+        elif not isinstance(ras_size, list):
             raise TypeError(f'The bounds should under list type!')
         elif len(bounds) != 2:
             raise TypeError(f'The ras size should under list type (Ysize, Xsize)!')
 
-        if not isinstance(crs, str):
+        if crs is None:
+            crs = None
+        elif not isinstance(crs, str):
             raise TypeError(f'The csr should under str type!')
 
         # Create output folder
@@ -105,6 +115,14 @@ class MODIS_ds(object):
 
         # Create the tiffiles based on each index
         for subname in subname_list:
+            for file in subname_dic[subname]:
+                ds_temp = gdal.Open(file)
+                vrt_temp = gdal.Warp(ds_temp)
+
+
+if __name__ == '__main__':
+    temp = MODIS_ds('G:\\A_veg\\MODIS_FPAR\\Ori\\')
+    temp.seq_hdf2tif(['PAR'])
 
 
 
@@ -113,36 +131,34 @@ class MODIS_ds(object):
 
 
 
-
-
-def hdf2tif():
-    # USER SPECIFIED
-    dir = 'E:\\modis_temp\\hdf\\'
-
-    # Pre-defined para
-    xsize = 500
-    ysize = 500
-    output_dir = dir + 'output\\'
-    bf.create_folder(output_dir)
-
-    # Retrieve all the files in dir
-    # file_list = file_filter(dir, ['.hdf', '2022'], and_or_factor='and')
-    file_list = bf.file_filter(dir, ['.hdf'])
-
-    for file in file_list:
-        ds = gdal.Open(file)
-
-        subdatasets = ds.GetSubDatasets()
-        print('Number of subdatasets: {}'.format(len(subdatasets)))
-        for sd in subdatasets:
-            print('Name: {0}\nDescription:{1}\n'.format(*sd))
-
-        # USER SPECIFIED
-        LAI_ds = gdal.Open(subdatasets[1][0])
-        LAI_array = gdal.Open(subdatasets[1][0]).ReadAsArray()
-        temp_file = '/vsimem/' + file.split('\\')[-1].split('.hdf')[0] + '.tif'
-        dst_filename = output_dir + file.split('\\')[-1].split('.hdf')[0] + '.tif'
-        ulx, xres, xskew, uly, yskew, yres = LAI_ds.GetGeoTransform()
-        array2raster('/vsimem/' + file.split('\\')[-1].split('.hdf')[0] + '.tif', [ulx, uly], xsize, ysize, LAI_array)
-        gdal.Warp(dst_filename, '/vsimem/' + file.split('\\')[-1].split('.hdf')[0] + '.tif', dstSRS='EPSG:32649')
-        gdal.Unlink('/vsimem/' + file.split('\\')[-1].split('.hdf')[0] + '.tif')
+# def hdf2tif():
+#     # USER SPECIFIED
+#     dir = 'E:\\modis_temp\\hdf\\'
+#
+#     # Pre-defined para
+#     xsize = 500
+#     ysize = 500
+#     output_dir = dir + 'output\\'
+#     bf.create_folder(output_dir)
+#
+#     # Retrieve all the files in dir
+#     # file_list = file_filter(dir, ['.hdf', '2022'], and_or_factor='and')
+#     file_list = bf.file_filter(dir, ['.hdf'])
+#
+#     for file in file_list:
+#         ds = gdal.Open(file)
+#
+#         subdatasets = ds.GetSubDatasets()
+#         print('Number of subdatasets: {}'.format(len(subdatasets)))
+#         for sd in subdatasets:
+#             print('Name: {0}\nDescription:{1}\n'.format(*sd))
+#
+#         # USER SPECIFIED
+#         LAI_ds = gdal.Open(subdatasets[1][0])
+#         LAI_array = gdal.Open(subdatasets[1][0]).ReadAsArray()
+#         temp_file = '/vsimem/' + file.split('\\')[-1].split('.hdf')[0] + '.tif'
+#         dst_filename = output_dir + file.split('\\')[-1].split('.hdf')[0] + '.tif'
+#         ulx, xres, xskew, uly, yskew, yres = LAI_ds.GetGeoTransform()
+#         array2raster('/vsimem/' + file.split('\\')[-1].split('.hdf')[0] + '.tif', [ulx, uly], xsize, ysize, LAI_array)
+#         gdal.Warp(dst_filename, '/vsimem/' + file.split('\\')[-1].split('.hdf')[0] + '.tif', dstSRS='EPSG:32649')
+#         gdal.Unlink('/vsimem/' + file.split('\\')[-1].split('.hdf')[0] + '.tif')
