@@ -422,8 +422,10 @@ class NCEI_ds(object):
                         pass
                 ds_temp = gdal.Open(ROI_tif_name, gdal.GA_Update)
                 array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
                 array_temp = array_temp.astype(np.int16)
-                array_temp[array_temp != -32768] = 1
+
+                array_temp[array_temp != nodata_value] = 1
                 np.save(ROI_array_name, array_temp)
                 ds_temp.GetRasterBand(1).WriteArray(array_temp)
                 ds_temp.FlushCache()
@@ -431,8 +433,9 @@ class NCEI_ds(object):
             else:
                 ds_temp = gdal.Open(ROI_tif_name)
                 array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
             cols, rows = array_temp.shape[1], array_temp.shape[0]
-            sparsify = np.sum(array_temp == -32768) / (array_temp.shape[0] * array_temp.shape[1])
+            sparsify = np.sum(array_temp == nodata_value) / (array_temp.shape[0] * array_temp.shape[1])
             _sparse_matrix = True if sparsify > 0.9 else False
 
             # Create the header dic
