@@ -12,6 +12,7 @@ import shutil
 from NDsm import NDSparseMatrix
 import scipy.sparse as sm
 import psutil
+import json
 
 
 global topts
@@ -35,6 +36,9 @@ class MODIS_ds(object):
         self.ROI, self.ROI_name = None, None
         self.main_coordinate_system = None
         self.hdf_files = bf.file_filter(file_path, ['.hdf'], subfolder_detection=True)
+
+        # ras2dc
+        self._temporal_div_str = ['year', 'month']
 
         # Obtain the doy list
         self.doy_list = []
@@ -101,9 +105,15 @@ class MODIS_ds(object):
                     else:
                         try:
                             t = float(q.split(para + ':')[-1])
-                            self.__dict__[para] = float(q.split(para + ':')[-1])
+                            if not protected_var:
+                                self.__dict__[para] = float(q.split(para + ':')[-1])
+                            else:
+                                self.__dict__['_' + para] = float(q.split(para + ':')[-1])
                         except:
-                            self.__dict__[para] = q.split(para + ':')[-1]
+                            if not protected_var:
+                                self.__dict__[para] = q.split(para + ':')[-1]
+                            else:
+                                self.__dict__['_' + para] = q.split(para + ':')[-1]
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):
@@ -188,7 +198,7 @@ class MODIS_ds(object):
 
     @save_log_file
     def mp_hdf2tif(self, subname):
-        # Create the fileslist based on the doy
+        # Create the file list based on the doy
         doyly_filelist = []
         for doy in self.doy_list:
             doy_filelist = []
@@ -213,8 +223,8 @@ class MODIS_ds(object):
             raise TypeError(f'The csr should under str type!')
 
         # Create output folder
-        ori_vrt_output_folder = f'{output_path}ori\\VRT\\'
-        ori_tif_output_folder = f'{output_path}ori\\TIF\\'
+        ori_vrt_output_folder = f'{output_path}Ori_Denv_raster\\Hourly_VRT\\'
+        ori_tif_output_folder = f'{output_path}Ori_Denv_raster\\Hourly_TIF\\'
         bf.create_folder(ori_vrt_output_folder)
         bf.create_folder(ori_tif_output_folder)
 
@@ -281,8 +291,8 @@ class MODIS_ds(object):
 
     def _cal_dailyPAR(self, doy: int, method='mean', remove_low_quality_data=True) -> None:
 
-        input_path = f'{self.output_path}ori\\TIF\\'
-        output_path = f'{self.output_path}ori\\DPAR\\'
+        input_path = f'{self.output_path}Ori_Denv_raster\\Hourly_TIF\\'
+        output_path = f'{self.output_path}Ori_Denv_raster\\DPAR\\'
         bf.create_folder(output_path)
 
         if not os.path.exists(f'{output_path}{str(doy)}_DPAR.TIF'):
@@ -313,24 +323,26 @@ class MODIS_ds(object):
             print(f'Finish generating the {str(doy)}_DPAR file in {str(time.time()-s_t)[0:5]}s')
 
     @save_log_file
-    def seq_extract_with_ROI(self, ROI, bounds: list = None, ras_res: list = None):
+    def seq_extract_with_ROI(self, ROI, zvalue: list, bounds: list = None, ras_res: list = None):
 
-        filelist = bf.file_filter(f'{self.output_path}ori\\DPAR\\', ['.TIF'])
-        if len(filelist) == 0:
-            self.seq_cal_dailyPAR()
+        for ztemp in zvalue:
+            filelist = bf.file_filter(f'{self.output_path}Ori_Denv_raster\\{ztemp}\\', ['.TIF'])
+            if len(filelist) == 0:
+                self.seq_cal_dailyPAR()
 
-        for file in filelist:
-            self._extract_ras_with_ROI(file, ROI, bounds=bounds, ras_res=ras_res)
+            for file in filelist:
+                self._extract_ras_with_ROI(file, ROI, bounds=bounds, ras_res=ras_res)
 
     @save_log_file
-    def mp_extract_with_ROI(self, ROI, bounds: list = None, ras_res: list = None):
+    def mp_extract_with_ROI(self, ROI, zvalue: list, bounds: list = None, ras_res: list = None):
 
-        filelist = bf.file_filter(f'{self.output_path}ori\\DPAR\\', ['.TIF'])
-        if len(filelist) == 0:
-            self.mp_cal_dailyPAR()
+        for ztemp in zvalue:
+            filelist = bf.file_filter(f'{self.output_path}Ori_Denv_raster\\{ztemp}\\', ['.TIF'])
+            if len(filelist) == 0:
+                self.mp_cal_dailyPAR()
 
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            executor.map(self._extract_ras_with_ROI, filelist, repeat(ROI), repeat(bounds), repeat(ras_res))
+            with concurrent.futures.ProcessPoolExecutor() as executor:
+                executor.map(self._extract_ras_with_ROI, filelist, repeat(ROI), repeat(bounds), repeat(ras_res))
 
     def _extract_ras_with_ROI(self, file: str, ROI, bounds: list = None, ras_res: list = None):
 
@@ -359,20 +371,20 @@ class MODIS_ds(object):
         elif len(ras_res) != 2:
             raise TypeError(f'The ras res should under list type (Ysize, Xsize)!')
 
-        bf.create_folder(f'{self.output_path}{self.ROI_name}\\')
+        bf.create_folder(f'{self.output_path}{self.ROI_name}_Denv_raster\\')
 
         # Cut using the para
         if self.ROI is not None:
             filename = file.split('\\')[-1]
-            if not os.path.exists(f"{self.output_path}{self.ROI_name}\\DPAR\\{filename}"):
+            if not os.path.exists(f"{self.output_path}{self.ROI_name}_Denv_raster\\DPAR\\{filename}"):
                 s_t = time.time()
                 print(f'Start cutting the {str(filename)} using {self.ROI_name}.shp!')
                 ds_temp = gdal.Open(file)
-                gdal.Warp(f"/vsimem/{self.ROI_name}\\{filename.split('.TIF')[0]}_TEMP.TIF", ds_temp, xRes=ras_res[0], yRes=ras_res[1], resampleAlg=gdal.GRA_Bilinear, outputBounds=bounds)
-                gdal.Warp(f"/vsimem/{self.ROI_name}\\{filename.split('.TIF')[0]}_TEMP2.TIF", f"/vsimem/{self.ROI_name}\\{filename.split('.TIF')[0]}_TEMP.TIF", xRes=ras_res[0], yRes=ras_res[1], cutlineDSName=self.ROI, outputBounds=bounds)
-                gdal.Translate(f"{self.output_path}{self.ROI_name}\\DPAR\\{filename}", f"/vsimem/{self.ROI_name}\\{filename.split('.TIF')[0]}_TEMP2.TIF", options=topts)
-                gdal.Unlink(f"/vsimem/{self.ROI_name}\\{filename.split('.TIF')[0]}_TEMP2.TIF")
-                gdal.Unlink(f"/vsimem/{self.ROI_name}\\{filename.split('.TIF')[0]}_TEMP.TIF")
+                gdal.Warp(f"/vsimem/{self.ROI_name}{filename.split('.TIF')[0]}_TEMP.TIF", ds_temp, xRes=ras_res[0], yRes=ras_res[1], resampleAlg=gdal.GRA_Bilinear, outputBounds=bounds)
+                gdal.Warp(f"/vsimem/{self.ROI_name}{filename.split('.TIF')[0]}_TEMP2.TIF", f"/vsimem/{self.ROI_name}{filename.split('.TIF')[0]}_TEMP.TIF", xRes=ras_res[0], yRes=ras_res[1], cutlineDSName=self.ROI, outputBounds=bounds)
+                gdal.Translate(f"{self.output_path}{self.ROI_name}_Denv_raster\\DPAR\\{filename}", f"/vsimem/{self.ROI_name}{filename.split('.TIF')[0]}_TEMP2.TIF", options=topts)
+                gdal.Unlink(f"/vsimem/{self.ROI_name}{filename.split('.TIF')[0]}_TEMP2.TIF")
+                gdal.Unlink(f"/vsimem/{self.ROI_name}{filename.split('.TIF')[0]}_TEMP.TIF")
                 print(f'Finish cutting the {str(filename)} in {str(time.time()-s_t)}s!')
 
     def _process_raster2dc_para(self, **kwargs):
@@ -432,10 +444,10 @@ class MODIS_ds(object):
         kwargs['inherit_from_logfile'] = True
         self._process_raster2dc_para(**kwargs)
 
-        if temporal_division is not None and isinstance(temporal_division, str):
+        if temporal_division is not None and not isinstance(temporal_division, str):
             raise TypeError(f'The {temporal_division} should be a str!')
         elif temporal_division is None:
-            temporal_division = 'year'
+            temporal_division = 'all'
         elif temporal_division not in self._temporal_div_str:
             raise ValueError(f'The {temporal_division} is not supported!')
 
@@ -446,11 +458,11 @@ class MODIS_ds(object):
         for index_temp in index_list:
 
             # Create the output path
-            output_path = f'{self.output_path}{self.ROI_name}_datacube\\'
+            output_path = f'{self.output_path}{self.ROI_name}_Denv_datacube\\'
             bf.create_folder(output_path)
 
             # Obtain the input files
-            input_folder = f'{self.output_path}{self.ROI_name}\\{index_temp}\\'
+            input_folder = f'{self.output_path}{self.ROI_name}_Denv_raster\\{index_temp}\\'
             input_files = bf.file_filter(input_folder, ['.TIF'], exclude_word_list=['aux'])
             if self.main_coordinate_system is None:
                 self.main_coordinate_system = bf.retrieve_srs(gdal.Open(input_files[0]))
@@ -483,10 +495,10 @@ class MODIS_ds(object):
             _sparse_matrix = True if sparsify > 0.9 else False
 
             # Create the header dic
-            header_dic = {'ROI_name': self.ROI_name, 'index': index_temp, 'Datatype': 'float', 'ROI': self.ROI,
-                          'ROI_array': ROI_array_name, 'ROI_tif': ROI_tif_name, 'sdc_factor': True,
-                          'coordinate_system': self.main_coordinate_system, 'size_control_factor': False,
-                          'oritif_folder': input_folder, 'dc_group_list': None, 'tiles': None}
+            metadata_dic = {'ROI_name': self.ROI_name, 'index': index_temp, 'Datatype': 'float', 'ROI': self.ROI,
+                            'ROI_array': ROI_array_name, 'ROI_tif': ROI_tif_name, 'sdc_factor': True, 'Denv_factor': True,
+                            'coordinate_system': self.main_coordinate_system, 'size_control_factor': False,
+                            'oritif_folder': input_folder, 'dc_group_list': None, 'tiles': None, 'timescale': temporal_division}
 
             if temporal_division == 'year':
                 time_range = self.year_range
@@ -495,27 +507,29 @@ class MODIS_ds(object):
                 for year_temp in self.year_range:
                     for month_temp in ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']:
                         time_range.append(str(year_temp) + str(month_temp))
-            elif temporal_division is None:
+            elif temporal_division == 'all':
                 time_range = ['TIF']
 
             with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
                 executor.map(self._raster2sdc, repeat(output_path), repeat(input_folder), time_range, repeat(index_temp),
-                             repeat(header_dic), repeat(rows), repeat(cols), repeat(_sparse_matrix))
+                             repeat(metadata_dic), repeat(rows), repeat(cols), repeat(_sparse_matrix))
 
-    def _raster2sdc(self, output_path, input_folder, time_temp, zvalue_temp, header_dic, rows, cols, _sparse_matrix, ):
+    def _raster2sdc(self, output_path, input_folder, time_temp, zvalue_temp, metadata_dic, rows, cols, _sparse_matrix, ):
         start_time = time.time()
         print(f'Start constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name}.')
         # Construct the header dic
         nodata_value = None
 
-        # Create the yearly output path
-        yearly_output_path = output_path + str(int(time_temp)) + '\\'
+        # Create the output path
+        yearly_output_path = output_path + str(int(time_temp)) + '\\' if time_temp != 'TIF' else output_path + 'all\\'
         bf.create_folder(yearly_output_path)
 
-        if not os.path.exists(f'{yearly_output_path}doy.npy') or not os.path.exists(f'{yearly_output_path}header.npy'):
+        if not os.path.exists(f'{yearly_output_path}doy.npy') or not os.path.exists(f'{yearly_output_path}metadata.json'):
+
             # Determine the input files
-            yearly_input_files = bf.file_filter(input_folder, ['.TIF', '\\' + str(time_temp)], exclude_word_list=['aux'],
-                                                and_or_factor='and')
+            yearly_input_files = bf.file_filter(input_folder, ['.TIF', '\\' + str(time_temp)], exclude_word_list=['aux'],and_or_factor='and')
+            if yearly_input_files == []:
+                raise Exception('There are no valid input files, double check the temporal division!')
 
             if nodata_value is None:
                 nodata_value = gdal.Open(yearly_input_files[0])
@@ -541,7 +555,7 @@ class MODIS_ds(object):
                             if not os.path.exists(f"{input_folder}{str(doy_list[i])}_{zvalue_temp}.TIF"):
                                 raise Exception(f'The {str(doy_list[i])}_{zvalue_temp} is not properly generated!')
                             else:
-                                array_temp = gdal.Open( f"{input_folder}{str(doy_list[i])}_{zvalue_temp}.TIF")
+                                array_temp = gdal.Open(f"{input_folder}{str(doy_list[i])}_{zvalue_temp}.TIF")
                                 array_temp = array_temp.GetRasterBand(1).ReadAsArray()
                                 array_temp[array_temp == nodata_value] = 0
 
@@ -550,7 +564,7 @@ class MODIS_ds(object):
                             data_cube.append(sm_temp, name=doy_list[i])
                             data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
 
-                            print( f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
+                            print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
                             i += 1
                         except:
                             error_inf = traceback.format_exc()
@@ -581,7 +595,7 @@ class MODIS_ds(object):
                     try:
                         t1 = time.time()
                         if not os.path.exists(f"{input_folder}{str(doy_list[i])}_{zvalue_temp}.TIF"):
-                            raise Exception( f'The {str(doy_list[i])}_{zvalue_temp} is not properly generated!')
+                            raise Exception(f'The {str(doy_list[i])}_{zvalue_temp} is not properly generated!')
                         else:
                             array_temp = gdal.Open(f"{input_folder}{str(doy_list[i])}_{zvalue_temp}.TIF")
                             array_temp = array_temp.GetRasterBand(1).ReadAsArray()
@@ -605,17 +619,22 @@ class MODIS_ds(object):
                         i_temp -= 1
                     i_temp += 1
 
-            # Save the header dic
-            header_dic['sparse_matrix'], header_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
-            np.save(f'{yearly_output_path}header.npy', header_dic)
+                np.save(f'{yearly_output_path}doy.npy', doy_list)
+                np.save(f'{yearly_output_path}{zvalue_temp}_Denv_datacube.npy', data_cube)
+
+                # Save the metadata dic
+            metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
+            metadata_dic['timerange'] = time_temp
+            with open(f'{yearly_output_path}meta.json', 'w') as js_temp:
+                json.dump(metadata_dic, js_temp)
 
         print(f'Finish constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name} in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
 
 if __name__ == '__main__':
-    bounds_temp = bf.raster_ds2bounds('C:\\XS\\MODIS_FPAR\\ROI_map\\MYZR_FP_2020_map.TIF')
-    MD_ds = MODIS_ds('C:\\XS\MODIS_FPAR\\Ori\\')
+    MD_ds = MODIS_ds('G:\\A_veg\\MODIS_FPAR\\Ori\\')
     MD_ds.mp_hdf2tif(['PAR_Quality', 'GMT_0000_PAR', 'GMT_0300_PAR', 'GMT_0600_PAR', 'GMT_0900_PAR', 'GMT_1200_PAR', 'GMT_1500_PAR', 'GMT_1800_PAR', 'GMT_2100_PAR'])
     MD_ds.seq_cal_dailyPAR()
-    MD_ds.mp_extract_with_ROI(ROI='C:\XS\MODIS_FPAR\shpfile\\floodplain_2020.shp', bounds=bounds_temp, ras_res=[10, 10])
-    MD_ds.raster2dc(['DPAR'], ROI='C:\XS\MODIS_FPAR\shpfile\\floodplain_2020.shp', inherit_from_logfile=True)
+    bounds_temp = bf.raster_ds2bounds('G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\\ROI_map\\floodplain_2020.TIF')
+    MD_ds.mp_extract_with_ROI('G:\\A_veg\MODIS_FPAR\\shpfile\\floodplain_2020.shp', ['DPAR'], bounds=bounds_temp, ras_res=[10, 10])
+    MD_ds.raster2dc(['DPAR'], ROI='G:\\A_veg\\MODIS_FPAR\\shpfile\\floodplain_2020.shp', temporal_division='year', inherit_from_logfile=True)

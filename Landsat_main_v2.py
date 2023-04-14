@@ -3039,7 +3039,7 @@ class Landsat_dcs(object):
 
         #  Define the output_path
         if work_env is None:
-            self.work_env = Path(os.path.dirname(os.path.dirname(self.Landsat_dcs[0].dc_filepath))).path_name
+            self.work_env = Path(os.path.dirname(os.path.dirname(self.Landsat_dcs[0].Denv_dc_filepath))).path_name
         else:
             self.work_env = work_env
         

@@ -17,6 +17,7 @@ from utils import shp2raster_idw
 from osgeo import ogr
 import psutil
 import scipy.sparse as sm
+import json
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
@@ -55,7 +56,7 @@ class NCEI_ds(object):
         bf.create_folder(self.shpfile_path)
 
         # ds2raster
-        self._ds2raster_method_tup = ('idw',)
+        self._ds2raster_method_tup = ('IDW',)
         self._ds2raster_method = None
 
         # ras2dc
@@ -115,9 +116,15 @@ class NCEI_ds(object):
                     else:
                         try:
                             t = float(q.split(para + ':')[-1])
-                            self.__dict__[para] = float(q.split(para + ':')[-1])
+                            if not protected_var:
+                                self.__dict__[para] = float(q.split(para + ':')[-1])
+                            else:
+                                self.__dict__['_' + para] = float(q.split(para + ':')[-1])
                         except:
-                            self.__dict__[para] = q.split(para + ':')[-1]
+                            if not protected_var:
+                                self.__dict__[para] = q.split(para + ':')[-1]
+                            else:
+                                self.__dict__['_' + para] = q.split(para + ':')[-1]
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):
@@ -168,7 +175,7 @@ class NCEI_ds(object):
             log_temp.extend(args_list)
             log_temp.extend(kwargs_list)
             log_file.writelines(log_temp)
-            for func_key, func_processing_name in zip(['ds2pointshp', 'ds2raster_idw', 'raster2dc'], ['2point', '2raster', 'rs2dc']):
+            for func_key, func_processing_name in zip(['ds2pointshp', 'ds2raster', 'raster2dc'], ['2point', '2raster', 'rs2dc']):
                 if func_key in func.__name__:
                     if error_inf is None:
                         log_file.writelines([f'Status: Finished {func_processing_name}!\n', '#' * 70 + '\n'])
@@ -251,7 +258,7 @@ class NCEI_ds(object):
                     geodf_temp.to_file(f'{output_path}{str(datetime.date.strftime(date, "%Y%m%d"))}{index_all}.shp', encoding='gbk')
                     print(f'Finish generating the shpfile of \033[1;31m{str(datetime.date.strftime(date, "%Y%m%d"))}\033[0m in \033[1;34m{str(time.time()-t1)[0:7]}\033[0m s')
 
-    @ save_log_file
+    @save_log_file
     def ds2raster(self, zvalue_list: list, raster_size=None, ds2ras_method=None, bounds=None, ROI=None, crs=None):
 
         # Process ds2raster para
@@ -261,7 +268,7 @@ class NCEI_ds(object):
             raise TypeError('The zvalue should be a list')
 
         if ds2ras_method is None:
-            self._ds2raster_method = 'idw'
+            self._ds2raster_method = 'IDW'
         elif ds2ras_method not in self._ds2raster_method_tup:
             raise ValueError(f'The {ds2ras_method} is not supported for ds2raster!')
         else:
@@ -295,15 +302,11 @@ class NCEI_ds(object):
             self.main_coordinate_system = 'EPSG:32649'
 
         # Create the point shpfiles
-        shpfile_folder = self.output_path + 'shpfile\\'
+        shpfile_folder = self.output_path + 'Ori_shpfile\\'
         bf.create_folder(shpfile_folder)
         self.ds2pointshp(zvalue_list, shpfile_folder, self.main_coordinate_system)
 
         for zvalue_temp in zvalue_list:
-
-            # Create output raster folders
-            rasterfile_folder = f'{self.output_path}\\{str(self._ds2raster_method)}_{str(zvalue_temp)}_rsfile\\'
-            bf.create_folder(rasterfile_folder)
 
             # Generate output bounds based on the point bounds
             if bounds is None:
@@ -320,10 +323,10 @@ class NCEI_ds(object):
                 raise ValueError(f'There are no valid shp files in the {str(shpfile_folder)}!')
 
             # Generate the raster
-            if ds2ras_method == 'idw':
+            if ds2ras_method == 'IDW':
 
                 with concurrent.futures.ProcessPoolExecutor() as executor:
-                    executor.map(shp2raster_idw, shpfiles, repeat(rasterfile_folder), repeat(zvalue_temp), repeat(raster_size), repeat(bounds), repeat(self.ROI), repeat(self.main_coordinate_system))
+                    executor.map(shp2raster_idw, shpfiles, repeat(self.output_path), repeat(zvalue_temp), repeat(raster_size), repeat(bounds), repeat(self.ROI), repeat(self.main_coordinate_system))
 
             else:
                 pass
@@ -377,19 +380,21 @@ class NCEI_ds(object):
                 raise TypeError('Please mention the ds2ras_method should be supported!')
         elif self._inherit_from_logfile:
             self._retrieve_para(['ds2ras_method'], protected_var=True)
+            if self._ds2ras_method is None:
+                self._ds2ras_method = 'IDW'
         else:
             raise TypeError('Please mention the ds2ras_method should be supported!')
 
     @save_log_file
-    def raster2dc(self, zvalue_list:list, temporal_division=None, ROI=None, **kwargs):
+    def raster2dc(self, zvalue_list: list, temporal_division=None, ROI=None, **kwargs):
 
         kwargs['inherit_from_logfile'] = True
         self._process_raster2dc_para(**kwargs)
 
-        if temporal_division is not None and isinstance(temporal_division, str):
+        if temporal_division is not None and not isinstance(temporal_division, str):
             raise TypeError(f'The {temporal_division} should be a str!')
         elif temporal_division is None:
-            temporal_division = 'year'
+            temporal_division = 'all'
         elif temporal_division not in self._temporal_div_str:
             raise ValueError(f'The {temporal_division} is not supported!')
 
@@ -400,19 +405,20 @@ class NCEI_ds(object):
         for zvalue_temp in zvalue_list:
 
             # Create the output path
-            output_path = f'{self.output_path}\\{zvalue_temp}_datacube\\'
+            output_path = f'{self.output_path}{self.ROI_name}_Denv_datacube\\' if self.ROI_name is not None else f'{self.output_path}Ori_Denv_datacube\\'
             bf.create_folder(output_path)
 
             # Obtain the input files
-            input_folder = f'{self.output_path}{str(self._ds2raster_method)}_{str(zvalue_temp)}_rsfile\\{self.ROI_name}\\'
+            input_folder = f'{self.output_path}{str(self.ROI_name)}_Denv_raster\\IDW_{zvalue_temp}\\' if self.ROI_name is not None else f'{self.output_path}Ori_Denv_raster\\IDW_{zvalue_temp}\\'
             input_files = bf.file_filter(input_folder, ['.TIF'], exclude_word_list=['aux'])
             if self.main_coordinate_system is None:
                 self.main_coordinate_system = bf.retrieve_srs(gdal.Open(input_files[0]))
 
             # Create the ROI map
-            roi_map_folder = f'{self.output_path}\\{str(self._ds2raster_method)}_{str(zvalue_temp)}_rsfile\\ROI_map\\'
+            roi_map_folder = f'{self.output_path}ROI_map\\'
             bf.create_folder(roi_map_folder)
             ROI_tif_name, ROI_array_name = f'{roi_map_folder}{self.ROI_name}.TIF', f'{roi_map_folder}{self.ROI_name}.npy'
+
             if not os.path.exists(ROI_tif_name) or not os.path.exists(ROI_array_name):
                 for i in range(len(input_files)):
                     try:
@@ -438,11 +444,12 @@ class NCEI_ds(object):
             sparsify = np.sum(array_temp == nodata_value) / (array_temp.shape[0] * array_temp.shape[1])
             _sparse_matrix = True if sparsify > 0.9 else False
 
-            # Create the header dic
-            header_dic = {'ROI_name': self.ROI_name, 'index': zvalue_temp, 'Datatype': 'float', 'ROI': self.ROI,
-                          'ROI_array': ROI_array_name, 'ROI_tif': ROI_tif_name, 'sdc_factor': True,
-                          'coordinate_system': self.main_coordinate_system, 'size_control_factor': False,
-                          'oritif_folder': input_folder, 'dc_group_list': None, 'tiles': None}
+            # Create the metadata dic
+            metadata_dic = {'ROI_name': self.ROI_name, 'index': zvalue_temp, 'Datatype': 'float', 'ROI': self.ROI,
+                            'ROI_array': ROI_array_name, 'ROI_tif': ROI_tif_name, 'sdc_factor': True,
+                            'coordinate_system': self.main_coordinate_system, 'size_control_factor': False,
+                            'oritif_folder': input_folder, 'dc_group_list': None, 'tiles': None, 'timescale': temporal_division,
+                            'Denv_factor': True}
 
             if temporal_division == 'year':
                 time_range = self.year_range
@@ -451,23 +458,24 @@ class NCEI_ds(object):
                 for year_temp in self.year_range:
                     for month_temp in ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']:
                         time_range.append(str(year_temp) + str(month_temp))
-            elif temporal_division is None:
+            elif temporal_division == 'all':
                 time_range = ['TIF']
 
             with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
-                executor.map(self._raster2sdc, repeat(output_path), repeat(input_folder), time_range, repeat(zvalue_temp), repeat(header_dic), repeat(rows), repeat(cols), repeat(_sparse_matrix))
+                executor.map(self._raster2sdc, repeat(output_path), repeat(input_folder), time_range, repeat(zvalue_temp), repeat(metadata_dic), repeat(rows), repeat(cols), repeat(_sparse_matrix))
 
-    def _raster2sdc(self, output_path, input_folder, time_temp, zvalue_temp, header_dic, rows, cols, _sparse_matrix,):
+    def _raster2sdc(self, output_path, input_folder, time_temp, zvalue_temp, metadata_dic, rows, cols, _sparse_matrix,):
+
         start_time = time.time()
         print(f'Start constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name}.')
-        # Construct the header dic
         nodata_value = None
 
-        # Create the yearly output path
-        yearly_output_path = output_path + str(int(time_temp)) + '\\'
+        # Create the output path
+        yearly_output_path = output_path + str(int(time_temp)) + '\\' if time_temp != 'TIF' else output_path + 'all\\'
         bf.create_folder(yearly_output_path)
 
-        if not os.path.exists(f'{yearly_output_path}doy.npy') or not os.path.exists(f'{yearly_output_path}header.npy'):
+        if not os.path.exists(f'{yearly_output_path}doy.npy') or not os.path.exists(f'{yearly_output_path}metadata.json'):
+
             # Determine the input files
             yearly_input_files = bf.file_filter(input_folder, ['.TIF', '\\' + str(time_temp)], exclude_word_list=['aux'],  and_or_factor='and')
 
@@ -495,8 +503,7 @@ class NCEI_ds(object):
                             if not os.path.exists(f"{input_folder}{str(bf.doy2date(doy_list[i]))}_{zvalue_temp}.TIF"):
                                 raise Exception(f'The {str(doy_list[i])}_{zvalue_temp} is not properly generated!')
                             else:
-                                array_temp = gdal.Open(
-                                    f"{input_folder}{str(bf.doy2date(doy_list[i]))}_{zvalue_temp}.TIF")
+                                array_temp = gdal.Open(f"{input_folder}{str(bf.doy2date(doy_list[i]))}_{zvalue_temp}.TIF")
                                 array_temp = array_temp.GetRasterBand(1).ReadAsArray()
                                 array_temp[array_temp == nodata_value] = 0
 
@@ -505,8 +512,7 @@ class NCEI_ds(object):
                             data_cube.append(sm_temp, name=doy_list[i])
                             data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
 
-                            print(
-                                f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
+                            print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
                             i += 1
                         except:
                             error_inf = traceback.format_exc()
@@ -525,7 +531,7 @@ class NCEI_ds(object):
 
                     # Save the sdc
                     np.save(f'{yearly_output_path}doy.npy', doy_list)
-                    data_cube.save(f'{yearly_output_path}{zvalue_temp}_datacube\\')
+                    data_cube.save(f'{yearly_output_path}{zvalue_temp}_Denv_datacube\\')
                 else:
                     pass
             else:
@@ -537,8 +543,7 @@ class NCEI_ds(object):
                     try:
                         t1 = time.time()
                         if not os.path.exists(f"{input_folder}{str(doy_list[i])}_{zvalue_temp}.TIF"):
-                            raise Exception(
-                                f'The {str(doy_list[i])}_{zvalue_temp} is not properly generated!')
+                            raise Exception(f'The {str(doy_list[i])}_{zvalue_temp} is not properly generated!')
                         else:
                             array_temp = gdal.Open(f"{input_folder}{str(doy_list[i])}_{zvalue_temp}.TIF")
                             array_temp = array_temp.GetRasterBand(1).ReadAsArray()
@@ -546,8 +551,7 @@ class NCEI_ds(object):
                         data_cube[:, :, i] = array_temp
                         data_valid_array[i] = [array_temp == nodata_value].all()
 
-                        print(
-                            f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
+                        print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
                         i += 1
                     except:
                         error_inf = traceback.format_exc()
@@ -563,9 +567,14 @@ class NCEI_ds(object):
                         i_temp -= 1
                     i_temp += 1
 
-            # Save the header dic
-            header_dic['sparse_matrix'], header_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
-            np.save(f'{yearly_output_path}header.npy', header_dic)
+                np.save(f'{yearly_output_path}doy.npy', doy_list)
+                np.save(f'{yearly_output_path}{zvalue_temp}_Denv_datacube.npy', data_cube)
+
+            # Save the metadata dic
+            metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
+            metadata_dic['timerange'] = time_temp
+            with open(f'{yearly_output_path}meta.json', 'w') as js_temp:
+                json.dump(metadata_dic, js_temp)
 
         print(f'Finish constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name} in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
@@ -575,5 +584,5 @@ if __name__ == '__main__':
     bounds_temp = bf.raster_ds2bounds('G:\A_veg\S2_all\Sentinel2_L2A_Output\ROI_map\\MYZR_FP_2020_map.TIF')
     size = [ds_temp.RasterYSize, ds_temp.RasterXSize]
     ds_temp = NCEI_ds('G:\A_veg\\NDCI_temperature\\NCEI_19_22\\download\\')
-    ds_temp.ds2raster(['TEMP'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp', raster_size=size, ds2ras_method='idw', bounds=bounds_temp)
-    ds_temp.raster2dc(['TEMP'])
+    ds_temp.ds2raster(['TEMP'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp', raster_size=size, ds2ras_method='IDW', bounds=bounds_temp)
+    ds_temp.raster2dc(['TEMP'], temporal_division='year')

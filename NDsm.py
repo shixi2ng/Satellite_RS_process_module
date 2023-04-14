@@ -183,6 +183,21 @@ class NDSparseMatrix:
             self.SM_namelist[self.SM_namelist.index(ori_layer_name)] = new_layer_name
         self._update_size_para()
 
+    def add_layer(self, new_layer, new_layer_name, pos: int):
+
+        if type(new_layer) not in (sm.spmatrix, sm.csr_matrix, sm.csc_matrix, sm.coo_matrix, sm.bsr_matrix, sm.dia_matrix, sm.dok_matrix):
+            raise TypeError(f'The new sm_matrix is not a sm_matrix')
+        elif type(new_layer) != self._matrix_type:
+            raise TypeError(f'The new sm_matrix is not under the same type within the 3d sm matrix')
+
+        try:
+            self.SM_namelist.insert(pos, new_layer_name)
+            self.SM_group[new_layer_name] = new_layer
+        except:
+            raise Exception('Error occurred when add layer!')
+
+        self._update_size_para()
+
     def remove_layer(self, layer_name):
 
         if layer_name not in self.SM_namelist:

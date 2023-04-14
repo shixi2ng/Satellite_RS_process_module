@@ -20,11 +20,12 @@ import pywt
 import psutil
 import sympy
 from scipy import sparse as sm
-from utils import retrieve_srs, write_raster, remove_all_file_and_folder, create_circle_polygon, extract_value2shpfile
-from utils import seven_para_logistic_function, two_term_fourier, curfit4bound_annual
+from utils import retrieve_srs, write_raster, remove_all_file_and_folder, link_GEDI_inform
+from utils import seven_para_logistic_function, two_term_fourier, curfit4bound_annual, curfit_pd2raster
 from built_in_index import built_in_index
 from lxml import etree
 from NDsm import NDSparseMatrix
+import json
 
 
 global topts
@@ -94,24 +95,24 @@ class Sentinel2_ds(object):
         # Initialise the work environment
         if work_env is None:
             try:
-                self.work_env = Path(os.path.dirname(os.path.dirname(self.ori_folder)) + '\\').path_name
+                self._work_env = Path(os.path.dirname(os.path.dirname(self.ori_folder)) + '\\').path_name
             except:
                 print('There has no base dir for the ori_folder and the ori_folder will be treated as the work env')
-                self.work_env = bf.Path(self.ori_folder).path_name
+                self._work_env = bf.Path(self.ori_folder).path_name
         else:
-            self.work_env = Path(work_env).path_name
+            self._work_env = Path(work_env).path_name
 
         # Create cache path
-        self.cache_folder = self.work_env + 'cache\\'
-        self.trash_folder = self.work_env + 'trash\\'
+        self.cache_folder = self._work_env + 'cache\\'
+        self.trash_folder = self._work_env + 'trash\\'
         bf.create_folder(self.cache_folder)
         bf.create_folder(self.trash_folder)
-        bf.create_folder(self.work_env + 'Corrupted_S2_file\\')
+        bf.create_folder(self._work_env + 'Corrupted_S2_file\\')
 
         # Create output path
-        self.output_path = f'{self.work_env}Sentinel2_L2A_Output\\'
-        self.shpfile_path = f'{self.work_env}shpfile\\'
-        self.log_filepath = f'{self.work_env}logfile\\'
+        self.output_path = f'{self._work_env}Sentinel2_L2A_Output\\'
+        self.shpfile_path = f'{self._work_env}shpfile\\'
+        self.log_filepath = f'{self._work_env}logfile\\'
         bf.create_folder(self.output_path)
         bf.create_folder(self.log_filepath)
         bf.create_folder(self.shpfile_path)
@@ -196,7 +197,7 @@ class Sentinel2_ds(object):
                         log_file.writelines([f'Status: Error in {func_processing_name}!\n', 'Error information:\n', error_inf + '\n', '#' * 70 + '\n'])
         return wrapper
 
-    def _retrieve_para(self, required_para_name_list: list, protected_var=False,**kwargs):
+    def _retrieve_para(self, required_para_name_list: list, protected_var=False, **kwargs):
 
         if not os.path.exists(f'{self.log_filepath}para_file.txt'):
             print('The para file is not established yet')
@@ -237,9 +238,16 @@ class Sentinel2_ds(object):
                     else:
                         try:
                             t = float(q.split(para + ':')[-1])
-                            self.__dict__[para] = float(q.split(para + ':')[-1])
+                            if not protected_var:
+                                self.__dict__[para] = float(q.split(para + ':')[-1])
+                            else:
+                                self.__dict__['_' + para] = float(q.split(para + ':')[-1])
                         except:
-                            self.__dict__[para] = q.split(para + ':')[-1]
+                            if not protected_var:
+                                self.__dict__[para] = q.split(para + ':')[-1]
+                            else:
+                                self.__dict__['_' + para] = q.split(para + ':')[-1]
+
 
     @save_log_file
     def construct_metadata(self):
@@ -254,12 +262,12 @@ class Sentinel2_ds(object):
         start_temp = time.time()
 
         # process input files
-        if os.path.exists(self.work_env + 'Metadata.xlsx'):
-            metadata_num = pd.read_excel(self.work_env + 'Metadata.xlsx').shape[0]
+        if os.path.exists(self._work_env + 'Metadata.xlsx'):
+            metadata_num = pd.read_excel(self._work_env + 'Metadata.xlsx').shape[0]
         else:
             metadata_num = 0
 
-        if not os.path.exists(self.work_env + 'Metadata.xlsx') or metadata_num != len(self.orifile_list):
+        if not os.path.exists(self._work_env + 'Metadata.xlsx') or metadata_num != len(self.orifile_list):
             corrupted_ori_file, corrupted_file_date, product_path, product_name, sensor_type, sensing_date, orbit_num, tile_num, width, height = (
                 [] for i in range(10))
             corrupted_factor = 0
@@ -275,8 +283,8 @@ class Sentinel2_ds(object):
                     sensor_type.append(file_name[file_name.find('S2'): file_name.find('S2') + 10])
                     # print(file_information)
                 except:
-                    if (not os.path.exists(self.work_env + 'Corrupted_S2_file')) and corrupted_factor == 0:
-                        os.makedirs(self.work_env + 'Corrupted_S2_file')
+                    if (not os.path.exists(self._work_env + 'Corrupted_S2_file')) and corrupted_factor == 0:
+                        os.makedirs(self._work_env + 'Corrupted_S2_file')
                         corrupted_factor = 1
                     print(f'This file is corrupted {ori_file}!')
                     file_name = ori_file.split('\\')[-1]
@@ -285,17 +293,17 @@ class Sentinel2_ds(object):
 
             # Move the corrupted files
             for corrupted_file_name in corrupted_ori_file:
-                shutil.move(self.ori_folder + corrupted_file_name, self.work_env + 'Corrupted_S2_file\\' + corrupted_file_name)
+                shutil.move(self.ori_folder + corrupted_file_name, self._work_env + 'Corrupted_S2_file\\' + corrupted_file_name)
 
             # Construct corrupted metadata
             Corrupted_metadata = pd.DataFrame({'Corrupted_file_name': corrupted_ori_file, 'File_Date': corrupted_file_date})
-            if not os.path.exists(self.work_env + 'Corrupted_metadata.xlsx'):
-                Corrupted_metadata.to_excel(self.work_env + 'Corrupted_metadata.xlsx')
+            if not os.path.exists(self._work_env + 'Corrupted_metadata.xlsx'):
+                Corrupted_metadata.to_excel(self._work_env + 'Corrupted_metadata.xlsx')
             else:
-                Corrupted_metadata_old_version = pd.read_excel(self.work_env + 'Corrupted_metadata.xlsx')
+                Corrupted_metadata_old_version = pd.read_excel(self._work_env + 'Corrupted_metadata.xlsx')
                 Corrupted_metadata_old_version.append(Corrupted_metadata, ignore_index=True)
                 Corrupted_metadata_old_version.drop_duplicates()
-                Corrupted_metadata_old_version.to_excel(self.work_env + 'Corrupted_metadata.xlsx')
+                Corrupted_metadata_old_version.to_excel(self._work_env + 'Corrupted_metadata.xlsx')
 
             self.S2_metadata = pd.DataFrame({'Product_Path': product_path, 'Sensing_Date': sensing_date,
                                              'Orbit_Num': orbit_num, 'Tile_Num': tile_num, 'Sensor_Type': sensor_type})
@@ -325,13 +333,13 @@ class Sentinel2_ds(object):
             duplicate_file_list = list(dict.fromkeys(duplicate_file_list))
             if duplicate_file_list != []:
                 for file in duplicate_file_list:
-                    shutil.move(file, self.work_env + 'Corrupted_S2_file\\' + file.split('\\')[-1])
+                    shutil.move(file, self._work_env + 'Corrupted_S2_file\\' + file.split('\\')[-1])
                 self.construct_metadata()
             else:
-                self.S2_metadata.to_excel(self.work_env + 'Metadata.xlsx')
-                self.S2_metadata = pd.read_excel(self.work_env + 'Metadata.xlsx')
+                self.S2_metadata.to_excel(self._work_env + 'Metadata.xlsx')
+                self.S2_metadata = pd.read_excel(self._work_env + 'Metadata.xlsx')
         else:
-            self.S2_metadata = pd.read_excel(self.work_env + 'Metadata.xlsx')
+            self.S2_metadata = pd.read_excel(self._work_env + 'Metadata.xlsx')
         self.S2_metadata.sort_values(by=['Sensing_Date'], ascending=True)
         self.S2_metadata_size = self.S2_metadata.shape[0]
         self.output_bounds = np.zeros([self.S2_metadata_size, 4]) * np.nan
@@ -638,7 +646,7 @@ class Sentinel2_ds(object):
 
     def _process_subset_failure_file(self, index_list, **kwargs):
         if self._subset_failure_file != []:
-            subset_failure_file_folder = self.work_env + 'Corrupted_S2_file\\subset_failure_file\\'
+            subset_failure_file_folder = self._work_env + 'Corrupted_S2_file\\subset_failure_file\\'
             bf.create_folder(subset_failure_file_folder)
             for subset_failure_file in self._subset_failure_file:
                 # remove all the related file
@@ -1547,17 +1555,17 @@ class Sentinel2_ds(object):
         print(f'Start output the Sentinel2 dataset of \033[0;31m{index}\033[0m to sequenced datacube.')
         start_time = time.time()
 
-        if self._dc_overwritten_para or not os.path.exists(self._dc_infr[index] + 'doy.npy') or not os.path.exists(self._dc_infr[index] + 'header.npy'):
+        if self._dc_overwritten_para or not os.path.exists(self._dc_infr[index] + 'doy.npy') or not os.path.exists(self._dc_infr[index] + 'metadata.json'):
 
             sa_map = np.load(bf.file_filter(self.output_path + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
             if self.ROI_name is None:
                 print('Start processing ' + index + ' datacube.')
-                header_dic = {'ROI_name': None, 'index': index, 'Datatype': 'float', 'ROI': None, 'ROI_array': None, 'ROI_tif': None,
+                metadata_dic = {'ROI_name': None, 'index': index, 'Datatype': 'float', 'ROI': None, 'ROI_array': None, 'ROI_tif': None,
                               'sdc_factor': True, 'coordinate_system': self.main_coordinate_system, 'size_control_factor': self._size_control_factor,
                               'oritif_folder': self._dc_infr[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
             else:
                 print('Start processing ' + index + ' datacube of the ' + self.ROI_name + '.')
-                header_dic = {'ROI_name': self.ROI_name, 'index': index, 'Datatype': 'float', 'ROI': self.ROI, 'ROI_array': self.output_path + 'ROI_map\\' + self.ROI_name + '_map.npy', 'ROI_tif': self.output_path + 'ROI_map\\' + self.ROI_name + '_map.TIF',
+                metadata_dic = {'ROI_name': self.ROI_name, 'index': index, 'Datatype': 'float', 'ROI': self.ROI, 'ROI_array': self.output_path + 'ROI_map\\' + self.ROI_name + '_map.npy', 'ROI_tif': self.output_path + 'ROI_map\\' + self.ROI_name + '_map.TIF',
                               'sdc_factor': True, 'coordinate_system': self.main_coordinate_system, 'size_control_factor': self._size_control_factor,
                               'oritif_folder': self._dc_infr[index + 'input_path'], 'dc_group_list': None, 'tiles': None}
 
@@ -1688,9 +1696,10 @@ class Sentinel2_ds(object):
                 bf.create_folder(f'{self._dc_infr[index]}{str(index)}_sequenced_datacube\\')
                 np.save(f'{self._dc_infr[index]}{str(index)}_sequenced_datacube.npy', data_cube)
 
-            # Save the header dic
-            header_dic['sparse_matrix'], header_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
-            np.save(self._dc_infr[index] + 'header.npy', header_dic)
+            # Save the metadata dic
+            metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
+            with open(self._dc_infr[index] + 'metadata.json', 'w') as js_temp:
+                json.dump(metadata_dic, js_temp)
 
         print(f'Finished writing the sdc in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
@@ -1709,35 +1718,36 @@ class Sentinel2_dc(object):
 
         # Check work env
         if work_env is not None:
-            self.work_env = Path(work_env).path_name
+            self._work_env = Path(work_env).path_name
         else:
-            self.work_env = Path(os.path.dirname(os.path.dirname(self.dc_filepath))).path_name
-        self.root_path = Path(os.path.dirname(os.path.dirname(self.work_env))).path_name
+            self._work_env = Path(os.path.dirname(os.path.dirname(self.dc_filepath))).path_name
+        self.root_path = Path(os.path.dirname(os.path.dirname(self._work_env))).path_name
 
         # Define the basic var name
         self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'sdc_factor',
                              'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
                              'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles')
 
-        # Read the header file
-        header_file = bf.file_filter(self.dc_filepath, ['header.npy'])
-        if len(header_file) == 0:
-            raise ValueError('There has no valid sdc or the header file of the sdc was missing!')
-        elif len(header_file) > 1:
-            raise ValueError('There has more than one header file in the dir')
+        # Read the metadata file
+        metadata_file = bf.file_filter(self.dc_filepath, ['metadata.json'])
+        if len(metadata_file) == 0:
+            raise ValueError('There has no valid sdc or the metadata file of the sdc was missing!')
+        elif len(metadata_file) > 1:
+            raise ValueError('There has more than one metadata file in the dir')
         else:
             try:
-                dc_header = np.load(header_file[0], allow_pickle=True).item()
-                if dc_header.__class__ is not dict:
-                    raise Exception('Please make sure the header file is a dictionary constructed in python!')
+                with open(metadata_file[0]) as js_temp:
+                    dc_metadata = json.load(js_temp)
+                if not isinstance(dc_metadata, dict):
+                    raise Exception('Please make sure the metadata file is a dictionary constructed in python!')
                 else:
                     for dic_name in self._fund_factor:
-                        if dic_name not in dc_header.keys():
-                            raise Exception(f'The {dic_name} is not in the dc header, double check!')
+                        if dic_name not in dc_metadata.keys():
+                            raise Exception(f'The {dic_name} is not in the dc metadata, double check!')
                         else:
-                            self.__dict__[dic_name] = dc_header[dic_name]
+                            self.__dict__[dic_name] = dc_metadata[dic_name]
             except:
-                raise Exception('Something went wrong when reading the header!')
+                raise Exception('Something went wrong when reading the metadata!')
 
         start_time = time.time()
         print(f'Start loading the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
@@ -1795,14 +1805,15 @@ class Sentinel2_dc(object):
             bf.create_folder(output_path)
         output_path = bf.Path(output_path).path_name
 
-        header_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI, 'ROI_array': self.ROI_array,
+        metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI, 'ROI_array': self.ROI_array,
                       'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor, 'coordinate_system': self.coordinate_system,
                       'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix, 'size_control_factor': self.size_control_factor,
                       'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles}
 
         doy = self.sdc_doylist
         np.save(f'{output_path}doy.npy', doy)
-        np.save(f'{output_path}header.npy', header_dic)
+        with open(f'{output_path}metadata.json', 'w') as js_temp:
+            json.dump(metadata_dic, js_temp)
 
         if self.sparse_matrix:
             self.dc.save(f'{output_path}{str(self.index)}_sequenced_datacube\\')
@@ -1819,7 +1830,7 @@ class Sentinel2_dcs(object):
         # init_key_var
         self.sparse_matrix, self.huge_matrix, self.ROI, self.ROI_name, self.sdc_factor = False, False, None, None, False
         self.doy_list, self.size_control_factor_list, self.oritif_folder_list = [], [], []
-        self.ROI_tif = None
+        self.ROI_tif, self.ROI_array = None, None
 
         # Generate the datacubes list
         self._dcs_backup_ = []
@@ -1903,9 +1914,9 @@ class Sentinel2_dcs(object):
 
         # Define the output_path
         if work_env is None:
-            self.work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[0].dc_filepath))).path_name
+            self._work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[0].Phemetric_dc_filepath))).path_name
         else:
-            self.work_env = work_env
+            self._work_env = work_env
 
         if space_optimised is True:
             for tt in self._dcs_backup_:
@@ -2053,8 +2064,8 @@ class Sentinel2_dcs(object):
                 MNDWI_static_thr = 0.1
 
             if 'inundation_MNDWI_thr' not in self.index_list or self._inundated_ow_para:
-                if not os.path.exists(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\header.npy'):
-                    bf.create_folder(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                if not os.path.exists(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\header.npy'):
+                    bf.create_folder(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
                     if 'MNDWI' in self.index_list:
                         if self.sparse_matrix:
                             namelist = self.dcs[self.index_list.index('MNDWI')].SM_namelist
@@ -2070,7 +2081,7 @@ class Sentinel2_dcs(object):
                             inundation_dc.dc = inundation_sm
                             inundation_dc.index = 'inundation_' + method
                             inundation_dc.sdc_doylist = self.doy_list
-                            inundation_dc.save(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                            inundation_dc.save(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
 
                         else:
                             inundation_array = copy.deepcopy(self.dcs[self.index_list.index('MNDWI')])
@@ -2079,7 +2090,7 @@ class Sentinel2_dcs(object):
                             inundation_dc = copy.deepcopy(self._dcs_backup_[self.index_list.index('MNDWI')])
                             inundation_dc.dc = inundation_array
                             inundation_dc.index = 'inundation_' + method
-                            inundation_dc.save(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                            inundation_dc.save(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
 
                         if self._append_inundated_dc:
                             self.append(inundation_dc)
@@ -2087,7 +2098,7 @@ class Sentinel2_dcs(object):
                     else:
                         raise ValueError('Please construct a valid datacube with MNDWI sdc inside!')
                 else:
-                    inundation_dc = Sentinel2_dc(self.work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                    inundation_dc = Sentinel2_dc(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
                     self.append(inundation_dc)
                     self.remove('MNDWI')
                 
@@ -2111,8 +2122,8 @@ class Sentinel2_dcs(object):
         processed_dc = copy.deepcopy(self.dcs[self.index_list.index(processed_index)])
         processed_dc4save = copy.deepcopy(self._dcs_backup_[self.index_list.index(processed_index)])
         
-        if not os.path.exists(self.work_env + processed_index + '_noninun_sequenced_datacube\\header.npy'):
-            bf.create_folder(self.work_env + processed_index + '_noninun_sequenced_datacube\\')
+        if not os.path.exists(self._work_env + processed_index + '_noninun_sequenced_datacube\\header.npy'):
+            bf.create_folder(self._work_env + processed_index + '_noninun_sequenced_datacube\\')
             if self.sparse_matrix:
 
                 for height in range(self.dcs_ZSize):
@@ -2132,14 +2143,14 @@ class Sentinel2_dcs(object):
                 processed_index = processed_index + '_noninun'
                 processed_dc4save.index = processed_index
                 processed_dc4save.dc = processed_dc
-                processed_dc4save.save(self.work_env + processed_index + '_sequenced_datacube\\')
+                processed_dc4save.save(self._work_env + processed_index + '_sequenced_datacube\\')
 
                 if append_new_dc:
                     self.append(processed_dc4save)
             else:
                pass
         else:
-            processed_dc = Sentinel2_dc(self.work_env + processed_index + '_noninun_sequenced_datacube\\')
+            processed_dc = Sentinel2_dc(self._work_env + processed_index + '_noninun_sequenced_datacube\\')
             if append_new_dc:
                 self.append(processed_dc)
 
@@ -2198,9 +2209,10 @@ class Sentinel2_dcs(object):
 
         # Define the study region
         sa_map = np.load(self.ROI_array)
+        ds_temp = gdal.Open(self.ROI_tif)
 
         # Create output path
-        curfit_output_path = self.work_env + index + '_curfit_datacube\\'
+        curfit_output_path = self._work_env + index + '_curfit_datacube\\'
         output_path = curfit_output_path + str(self._curve_fitting_dic['CFM']) + '\\'
         bf.create_folder(curfit_output_path)
         bf.create_folder(output_path)
@@ -2266,7 +2278,6 @@ class Sentinel2_dcs(object):
 
                 with concurrent.futures.ProcessPoolExecutor(max_workers=16) as executor:
                     result = executor.map(curfit4bound_annual, pos_list, index_dc_list, doy_all_list, repeat(self._curve_fitting_dic), repeat(self.sparse_matrix), repeat(size_control_fac), xy_offset_list, repeat(cache_folder))
-
                 result_list = list(result)
 
             else:
@@ -2277,7 +2288,7 @@ class Sentinel2_dcs(object):
             self._curfit_result = None
             for result_temp in result_list:
                 if self._curfit_result is None:
-                    self._curfit_result = copy.copy(self._curfit_result)
+                    self._curfit_result = copy.copy(result_temp)
                 else:
                     self._curfit_result = pd.concat([self._curfit_result, result_temp])
 
@@ -2287,15 +2298,28 @@ class Sentinel2_dcs(object):
                     pos_df.insert(len(pos_df.keys()), key_temp, np.nan)
                     key_list.append(key_temp)
 
-            for num in range(len(self._curfit_result)):
-                num_pos_df = pos_df[pos_df['index'] == self._curfit_result.loc[num, 'index']].index.tolist()[0]
-                for key in key_list:
-                    pos_df.loc[num_pos_df, key] = self._curfit_result.loc[num, key]
-                    pos_df.loc[num_pos_df, 'Cal_factor'] = 1
+            # for num in range(len(self._curfit_result)):
+            #     num_pos_df = pos_df[pos_df['index'] == self._curfit_result.loc[num, 'index']].index.tolist()[0]
+            #     for key in key_list:
+            #         pos_df.loc[num_pos_df, key] = self._curfit_result.loc[num, key]
+            #         pos_df.loc[num_pos_df, 'Cal_factor'] = 1
 
             self._curfit_result.to_csv(output_path + 'curfit_all.csv')
         else:
             self._curfit_result = pd.read_csv(output_path + 'curfit_all.csv')
+
+        # Create output key list
+        key_list = []
+        df_list = []
+        for key_temp in self._curfit_result.keys():
+            if True not in [nr_key in key_temp for nr_key in ['Unnamed', 'level', 'index']] and key_temp != 'y' and key_temp != 'x':
+                key_list.append(key_temp)
+                df_list.append(self._curfit_result.loc[:, ['y', 'x', key_temp]])
+
+        # Create tif file based on phenological parameter
+        for _ in range(len(key_list)):
+            arr_result = curfit_pd2raster(df_list[_], key_list[_], ds_temp.RasterYSize, ds_temp.RasterXSize)
+            bf.write_raster(ds_temp, arr_result[1], output_path, arr_result[0] + '.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
 
     def _process_phenology_metrics_para(self, **kwargs):
 
@@ -2353,9 +2377,9 @@ class Sentinel2_dcs(object):
         sa_map = np.load(self.ROI_array, allow_pickle=True)
         for index_temp in index_list:
             # input the cf dic
-            input_annual_file = self.work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic[
+            input_annual_file = self._work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic[
                 'CFM'] + '\\annual_cf_para.npy'
-            input_year_file = self.work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic['CFM'] + '\\year.npy'
+            input_year_file = self._work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic['CFM'] + '\\year.npy'
             if not os.path.exists(input_annual_file) or not os.path.exists(input_year_file):
                 raise Exception('Please generate the cf para before the generation of phenology metrics')
             else:
@@ -2363,7 +2387,7 @@ class Sentinel2_dcs(object):
                 year_list = np.load(input_year_file)
 
             phenology_metrics_inform_dic = {}
-            root_output_folder = self.work_env + index_temp + '_phenology_metrics\\' + str(
+            root_output_folder = self._work_env + index_temp + '_phenology_metrics\\' + str(
                 self._curve_fitting_dic['CFM']) + '\\'
             bf.create_folder(root_output_folder)
             for phenology_index_temp in phenology_index:
@@ -2438,7 +2462,7 @@ class Sentinel2_dcs(object):
                         write_raster(gdal.Open(self.ROI_tif), phe_metrics, phenology_metrics_inform_dic[
                             phenology_index_temp + '_' + index_temp + '_' + str(self._curve_fitting_dic['CFM']) + '_path'],
                                      str(year) + '_phe_metrics.TIF', raster_datatype=gdal.GDT_Float32)
-            np.save(self.work_env + index_temp + '_phenology_metrics\\' + str(self._curve_fitting_dic['CFM']) + '_phenology_metrics.npy', phenology_metrics_inform_dic)
+            np.save(self._work_env + index_temp + '_phenology_metrics\\' + str(self._curve_fitting_dic['CFM']) + '_phenology_metrics.npy', phenology_metrics_inform_dic)
 
     def generate_phenology_metric(self):
         pass
@@ -2527,96 +2551,6 @@ class Sentinel2_dcs(object):
                 gedi_list_output.to_csv(GEDI_xlsx_file.split('.')[0] + f'_{index_combined_name}.csv')
             except:
                 raise Exception('The df output procedure was interrupted by error!')
-
-
-def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GEDI_link_S2_retrieval_method, size_control_factor, search_window: int = 40):
-
-    df_size = gedi_list.shape[0]
-    furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
-    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2_{index_name}_{GEDI_link_S2_retrieval_method}', value=np.nan)
-    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability', value=np.nan)
-    sparse_matrix = True if isinstance(dc, NDSparseMatrix) else False
-    gedi_list = gedi_list.reset_index()
-
-    # itr through the gedi_list
-    for i in range(df_size):
-        lat, lon, date_temp = gedi_list[furlat][i], gedi_list[furlon][i], gedi_list['Date'][i]
-
-        # Draw a circle around the central point
-        point_coords = [lon, lat]
-        polygon = create_circle_polygon(point_coords, 25)
-
-        t1 = time.time()
-        print(f'Start linking the {index_name} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
-
-        if GEDI_link_S2_retrieval_method == 'nearest_neighbor':
-            # Link GEDI and S2 inform using nearest_neighbor
-            pass
-
-        elif GEDI_link_S2_retrieval_method == 'linear_interpolation':
-
-            # Link GEDI and S2 inform using linear_interpolation
-            data_positive, date_positive, data_negative, date_negative = None, None, None, None
-            gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = np.nan
-            gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = np.nan
-
-            for date_interval in range(search_window):
-                if date_interval == 0 and date_interval + date_temp in doy_list:
-                    if sparse_matrix:
-                        array_temp = dc.SM_group[bf.doy2date(date_temp)]
-                        info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-
-                        if size_control_factor:
-                            info_temp = (float(info_temp) - 32768) / 10000
-                        else:
-                            info_temp = float(info_temp)
-
-                    if ~np.isnan(info_temp):
-                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = info_temp
-                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = 1
-                        break
-
-                else:
-                    if data_negative is None and date_temp - date_interval in doy_list:
-                        date_temp_temp = date_temp - date_interval
-                        if sparse_matrix:
-                            array_temp = dc.SM_group[bf.doy2date(date_temp_temp)]
-                            info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-
-                            if size_control_factor:
-                                info_temp = (float(info_temp) - 32768) / 10000
-                            else:
-                                info_temp = float(info_temp)
-
-                        if ~np.isnan(info_temp):
-                            data_negative = info_temp
-                            date_negative = date_temp_temp
-
-                    if data_positive is None and date_temp + date_interval in doy_list:
-                        date_temp_temp = date_temp + date_interval
-                        if sparse_matrix:
-                            array_temp = dc.SM_group[bf.doy2date(date_temp_temp)]
-                            info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-
-                            if size_control_factor:
-                                info_temp = (float(info_temp) - 32768) / 10000
-                            else:
-                                info_temp = float(info_temp)
-
-                        if ~np.isnan(info_temp):
-                            data_positive = info_temp
-                            date_positive = date_temp_temp
-
-                    if data_positive is not None and data_negative is not None:
-                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = data_negative + (date_temp - date_negative) * (data_positive - data_negative) / (date_positive - date_negative)
-                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = 1 - ((date_positive - date_negative) / (2 * search_window))
-                        break
-
-            print(f'Finish linking the {index_name} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
-        else:
-            raise TypeError(f'{str(GEDI_link_S2_retrieval_method)} is not supported!')
-
-    return gedi_list
 
 
 if __name__ == '__main__':
