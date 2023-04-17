@@ -154,6 +154,8 @@ class Denv_dc(object):
 
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
+        if self.dc_ZSize != len(self.sdc_doylist):
+            raise TypeError('The Denv datacube is not consistent with the doy list')
 
         print(f'Finish loading the Denv dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
@@ -265,7 +267,8 @@ class Phemetric_dc(object):
         self.index, self.Datatype, self.coordinate_system = None, None, None
         self.dc_group_list, self.tiles = None, None
         self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
-        self.phemetric_factor, self.pheyear = False, None
+        self.Phemetric_factor, self.pheyear = False, None
+        self.curfit_dic = {}
 
         # Check work env
         if work_env is not None:
@@ -275,9 +278,9 @@ class Phemetric_dc(object):
         self.root_path = Path(os.path.dirname(os.path.dirname(self._work_env))).path_name
 
         # Define the basic var name
-        self._fund_factor = ('ROI_name', 'pheyear', 'Datatype', 'ROI', 'ROI_array', 'sdc_factor',
+        self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array',
                              'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
-                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles')
+                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles', 'timerange')
 
         # Read the metadata file
         metadata_file = bf.file_filter(self.Phemetric_dc_filepath, ['metadata.json'])
@@ -294,14 +297,14 @@ class Phemetric_dc(object):
                     raise Exception('Please make sure the metadata file is a dictionary constructed in python!')
                 else:
                     # Determine whether this datacube is Phemetric or not
-                    if 'Denv_factor' not in dc_metadata.keys():
-                        raise TypeError('The Denv factor was lost or it is not a Denv datacube!')
-                    elif dc_metadata['Denv_factor'] is False:
-                        raise TypeError(f'{self.Phemetric_dc_filepath} is not a Denv datacube!')
-                    elif dc_metadata['Denv_factor'] is True:
-                        self.Denv_factor = dc_metadata['Denv_factor']
+                    if 'Phemetric_factor' not in dc_metadata.keys():
+                        raise TypeError('The Phemetric_factor was lost or it is not a Phemetric datacube!')
+                    elif dc_metadata['Phemetric_factor'] is False:
+                        raise TypeError(f'{self.Phemetric_dc_filepath} is not a Phemetric datacube!')
+                    elif dc_metadata['Phemetric_factor'] is True:
+                        self.Denv_factor = dc_metadata['Phemetric_factor']
                     else:
-                        raise TypeError('The Denv factor was under wrong type!')
+                        raise TypeError('The Phemetric factor was under wrong type!')
 
                     for dic_name in self._fund_factor:
                         if dic_name not in dc_metadata.keys():
@@ -312,57 +315,58 @@ class Phemetric_dc(object):
                 raise Exception('Something went wrong when reading the metadata!')
 
         start_time = time.time()
-        print(f'Start loading the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+        print(f'Start loading the Phemetric datacube of {str(self.pheyear)} \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
 
-        # Read doy or date file of the Datacube
+        # Read paraname file of the Phemetric datacube
         try:
-            if self.sdc_factor is True:
-                # Read doylist
-                doy_file = bf.file_filter(self.Phemetric_dc_filepath, ['doy.npy'])
-                if len(doy_file) == 0:
-                    raise ValueError('There has no valid doy file or file was missing!')
-                elif len(doy_file) > 1:
-                    raise ValueError('There has more than one doy file in the dc dir')
+            if self.Phemetric_factor is True:
+                # Read paraname
+                paraname_file = bf.file_filter(self.Phemetric_dc_filepath, ['paraname.npy'])
+                if len(paraname_file) == 0:
+                    raise ValueError('There has no paraname file or file was missing!')
+                elif len(paraname_file) > 1:
+                    raise ValueError('There has more than one paraname file in the Phemetric datacube dir')
                 else:
-                    sdc_doylist = np.load(doy_file[0], allow_pickle=True)
-                    self.sdc_doylist = [int(sdc_doy) for sdc_doy in sdc_doylist]
+                    paraname_list = np.load(paraname_file[0], allow_pickle=True)
+                    self.paraname_list = [int(paraname) for paraname in paraname_list]
             else:
-                raise TypeError('Please input as a sdc')
+                raise TypeError('Please input as a Phemetric datacube')
         except:
-            raise Exception('Something went wrong when reading the doy and date list!')
+            raise Exception('Something went wrong when reading the paraname list!')
 
         # Read func dic
         try:
             if self.sparse_matrix and self.huge_matrix:
-                if os.path.exists(self.Phemetric_dc_filepath + f'{self.index}_sequenced_datacube\\'):
-                    self.dc = NDSparseMatrix().load(self.Phemetric_dc_filepath + f'{self.index}_sequenced_datacube\\')
+                if os.path.exists(self.Phemetric_dc_filepath + f'{self.index}_Phemetric_datacube\\'):
+                    self.dc = NDSparseMatrix().load(self.Phemetric_dc_filepath + f'{self.index}_Phemetric_datacube\\')
                 else:
-                    raise Exception('Please double check the code if the sparse huge matrix is generated properply')
+                    raise Exception('Please double check the code if the sparse huge matrix is generated properly')
             elif not self.huge_matrix:
-                self.dc_filename = bf.file_filter(self.Phemetric_dc_filepath, ['sequenced_datacube.npy'])
+                self.dc_filename = bf.file_filter(self.Phemetric_dc_filepath, ['Phemetric_datacube.npy'])
                 if len(self.dc_filename) == 0:
-                    raise ValueError('There has no valid dc or the dc was missing!')
+                    raise ValueError('There has no valid Phemetric datacube or the dc was missing!')
                 elif len(self.dc_filename) > 1:
-                    raise ValueError('There has more than one date file in the dc dir')
+                    raise ValueError('There has more than one data file in the dc dir')
                 else:
                     self.dc = np.load(self.dc_filename[0], allow_pickle=True)
             elif self.huge_matrix and not self.sparse_matrix:
                 self.dc_filename = bf.file_filter(self.Phemetric_dc_filepath, ['sequenced_datacube', '.npy'], and_or_factor='and')
         except:
-            raise Exception('Something went wrong when reading the datacube!')
+            raise Exception('Something went wrong when reading the Phemetric datacube!')
 
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
+        if self.dc_ZSize != len(self.paraname_list) or self.dc_ZSize != self.curfit_dic['para_num'] + 1:
+            raise TypeError('The Phemetric datacube is not consistent with the paraname file')
 
-        print(
-            f'Finish loading the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+        print(f'Finish loading the Phemetric datacube of {str(self.pheyear)} \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
     def __sizeof__(self):
-        return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()
+        return self.dc.__sizeof__() + self.paraname_list.__sizeof__()
 
     def save(self, output_path: str):
         start_time = time.time()
-        print(f'Start saving the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+        print(f'Start saving the Phemetric datacube of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
 
         if not os.path.exists(output_path):
             bf.create_folder(output_path)
@@ -371,21 +375,17 @@ class Phemetric_dc(object):
         metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI,
                         'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
                         'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
-                        'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles}
+                        'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles,
+                        'pheyear': self.pheyear, 'curfit_dic': self.curfit_dic, 'Phemetric_factor': self.Phemetric_factor}
 
-        doy = self.sdc_doylist
-        np.save(f'{output_path}doy.npy', doy)
+        paraname = self.paraname_list
+        np.save(f'{output_path}paraname.npy', paraname)
         with open(f'{output_path}metadata.json', 'w') as js_temp:
             json.dump(metadata_dic, js_temp)
 
         if self.sparse_matrix:
-            self.dc.save(f'{output_path}{str(self.index)}_sequenced_datacube\\')
+            self.dc.save(f'{output_path}{str(self.index)}_Phemetric_datacube\\')
         else:
-            np.save(f'{output_path}{str(self.index)}_sequenced_datacube.npy', self.dc)
+            np.save(f'{output_path}{str(self.index)}_Phemetric_datacube.npy', self.dc)
 
-        print(f'Finish saving the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
-
-
-if __name__ == '__main__':
-    A = Denv_dc('G:\A_veg\\NDCI_temperature\\NCEI_19_22\\NCEI_Output\\floodplain_2020_Denv_datacube\\2019\\')
-    b = 1
+        print(f'Finish saving the Phemetric datacube of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')

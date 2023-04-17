@@ -408,10 +408,10 @@ class GEDI_list(object):
     def generate_boundary(self, ):
         pass
 
-    def reprojection(self, proj: str, name: str = 'new'):
+    def reprojection(self, proj: str, xycolumn_start: str = 'new'):
 
-        if not isinstance(name, str):
-            raise TypeError
+        if not isinstance(xycolumn_start, str):
+            raise TypeError(f'{xycolumn_start} is not a str')
 
         lat, lon, lon_left, lon_right, lat_upper, lat_lower = [], [], [], [], [], []
         for i in range(self.df_size):
@@ -427,11 +427,11 @@ class GEDI_list(object):
             lon.append(point_temp[0].coords[0][0])
             lat.append(point_temp[0].coords[0][1])
 
-        for data_temp, name_temp in zip([lat, lon], [name + '_' + temp for temp in ['lat', 'lon']]):
+        for data_temp, name_temp in zip([lat, lon], [xycolumn_start + '_' + temp for temp in ['lat', 'lon']]):
             self.GEDI_df.insert(len(self.GEDI_df.columns), name_temp, data_temp)
 
         # Sort it according to lat and lon
-        self.GEDI_df = self.GEDI_df.sort_values([f'{name}_lon', f'{name}_lat'], ascending=[True, False])
+        self.GEDI_df = self.GEDI_df.sort_values([f'{xycolumn_start}_lon', f'{xycolumn_start}_lat'], ascending=[True, False])
         self.GEDI_df = self.GEDI_df.reset_index()
 
 

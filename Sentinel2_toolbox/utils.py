@@ -1,7 +1,6 @@
 # coding=utf-8
 import concurrent.futures
 import os
-
 import pandas as pd
 
 os.environ['PROJ_LIB'] = 'C:\\Users\\sx199\\Anaconda3\\envs\\py38\\Library\\share\\proj'
@@ -21,6 +20,10 @@ import shapely.geometry
 from osgeo import ogr
 import time
 from NDsm import NDSparseMatrix
+import json
+import psutil
+import scipy.sparse as sm
+import traceback
 
 
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
@@ -858,6 +861,108 @@ def curfit_pd2raster(df: pd.DataFrame, key: str, ysize: int, xsize: int):
         array_temp[df.loc[pos, 'y'], df.loc[pos, 'x']] = df.loc[pos, key]
 
     return [key, array_temp]
+
+
+def cf2phemetric_dc(input_path, output_path, year, index, metadata_dic):
+
+    # Initial
+    start_time = time.time()
+    print(f"Start constructing the {str(year)} {index} Phemetric datacube of {metadata_dic['ROI_name']}.")
+
+    # Create the output path
+    yearly_output_path = output_path + str(int(year)) + '\\'
+    bf.create_folder(yearly_output_path)
+
+    if not os.path.exists(output_path + f'{str(year)}\\metadata.json') or not not os.path.exists(output_path + f'{str(year)}\\paraname.npy'):
+
+        # Determine the input files
+        yearly_input_files = bf.file_filter(input_path, ['.TIF', '\\' + str(year)], exclude_word_list=['aux'], and_or_factor='and')
+
+        if yearly_input_files == []:
+            raise Exception('There are no valid input files, double check the temporal division!')
+
+        nodata_value = gdal.Open(yearly_input_files[0])
+        nodata_value = nodata_value.GetRasterBand(1).GetNoDataValue()
+
+        ds_temp = gdal.Open(yearly_input_files[0])
+        array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+        cols, rows = array_temp.shape[1], array_temp.shape[0]
+        sparsify = np.sum(array_temp == nodata_value) / (array_temp.shape[0] * array_temp.shape[1]) if ~np.isnan(nodata_value) else np.sum(np.isnan(array_temp)) / (array_temp.shape[0] * array_temp.shape[1])
+        _sparse_matrix = True if sparsify > 0.9 else False
+
+        # Create the para list
+        para_list = [filepath_temp.split('\\')[-1].split('.TIF')[0] for filepath_temp in yearly_input_files]
+
+        # Determine whether the output folder is huge and sparsify or not?
+        mem = psutil.virtual_memory()
+        dc_max_size = int(mem.free * 0.90)
+        _huge_matrix = True if len(para_list) * cols * rows * 2 > dc_max_size else False
+
+        if _huge_matrix:
+            if _sparse_matrix:
+                i = 0
+                data_cube = NDSparseMatrix()
+                while i < len(para_list):
+
+                    try:
+                        t1 = time.time()
+                        if not os.path.exists(f"{input_path}{str(para_list[i])}.TIF"):
+                            raise Exception(f'The {input_path}{str(para_list[i])} is not properly generated!')
+                        else:
+                            array_temp = gdal.Open(f"{input_path}{str(para_list[i])}.TIF")
+                            array_temp = array_temp.GetRasterBand(1).ReadAsArray()
+                            array_temp[array_temp == -1] = 0
+                            if np.isnan(nodata_value):
+                                array_temp[np.isnan(array_temp)] = 0
+                            else:
+                                array_temp[array_temp == nodata_value] = 0
+
+                        sm_temp = sm.csr_matrix(array_temp.astype(np.float))
+                        array_temp = None
+                        data_cube.append(sm_temp, name=para_list[i])
+
+                        print(f'Assemble the {str(para_list[i])} into the Phemetric_datacube using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(para_list))})')
+                        i += 1
+                    except:
+                        error_inf = traceback.format_exc()
+                        print(error_inf)
+
+                # Save the sdc
+                np.save(f'{yearly_output_path}paraname.npy', para_list)
+                data_cube.save(f'{yearly_output_path}{index}_Phemetric_datacube\\')
+            else:
+                pass
+        else:
+            i = 0
+            data_cube = np.zeros([rows, cols, len(para_list)])
+            while i < len(para_list):
+
+                try:
+                    t1 = time.time()
+                    if not os.path.exists(f"{input_path}{str(para_list[i])}.TIF"):
+                        raise Exception(f'The {input_path}{str(para_list[i])} is not properly generated!')
+                    else:
+                        array_temp = gdal.Open(f"{input_path}{str(para_list[i])}.TIF")
+                        array_temp = array_temp.GetRasterBand(1).ReadAsArray()
+                        array_temp[array_temp == -1] = nodata_value
+
+                    data_cube[:, :, i] = array_temp
+                    print(f'Assemble the {str(para_list[i])} into the Phemetric_datacube using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(para_list))})')
+                    i += 1
+                except:
+                    error_inf = traceback.format_exc()
+                    print(error_inf)
+
+            np.save(f'{yearly_output_path}paraname.npy', para_list)
+            np.save(f'{yearly_output_path}{index}_Phemetric_datacube.npy', data_cube)
+
+        # Save the metadata dic
+        metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
+        metadata_dic['pheyear'] = year
+        with open(f'{yearly_output_path}meta.json', 'w') as js_temp:
+            json.dump(metadata_dic, js_temp)
+
+    print(f"Finish constructing the {str(year)} {index} Phemetric datacube of {metadata_dic['ROI_name']} in \033[1;31m{str(time.time() - start_time)} s\033[0m.")
 
 
 def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GEDI_link_S2_retrieval_method, size_control_factor, search_window: int = 40):

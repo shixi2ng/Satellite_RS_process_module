@@ -516,7 +516,7 @@ class MODIS_ds(object):
 
     def _raster2sdc(self, output_path, input_folder, time_temp, zvalue_temp, metadata_dic, rows, cols, _sparse_matrix, ):
         start_time = time.time()
-        print(f'Start constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name}.')
+        print(f'Start constructing the {str(time_temp)} {str(zvalue_temp)} Denv datacube of {self.ROI_name}.')
         # Construct the header dic
         nodata_value = None
 
@@ -527,7 +527,7 @@ class MODIS_ds(object):
         if not os.path.exists(f'{yearly_output_path}doy.npy') or not os.path.exists(f'{yearly_output_path}metadata.json'):
 
             # Determine the input files
-            yearly_input_files = bf.file_filter(input_folder, ['.TIF', '\\' + str(time_temp)], exclude_word_list=['aux'],and_or_factor='and')
+            yearly_input_files = bf.file_filter(input_folder, ['.TIF', '\\' + str(time_temp)], exclude_word_list=['aux'], and_or_factor='and')
             if yearly_input_files == []:
                 raise Exception('There are no valid input files, double check the temporal division!')
 
@@ -583,7 +583,7 @@ class MODIS_ds(object):
 
                     # Save the sdc
                     np.save(f'{yearly_output_path}doy.npy', doy_list)
-                    data_cube.save(f'{yearly_output_path}{zvalue_temp}_datacube\\')
+                    data_cube.save(f'{yearly_output_path}{zvalue_temp}_Denv_datacube\\')
                 else:
                     pass
             else:
@@ -625,16 +625,16 @@ class MODIS_ds(object):
                 # Save the metadata dic
             metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
             metadata_dic['timerange'] = time_temp
-            with open(f'{yearly_output_path}meta.json', 'w') as js_temp:
+            with open(f'{yearly_output_path}metadata.json', 'w') as js_temp:
                 json.dump(metadata_dic, js_temp)
 
-        print(f'Finish constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name} in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
+        print(f'Finish constructing the {str(time_temp)} {str(zvalue_temp)} Denv datacube of {self.ROI_name} in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
 
 if __name__ == '__main__':
     MD_ds = MODIS_ds('G:\\A_veg\\MODIS_FPAR\\Ori\\')
-    MD_ds.mp_hdf2tif(['PAR_Quality', 'GMT_0000_PAR', 'GMT_0300_PAR', 'GMT_0600_PAR', 'GMT_0900_PAR', 'GMT_1200_PAR', 'GMT_1500_PAR', 'GMT_1800_PAR', 'GMT_2100_PAR'])
-    MD_ds.seq_cal_dailyPAR()
-    bounds_temp = bf.raster_ds2bounds('G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\\ROI_map\\floodplain_2020.TIF')
-    MD_ds.mp_extract_with_ROI('G:\\A_veg\MODIS_FPAR\\shpfile\\floodplain_2020.shp', ['DPAR'], bounds=bounds_temp, ras_res=[10, 10])
+    # MD_ds.mp_hdf2tif(['PAR_Quality', 'GMT_0000_PAR', 'GMT_0300_PAR', 'GMT_0600_PAR', 'GMT_0900_PAR', 'GMT_1200_PAR', 'GMT_1500_PAR', 'GMT_1800_PAR', 'GMT_2100_PAR'])
+    # MD_ds.seq_cal_dailyPAR()
+    # bounds_temp = bf.raster_ds2bounds('G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\\ROI_map\\floodplain_2020.TIF')
+    # MD_ds.mp_extract_with_ROI('G:\\A_veg\MODIS_FPAR\\shpfile\\floodplain_2020.shp', ['DPAR'], bounds=bounds_temp, ras_res=[10, 10])
     MD_ds.raster2dc(['DPAR'], ROI='G:\\A_veg\\MODIS_FPAR\\shpfile\\floodplain_2020.shp', temporal_division='year', inherit_from_logfile=True)
