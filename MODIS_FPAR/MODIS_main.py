@@ -337,7 +337,7 @@ class MODIS_ds(object):
     def mp_extract_with_ROI(self, ROI, zvalue: list, bounds: list = None, ras_res: list = None):
 
         for ztemp in zvalue:
-            filelist = bf.file_filter(f'{self.output_path}Ori_Denv_raster\\{ztemp}\\', ['.TIF'])
+            filelist = bf.file_filter(f'{self.output_path}Ori_Denv_raster\\{ztemp}\\', ['.TIF'], exclude_word_list=['.aux', '.ovr'])
             if len(filelist) == 0:
                 self.mp_cal_dailyPAR()
 
@@ -633,8 +633,8 @@ class MODIS_ds(object):
 
 if __name__ == '__main__':
     MD_ds = MODIS_ds('G:\\A_veg\\MODIS_FPAR\\Ori\\')
-    # MD_ds.mp_hdf2tif(['PAR_Quality', 'GMT_0000_PAR', 'GMT_0300_PAR', 'GMT_0600_PAR', 'GMT_0900_PAR', 'GMT_1200_PAR', 'GMT_1500_PAR', 'GMT_1800_PAR', 'GMT_2100_PAR'])
-    # MD_ds.seq_cal_dailyPAR()
-    # bounds_temp = bf.raster_ds2bounds('G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\\ROI_map\\floodplain_2020.TIF')
-    # MD_ds.mp_extract_with_ROI('G:\\A_veg\MODIS_FPAR\\shpfile\\floodplain_2020.shp', ['DPAR'], bounds=bounds_temp, ras_res=[10, 10])
+    MD_ds.mp_hdf2tif(['PAR_Quality', 'GMT_0000_PAR', 'GMT_0300_PAR', 'GMT_0600_PAR', 'GMT_0900_PAR', 'GMT_1200_PAR', 'GMT_1500_PAR', 'GMT_1800_PAR', 'GMT_2100_PAR'])
+    MD_ds.seq_cal_dailyPAR()
+    bounds_temp = bf.raster_ds2bounds('G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\\ROI_map\\floodplain_2020.TIF')
+    MD_ds.mp_extract_with_ROI('G:\\A_veg\MODIS_FPAR\\shpfile\\floodplain_2020.shp', ['DPAR'], bounds=bounds_temp, ras_res=[10, 10])
     MD_ds.raster2dc(['DPAR'], ROI='G:\\A_veg\\MODIS_FPAR\\shpfile\\floodplain_2020.shp', temporal_division='year', inherit_from_logfile=True)

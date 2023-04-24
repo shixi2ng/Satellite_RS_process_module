@@ -1,4 +1,3 @@
-import numpy as np
 import gdal
 import basic_function as bf
 import time

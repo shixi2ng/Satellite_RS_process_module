@@ -33,7 +33,7 @@ class NDSparseMatrix:
         if 'SM_namelist' in self.__dict__.keys():
             if self.SM_namelist is not None:
                 if isinstance(self.SM_namelist, list):
-                    if len(args) == len(self.SM_namelist):
+                    if len(args) != len(self.SM_namelist):
                         raise ValueError(f'Please make sure the sm name list is consistent with the SM_group')
                 else:
                     raise TypeError(f'Please input the SM_namelist under the list type!')
@@ -143,14 +143,14 @@ class NDSparseMatrix:
         else:
             try:
                 header_file = np.load(file_list[0], allow_pickle=True).astype(int)
-            except:
-                raise Exception('file cannot be loaded')
+            except ValueError:
+                header_file = np.load(file_list[0], allow_pickle=True)
 
         self.SM_namelist = np.sort(header_file).tolist()
         self.SM_group = {}
 
         for SM_name in self.SM_namelist:
-            SM_arr_path = bf.file_filter(input_path, ['.npz', str(SM_name)], and_or_factor='and')
+            SM_arr_path = bf.file_filter(input_path, [f'{str(SM_name)}.npz'], and_or_factor='and')
             if len(SM_arr_path) == 0:
                 raise ValueError(f'The file {str(SM_name)} is missing！')
             elif len(SM_arr_path) > 1:
@@ -185,9 +185,9 @@ class NDSparseMatrix:
 
     def add_layer(self, new_layer, new_layer_name, pos: int):
 
-        if type(new_layer) not in (sm.spmatrix, sm.csr_matrix, sm.csc_matrix, sm.coo_matrix, sm.bsr_matrix, sm.dia_matrix, sm.dok_matrix):
+        if not isinstance(new_layer, (sm.spmatrix, sm.csr_matrix, sm.csc_matrix, sm.coo_matrix, sm.bsr_matrix, sm.dia_matrix, sm.dok_matrix)):
             raise TypeError(f'The new sm_matrix is not a sm_matrix')
-        elif type(new_layer) != self._matrix_type:
+        elif not isinstance(new_layer, self._matrix_type):
             raise TypeError(f'The new sm_matrix is not under the same type within the 3d sm matrix')
 
         try:
@@ -196,6 +196,15 @@ class NDSparseMatrix:
         except:
             raise Exception('Error occurred when add layer!')
 
+        self._update_size_para()
+
+    def extend_layers(self, ndsm_temp):
+
+        if not isinstance(ndsm_temp, NDSparseMatrix):
+            raise TypeError('The extended layers should under ndsm type')
+        else:
+            for _ in range(ndsm_temp.shape[2]):
+                self.add_layer(self.SM_group[self.SM_namelist[_]], self.SM_namelist[_], self.shape[2])
         self._update_size_para()
 
     def remove_layer(self, layer_name):
@@ -211,7 +220,7 @@ class NDSparseMatrix:
 
         if len(list_temp) == 1:
             if list_temp[0] == 'all':
-                return [min(range_temp), max(range_temp) + 1]
+                return [min(range_temp), max(range_temp)]
             elif (isinstance(list_temp[0], int) or isinstance(list_temp[0], np.int16) or isinstance(list_temp[0], np.int32)) and list_temp[0] in range_temp:
                 return [list_temp[0], list_temp[0] + 1]
             else:
@@ -220,7 +229,7 @@ class NDSparseMatrix:
         elif len(list_temp) == 2:
             if (isinstance(list_temp[0], int) or isinstance(list_temp[0], np.int16) or isinstance(list_temp[0], np.int32)) and (isinstance(list_temp[1], int) or isinstance(list_temp[1], np.int16) or isinstance(list_temp[1], np.int32)):
                 if list_temp[0] in range_temp and list_temp[1] in range_temp and list_temp[0] <= list_temp[1]:
-                    return [list_temp[0], list_temp[1] + 1]
+                    return [list_temp[0], list_temp[1]]
             else:
                 raise ValueError('Please input a supported type!')
 
@@ -232,9 +241,9 @@ class NDSparseMatrix:
         if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
             raise TypeError(f'Please input the index array in a 3D tuple')
         else:
-            rows_range = self._understand_range(tuple_temp[0], range(self._rows))
-            cols_range = self._understand_range(tuple_temp[1], range(self._cols))
-            heights_range = self._understand_range(tuple_temp[2], range(self._height))
+            rows_range = self._understand_range(tuple_temp[0], range(self._rows + 1))
+            cols_range = self._understand_range(tuple_temp[1], range(self._cols + 1))
+            heights_range = self._understand_range(tuple_temp[2], range(self._height + 1))
 
         try:
             output_array = np.zeros([rows_range[1]-rows_range[0], cols_range[1]-cols_range[0], heights_range[1]- heights_range[0]], dtype=np.float16)
@@ -252,22 +261,18 @@ class NDSparseMatrix:
         if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
             raise TypeError(f'Please input the index array in a 3D tuple')
         else:
-            rows_range = self._understand_range(tuple_temp[0], range(self._rows))
-            cols_range = self._understand_range(tuple_temp[1], range(self._cols))
-            heights_range = self._understand_range(tuple_temp[2], range(self._height))
+            rows_range = self._understand_range(tuple_temp[0], range(self._rows + 1))
+            cols_range = self._understand_range(tuple_temp[1], range(self._cols + 1))
+            heights_range = self._understand_range(tuple_temp[2], range(self._height + 1))
 
-        try:
-            output_array = copy.deepcopy(self)
-        except MemoryError:
-            return None
-
+        output_array = None
         height_temp = 0
-        while height_temp < output_array._height:
-            if height_temp not in range(heights_range[0], heights_range[1]):
-                output_array.remove_layer(output_array.SM_namelist[height_temp])
-                height_temp -= 1
-            else:
-                output_array.SM_group[output_array.SM_namelist[height_temp]] = output_array.SM_group[output_array.SM_namelist[height_temp]][rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]]
+        while height_temp < self._height:
+            if height_temp in range(heights_range[0], heights_range[1]):
+                if output_array is None:
+                    output_array = NDSparseMatrix(self.SM_group[self.SM_namelist[height_temp]][rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]], SM_namelist = [self.SM_namelist[height_temp]])
+                else:
+                    output_array.add_layer(self.SM_group[self.SM_namelist[height_temp]][rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]], self.SM_namelist[height_temp], output_array.shape[2])
             height_temp += 1
 
         output_array._cols, output_array._rows = -1, -1
@@ -312,6 +317,34 @@ class NDSparseMatrix:
         # print(f'tt0:{str(tt0)}, tt1:{str(tt1)}, tt2:{str(tt2)}')
         return date_temp, index_temp, year_doy_all
 
+    def _extract_matrix_y1x1zh_v2(self, tuple_temp: tuple, nodata_export= False):
+
+        # tt0, tt1, tt2 = 0, 0, 0
+        # start_time = time.time()
+        if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
+            raise TypeError(f'Please input the index array in a 3D tuple')
+        elif len(tuple_temp[0]) != 1 or len(tuple_temp[1]) != 1:
+            raise TypeError(f'This func is for y1x1zh datacube!')
+        else:
+            heights_range = self._understand_range(tuple_temp[2], range(self._height))
+            rows_extract = tuple_temp[0][0]
+            cols_extract = tuple_temp[1][0]
+
+        index_temp = []
+        for height_temp in range(self._height):
+            if height_temp in range(heights_range[0], heights_range[1]):
+                date_tt = self.SM_namelist[height_temp]
+                temp = self.SM_group[date_tt][rows_extract, cols_extract]
+                if nodata_export:
+                    index_temp.append(temp)
+                elif not nodata_export and temp != 0:
+                    index_temp.append(temp)
+
+        # tt1 += time.time() - start_time
+        index_temp = np.array(index_temp)
+
+        return index_temp
+
     def drop_nanlayer(self):
 
         i = 0
@@ -322,6 +355,31 @@ class NDSparseMatrix:
                 i -= 1
             i += 1
         self._update_size_para()
+
+        return self
+
+    def sum(self, axis: int, new_layer_name=None):
+
+        if axis == 0 or axis == 1:
+            for _ in self.SM_namelist:
+                self.SM_group[_] = self.SM_group[_].sum(axis = axis)
+            self._update_size_para()
+        elif axis == 2:
+            temp = None
+            for _ in self.SM_namelist:
+                if temp is None:
+                    temp = self.SM_group[_]
+                else:
+                    temp = temp + self.SM_group[_]
+            if new_layer_name is None:
+                new_layer_name = 'sum'
+            elif isinstance(new_layer_name, str):
+                new_layer_name = new_layer_name
+            self.SM_group = {new_layer_name: temp}
+            self.SM_namelist = [new_layer_name]
+            self._update_size_para()
+        else:
+            raise TypeError(f'The nd sparse matrix donot have a axis {str(axis)}')
 
         return self
 

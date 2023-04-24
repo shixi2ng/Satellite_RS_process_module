@@ -490,7 +490,7 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
     xres_min = float(xres / factor)
     yres_min = float(yres / factor)
 
-    if (uly - lry)/ yres != ysize or (lrx - ulx)/ xres != xsize:
+    if (uly - lry) / yres != ysize or (lrx - ulx)/ xres != xsize:
         raise ValueError('The raster and proj is not compatible!')
 
     # Define the combined raster size
@@ -519,8 +519,12 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
     if out_ymin is None or out_ymax is None or out_xmin is None or out_xmax is None:
         return np.nan
 
+    if isinstance(raster, NDSparseMatrix):
+        raster_temp = raster.toarray()[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].astype(np.float64)
+    else:
+        raster_temp = raster[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].astype(np.float64)
+
     rasterize_Xsize, rasterize_Ysize = int((out_xmax - out_xmin) / xres_min), int((out_ymax - out_ymin) / yres_min)
-    raster_temp = raster.toarray()[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].astype(np.float64)
     raster_temp = np.broadcast_to(raster_temp[:, None, :, None], (raster_temp.shape[0], factor, raster_temp.shape[1], factor)).reshape(np.int64(factor * raster_temp.shape[0]), np.int64(factor * raster_temp.shape[1]))
 
     if [raster_temp == nodatavalue][0].all():
@@ -965,6 +969,89 @@ def cf2phemetric_dc(input_path, output_path, year, index, metadata_dic):
     print(f"Finish constructing the {str(year)} {index} Phemetric datacube of {metadata_dic['ROI_name']} in \033[1;31m{str(time.time() - start_time)} s\033[0m.")
 
 
+def link_GEDI_pheinform(dc, gedi_list, year_list, raster_gt, furname, phe_name):
+
+    df_size = gedi_list.shape[0]
+    furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
+    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2phemetric_{phe_name}', value=np.nan)
+    sparse_matrix = True if isinstance(dc, NDSparseMatrix) else False
+    gedi_list = gedi_list.reset_index()
+
+    # itr through the gedi_list
+    for i in range(df_size):
+        lat, lon, date_temp, year_temp = gedi_list[furlat][i], gedi_list[furlon][i], gedi_list['Date'][i], int(np.floor(gedi_list['Date'][i]/1000))
+
+        if year_temp in year_list:
+
+            # Draw a circle around the central point
+            point_coords = [lon, lat]
+            polygon = create_circle_polygon(point_coords, 25)
+
+            t1 = time.time()
+            print(f'Start linking the {phe_name} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
+
+            # Link GEDI and S2phemetric inform
+            gedi_list.loc[i, f'S2phemetric_{phe_name}'] = np.nan
+            if sparse_matrix:
+                array_temp = dc.SM_group[dc.SM_namelist[year_list.index(year_temp)]]
+            else:
+                array_temp = dc[:, :, year_list.index(year_temp)].reshape[-1]
+            info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
+
+            if ~np.isnan(info_temp):
+                gedi_list.loc[i, f'S2phemetric_{phe_name}'] = info_temp
+
+            print(f'Finish linking the {phe_name} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+
+    return gedi_list
+
+
+def link_GEDI_accdenvinform(dc, gedi_list, doy_list, raster_gt, furname, denv_name):
+
+    df_size = gedi_list.shape[0]
+    furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
+    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2_accumulated_{str(denv_name)}', value=np.nan)
+    sparse_matrix = True if isinstance(dc, NDSparseMatrix) else False
+    gedi_list = gedi_list.reset_index()
+
+    # itr through the gedi_list
+    for i in range(df_size):
+        lat, lon, year_temp, doy_temp = gedi_list[furlat][i], gedi_list[furlon][i], int(np.floor(gedi_list['Date'][i]/1000)), int(np.mod(gedi_list['Date'][i], 1000))
+
+        # Draw a circle around the central point
+        point_coords = [lon, lat]
+        polygon = create_circle_polygon(point_coords, 25)
+
+        t1 = time.time()
+        print(f'Start linking the {str(denv_name)} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
+
+        # Link GEDI and accumulated inform
+        gedi_list.loc[i, f'S2_accumulated_{str(denv_name)}'] = np.nan
+        doy_templist = range(year_temp * 1000 + 1, year_temp * 1000 + doy_temp + 1)
+        doy_pos = []
+        for _ in doy_templist:
+            doy_pos.append(doy_list.index(_))
+
+        if len(doy_pos) != max(doy_pos) - min(doy_pos) + 1:
+            raise Exception('The doy list is not continuous!')
+
+        if isinstance(dc, NDSparseMatrix):
+            array_temp = dc.extract_matrix((['all'], ['all'], [min(doy_pos), max(doy_pos) + 1]))
+            array_temp = array_temp.sum(axis=2)
+            array_temp = array_temp.SM_group['sum'].toarray()
+        else:
+            array_temp = dc[:, :, min(doy_pos): max(doy_pos) + 1]
+            array_temp = np.nansun(array_temp, axis=2)
+
+        info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
+        if ~np.isnan(info_temp):
+            gedi_list.loc[i, f'S2_accumulated_{str(denv_name)}'] = info_temp
+
+        print(f'Finish linking the {denv_name} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+
+    return gedi_list
+
+
 def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GEDI_link_S2_retrieval_method, size_control_factor, search_window: int = 40):
 
     df_size = gedi_list.shape[0]
@@ -1053,3 +1140,33 @@ def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GE
             raise TypeError(f'{str(GEDI_link_S2_retrieval_method)} is not supported!')
 
     return gedi_list
+
+
+def get_base_denv(y_all_blocked: list, x_all_blocked: list, sos: np.ndarray, year_doy: list, denv_dc_blocked, xy_offset_blocked: list):
+
+    if len(y_all_blocked) != len(x_all_blocked):
+        raise TypeError('The x and y blocked were not under the same size!')
+
+    rs = []
+    for _ in range(len(y_all_blocked)):
+        y_, x_ = y_all_blocked[_] - xy_offset_blocked[0], x_all_blocked[_] - xy_offset_blocked[1]
+        sos_t = sos[y_, x_]
+        sos_t_min = max(min(year_doy), sos_t - 5)
+        sos_t_max = min(max(year_doy), sos_t + 5)
+        sos_doy_min = year_doy.index(sos_t_min)
+        sos_doy_max = year_doy.index(sos_t_max)
+
+        if sos_doy_max - sos_doy_min != sos_t_max - sos_t_min:
+            raise Exception('The doy list is not continuous!')
+
+        if isinstance(denv_dc_blocked, NDSparseMatrix):
+            base_env_t = denv_dc_blocked._extract_matrix_y1x1zh_v2(([y_], [x_], [sos_doy_min, sos_doy_max + 1]))
+            base_env_t = np.nanmean(base_env_t)
+        elif isinstance(denv_dc_blocked, np.ndarray):
+            base_env_t = np.nanmean(denv_dc_blocked[y_, x_, sos_doy_min: sos_doy_max + 1])
+        else:
+            raise TypeError('The para denv dc is not imported as a supported datatype!')
+
+        rs.append([y_ + xy_offset_blocked[0], x_ + xy_offset_blocked[1], base_env_t])
+    return rs
+

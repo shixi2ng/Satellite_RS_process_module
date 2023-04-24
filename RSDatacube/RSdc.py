@@ -6,6 +6,15 @@ import time
 import numpy as np
 from NDsm import NDSparseMatrix
 import datetime
+import copy
+
+
+def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
+    return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
+
+
+def two_term_fourier(x, a0, a1, b1, a2, b2, w):
+    return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x)+b2 * np.sin(2 * w * x)
 
 
 class Denv_dc(object):
@@ -185,12 +194,13 @@ class Denv_dc(object):
                         ordinal_date = datetime.date(year=int(np.floor(bf.doy2date(date_temp)/10000)), month=int(np.floor(np.mod(bf.doy2date(date_temp), 10000)/100)), day=int(np.mod(bf.doy2date(date_temp), 100))).toordinal()
                         if date_beg is None:
                             date_out = bf.date2doy(int(datetime.date.fromordinal(ordinal_date - _).strftime('%Y%m%d')))
-                            date_beg = date_out if date_out in self.compete_doy_list else None
-                            _beg = _ if date_out in self.compete_doy_list else None
+                            date_beg = date_out if date_out in self.sdc_doylist else None
+                            _beg = _ if date_out in self.sdc_doylist else None
+
                         if date_end is None:
                             date_out = bf.date2doy(int(datetime.date.fromordinal(ordinal_date + _).strftime('%Y%m%d')))
-                            date_end = date_out if date_out in self.compete_doy_list else None
-                            _end = _ if date_out in self.compete_doy_list else None
+                            date_end = date_out if date_out in self.sdc_doylist else None
+                            _end = _ if date_out in self.sdc_doylist else None
 
                         if date_end is not None and date_beg is not None:
                             break
@@ -270,6 +280,9 @@ class Phemetric_dc(object):
         self.Phemetric_factor, self.pheyear = False, None
         self.curfit_dic = {}
 
+        # Init protected var
+        self._support_pheme_list = ['SOS', 'EOS', 'trough_vi', 'peak_vi', 'peak_doy', 'GR', 'DR', 'DR2']
+
         # Check work env
         if work_env is not None:
             self._work_env = Path(work_env).path_name
@@ -278,9 +291,9 @@ class Phemetric_dc(object):
         self.root_path = Path(os.path.dirname(os.path.dirname(self._work_env))).path_name
 
         # Define the basic var name
-        self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array',
+        self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'curfit_dic', 'pheyear',
                              'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
-                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles', 'timerange')
+                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles')
 
         # Read the metadata file
         metadata_file = bf.file_filter(self.Phemetric_dc_filepath, ['metadata.json'])
@@ -302,7 +315,7 @@ class Phemetric_dc(object):
                     elif dc_metadata['Phemetric_factor'] is False:
                         raise TypeError(f'{self.Phemetric_dc_filepath} is not a Phemetric datacube!')
                     elif dc_metadata['Phemetric_factor'] is True:
-                        self.Denv_factor = dc_metadata['Phemetric_factor']
+                        self.Phemetric_factor = dc_metadata['Phemetric_factor']
                     else:
                         raise TypeError('The Phemetric factor was under wrong type!')
 
@@ -328,7 +341,7 @@ class Phemetric_dc(object):
                     raise ValueError('There has more than one paraname file in the Phemetric datacube dir')
                 else:
                     paraname_list = np.load(paraname_file[0], allow_pickle=True)
-                    self.paraname_list = [int(paraname) for paraname in paraname_list]
+                    self.paraname_list = [paraname for paraname in paraname_list]
             else:
                 raise TypeError('Please input as a Phemetric datacube')
         except:
@@ -356,13 +369,139 @@ class Phemetric_dc(object):
 
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
-        if self.dc_ZSize != len(self.paraname_list) or self.dc_ZSize != self.curfit_dic['para_num'] + 1:
+        if self.dc_ZSize != len(self.paraname_list):
             raise TypeError('The Phemetric datacube is not consistent with the paraname file')
 
         print(f'Finish loading the Phemetric datacube of {str(self.pheyear)} \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.paraname_list.__sizeof__()
+
+    def calculate_phemetrics(self, pheme_list: list, save2phemedc = True):
+
+        pheme_list_temp = copy.copy(pheme_list)
+        for pheme_temp in pheme_list:
+            if pheme_temp not in self._support_pheme_list:
+                raise ValueError(f'The {pheme_temp} is not supported')
+            elif f'{self.pheyear}_{pheme_temp}' in self.paraname_list:
+                pheme_list_temp.remove(pheme_temp)
+        pheme_list = pheme_list_temp
+
+        if self.curfit_dic['CFM'] == 'SPL':
+            for pheme_temp in pheme_list:
+                if pheme_temp == 'SOS':
+                    if isinstance(self.dc, NDSparseMatrix):
+                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_2'], 'SOS')
+                    else:
+                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_2')], 'SOS')
+                elif pheme_temp == 'EOS':
+                    if isinstance(self.dc, NDSparseMatrix):
+                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_4'], 'EOS')
+                    else:
+                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_4')], 'EOS')
+                elif pheme_temp == 'trough_vi':
+                    if isinstance(self.dc, NDSparseMatrix):
+                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_0'], 'trough_vi')
+                    else:
+                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_0')], 'trough_vi')
+                elif pheme_temp == 'peak_vi':
+                    para_dic = {}
+                    for para_num in range(self.curfit_dic['para_num']):
+                        if isinstance(self.dc, NDSparseMatrix):
+                            para_dic[para_num] = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
+                        else:
+                            para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
+
+                    try:
+                        peak_vi_array = np.zeros([para_dic[0].shape[0], para_dic[0].shape[1], 365])
+                        for _ in range(peak_vi_array.shape[2]):
+                            peak_vi_array[:, :, _] = _ + 1
+                        peak_vi_array[para_dic[0] == 0] = np.nan
+                        peak_vi_array = np.nanmax(seven_para_logistic_function(peak_vi_array, para_dic[0][y_temp, x_temp], para_dic[1][y_temp, x_temp], para_dic[2][y_temp, x_temp], para_dic[3][y_temp, x_temp], para_dic[4][y_temp, x_temp], para_dic[5][y_temp, x_temp], para_dic[6][y_temp, x_temp]), axis=2)
+                        peak_vi_array[np.isnan(peak_vi_array)] = 0
+                    except MemoryError:
+                        peak_vi_array = copy.copy(para_dic[0])
+                        peak_vi_array[peak_vi_array != 0] = -1
+                        for y_temp in range(para_dic[0].shape[0]):
+                            for x_temp in range(para_dic[0].shape[1]):
+                                if peak_vi_array[y_temp, x_temp] == -1:
+                                    peak_vi_array[y_temp, x_temp] = np.max(seven_para_logistic_function(np.linspace(1, 365, 365), para_dic[0][y_temp, x_temp], para_dic[1][y_temp, x_temp], para_dic[2][y_temp, x_temp], para_dic[3][y_temp, x_temp], para_dic[4][y_temp, x_temp], para_dic[5][y_temp, x_temp], para_dic[6][y_temp, x_temp]))
+                        peak_vi_array[peak_vi_array == -1] = 0
+
+                    self._add_layer(peak_vi_array, 'peak_vi')
+
+                elif pheme_temp == 'peak_doy':
+                    para_dic = {}
+                    for para_num in range(self.curfit_dic['para_num']):
+                        if isinstance(self.dc, NDSparseMatrix):
+                            para_dic[para_num] = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
+                        else:
+                            para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
+
+                    peak_doy_array = copy.copy(para_dic[0])
+                    peak_doy_array[peak_doy_array != 0] = -1
+                    for y_temp in range(para_dic[0].shape[0]):
+                        for x_temp in range(para_dic[0].shape[1]):
+                            if peak_doy_array[y_temp, x_temp] == -1:
+                                peak_doy_array[y_temp, x_temp] = np.argmax(seven_para_logistic_function(np.linspace(1, 365, 365), para_dic[0][y_temp, x_temp], para_dic[1][y_temp, x_temp], para_dic[2][y_temp, x_temp], para_dic[3][y_temp, x_temp], para_dic[4][y_temp, x_temp], para_dic[5][y_temp, x_temp], para_dic[6][y_temp, x_temp])) + 1
+                    peak_doy_array[peak_doy_array == -1] = 0
+
+                    self._add_layer(peak_doy_array, 'peak_doy')
+
+                elif pheme_temp == 'GR':
+                    if isinstance(self.dc, NDSparseMatrix):
+                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_3'], 'GR')
+                    else:
+                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_3')], 'GR')
+                elif pheme_temp == 'DR':
+                    if isinstance(self.dc, NDSparseMatrix):
+                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_5'], 'DR')
+                    else:
+                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_5')], 'DR')
+                elif pheme_temp == 'DR2':
+                    if isinstance(self.dc, NDSparseMatrix):
+                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_6'], 'DR2')
+                    else:
+                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_6')], 'DR2')
+
+        else:
+            pass
+
+        if save2phemedc:
+            self.save(self.Phemetric_dc_filepath)
+            self.__init__(self.Phemetric_dc_filepath)
+        else:
+            # Size calculation and shape definition
+            self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
+            if self.dc_ZSize != len(self.paraname_list) or self.dc_ZSize != self.curfit_dic['para_num']:
+                raise TypeError('The Phemetric datacube is not consistent with the paraname file')
+
+    def _add_layer(self, array, layer_name: str):
+
+        # Process the layer name
+        if not isinstance(layer_name, str):
+            raise TypeError('Please input the adding layer name as a string！')
+        elif not layer_name.startswith(str(self.pheyear)):
+            layer_name = str(self.pheyear) + '_' + layer_name
+
+        if self.sparse_matrix:
+            sparse_type = type(self.dc.SM_group[self.dc.SM_namelist[0]])
+            if not isinstance(array, sparse_type):
+                try:
+                    array = type(self.dc.SM_group[self.dc.SM_namelist[0]])(array)
+                except:
+                    raise Exception(f'The adding layer {layer_name} cannot be converted to the data type')
+            try:
+                self.dc.add_layer(array, layer_name, self.dc.shape[2])
+                self.paraname_list.append(layer_name)
+            except:
+                raise Exception('Some error occurred during the add layer within a phemetric dc')
+        else:
+            try:
+                self.dc = np.concatenate((self.dc, array.reshape(array.shape[0], array.shape[1], 1)), axis=2)
+                self.paraname_list.append(layer_name)
+            except:
+                raise Exception('Some error occurred during the add layer within a phemetric dc')
 
     def save(self, output_path: str):
         start_time = time.time()

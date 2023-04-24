@@ -20,8 +20,8 @@ import pywt
 import psutil
 import sympy
 from scipy import sparse as sm
-from utils import retrieve_srs, write_raster, remove_all_file_and_folder, link_GEDI_inform, cf2phemetric_dc
-from utils import seven_para_logistic_function, two_term_fourier, curfit4bound_annual, curfit_pd2raster
+from utils import retrieve_srs, write_raster, remove_all_file_and_folder, link_GEDI_inform, cf2phemetric_dc, link_GEDI_pheinform
+from utils import seven_para_logistic_function, two_term_fourier, curfit4bound_annual, curfit_pd2raster, link_GEDI_accdenvinform, get_base_denv
 from built_in_index import built_in_index
 from lxml import etree
 from NDsm import NDSparseMatrix
@@ -1839,12 +1839,17 @@ class Sentinel2_dcs(object):
         self._dcs_backup_ = []
         self._doys_backup_ = []
         self._dc_typelist = []
+        self.dcs = []
+
+        # Construct the indicator for different dcs
+        self._phemetric_namelist = None
 
         self._withPhemetricdc_, self._withDenvdc_, self._withS2dc_ = False, False, False
+        self._s2dc_work_env, self._phemetric_work_env, self._denv_work_env = None, None, None
 
         # Separate into Denv Phemetric and Sentinel-2 datacube
         for args_temp in args:
-            if not isinstance(args_temp, Sentinel2_dc) or not isinstance(args_temp, Denv_dc) or not isinstance(args_temp, Phemetric_dc):
+            if not isinstance(args_temp, Sentinel2_dc) and not isinstance(args_temp, Denv_dc) and not isinstance(args_temp, Phemetric_dc):
                 raise TypeError('The Sentinel2 datacubes should be a bunch of Sentinel2 datacube, phemetric datacube or Denv datacube!')
             else:
                 self._dcs_backup_.append(args_temp)
@@ -1866,7 +1871,7 @@ class Sentinel2_dcs(object):
         factor_all = ['dc_XSize', 'dc_YSize', 'dc_ZSize']
         for args_temp in args:
             factor_all.extend(list(args_temp._fund_factor))
-        factor_all = set(factor_all)
+        factor_all = list(set(factor_all))
 
         # Input all metadata
         for args_temp in args:
@@ -1874,7 +1879,7 @@ class Sentinel2_dcs(object):
                 if f'_{factor_temp}_list' not in self.__dict__.keys():
                     self.__dict__[f'_{factor_temp}_list'] = []
 
-                if factor_temp in args_temp.keys():
+                if factor_temp in args_temp.__dict__.keys():
                     self.__dict__[f'_{factor_temp}_list'].append(args_temp.__dict__[factor_temp])
                 else:
                     self.__dict__[f'_{factor_temp}_list'].append(None)
@@ -1884,7 +1889,7 @@ class Sentinel2_dcs(object):
                 raise ImportError('The factor of some dcs is not properly imported!')
 
         # Check the consistency of datacube size
-        x_size, y_size, z_S2size, z_Phemetric_size = 0, 0, 0, 0, 0
+        x_size, y_size, z_S2size, z_Phemetric_size, z_Denv_size = 0, 0, 0, 0, 0
         for _ in range(len(self._dc_typelist)):
 
             if self._dc_typelist[_] == Sentinel2_dc:
@@ -1892,7 +1897,8 @@ class Sentinel2_dcs(object):
                 # Retrieve the shape inform
                 if x_size == 0 and y_size == 0:
                     x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
-                elif z_S2size == 0:
+
+                if z_S2size == 0:
                     z_S2size = self._dcs_backup_[_].dc_ZSize
 
                 if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
@@ -1917,13 +1923,19 @@ class Sentinel2_dcs(object):
                 # Retrieve the shape inform
                 if x_size == 0 and y_size == 0:
                     x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
-                elif z_Phemetric_size == 0:
-                    z_Denv_size = self._dcs_backup_[_].dc_ZSize
+
+                if z_Phemetric_size == 0:
+                    z_Phemetric_size = self._dcs_backup_[_].dc_ZSize
 
                 if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
                     raise Exception('Please make sure all the Denv datacube share the same size!')
-                elif z_Denv_size != self._dcs_backup_[_].dc_ZSize:
-                    raise Exception('The Denv datacubes is not consistent in the Z dimension! Double check the input!')
+                elif z_Phemetric_size != self._dcs_backup_[_].dc_ZSize:
+                    raise Exception('The Phemetric_dc datacubes is not consistent in the Z dimension! Double check the input!')
+
+        if x_size != 0 and y_size != 0:
+            self.dcs_XSize, self.dcs_YSize = x_size, y_size
+        else:
+            raise Exception('Error occurred when obtaining the x y size of s2 dcs!')
 
         # Check the consistency of S2dcs
         if self._withS2dc_:
@@ -1949,17 +1961,23 @@ class Sentinel2_dcs(object):
                 if harmonised_factor:
                     self._auto_harmonised_s2dcs()
 
-                if x_size != 0 and y_size != 0 and z_S2size != 0:
-                    self.dcs_XSize, self.dcs_YSize, self.S2_dcs_ZSize = x_size, y_size, z_S2size
+                # Determine the Zsize
+                if z_S2size != 0:
+                    self.S2dc_ZSize = z_S2size
                 else:
-                    raise Exception('Error occurred when obtaining the size of s2dc!')
+                    raise Exception('Error occurred when obtaining the Z size of s2 dc!')
+
+                # Define the output_path
+                if work_env is None:
+                    self._s2dc_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
+                else:
+                    self._s2dc_work_env = work_env
 
         # Check the consistency of Denv dcs
         if self._withDenvdc_:
             Denvdc_pos = [i for i, v in enumerate(self._dc_typelist) if v == Denv_dc]
             if len(Denvdc_pos) != 1:
-                for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'ROI_tif', 'coordinate_system',
-                                    'sparse_matrix', 'huge_matrix', 'sdc_factor', 'dc_group_list', 'tiles']:
+                for factor_temp in ['Datatype', 'coordinate_system', 'sparse_matrix', 'huge_matrix', 'sdc_factor', 'dc_group_list', 'tiles']:
                     if False in [self.__dict__[f'_{factor_temp}_list'][Denvdc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos] for pos in Denvdc_pos]:
                         raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
 
@@ -1968,23 +1986,48 @@ class Sentinel2_dcs(object):
             for _ in Denvdc_pos:
                 self.Denv_doy_list[_] = self._doys_backup_[_]
 
+            # Define the output_path
+            if work_env is None:
+                self._denv_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[Denvdc_pos[0]].Denv_dc_filepath))).path_name
+            else:
+                self._denv_work_env = work_env
+
+            # Determine the denv index
+            self.Denv_indexlist = list(set([self._index_list[_] for _ in range(len(self._index_list)) if self._dc_typelist[_] == Denv_dc]))
+
         # Check the consistency of Phemetric dcs
         if self._withPhemetricdc_:
             Phemetricdc_pos = [i for i, v in enumerate(self._dc_typelist) if v == Phemetric_dc]
             if len(Phemetricdc_pos) != 1:
                 for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'ROI_tif', 'coordinate_system',
-                                    'sparse_matrix', 'huge_matrix', 'sdc_factor', 'dc_group_list', 'tiles']:
+                                    'sparse_matrix', 'huge_matrix', 'dc_group_list', 'tiles']:
                     if False in [self.__dict__[f'_{factor_temp}_list'][Phemetricdc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos] for pos in Phemetricdc_pos]:
                         raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
 
-                # Read the paraname or date list
-                if False in [len(self._doys_backup_[Phemetricdc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp in Phemetricdc_pos]:
-                    raise Exception('The Phemetric datacubes is not consistent in the Z dimension!')
+            # Define the output_path
+            if work_env is None:
+                self._denv_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[Phemetricdc_pos[0]].Phemetric_dc_filepath))).path_name
+            else:
+                self._denv_work_env = work_env
 
-            # Construct Phemtric doylist
-            self.Phemetric_doy_list = [None for _ in range(len(self._doys_backup_))]
+            # Determine the Zsize
+            if z_Phemetric_size != 0:
+                self.Phedc_ZSize = z_Phemetric_size
+            else:
+                raise Exception('Error occurred when obtaining the Z size of s2 dc!')
+
+            # Construct phemetric namelist
+            self._phemetric_namelist = []
             for _ in Phemetricdc_pos:
-                self.Phemetric_doy_list[_] = self._doys_backup_[_]
+                self._phemetric_namelist.extend([temp.split(str(self._pheyear_list[_]) + '_')[-1] for temp in self._doys_backup_[_]])
+            self._phemetric_namelist = list(set(self._phemetric_namelist))
+
+            pheyear = []
+            for _ in self._pheyear_list:
+                if _ not in pheyear and _ is not None:
+                    pheyear.append(_)
+                elif _ is not None:
+                    raise ValueError('There are duplicate pheyears for different pheme dcs!')
 
         # Check consistency between different types of dcs (ROI/Time range)
         # Check the ROI consistency
@@ -2034,19 +2077,31 @@ class Sentinel2_dcs(object):
             else:
                 Denvdc_year_range = None
 
+        # Check the matrix consistency
+        if [self._withS2dc_, self._withDenvdc_, self._withPhemetricdc_].count(True) > 1:
+            if self._withS2dc_:
+                s2dc_year_range = set([int(np.floor(temp/10000)) for temp in self.s2dc_doy_list])
+            else:
+                s2dc_year_range = None
+
+            if self._withPhemetricdc_:
+                phedc_year_range = [_ for _ in self._pheyear_list if _ is not None]
+            else:
+                phedc_year_range = None
+
+            if self._withDenvdc_:
+                Denvdc_year_range = []
+                for _ in Denvdc_pos:
+                    Denvdc_year_range.extend(self._doys_backup_[_])
+                Denvdc_year_range = set([int(np.floor(_/1000)) for _ in Denvdc_year_range])
+            else:
+                Denvdc_year_range = None
+
         # Construct the datacube list
         for _ in self._dcs_backup_:
-            self.dcs.append(_.dc)
+            self.dcs.append(copy.copy(_.dc))
             if space_optimised is True:
                 _.dc = None
-
-        self.index_list, self.dcs, self.size_control_factor_list, doy_list, self.oritif_folder_list = [], [], [], [], []
-
-        # Define the output_path
-        if work_env is None:
-            self._work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[0].dc_filepath))).path_name
-        else:
-            self._work_env = work_env
 
         # Define var for the flood mapping
         self.inun_det_method_dic = {}
@@ -2105,7 +2160,7 @@ class Sentinel2_dcs(object):
         if False in [doy_all.shape[0] == self.dcs[i].shape[2] for i in range(len(self.dcs))]:
             raise ValueError('The autoharmised is failed')
 
-        self.S2_dcs_ZSize = len(doy_all)
+        self.S2dc_ZSize = len(doy_all)
         self.s2dc_doy_list = doy_all.tolist()
 
         for t in range(len(self._doys_backup_)):
@@ -2113,7 +2168,7 @@ class Sentinel2_dcs(object):
 
         for tt in self._dcs_backup_:
             tt.sdc_doylist = self.s2dc_doy_list
-            tt.dc_ZSize = self.S2_dcs_ZSize
+            tt.dc_ZSize = self.S2dc_ZSize
 
     def append(self, dc_temp: Sentinel2_dc) -> None:
         if type(dc_temp) is not Sentinel2_dc:
@@ -2123,7 +2178,7 @@ class Sentinel2_dcs(object):
             if dc_temp.__dict__[indicator] != self.__dict__[indicator]:
                 raise ValueError('The appended datacube is not consistent with the original datacubes')
 
-        if self.dcs_XSize != dc_temp.dc_XSize or self.dcs_YSize != dc_temp.dc_YSize or self.S2_dcs_ZSize != dc_temp.dc_ZSize:
+        if self.dcs_XSize != dc_temp.dc_XSize or self.dcs_YSize != dc_temp.dc_YSize or self.S2dc_ZSize != dc_temp.dc_ZSize:
             raise ValueError('The appended datacube has different size compared to the original datacubes')
 
         if self.s2dc_doy_list != dc_temp.sdc_doylist:
@@ -2190,13 +2245,13 @@ class Sentinel2_dcs(object):
                 MNDWI_static_thr = 0.1
 
             if 'inundation_MNDWI_thr' not in self.index_list or self._inundated_ow_para:
-                if not os.path.exists(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\header.npy'):
-                    bf.create_folder(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                if not os.path.exists(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\header.npy'):
+                    bf.create_folder(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
                     if 'MNDWI' in self.index_list:
                         if self.sparse_matrix:
                             namelist = self.dcs[self.index_list.index('MNDWI')].SM_namelist
                             inundation_sm = NDSparseMatrix()
-                            for z_temp in range(self.S2_dcs_ZSize):
+                            for z_temp in range(self.S2dc_ZSize):
                                 inundation_array = self.dcs[self.index_list.index('MNDWI')].SM_group[namelist[z_temp]]
                                 inundation_array.data[inundation_array.data < MNDWI_static_thr] = -1
                                 inundation_array.data[inundation_array.data > MNDWI_static_thr] = 0
@@ -2207,7 +2262,7 @@ class Sentinel2_dcs(object):
                             inundation_dc.dc = inundation_sm
                             inundation_dc.index = 'inundation_' + method
                             inundation_dc.sdc_doylist = self.s2dc_doy_list
-                            inundation_dc.save(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                            inundation_dc.save(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
 
                         else:
                             inundation_array = copy.deepcopy(self.dcs[self.index_list.index('MNDWI')])
@@ -2216,7 +2271,7 @@ class Sentinel2_dcs(object):
                             inundation_dc = copy.deepcopy(self._dcs_backup_[self.index_list.index('MNDWI')])
                             inundation_dc.dc = inundation_array
                             inundation_dc.index = 'inundation_' + method
-                            inundation_dc.save(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                            inundation_dc.save(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
 
                         if self._append_inundated_dc:
                             self.append(inundation_dc)
@@ -2224,7 +2279,7 @@ class Sentinel2_dcs(object):
                     else:
                         raise ValueError('Please construct a valid datacube with MNDWI sdc inside!')
                 else:
-                    inundation_dc = Sentinel2_dc(self._work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                    inundation_dc = Sentinel2_dc(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
                     self.append(inundation_dc)
                     self.remove('MNDWI')
                 
@@ -2248,11 +2303,11 @@ class Sentinel2_dcs(object):
         processed_dc = copy.deepcopy(self.dcs[self.index_list.index(processed_index)])
         processed_dc4save = copy.deepcopy(self._dcs_backup_[self.index_list.index(processed_index)])
         
-        if not os.path.exists(self._work_env + processed_index + '_noninun_sequenced_datacube\\header.npy'):
-            bf.create_folder(self._work_env + processed_index + '_noninun_sequenced_datacube\\')
+        if not os.path.exists(self._s2dc_work_env + processed_index + '_noninun_sequenced_datacube\\header.npy'):
+            bf.create_folder(self._s2dc_work_env + processed_index + '_noninun_sequenced_datacube\\')
             if self.sparse_matrix:
 
-                for height in range(self.S2_dcs_ZSize):
+                for height in range(self.S2dc_ZSize):
                     processed_dc.SM_group[processed_dc.SM_namelist[height]] = processed_dc.SM_group[processed_dc.SM_namelist[height]].multiply(inundation_dc.SM_group[inundation_dc.SM_namelist[height]])
 
                 # if self._remove_nan_layer or self._manually_remove_para:
@@ -2269,14 +2324,14 @@ class Sentinel2_dcs(object):
                 processed_index = processed_index + '_noninun'
                 processed_dc4save.index = processed_index
                 processed_dc4save.dc = processed_dc
-                processed_dc4save.save(self._work_env + processed_index + '_sequenced_datacube\\')
+                processed_dc4save.save(self._s2dc_work_env + processed_index + '_sequenced_datacube\\')
 
                 if append_new_dc:
                     self.append(processed_dc4save)
             else:
                pass
         else:
-            processed_dc = Sentinel2_dc(self._work_env + processed_index + '_noninun_sequenced_datacube\\')
+            processed_dc = Sentinel2_dc(self._s2dc_work_env + processed_index + '_noninun_sequenced_datacube\\')
             if append_new_dc:
                 self.append(processed_dc)
 
@@ -2343,9 +2398,9 @@ class Sentinel2_dcs(object):
         ds_temp = gdal.Open(self.ROI_tif)
 
         # Create output path
-        curfit_output_path = self._work_env + index + '_curfit_datacube\\'
+        curfit_output_path = self._s2dc_work_env + index + '_curfit_datacube\\'
         para_output_path = curfit_output_path + str(self._curve_fitting_dic['CFM']) + '_para\\'
-        phemetric_output_path = self._work_env + index + f'_curfit_datacube\\{self.ROI_name}_Phemetric_datacube\\'
+        phemetric_output_path = self._s2dc_work_env + index + f'_curfit_datacube\\{self.ROI_name}_Phemetric_datacube\\'
         csv_para_output_path = para_output_path + 'csv_file\\'
         tif_para_output_path = para_output_path + 'tif_file\\'
         bf.create_folder(curfit_output_path)
@@ -2442,12 +2497,6 @@ class Sentinel2_dcs(object):
         with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
             executor.map(cf2phemetric_dc, repeat(tif_para_output_path), repeat(phemetric_output_path), year_list, repeat(index), repeat(metadata_dic))
 
-    def link_GEDI_Phemetric_dc(self):
-        pass
-
-    def link_GEDI_Denv_dc(self):
-        pass
-
     def _process_phenology_metrics_para(self, **kwargs):
 
         self._curve_fitting_algorithm = None
@@ -2505,9 +2554,8 @@ class Sentinel2_dcs(object):
         for index_temp in index_list:
 
             # input the cf dic
-            input_annual_file = self._work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic[
-                'CFM'] + '\\annual_cf_para.npy'
-            input_year_file = self._work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic['CFM'] + '\\year.npy'
+            input_annual_file = self._s2dc_work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic['CFM'] + '\\annual_cf_para.npy'
+            input_year_file = self._s2dc_work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic['CFM'] + '\\year.npy'
             if not os.path.exists(input_annual_file) or not os.path.exists(input_year_file):
                 raise Exception('Please generate the cf para before the generation of phenology metrics')
             else:
@@ -2515,14 +2563,12 @@ class Sentinel2_dcs(object):
                 year_list = np.load(input_year_file)
 
             phenology_metrics_inform_dic = {}
-            root_output_folder = self._work_env + index_temp + '_phenology_metrics\\' + str(
+            root_output_folder = self._s2dc_work_env + index_temp + '_phenology_metrics\\' + str(
                 self._curve_fitting_dic['CFM']) + '\\'
             bf.create_folder(root_output_folder)
             for phenology_index_temp in phenology_index:
-                phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
-                    self._curve_fitting_dic['CFM']) + '_path'] = root_output_folder + phenology_index_temp + '\\'
-                phenology_metrics_inform_dic[
-                    phenology_index_temp + '_' + index_temp + '_' + str(self._curve_fitting_dic['CFM']) + '_year'] = year_list
+                phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = root_output_folder + phenology_index_temp + '\\'
+                phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(self._curve_fitting_dic['CFM']) + '_year'] = year_list
                 bf.create_folder(phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
                     self._curve_fitting_dic['CFM']) + '_path'])
 
@@ -2568,8 +2614,7 @@ class Sentinel2_dcs(object):
                         elif phenology_index_temp == 'flood_ave_VI':
                             phe_metrics = np.mean(annual_phe[:, :, 182: 302], axis=2)
                         elif phenology_index_temp == 'unflood_ave_VI':
-                            phe_metrics = np.mean(
-                                np.concatenate((annual_phe[:, :, 0:181], annual_phe[:, :, 302:364]), axis=2), axis=2)
+                            phe_metrics = np.mean(np.concatenate((annual_phe[:, :, 0:181], annual_phe[:, :, 302:364]), axis=2), axis=2)
                         elif phenology_index_temp == 'max_VI':
                             phe_metrics = np.max(annual_phe, axis=2)
                         elif phenology_index_temp == 'max_VI_doy':
@@ -2591,29 +2636,138 @@ class Sentinel2_dcs(object):
                         write_raster(gdal.Open(self.ROI_tif), phe_metrics, phenology_metrics_inform_dic[
                             phenology_index_temp + '_' + index_temp + '_' + str(self._curve_fitting_dic['CFM']) + '_path'],
                                      str(year) + '_phe_metrics.TIF', raster_datatype=gdal.GDT_Float32)
-            np.save(self._work_env + index_temp + '_phenology_metrics\\' + str(self._curve_fitting_dic['CFM']) + '_phenology_metrics.npy', phenology_metrics_inform_dic)
+            np.save(self._s2dc_work_env + index_temp + '_phenology_metrics\\' + str(self._curve_fitting_dic['CFM']) + '_phenology_metrics.npy', phenology_metrics_inform_dic)
 
     def generate_phenology_metric(self, **kwargs):
         pass
 
-    def _process_link_GEDI_S2_phenology_para(self, **kwargs):
+    def _process_link_GEDI_temp_DPAR(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ['retrieval_method']:
+            if kwarg_indicator not in ['accumulated_method', 'static_thr', 'phemetric_window']:
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
-        # process clipped_overwritten_para
-        if 'retrieval_method' in kwargs.keys():
-            if type(kwargs['retrieval_method']) is str and kwargs['retrieval_method'] in ['nearest_neighbor','linear_interpolation']:
-                self._GEDI_link_S2_retrieval_method = kwargs['retrieval_method']
+        # process accumulated_method
+        if 'accumulated_method' in kwargs.keys():
+            if isinstance(kwargs['accumulated_method'], str) and kwargs['accumulated_method'] in ['static_thr', 'phemetric_thr']:
+                self._GEDI_link_S2_retrieval_method = kwargs['accumulated_method']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be str type!')
         else:
-            self._GEDI_link_S2_retrieval_method = 'nearest_neighbor'
+            self._GEDI_link_S2_retrieval_method = 'phemetric_thr'
+
+        if 'static_thr' in kwargs.keys():
+            if isinstance(kwargs['static_thr'], (int, float, complex)):
+                self._link_GEDI_denv_method = ['static_thr', kwargs['static_thr']]
+            else:
+                raise TypeError('Please mention the static_thr should be a number!')
+        elif self._GEDI_link_S2_retrieval_method == 'static_thr':
+            self._link_GEDI_denv_method = ['phemetric_thr', 10]
+
+        if 'phemetric_window' in kwargs.keys():
+            if isinstance(kwargs['phemetric_window'], int):
+                self._link_GEDI_denv_method = ['phemetric_thr', kwargs['phemetric_window']]
+            else:
+                raise TypeError('Please mention the phemetric_window should be int type!')
+        else:
+            self._link_GEDI_denv_method = ['phemetric_thr', 10]
+
+    def link_GEDI_accumulated_Denv(self, GEDI_xlsx_file, denv_list, **kwargs):
+
+        # Process para
+        self._process_link_GEDI_temp_DPAR(**kwargs)
+        for _ in denv_list:
+            if _ not in self.Denv_indexlist:
+                raise TypeError(f'The {str(_)} is not imported into the Sentinel2 dcs')
+
+        # Retrieve the S2 inform
+        raster_gt = gdal.Open(self.ROI_tif).GetGeoTransform()
+        raster_proj = retrieve_srs(gdal.Open(self.ROI_tif))
+
+        # Retrieve GEDI inform
+        GEDI_list = gedi.GEDI_list(GEDI_xlsx_file)
+        GEDI_list.reprojection(raster_proj, xycolumn_start='EPSG')
+
+        # Construct Denv list
+        for denv_temp in denv_list:
+            if not os.path.exists(GEDI_xlsx_file.split('.xlsx')[0] + f'_accumulated_{denv_temp}.csv'):
+
+                # Divide the GEDI and dc into different blocks
+                block_amount = os.cpu_count()
+                indi_block_size = int(np.ceil(GEDI_list.df_size / block_amount))
+
+                # Allocate the GEDI_list and dc
+                GEDI_list_blocked, denvdc_blocked, raster_gt_list, thr_blocked, doy_list_integrated = [], [], [], [], []
+
+                # Phe dc count and pos
+                denvdc_count = len([_ for _ in self._index_list if _ == denv_temp])
+                denvdc_pos = [_ for _ in range(len(self._index_list)) if self._index_list[_] == denv_temp]
+
+                # Reconstruct the phenology dc
+                denvdc_reconstructed = None
+                for _ in range(denvdc_count):
+                    if denvdc_reconstructed is None:
+                        if self._sparse_matrix_list[denvdc_pos[_]]:
+                            denvdc_reconstructed = self.dcs[denvdc_pos[_]]
+                        else:
+                            denvdc_reconstructed = self.dcs[denvdc_pos[_]]
+                    else:
+                        if self._sparse_matrix_list[denvdc_pos[_]]:
+                            denvdc_reconstructed.extend_layers(self.dcs[denvdc_pos[_]])
+                        else:
+                            denvdc_reconstructed = np.concatenate((denvdc_reconstructed, self.dcs[denvdc_pos[_]]), axis=2)
+                    doy_list_integrated.extend(self._doys_backup_[denvdc_pos[_]])
+
+                for i in range(block_amount):
+                    if i != block_amount - 1:
+                        GEDI_list_blocked.append(GEDI_list.GEDI_df[i * indi_block_size: (i + 1) * indi_block_size])
+                    else:
+                        GEDI_list_blocked.append(GEDI_list.GEDI_df[i * indi_block_size: -1])
+
+                    ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_list_blocked[-1].EPSG_lat.max() + 12.5, GEDI_list_blocked[-1].EPSG_lat.min() - 12.5, GEDI_list_blocked[-1].EPSG_lon.min() - 12.5, GEDI_list_blocked[-1].EPSG_lon.max() + 12.5
+                    cube_ymin, cube_ymax = int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))), int(min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5])))
+                    cube_xmin, cube_xmax = int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))), int(min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1])))
+
+                    raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2], raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
+
+                    if isinstance(denvdc_reconstructed, NDSparseMatrix):
+                        sm_temp = denvdc_reconstructed.extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
+                        denvdc_blocked.append(sm_temp)
+                    else:
+                        denvdc_blocked.append(denvdc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
+
+                try:
+                    # Sequenced code for debug
+                    # for i in range(block_amount):
+                    #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(self.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', self.size_control_factor_list[self.index_list.index(index_temp)])
+                    with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
+                        result = executor.map(link_GEDI_accdenvinform, denvdc_blocked, GEDI_list_blocked, repeat(doy_list_integrated), raster_gt_list, repeat('EPSG'), repeat(denv_temp))
+                except:
+                    raise Exception('The s2pheme-GEDI link procedure was interrupted by unknown error!')
+
+                try:
+                    result = list(result)
+                    gedi_list_output = None
+
+                    for result_temp in result:
+                        if gedi_list_output is None:
+                            gedi_list_output = copy.copy(result_temp)
+                        else:
+                            gedi_list_output = pd.concat([gedi_list_output, result_temp])
+
+                    gedi_list_output.to_csv(GEDI_xlsx_file.split('.xlsx')[0] + f'_accumulated_{denv_temp}.csv')
+                except:
+                    raise Exception('The df output procedure was interrupted by error!')
+
+    def _process_link_GEDI_S2_phenology_para(self, **kwargs):
+        # Detect whether all the indicators are valid
+        for kwarg_indicator in kwargs.keys():
+            if kwarg_indicator not in []:
+                raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
     def link_GEDI_S2_phenology_inform(self, GEDI_xlsx_file, phemetric_list, **kwargs):
 
-        # Two different method Nearest neighbor and linear interpolation
+        # Process para
         self._process_link_GEDI_S2_para(**kwargs)
 
         # Retrieve the S2 inform
@@ -2624,75 +2778,100 @@ class Sentinel2_dcs(object):
         GEDI_list = gedi.GEDI_list(GEDI_xlsx_file)
         GEDI_list.reprojection(raster_proj, xycolumn_start='EPSG')
 
+        # Construct phemetric list
+        phemetric_gedi_list = []
         for phemetric_temp in phemetric_list:
+            if not os.path.exists(GEDI_xlsx_file.split('.')[0] + f'_{phemetric_temp}.csv'):
+                if phemetric_temp not in self._phemetric_namelist:
+                    raise Exception(f'The {str(phemetric_temp)} is not a valid index or is not inputted into the dcs!')
 
-            if phemetric_temp not in self.index_list:
-                raise Exception(f'The {str(phemetric_temp)} is not a valid index or is not inputted into the dcs!')
+                # Divide the GEDI and dc into different blocks
+                block_amount = os.cpu_count()
+                indi_block_size = int(np.ceil(GEDI_list.df_size / block_amount))
 
-            # Divide the GEDI and dc into different blocks
-            block_amount = os.cpu_count()
-            indi_block_size = int(np.ceil(GEDI_list.df_size / block_amount))
+                # Allocate the GEDI_list and dc
+                GEDI_list_blocked, phedc_blocked, raster_gt_list, year_list_temp = [], [], [], []
 
-            # Allocate the GEDI_list and dc
-            GEDI_list_blocked, dc_blocked, raster_gt_list, doy_list_temp = [], [], [], []
-            for i in range(block_amount):
-                if i != block_amount - 1:
-                    GEDI_list_blocked.append(GEDI_list.GEDI_df[i * indi_block_size: (i + 1) * indi_block_size])
-                else:
-                    GEDI_list_blocked.append(GEDI_list.GEDI_df[i * indi_block_size: -1])
+                # Phe dc count and pos
+                phedc_count = len([_ for _ in self._pheyear_list if _ is not None])
+                phepos = [self._pheyear_list.index(_) for _ in self._pheyear_list if _ is not None]
 
-                ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_list_blocked[-1].EPSG_lat.max() + 12.5, \
-                                                             GEDI_list_blocked[-1].EPSG_lat.min() - 12.5, \
-                                                             GEDI_list_blocked[-1].EPSG_lon.min() - 12.5, \
-                                                             GEDI_list_blocked[-1].EPSG_lon.max() + 12.5
-                cube_ymin, cube_ymax, cube_xmin, cube_xmax = int(
-                    max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))), int(
-                    min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5]))), int(
-                    max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))), int(
-                    min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1])))
-
-                if self.sparse_matrix:
-                    sm_temp = self.dcs[self.index_list.index(phemetric_temp)].extract_matrix(
-                        ([cube_ymin, cube_ymax], [cube_xmin, cube_xmax], ['all']))
-                    dc_blocked.append(sm_temp.drop_nanlayer())
-                    doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
-                else:
-                    dc_blocked.append(
-                        self.dcs[self.index_list.index(phemetric_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1,
-                        :])
-                    doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
-                raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2],
-                                       raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
-
-            try:
-                # Sequenced code for debug
-                # for i in range(block_amount):
-                #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(self.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', self.size_control_factor_list[self.index_list.index(index_temp)])
-                with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                    result = executor.map(link_GEDI_inform, dc_blocked, GEDI_list_blocked, doy_list_temp,
-                                          raster_gt_list, repeat('EPSG'), repeat(phemetric_temp),
-                                          repeat('linear_interpolation'),
-                                          repeat(self.size_control_factor_list[self.index_list.index(phemetric_temp)]))
-            except:
-                raise Exception('The link procedure was interrupted by error!')
-
-            try:
-                result = list(result)
-                index_combined_name = '_'
-                index_combined_name = index_combined_name.join(phemetric_list)
-                gedi_list_output = None
-
-                for result_temp in result:
-                    if gedi_list_output is None:
-                        gedi_list_output = copy.copy(result_temp)
+                # Reconstruct the phenology dc
+                phedc_reconstructed = None
+                for _ in range(phedc_count):
+                    if phedc_reconstructed is None:
+                        if self._sparse_matrix_list[phepos[_]]:
+                            phedc_reconstructed = NDSparseMatrix(self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'], SM_namelist=[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])
+                        else:
+                            phedc_reconstructed = self.dcs[phepos[_]][:,:,[self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]
                     else:
-                        gedi_list_output = pd.concat([gedi_list_output, result_temp])
+                        if self._sparse_matrix_list[phepos[_]]:
+                            phedc_reconstructed.add_layer(self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'], f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}', phedc_reconstructed.shape[2] + 1)
+                        else:
+                            phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]), axis=2)
+                    year_list_temp.append(self._pheyear_list[phepos[_]])
 
-                gedi_list_output.to_csv(GEDI_xlsx_file.split('.')[0] + f'_{index_combined_name}.csv')
-            except:
-                raise Exception('The df output procedure was interrupted by error!')
+                for i in range(block_amount):
+                    if i != block_amount - 1:
+                        GEDI_list_blocked.append(GEDI_list.GEDI_df[i * indi_block_size: (i + 1) * indi_block_size])
+                    else:
+                        GEDI_list_blocked.append(GEDI_list.GEDI_df[i * indi_block_size: -1])
+
+                    ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_list_blocked[-1].EPSG_lat.max() + 12.5, \
+                                                                 GEDI_list_blocked[-1].EPSG_lat.min() - 12.5, \
+                                                                 GEDI_list_blocked[-1].EPSG_lon.min() - 12.5, \
+                                                                 GEDI_list_blocked[-1].EPSG_lon.max() + 12.5
+                    cube_ymin, cube_ymax = int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))), int(min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5])))
+                    cube_xmin, cube_xmax = int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))), int(min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1])))
+
+                    raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2], raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
+
+                    if isinstance(phedc_reconstructed, NDSparseMatrix):
+                        sm_temp = phedc_reconstructed.extract_matrix(([cube_ymin, cube_ymax], [cube_xmin, cube_xmax], ['all']))
+                        phedc_blocked.append(sm_temp.drop_nanlayer())
+                    else:
+                        phedc_blocked.append(phedc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
+
+                try:
+                    # Sequenced code for debug
+                    # for i in range(block_amount):
+                    #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(self.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', self.size_control_factor_list[self.index_list.index(index_temp)])
+                    with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
+                        result = executor.map(link_GEDI_pheinform, phedc_blocked, GEDI_list_blocked, repeat(year_list_temp), raster_gt_list, repeat('EPSG'), repeat(phemetric_temp))
+                except:
+                    raise Exception('The s2pheme-GEDI link procedure was interrupted by unknown error!')
+
+                try:
+                    result = list(result)
+                    gedi_list_output = None
+
+                    for result_temp in result:
+                        if gedi_list_output is None:
+                            gedi_list_output = copy.copy(result_temp)
+                        else:
+                            gedi_list_output = pd.concat([gedi_list_output, result_temp])
+
+                    gedi_list_output.to_csv(GEDI_xlsx_file.split('.')[0] + f'_{phemetric_temp}.csv')
+                except:
+                    raise Exception('The df output procedure was interrupted by error!')
+            phemetric_gedi_list.append(pd.read_csv(GEDI_xlsx_file.split('.')[0] + f'_{phemetric_temp}.csv'))
+
+        # Output to a single file
+        if not os.path.exists(GEDI_xlsx_file.split('.')[0] + f'_all_Phemetrics.csv'):
+            i = 0
+            phemetric_output = None
+            for phemetric_temp in phemetric_list:
+                phe_gedilist_temp = phemetric_gedi_list[i].sort_values('Unnamed: 0')
+                if phemetric_output is None:
+                    phemetric_output = phe_gedilist_temp
+                else:
+                    key_temp = [_ for _ in list(phe_gedilist_temp.keys()) if phemetric_temp in _][0]
+                    phemetric_output.insert(phemetric_output.shape[1], key_temp, phe_gedilist_temp[key_temp])
+                i += 1
+            phemetric_output.to_csv(GEDI_xlsx_file.split('.')[0] + f'_all_Phemetrics.csv')
 
     def _process_link_GEDI_S2_para(self, **kwargs):
+
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
             if kwarg_indicator != 'retrieval_method':
@@ -2774,12 +2953,198 @@ class Sentinel2_dcs(object):
             except:
                 raise Exception('The df output procedure was interrupted by error!')
 
+    def process_denv_via_pheme(self, denvname, phename):
+
+        if denvname not in self.Denv_indexlist:
+            raise ValueError(f'The denv index {str(denvname)} is not imported')
+
+        if phename not in self._phemetric_namelist:
+            raise ValueError(f'The denv index {str(phename)} is not imported')
+
+        if phename == 'SOS':
+            # Phe dc count and pos
+            denvdc_count = len([_ for _ in self._index_list if _ == denvname])
+            denvdc_pos = [_ for _ in range(len(self._index_list)) if self._index_list[_] == denvname]
+
+            pheme_reconstructed = None
+            pheme_namelist = []
+            # Reconstruct the phenology dc
+            for _ in range(denvdc_count):
+                denvdc_year = list(set([int(np.floor(_/1000)) for _ in self.Denv_doy_list[denvdc_pos[_]]]))
+
+                for year_temp in denvdc_year:
+                    if year_temp not in self._pheyear_list:
+                        raise TypeError(f'The phemetric of {str(year_temp)} is not imported')
+                    else:
+                        phepos = self._pheyear_list.index(year_temp)
+                        if f'{str(year_temp)}_static_{denvname}' not in self._doys_backup_[phepos]:
+                            try:
+                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed, NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_reconstructed.SM_namelist) or (isinstance(pheme_reconstructed, np.ndarray) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_namelist):
+                                    if pheme_reconstructed is None:
+                                        if self._sparse_matrix_list[phepos]:
+                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'], SM_namelist=[f'{str(self._pheyear_list[phepos])}_SOS'])
+                                        else:
+                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]
+                                            pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
+                                    else:
+                                        if self._sparse_matrix_list[phepos]:
+                                            pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'], f'{str(self._pheyear_list[phepos])}_SOS', pheme_reconstructed.shape[2] + 1)
+                                        else:
+                                            pheme_reconstructed = np.concatenate((pheme_reconstructed, self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]), axis=2)
+                                            pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
+
+                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed,NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_reconstructed.SM_namelist) or (isinstance(pheme_reconstructed,np.ndarray) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_namelist):
+                                    if pheme_reconstructed is None:
+                                        if self._sparse_matrix_list[phepos]:
+                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'], SM_namelist=[f'{str(self._pheyear_list[phepos])}_peak_doy'])
+                                        else:
+                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]
+                                            pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
+                                    else:
+                                        if self._sparse_matrix_list[phepos]:
+                                            pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'], f'{str(self._pheyear_list[phepos])}_peak_doy', pheme_reconstructed.shape[2] + 1)
+                                        else:
+                                            pheme_reconstructed = np.concatenate((pheme_reconstructed, self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]), axis=2)
+                                        pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
+
+                            except:
+                                raise Exception('SOS or peak doy is not properly retrieved!')
+
+                            # Retrieve the phemetric inform
+                            if isinstance(pheme_reconstructed, NDSparseMatrix):
+                                sos = np.round(pheme_reconstructed.SM_group[f'{str(year_temp)}_SOS'].toarray())
+                                peak_doy = np.round(pheme_reconstructed.SM_group[f'{str(year_temp)}_peak_doy'].toarray())
+                            elif isinstance(pheme_reconstructed, np.ndarray):
+                                sos = np.round(pheme_reconstructed[:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].resshape([pheme_reconstructed.shape[0], pheme_reconstructed.shape[1]]))
+                                peak_doy = np.round(pheme_reconstructed[:, :, pheme_namelist.index(f'{str(year_temp)}_peak_doy')].resshape([pheme_reconstructed.shape[0], pheme_reconstructed.shape[1]]))
+                            else:
+                                raise TypeError('The para phemetric dc is not imported as a supported datatype!')
+
+                            base_env = copy.copy(sos)
+                            base_env[base_env <= 0] = 0
+                            base_env[base_env != 0] = -1
+
+                            sos = sos + year_temp * 1000
+                            sos[sos <= year_temp * 1000] = 3000000
+                            sos = sos.astype(np.int32)
+
+                            peak_doy = peak_doy + year_temp * 1000
+                            peak_doy[peak_doy <= year_temp * 1000] = 0
+                            peak_doy = peak_doy.astype(np.int32)
+
+                            year_doy = self._doys_backup_[denvdc_pos[_]]
+
+                            # Create static/base env map
+                            xy_all = np.argwhere(base_env == -1)
+                            xy_all = pd.DataFrame(xy_all, columns=['y', 'x'])
+                            xy_all = xy_all.sort_values(['x', 'y'])
+                            y_all, x_all = list(xy_all['y']), list(xy_all['x'])
+
+                            block_amount = os.cpu_count()
+                            indi_block_size = int(np.ceil(len(x_all) / block_amount))
+
+                            # Allocate the GEDI_list and dc
+                            y_all_blocked, x_all_blocked, denv_dc_blocked, xy_offset_blocked, sos_blocked = [], [], [], [], []
+                            for i in range(block_amount):
+                                if i != block_amount - 1:
+                                    y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
+                                    x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
+                                else:
+                                    y_all_blocked.append(y_all[i * indi_block_size:])
+                                    x_all_blocked.append(x_all[i * indi_block_size:])
+
+                                if isinstance(self.dcs[denvdc_pos[_]], NDSparseMatrix):
+                                    denv_dc_blocked.append(self.dcs[denvdc_pos[_]].extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]), max(x_all_blocked[-1]) + 1], ['all'])))
+                                else:
+                                    pass
+
+                                sos_blocked.append(sos[min(y_all_blocked[-1]): max(y_all_blocked[-1]) + 1, min(x_all_blocked[-1]): max(x_all_blocked[-1]) + 1])
+                                xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
+
+                            with concurrent.futures.ProcessPoolExecutor() as exe:
+                                result = exe.map(get_base_denv, y_all_blocked, x_all_blocked, sos_blocked, repeat(year_doy), denv_dc_blocked, xy_offset_blocked)
+
+                            result = list(result)
+                            for result_temp in result:
+                                for r_ in result_temp:
+                                    base_env[r_[0], r_[1]] = r_[2]
+                            base_env[base_env == -1] = 0
+                            base_env[np.isnan(base_env)] = 0
+                            self._dcs_backup_[phepos].dc = copy.copy(self.dcs[phepos])
+                            self._dcs_backup_[phepos]._add_layer(type(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'])(base_env), f'{str(year_temp)}_static_{denvname}')
+                            self._dcs_backup_[phepos].save(self._dcs_backup_[phepos].Phemetric_dc_filepath)
+                            self._dcs_backup_[phepos].dc = None
+                        else:
+                            # Retrieve the phemetric inform
+                            if isinstance(self.dcs[phepos], NDSparseMatrix):
+                                sos = np.round(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'].toarray())
+                                peak_doy = np.round(self.dcs[phepos].SM_group[f'{str(year_temp)}_peak_doy'].toarray())
+                                base_env = self.dcs[phepos].SM_group[f'{str(year_temp)}_static_{denvname}'].toarray()
+                            elif isinstance(self.dcs[phepos], np.ndarray):
+                                sos = np.round(self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].reshape([self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]]))
+                                peak_doy = np.round(self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_peak_doy')].reshape([self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]]))
+                                base_env = self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_static_{denvname}')].reshape([self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]])
+                            else:
+                                raise TypeError('The para phemetric dc is not imported as a supported datatype!')
+
+                            sos = sos + year_temp * 1000
+                            sos[sos <= year_temp * 1000] = 3000000
+                            sos = sos.astype(np.int32)
+
+                            peak_doy = peak_doy + year_temp * 1000
+                            peak_doy[peak_doy <= year_temp * 1000] = 0
+                            peak_doy = peak_doy.astype(np.int32)
+
+                        peak_doy_env = copy.copy(peak_doy)
+                        peak_doy_env = peak_doy_env.astype(float)
+                        peak_doy_env[peak_doy_env != 0] = 0
+
+                        for doy in self._doys_backup_[denvdc_pos[_]]:
+                            sos_temp = sos <= doy
+                            sos_temp = sos_temp.astype(int)
+                            peak_doy_temp = peak_doy >= doy
+                            peak_doy_temp = peak_doy_temp.astype(float)
+                            if isinstance(self.dcs[denvdc_pos[_]], NDSparseMatrix):
+                                temp = (self.dcs[denvdc_pos[_]].SM_group[doy] - self.dcs[denvdc_pos[_]]._matrix_type(base_env)).multiply(self.dcs[denvdc_pos[_]]._matrix_type(sos_temp))
+                                temp[temp < 0] = 0
+                                self.dcs[denvdc_pos[_]].SM_group[doy] = type(temp)(temp.astype(self.dcs[denvdc_pos[_]].SM_group[doy].dtype).toarray())
+                                peak_doy_env += self.dcs[denvdc_pos[_]].SM_group[doy].toarray() * peak_doy_temp
+                            else:
+                                self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] = (self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] - base_env) * sos_temp
+                                peak_doy_env += self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] * peak_doy_temp
+                        self._dcs_backup_[phepos].dc = copy.copy(self.dcs[phepos])
+                        self._dcs_backup_[phepos]._add_layer(type(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'])(peak_doy_env), f'{str(year_temp)}_peak_{denvname}')
+                        self._dcs_backup_[phepos].save(self._dcs_backup_[phepos].Phemetric_dc_filepath)
+                        self._dcs_backup_[phepos].dc = None
+
+                self._dcs_backup_[denvdc_pos[_]].dc = copy.copy(self.dcs[denvdc_pos[_]])
+                ori_index, ori_path = self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath
+                self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath = ori_index + '_relative', os.path.dirname(os.path.dirname(ori_path)) + '\\' + ori_path.split('\\')[-2] + '_relative\\'
+                self._dcs_backup_[denvdc_pos[_]].save(self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath)
+                self._dcs_backup_[denvdc_pos[_]].dc = None
+                self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath = ori_index, ori_path
+        else:
+            pass
+
 
 if __name__ == '__main__':
-    dc_temp_dic = {}
-    for year in [2020, 2021, 2022]:
-        dc_temp_dic[f'{str(year)}_TEMP_Denv'] = Denv_dc(f'G:\\A_veg\\NCEI_temperature\\NCEI_19_22\\NCEI_Output\\floodplain_2020_Denv_datacube\\{str(year)}\\')
-        dc_temp_dic[f'{str(year)}_DPAR_Denv'] = Denv_dc(f'G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\{str(year)}\\')
-        dc_temp_dic[f'{str(year)}_Pheme'] = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{str(year)}\\')
-        dcs_temp = Sentinel2_dcs(dc_temp_dic[f'{str(year)}_TEMP_Denv'], dc_temp_dic[f'{str(year)}_Pheme'], dc_temp_dic[f'{str(year)}_DPAR_Denv'])
-
+    # for year in [2019, 2020, 2021, 2022]:
+    #     dc_temp_dic = {}
+    #     dc_temp_dic[f'{str(year)}_Pheme'] = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{str(year)}\\')
+    #     dc_temp_dic[f'{str(year)}_temp'] = Denv_dc(f'G:\\A_veg\\NCEI_temperature\\NCEI_19_22\\NCEI_Output\\floodplain_2020_Denv_datacube\\{str(year)}\\')
+    #     dcs_temp = Sentinel2_dcs(dc_temp_dic[f'{str(year)}_Pheme'],  dc_temp_dic[f'{str(year)}_temp'])
+    #     # dcs_temp.link_GEDI_S2_phenology_inform('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality.xlsx', ['SOS', 'EOS', 'trough_vi', 'peak_vi', 'peak_doy', 'GR', 'DR', 'DR2'])
+    #     dcs_temp.process_denv_via_pheme('TEMP', 'SOS')
+    #
+    # for year in [2019, 2020, 2021, 2022]:
+    #     dc_temp_dic = {}
+    #     dc_temp_dic[f'{str(year)}_Pheme'] = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{str(year)}\\')
+    #     dc_temp_dic[f'{str(year)}_temp'] = Denv_dc(f'G:\\A_veg\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\{str(year)}\\')
+    #     dcs_temp = Sentinel2_dcs(dc_temp_dic[f'{str(year)}_Pheme'],  dc_temp_dic[f'{str(year)}_temp'])
+    #     # dcs_temp.link_GEDI_S2_phenology_inform('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality.xlsx', ['SOS', 'EOS', 'trough_vi', 'peak_vi', 'peak_doy', 'GR', 'DR', 'DR2'])
+    #     dcs_temp.process_denv_via_pheme('DPAR', 'SOS')
+    dc_temp_dic = []
+    for year in [2019, 2020, 2021, 2022]:
+        dc_temp_dic.append(Denv_dc(f'G:\\A_veg\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\{str(year)}_relative\\'))
+    dcs_temp = Sentinel2_dcs(*dc_temp_dic)
+    dcs_temp.link_GEDI_accumulated_Denv('G:\\A_veg\\S2_all\GEDI_v3\\GEDI_TEMP\\floodplain_2020_high_quality.xlsx', ['DPAR_relative'], )
