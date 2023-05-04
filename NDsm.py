@@ -270,9 +270,15 @@ class NDSparseMatrix:
         while height_temp < self._height:
             if height_temp in range(heights_range[0], heights_range[1]):
                 if output_array is None:
-                    output_array = NDSparseMatrix(self.SM_group[self.SM_namelist[height_temp]][rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]], SM_namelist = [self.SM_namelist[height_temp]])
+                    if isinstance(self.SM_group[self.SM_namelist[height_temp]], sm.coo_matrix):
+                        output_array = NDSparseMatrix(sm.coo_matrix(sm.csc_matrix(self.SM_group[self.SM_namelist[height_temp]])[rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]]), SM_namelist=[self.SM_namelist[height_temp]])
+                    else:
+                        output_array = NDSparseMatrix(self.SM_group[self.SM_namelist[height_temp]][rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]], SM_namelist=[self.SM_namelist[height_temp]])
                 else:
-                    output_array.add_layer(self.SM_group[self.SM_namelist[height_temp]][rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]], self.SM_namelist[height_temp], output_array.shape[2])
+                    if isinstance(self.SM_group[self.SM_namelist[height_temp]], sm.coo_matrix):
+                        output_array.add_layer(sm.coo_matrix(sm.csc_matrix(self.SM_group[self.SM_namelist[height_temp]])[rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]]), self.SM_namelist[height_temp], output_array.shape[2])
+                    else:
+                        output_array.add_layer(self.SM_group[self.SM_namelist[height_temp]][rows_range[0]: rows_range[1], cols_range[0]: cols_range[1]], self.SM_namelist[height_temp], output_array.shape[2])
             height_temp += 1
 
         output_array._cols, output_array._rows = -1, -1
@@ -368,9 +374,9 @@ class NDSparseMatrix:
             temp = None
             for _ in self.SM_namelist:
                 if temp is None:
-                    temp = self.SM_group[_]
+                    temp = self.SM_group[_].astype(np.float)
                 else:
-                    temp = temp + self.SM_group[_]
+                    temp = temp + self.SM_group[_].astype(np.float)
             if new_layer_name is None:
                 new_layer_name = 'sum'
             elif isinstance(new_layer_name, str):

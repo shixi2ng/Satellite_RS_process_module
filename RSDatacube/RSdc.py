@@ -367,12 +367,27 @@ class Phemetric_dc(object):
         except:
             raise Exception('Something went wrong when reading the Phemetric datacube!')
 
+        # Drop duplicate layers
+        self._drop_duplicate_layers()
+
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
         if self.dc_ZSize != len(self.paraname_list):
             raise TypeError('The Phemetric datacube is not consistent with the paraname file')
 
         print(f'Finish loading the Phemetric datacube of {str(self.pheyear)} \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+
+    def _drop_duplicate_layers(self):
+        for _ in self.paraname_list:
+            if len([t for t in self.paraname_list if t == _]) != 1:
+                pos = [tt for tt in range(len(self.paraname_list)) if self.paraname_list[tt] == _]
+                if self.sparse_matrix:
+                    self.dc.SM_namelist.pop(pos[-1])
+                    self.paraname_list.pop(pos[-1])
+                    self.dc._update_size_para()
+                else:
+                    self.dc = np.delete(self.dc, pos[-1], axis=2)
+                    self.paraname_list.pop(pos[-1])
 
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.paraname_list.__sizeof__()

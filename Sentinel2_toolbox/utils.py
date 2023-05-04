@@ -519,7 +519,7 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
     if out_ymin is None or out_ymax is None or out_xmin is None or out_xmax is None:
         return np.nan
 
-    if isinstance(raster, NDSparseMatrix):
+    if not isinstance(raster, np.ndarray):
         raster_temp = raster.toarray()[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].astype(np.float64)
     else:
         raster_temp = raster[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].astype(np.float64)
@@ -529,6 +529,8 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
 
     if [raster_temp == nodatavalue][0].all():
         return np.nan
+    elif ~np.isnan(nodatavalue):
+        raster_temp[raster_temp == nodatavalue] = np.nan
 
     if raster_temp.shape[0] != rasterize_Ysize or raster_temp.shape[1] != rasterize_Xsize:
         raise ValueError('The output raster and rasterise raster are not consistent!')
@@ -554,6 +556,8 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
     file_temp = gdal.RasterizeLayer(rvds, [1], mem_layer, None, None, burn_values=[1], options=['ALL_TOUCHED=True'])
     info_temp = rvds.GetRasterBand(1).ReadAsArray()
     raster_temp[info_temp == 0] = np.nan
+
+    # Return the value
     if np.sum(~np.isnan(raster_temp)) / np.sum(info_temp == 1) > 0.5:
         return np.nansum(raster_temp) / np.sum(~np.isnan(raster_temp))
     else:
@@ -1089,11 +1093,6 @@ def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GE
                         array_temp = dc.SM_group[bf.doy2date(date_temp)]
                         info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
 
-                        if size_control_factor:
-                            info_temp = (float(info_temp) - 32768) / 10000
-                        else:
-                            info_temp = float(info_temp)
-
                     if ~np.isnan(info_temp):
                         gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = info_temp
                         gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = 1
@@ -1106,11 +1105,6 @@ def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GE
                             array_temp = dc.SM_group[bf.doy2date(date_temp_temp)]
                             info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
 
-                            if size_control_factor:
-                                info_temp = (float(info_temp) - 32768) / 10000
-                            else:
-                                info_temp = float(info_temp)
-
                         if ~np.isnan(info_temp):
                             data_negative = info_temp
                             date_negative = date_temp_temp
@@ -1120,11 +1114,6 @@ def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GE
                         if sparse_matrix:
                             array_temp = dc.SM_group[bf.doy2date(date_temp_temp)]
                             info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
-
-                            if size_control_factor:
-                                info_temp = (float(info_temp) - 32768) / 10000
-                            else:
-                                info_temp = float(info_temp)
 
                         if ~np.isnan(info_temp):
                             data_positive = info_temp
@@ -1140,6 +1129,91 @@ def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GE
             raise TypeError(f'{str(GEDI_link_S2_retrieval_method)} is not supported!')
 
     return gedi_list
+
+
+def get_index_by_date(dc_blocked, y_all_blocked: list, x_all_blocked: list, doy_list: list, date: list, xy_offset_blocked: list, index:str, mode:str, search_window: int = 40):
+    if len(y_all_blocked) != len(x_all_blocked):
+        raise TypeError('The x and y blocked were not under the same size!')
+
+    res = [np.nan for _ in range(len(y_all_blocked))]
+    if mode == 'index':
+        for _ in range(len(y_all_blocked)):
+            y_, x_ = y_all_blocked[_] - xy_offset_blocked[0], x_all_blocked[_] - xy_offset_blocked[1]
+
+            date_temp = date
+            data_positive, date_positive, data_negative, date_negative = None, None, None, None
+
+            for date_interval in range(search_window):
+                if date_interval == 0 and date_interval + date_temp in doy_list:
+                    if isinstance(dc_blocked, NDSparseMatrix):
+                        if isinstance(dc_blocked.SM_group[bf.doy2date(date_temp)], sm.coo_matrix):
+                            info_temp = sm.csr_matrix(dc_blocked.SM_group[bf.doy2date(date_temp)])[y_, x_]
+                        else:
+                            info_temp = dc_blocked.SM_group[bf.doy2date(date_temp)][y_, x_]
+
+                    if info_temp != 0:
+                        res[_] = info_temp
+                        break
+
+                else:
+                    if data_negative is None and date_temp - date_interval in doy_list:
+                        date_temp_temp = date_temp - date_interval
+                        if isinstance(dc_blocked, NDSparseMatrix):
+                            if isinstance(dc_blocked.SM_group[bf.doy2date(date_temp_temp)], sm.coo_matrix):
+                                info_temp = sm.csr_matrix(dc_blocked.SM_group[bf.doy2date(date_temp_temp)])[y_, x_]
+                            else:
+                                info_temp = dc_blocked.SM_group[bf.doy2date(date_temp_temp)][y_, x_]
+
+                        if info_temp != 0:
+                            data_negative = np.float(info_temp)
+                            date_negative = date_temp_temp
+
+                    if data_positive is None and date_temp + date_interval in doy_list:
+                        date_temp_temp = date_temp + date_interval
+                        if isinstance(dc_blocked, NDSparseMatrix):
+                            if isinstance(dc_blocked.SM_group[bf.doy2date(date_temp_temp)], sm.coo_matrix):
+                                info_temp = sm.csr_matrix(dc_blocked.SM_group[bf.doy2date(date_temp_temp)])[y_, x_]
+                            else:
+                                info_temp = dc_blocked.SM_group[bf.doy2date(date_temp_temp)][y_, x_]
+
+                        if info_temp != 0:
+                            data_positive = np.float(info_temp)
+                            date_positive = date_temp_temp
+
+                    if data_positive is not None and data_negative is not None:
+                        res[_] = data_negative + (date_temp - date_negative) * (data_positive - data_negative) / (date_positive - date_negative)
+                        break
+
+            print(f'y: {str(y_)}, x: {str(x_)}, index_res: {str(res[_])}')
+    elif mode == 'pheno':
+        for _ in range(len(y_all_blocked)):
+            y_, x_ = y_all_blocked[_] - xy_offset_blocked[0], x_all_blocked[_] - xy_offset_blocked[1]
+            if isinstance(dc_blocked, NDSparseMatrix):
+                info_temp = dc_blocked.SM_group[f'{str(date)}_{index}'][y_, x_]
+
+            if info_temp != 0:
+                res[_] = info_temp
+
+            print(f'y: {str(y_)}, x: {str(x_)}, pheno_res: {str(res[_])}')
+
+    elif mode == 'denv':
+        year_temp = int(np.floor(date / 1000))
+        doy_temp = np.mod(date, 1000)
+
+        if isinstance(dc_blocked, NDSparseMatrix):
+            arr_temp = dc_blocked.SM_group['sum'].toarray()
+        else:
+            arr_temp = dc_blocked[:, :]
+
+        for _ in range(len(y_all_blocked)):
+            y_, x_ = y_all_blocked[_] - xy_offset_blocked[0], x_all_blocked[_] - xy_offset_blocked[1]
+            info_temp = arr_temp[y_, x_]
+
+            if info_temp != 0:
+                res[_] = info_temp
+
+            print(f'y: {str(y_)}, x: {str(x_)}, denv_res: {str(res[_])}')
+    return {'x': x_all_blocked, 'y': y_all_blocked, index: res}
 
 
 def get_base_denv(y_all_blocked: list, x_all_blocked: list, sos: np.ndarray, year_doy: list, denv_dc_blocked, xy_offset_blocked: list):
