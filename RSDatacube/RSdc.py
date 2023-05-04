@@ -7,6 +7,7 @@ import numpy as np
 from NDsm import NDSparseMatrix
 import datetime
 import copy
+from scipy import sparse as sm
 
 
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
@@ -161,6 +162,10 @@ class Denv_dc(object):
         elif len(self.compete_doy_list) < len(self.sdc_doylist):
             raise Exception('Code has issues in the Denc autofill procedure!')
 
+        # autotrans sparse matrix
+        if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
+            self._autotrans_sparse_matrix()
+
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
         if self.dc_ZSize != len(self.sdc_doylist):
@@ -205,7 +210,7 @@ class Denv_dc(object):
                         if date_end is not None and date_beg is not None:
                             break
 
-                    if self.sparse_matrix:
+                    if isinstance(self.dc, NDSparseMatrix):
                         type_temp = type(self.dc.SM_group[date_beg])
                         array_beg = self.dc.SM_group[date_beg].toarray()
                         array_end = self.dc.SM_group[date_end].toarray()
@@ -236,9 +241,8 @@ class Denv_dc(object):
         start_time = time.time()
         print(f'Start saving the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
 
-        if not os.path.exists(output_path):
-            bf.create_folder(output_path)
         output_path = bf.Path(output_path).path_name
+        bf.create_folder(output_path) if not os.path.exists(output_path) else None
 
         metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI,
                         'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
@@ -256,6 +260,17 @@ class Denv_dc(object):
             np.save(f'{output_path}{str(self.index)}_Denv_datacube.npy', self.dc)
 
         print(f'Finish saving the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+
+    def _autotrans_sparse_matrix(self):
+
+        if not isinstance(self.dc, NDSparseMatrix):
+            raise TypeError('The autotrans sparse matrix is specified for the NDsm!')
+
+        for _ in self.dc.SM_namelist:
+            if isinstance(self.dc.SM_group[_], sm.coo_matrix):
+                self.dc.SM_group[_] = sm.csr_matrix(self.dc.SM_group[_])
+                self.dc._update_size_para()
+        self.save(self.Denv_dc_filepath)
 
 
 class Phemetric_dc(object):
@@ -367,6 +382,10 @@ class Phemetric_dc(object):
         except:
             raise Exception('Something went wrong when reading the Phemetric datacube!')
 
+        # autotrans sparse matrix
+        if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
+            self._autotrans_sparse_matrix()
+
         # Drop duplicate layers
         self._drop_duplicate_layers()
 
@@ -377,11 +396,22 @@ class Phemetric_dc(object):
 
         print(f'Finish loading the Phemetric datacube of {str(self.pheyear)} \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
+    def _autotrans_sparse_matrix(self):
+
+        if not isinstance(self.dc, NDSparseMatrix):
+            raise TypeError('The autotrans sparse matrix is specified for the NDsm!')
+
+        for _ in self.dc.SM_namelist:
+            if isinstance(self.dc.SM_group[_], sm.coo_matrix):
+                self.dc.SM_group[_] = sm.csr_matrix(self.dc.SM_group[_])
+                self.dc._update_size_para()
+        self.save(self.Phemetric_dc_filepath)
+
     def _drop_duplicate_layers(self):
         for _ in self.paraname_list:
             if len([t for t in self.paraname_list if t == _]) != 1:
                 pos = [tt for tt in range(len(self.paraname_list)) if self.paraname_list[tt] == _]
-                if self.sparse_matrix:
+                if isinstance(self.dc, NDSparseMatrix):
                     self.dc.SM_namelist.pop(pos[-1])
                     self.paraname_list.pop(pos[-1])
                     self.dc._update_size_para()
@@ -392,7 +422,7 @@ class Phemetric_dc(object):
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.paraname_list.__sizeof__()
 
-    def calculate_phemetrics(self, pheme_list: list, save2phemedc = True):
+    def calculate_phemetrics(self, pheme_list: list, save2phemedc: bool = True):
 
         pheme_list_temp = copy.copy(pheme_list)
         for pheme_temp in pheme_list:

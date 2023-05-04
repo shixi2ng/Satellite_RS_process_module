@@ -4,6 +4,7 @@ import basic_function as bf
 import copy
 import numpy as np
 import os
+import progressbar
 
 
 class NDSparseMatrix:
@@ -122,6 +123,15 @@ class NDSparseMatrix:
             i += 1
 
     def save(self, output_path, overwritten_para=True):
+
+        widgets = ['Saving ND sparse matrix: ',
+                   ' [', progressbar.Timer(), '] ',
+                   progressbar.Bar(),
+                   ' (', progressbar.ETA(), ') ',
+                   ]
+
+        bar = progressbar.ProgressBar(maxval=len(self.SM_namelist) + 1, widgets=widgets).start()
+
         bf.create_folder(output_path)
         output_path = bf.Path(output_path).path_name
         i = 0
@@ -129,6 +139,7 @@ class NDSparseMatrix:
             if not os.path.exists(output_path + str(sm_name) + '.npz') or overwritten_para:
                 sm.save_npz(output_path + str(sm_name) + '.npz', self.SM_group[sm_name])
             i += 1
+            bar.update(i)
         np.save(output_path + 'SMsequence.npz', np.array(self.SM_namelist))
 
     def load(self, input_path):

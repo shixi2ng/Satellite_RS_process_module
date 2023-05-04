@@ -409,4 +409,12 @@ def file_rename(files):
         file_name = file_name.split('_')[0] + file_name.split('_')[1] + file_name.split('_')[2] + '_' + \
                     file_name.split('__')[-1]
         os.rename(file, path_name + file_name)
-    
+
+
+def progressBar(count_value, total, suffix=''):
+    bar_length = 100
+    filled_up_Length = int(round(bar_length * count_value / float(total)))
+    percentage = round(100.0 * count_value/float(total), 1)
+    bar = '=' * filled_up_Length + '-' * (bar_length - filled_up_Length)
+    sys.stdout.write('[%s] %s%s ...%s\r' %(bar, percentage, '%', suffix))
+    sys.stdout.flush()

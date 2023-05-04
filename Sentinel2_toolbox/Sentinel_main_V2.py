@@ -27,7 +27,9 @@ from lxml import etree
 from NDsm import NDSparseMatrix
 import json
 from RSDatacube.RSdc import Phemetric_dc, Denv_dc
+from typing import Optional, Union
 import polars
+
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
@@ -1610,7 +1612,7 @@ class Sentinel2_ds(object):
                             else:
                                 array_temp[array_temp == nodata_value] = 0
 
-                            sm_temp = sm.coo_matrix(array_temp.astype(np.uint16))
+                            sm_temp = sm.csr_matrix(array_temp.astype(np.uint16))
                             data_cube.append(sm_temp, name=doy_list[i])
                             data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
 
@@ -1751,7 +1753,7 @@ class Sentinel2_dc(object):
                 raise Exception('Something went wrong when reading the metadata!')
 
         start_time = time.time()
-        print(f'Start loading the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+        print(f'Start loading the Sentinel2 dc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
 
         # Read doy or date file of the Datacube
         try:
@@ -1790,17 +1792,33 @@ class Sentinel2_dc(object):
         except:
             raise Exception('Something went wrong when reading the datacube!')
 
+        # autotrans sparse matrix
+        if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
+            self._autotrans_sparse_matrix()
+
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
 
-        print(f'Finish loading the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+        print(f'Finish loading the Sentinel2 dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()
 
+    def _autotrans_sparse_matrix(self):
+
+        if not isinstance(self.dc, NDSparseMatrix):
+            raise TypeError('The autotrans sparse matrix is specified for the NDsm!')
+
+        for _ in self.dc.SM_namelist:
+            if isinstance(self.dc.SM_group[_], sm.coo_matrix):
+                self.dc.SM_group[_] = sm.csr_matrix(self.dc.SM_group[_])
+        self.dc._update_size_para()
+        self.dc._matrix_type = sm.csr_matrix
+        self.save(self.dc_filepath)
+
     def save(self, output_path: str):
         start_time = time.time()
-        print(f'Start saving the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+        print(f'Start saving the Sentinel2 dc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
 
         if not os.path.exists(output_path):
             bf.create_folder(output_path)
@@ -1821,10 +1839,10 @@ class Sentinel2_dc(object):
         else:
             np.save(f'{output_path}{str(self.index)}_sequenced_datacube.npy', self.dc)
 
-        print(f'Finish saving the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+        print(f'Finish saving the Sentinel2 dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
 
-class Sentinel2_dcs(object):
+class RS_dcs(object):
 
     def __init__(self, *args, work_env: str = None, auto_harmonised: bool = True, space_optimised: bool = True):
 
@@ -1842,8 +1860,7 @@ class Sentinel2_dcs(object):
         self.dcs = []
 
         # Construct the indicator for different dcs
-        self._phemetric_namelist = None
-
+        self._phemetric_namelist, self._pheyear_list = None, []
         self._withPhemetricdc_, self._withDenvdc_, self._withS2dc_ = False, False, False
         self._s2dc_work_env, self._phemetric_work_env, self._denv_work_env = None, None, None
 
@@ -2006,9 +2023,9 @@ class Sentinel2_dcs(object):
 
             # Define the output_path
             if work_env is None:
-                self._denv_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[Phemetricdc_pos[0]].Phemetric_dc_filepath))).path_name
+                self._pheme_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[Phemetricdc_pos[0]].Phemetric_dc_filepath))).path_name
             else:
-                self._denv_work_env = work_env
+                self._pheme_work_env = work_env
 
             # Determine the Zsize
             if z_Phemetric_size != 0:
@@ -2154,7 +2171,7 @@ class Sentinel2_dcs(object):
                     if not self.sparse_matrix:
                         self.dcs[i] = np.insert(self.dcs[i], np.argwhere(doy_all == doy).flatten()[0], np.nan * np.zeros([self.dcs_YSize, self.dcs_XSize, 1]), axis=2)
                     else:
-                        self.dcs[i].append(sm.coo_matrix(np.zeros([self.dcs_YSize, self.dcs_XSize])), name=int(doy), pos=np.argwhere(doy_all == doy).flatten()[0])
+                        self.dcs[i].append(self.dcs[i]._matrix_type(np.zeros([self.dcs_YSize, self.dcs_XSize])), name=int(doy), pos=np.argwhere(doy_all == doy).flatten()[0])
             i += 1
 
         if False in [doy_all.shape[0] == self.dcs[i].shape[2] for i in range(len(self.dcs))]:
@@ -2202,7 +2219,7 @@ class Sentinel2_dcs(object):
         self.index_list.remove(self.index_list[num])
 
     def extend(self, dcs_temp) -> None:
-        if type(dcs_temp) is not Sentinel2_dcs:
+        if type(dcs_temp) is not RS_dcs:
             raise TypeError('The appended data should be a Sentinel2_dcs!')
 
         for indicator in ['ROI', 'ROI_name', 'sdc_factor', 'dcs_XSize', 'dcs_YSize', 'dcs_ZSize', 'doy_list', 'coordinate_system']:
@@ -3126,103 +3143,113 @@ class Sentinel2_dcs(object):
         else:
             pass
 
-    def create_index_list_by_date(self, date, index):
+    def create_feature_list_by_date(self, date: list, index: str, output_folder: str):
 
-        doy = bf.date2doy(date)
-        roi_map = np.load(self._ROI_array_list[0], allow_pickle=True)
+        # Determine the date
+        date_pro, peak_factor = [], False
+        for _ in date:
+            if isinstance(_, int) and _ > 10000000:
+                date_pro.append(bf.date2doy(_))
+            elif isinstance(_, int) and _ > 1000000:
+                date_pro.append(_)
+            elif isinstance(_, str) and _.startswith('peak'):
+                date_pro.append(_)
+                year = None
 
-        xy_all = np.argwhere(roi_map != -32768)
+                for q in range(0, len(_) - 4):
+                    try:
+                        year = int(date[q: q + 4])
+                    except:
+                        pass
+
+                if year is None:
+                    raise TypeError('The peak type should follow the year!')
+                elif year is not None and year not in self._pheyear_list:
+                    raise TypeError(f'The phemetric of {str(year)} is not input!')
+                elif self._phemetric_namelist is not None and 'peak_doy' not in self._phemetric_namelist:
+                    raise TypeError(f'The peak doy of {str(year)} is not generated!')
+                else:
+                    peak_factor = True
+
+            else:
+                raise TypeError('The date was not supported!')
+
+            # Create output folder
+            if isinstance(output_folder, str):
+                output_folder = Path(output_folder).path_name
+                bf.create_folder(output_folder) if not os.path.exists(output_folder) else None
+                bf.create_folder(output_folder + str(date) + '\\') if not os.path.exists(output_folder + str(date) + '\\') else None
+            else:
+                raise TypeError('The output folder should be a string!')
+
+        # Generate the pos xy list
+        roi_ds = gdal.Open(self._ROI_array_list[0])
+        roi_map = roi_ds.GetRasterBand(1).ReadAsArray()
+        xy_all = np.argwhere(roi_map != roi_ds.GetRasterBand(1).GetNoDataValue()) if ~np.isnan(roi_ds.GetRasterBand(1).GetNoDataValue()) else np.argwhere(~np.isnan(roi_map))
         xy_all = pd.DataFrame(xy_all, columns=['y', 'x'])
         xy_all = xy_all.sort_values(['x', 'y'])
 
-        for _ in index:
-            if not os.path.exists(f'G:\A_veg\S2_all\\20220704\\{_}_index.csv'):
-                if _ not in self._index_list and _ not in self._phemetric_namelist:
-                    raise TypeError(f'The {_} is not input or avaliable!')
-                elif _ in self._index_list and self._dc_typelist[self._index_list.index(_)] == Sentinel2_dc:
-                    pos = self._index_list.index(_)
-                    y_all, x_all = list(xy_all['y']), list(xy_all['x'])
-                    block_amount = os.cpu_count()
-                    indi_block_size = int(np.ceil(len(y_all) / block_amount))
+        # Generate the peak doy list
+        if peak_factor:
 
-                    if isinstance(self.dcs[self._index_list.index(_)].SM_group[self.dcs[self._index_list.index(_)].SM_namelist[0]], sm.coo_matrix):
-                        for q in self.dcs[self._index_list.index(_)].SM_namelist:
-                            self.dcs[self._index_list.index(_)].SM_group[q] = sm.csr_matrix(self.dcs[self._index_list.index(_)].SM_group[q])
+            for q in date_pro:
+                if q.startswith('peak'):
 
-                    # Allocate the GEDI_list and dc
-                    y_all_blocked, x_all_blocked, dc_blocked, xy_offset_blocked, doy_list_temp = [], [], [], [], []
-                    for i in range(block_amount):
-                        if i != block_amount - 1:
-                            y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
-                            x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
-                        else:
-                            y_all_blocked.append(y_all[i * indi_block_size:])
-                            x_all_blocked.append(x_all[i * indi_block_size:])
+                    year_temp = None
+                    for yy in range(0, len(q) - 4):
+                        try:
+                            year_temp = int(date[yy: yy + 4])
+                        except:
+                            pass
 
-                        if isinstance(self.dcs[self._index_list.index(_)], NDSparseMatrix):
-                            sm_temp = self.dcs[self._index_list.index(_)].extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]), max(x_all_blocked[-1]) + 1], ['all']))
-                            dc_blocked.append(sm_temp.drop_nanlayer())
-                            doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
-                        elif isinstance(self.dcs[self._index_list.index(_)], np.ndarray):
-                            dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[-1].min():y_all_blocked[-1].max() + 1, x_all_blocked[-1].min(): x_all_blocked[-1].max() + 1, :])
-                            doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
-
-                        xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
-
-                    with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                        result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, doy_list_temp, repeat(doy), xy_offset_blocked, repeat(_), repeat('index'))
-
-                    pd_out = None
-                    result = list(result)
-                    for tt in result:
-                        if pd_out is None:
-                            pd_out = pd.DataFrame(tt)
-                        else:
-                            pd_out = pd.concat([pd_out, pd.DataFrame(tt)])
-
-                elif self._phemetric_namelist is not None and _ in self._phemetric_namelist:
-
-                    year = int(np.floor(doy/1000))
-                    if year not in self._pheyear_list:
-                        raise ValueError(f'The phemetric under {str(year)} is not imported!')
+                    if isinstance(self.dcs[self._pheyear_list.index(year_temp)], NDSparseMatrix):
+                        pheme_array = self.dcs[self._pheyear_list.index(year_temp)].SM_group['peak_doy'].toarray()
                     else:
-                        # Allocate the GEDI_list and dc
-                        y_all_blocked, x_all_blocked, dc_blocked, xy_offset_blocked, doy_list_temp = [], [], [], [], []
+                        pheme_array = self.dcs[self._pheyear_list.index(year_temp)][:, :, self._doys_backup_[self._pheyear_list.index(year_temp)].index('peak_doy')]
 
+                    y_all, x_all = np.mgrid[:pheme_array.shape[0], :pheme_array.shape[1]]
+                    arr_out = np.column_stack((y_all.ravel(), x_all.ravel(), pheme_array.ravel()))
+                    df_temp = pd.DataFrame(arr_out, columns=['y', 'x', q])
+            xy_all = pd.merge(xy_all, df_temp, on=['x', 'y'], how='left')
+
+        # Itr through index
+        for _ in index:
+            if _ not in self._index_list and _ not in self._phemetric_namelist:
+                raise TypeError(f'The {_} is not input or avaliable !')
+            elif _ in self._index_list and self._dc_typelist[self._index_list.index(_)] == Sentinel2_dc:
+
+                # Allocate the GEDI_list and dc
+                y_all_blocked, x_all_blocked, dc_blocked, xy_offset_blocked, doy_list_temp, req_day_list = [], [], [], [], [], []
+                for date_temp in date_pro:
+
+                    if not os.path.exists(f'{output_folder}{str(date_temp)}\\{_}_index.csv'):
                         y_all, x_all = list(xy_all['y']), list(xy_all['x'])
+                        peak_doy_all = list(xy_all[date_temp]) if isinstance(date_temp, str) else None
                         block_amount = os.cpu_count()
                         indi_block_size = int(np.ceil(len(y_all) / block_amount))
-
-                        # Phe dc count and pos
-                        phepos = self._pheyear_list.index(year)
-
-                        # Reconstruct the phenology dc
-                        if isinstance(self.dcs[phepos], NDSparseMatrix):
-                            phedc_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_{_}'], SM_namelist=[f'{str(self._pheyear_list[phepos])}_{_}'])
-                        else:
-                            phedc_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_{_}'])]]
 
                         for i in range(block_amount):
                             if i != block_amount - 1:
                                 y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
                                 x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
+                                if peak_factor:
+                                    req_day_list.append()
                             else:
                                 y_all_blocked.append(y_all[i * indi_block_size:])
                                 x_all_blocked.append(x_all[i * indi_block_size:])
 
-                            if isinstance(phedc_reconstructed, NDSparseMatrix):
-                                sm_temp = phedc_reconstructed.extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]), max(x_all_blocked[-1]) + 1], ['all']))
-                                dc_blocked.append(sm_temp)
-                                doy_list_temp.append(year)
-
+                            if isinstance(self.dcs[self._index_list.index(_)], NDSparseMatrix):
+                                sm_temp = self.dcs[self._index_list.index(_)].extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]), max(x_all_blocked[-1]) + 1], ['all']))
+                                dc_blocked.append(sm_temp.drop_nanlayer())
+                                doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
                             elif isinstance(self.dcs[self._index_list.index(_)], np.ndarray):
-                                dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[-1].min():y_all_blocked[-1].max() + 1,x_all_blocked[-1].min(): x_all_blocked[-1].max() + 1, :])
-                                doy_list_temp.append(year)
+                                dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[-1].min():y_all_blocked[-1].max() + 1, x_all_blocked[-1].min(): x_all_blocked[-1].max() + 1, :])
+                                doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
 
                             xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
 
                         with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                            result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, doy_list_temp, repeat(year), xy_offset_blocked, repeat(_), repeat('pheno'))
+                            result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, doy_list_temp, repeat(doy), xy_offset_blocked, repeat(_), repeat('index'))
 
                         pd_out = None
                         result = list(result)
@@ -3232,83 +3259,135 @@ class Sentinel2_dcs(object):
                             else:
                                 pd_out = pd.concat([pd_out, pd.DataFrame(tt)])
 
-                elif _ in self._index_list and self._dc_typelist[self._index_list.index(_)] == Denv_dc:
+                    elif self._phemetric_namelist is not None and _ in self._phemetric_namelist:
 
-                    y_all_blocked, x_all_blocked, dc_blocked, xy_offset_blocked, doy_list_temp = [], [], [], [], []
+                        year = int(np.floor(doy/1000))
+                        if year not in self._pheyear_list:
+                            raise ValueError(f'The phemetric under {str(year)} is not imported!')
+                        else:
+                            # Allocate the GEDI_list and dc
+                            y_all_blocked, x_all_blocked, dc_blocked, xy_offset_blocked, doy_list_temp = [], [], [], [], []
 
-                    y_all, x_all = list(xy_all['y']), list(xy_all['x'])
-                    block_amount = os.cpu_count()
-                    indi_block_size = int(np.ceil(len(y_all) / block_amount))
+                            y_all, x_all = list(xy_all['y']), list(xy_all['x'])
+                            block_amount = os.cpu_count()
+                            indi_block_size = int(np.ceil(len(y_all) / block_amount))
 
-                    # Phe dc count and pos
-                    denvdc_count = len([q for q in self._index_list if q == _])
-                    denvdc_pos = [q for q in range(len(self._index_list)) if self._index_list[q] == _]
+                            # Phe dc count and pos
+                            phepos = self._pheyear_list.index(year)
 
-                    # Reconstruct the phenology dc
-                    denvdc_reconstructed = None
-                    for q in range(denvdc_count):
-                        if denvdc_reconstructed is None:
-                            if self._sparse_matrix_list[denvdc_pos[q]]:
-                                denvdc_reconstructed = self.dcs[denvdc_pos[q]]
+                            # Reconstruct the phenology dc
+                            if isinstance(self.dcs[phepos], NDSparseMatrix):
+                                phedc_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_{_}'], SM_namelist=[f'{str(self._pheyear_list[phepos])}_{_}'])
                             else:
-                                denvdc_reconstructed = self.dcs[denvdc_pos[q]]
-                        else:
-                            if self._sparse_matrix_list[denvdc_pos[q]]:
-                                denvdc_reconstructed.extend_layers(self.dcs[denvdc_pos[q]])
+                                phedc_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_{_}'])]]
+
+                            for i in range(block_amount):
+                                if i != block_amount - 1:
+                                    y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
+                                    x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
+                                else:
+                                    y_all_blocked.append(y_all[i * indi_block_size:])
+                                    x_all_blocked.append(x_all[i * indi_block_size:])
+
+                                if isinstance(phedc_reconstructed, NDSparseMatrix):
+                                    sm_temp = phedc_reconstructed.extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]), max(x_all_blocked[-1]) + 1], ['all']))
+                                    dc_blocked.append(sm_temp)
+                                    doy_list_temp.append(year)
+
+                                elif isinstance(self.dcs[self._index_list.index(_)], np.ndarray):
+                                    dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[-1].min():y_all_blocked[-1].max() + 1,x_all_blocked[-1].min(): x_all_blocked[-1].max() + 1, :])
+                                    doy_list_temp.append(year)
+
+                                xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
+
+                            with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
+                                result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, doy_list_temp, repeat(year), xy_offset_blocked, repeat(_), repeat('pheno'))
+
+                            pd_out = None
+                            result = list(result)
+                            for tt in result:
+                                if pd_out is None:
+                                    pd_out = pd.DataFrame(tt)
+                                else:
+                                    pd_out = pd.concat([pd_out, pd.DataFrame(tt)])
+
+                    elif _ in self._index_list and self._dc_typelist[self._index_list.index(_)] == Denv_dc:
+
+                        y_all_blocked, x_all_blocked, dc_blocked, xy_offset_blocked, doy_list_temp = [], [], [], [], []
+
+                        y_all, x_all = list(xy_all['y']), list(xy_all['x'])
+                        block_amount = os.cpu_count()
+                        indi_block_size = int(np.ceil(len(y_all) / block_amount))
+
+                        # Phe dc count and pos
+                        denvdc_count = len([q for q in self._index_list if q == _])
+                        denvdc_pos = [q for q in range(len(self._index_list)) if self._index_list[q] == _]
+
+                        # Reconstruct the phenology dc
+                        denvdc_reconstructed = None
+                        for q in range(denvdc_count):
+                            if denvdc_reconstructed is None:
+                                if self._sparse_matrix_list[denvdc_pos[q]]:
+                                    denvdc_reconstructed = self.dcs[denvdc_pos[q]]
+                                else:
+                                    denvdc_reconstructed = self.dcs[denvdc_pos[q]]
                             else:
-                                denvdc_reconstructed = np.concatenate((denvdc_reconstructed, self.dcs[denvdc_pos[q]]),  axis=2)
-                        doy_list_temp.extend(self._doys_backup_[denvdc_pos[q]])
+                                if self._sparse_matrix_list[denvdc_pos[q]]:
+                                    denvdc_reconstructed.extend_layers(self.dcs[denvdc_pos[q]])
+                                else:
+                                    denvdc_reconstructed = np.concatenate((denvdc_reconstructed, self.dcs[denvdc_pos[q]]),  axis=2)
+                            doy_list_temp.extend(self._doys_backup_[denvdc_pos[q]])
 
-                    year_temp = int(np.floor(date / 10000))
-                    doy_temp = np.mod(bf.date2doy(date), 1000)
-                    doy_templist = range(year_temp * 1000 + 1, year_temp * 1000 + doy_temp + 1)
-                    doy_pos = []
+                        year_temp = int(np.floor(date / 10000))
+                        doy_temp = np.mod(bf.date2doy(date), 1000)
+                        doy_templist = range(year_temp * 1000 + 1, year_temp * 1000 + doy_temp + 1)
+                        doy_pos = []
 
-                    for q in doy_templist:
-                        doy_pos.append(doy_list_temp.index(q))
+                        for q in doy_templist:
+                            doy_pos.append(doy_list_temp.index(q))
 
-                    if len(doy_pos) != max(doy_pos) - min(doy_pos) + 1:
-                        raise Exception('The doy list is not continuous!')
+                        if len(doy_pos) != max(doy_pos) - min(doy_pos) + 1:
+                            raise Exception('The doy list is not continuous!')
 
-                    if isinstance(denvdc_reconstructed, NDSparseMatrix):
-                        array_temp = denvdc_reconstructed.extract_matrix((['all'], ['all'], [min(doy_pos), max(doy_pos) + 1])).sum(axis=2)
-                    else:
-                        array_temp = np.nansun(denvdc_reconstructed[:, :, min(doy_pos): max(doy_pos) + 1], axis=2)
-
-                    denvdc_reconstructed = None
-
-                    for i in range(block_amount):
-
-                        if i != block_amount - 1:
-                            y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
-                            x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
+                        if isinstance(denvdc_reconstructed, NDSparseMatrix):
+                            array_temp = denvdc_reconstructed.extract_matrix((['all'], ['all'], [min(doy_pos), max(doy_pos) + 1])).sum(axis=2)
                         else:
-                            y_all_blocked.append(y_all[i * indi_block_size:])
-                            x_all_blocked.append(x_all[i * indi_block_size:])
+                            array_temp = np.nansun(denvdc_reconstructed[:, :, min(doy_pos): max(doy_pos) + 1], axis=2)
 
-                        if isinstance(array_temp, NDSparseMatrix):
-                            sm_temp = array_temp.extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]), max(x_all_blocked[-1]) + 1], ['all']))
-                            dc_blocked.append(sm_temp.SM_group['sum'].toarray())
-                        else:
-                            dc_blocked.append(array_temp[min(y_all_blocked[-1]):max(y_all_blocked[-1]) + 1, min(x_all_blocked[-1]): max(x_all_blocked[-1]) + 1, :])
+                        denvdc_reconstructed = None
 
-                        xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
+                        for i in range(block_amount):
 
-                    with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                        result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, repeat(doy_list_temp), repeat(doy), xy_offset_blocked, repeat(_), repeat('denv'))
+                            if i != block_amount - 1:
+                                y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
+                                x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
+                            else:
+                                y_all_blocked.append(y_all[i * indi_block_size:])
+                                x_all_blocked.append(x_all[i * indi_block_size:])
 
-                    pd_out = None
-                    result = list(result)
-                    for tt in result:
-                        if pd_out is None:
-                            pd_out = pd.DataFrame(tt)
-                        else:
-                            pd_out = pd.concat([pd_out, pd.DataFrame(tt)])
+                            if isinstance(array_temp, NDSparseMatrix):
+                                sm_temp = array_temp.extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]), max(x_all_blocked[-1]) + 1], ['all']))
+                                dc_blocked.append(sm_temp.SM_group['sum'].toarray())
+                            else:
+                                dc_blocked.append(array_temp[min(y_all_blocked[-1]):max(y_all_blocked[-1]) + 1, min(x_all_blocked[-1]): max(x_all_blocked[-1]) + 1, :])
 
-                xy_all = pd.merge(xy_all, pd_out, on=['x', 'y'], how='outer')
-                xy_all.to_csv(f'G:\A_veg\S2_all\\20220704\\{_}_index.csv')
+                            xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
 
-    def table2tiffile(self, table: str, index: str, outputfolder: str):
+                        with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
+                            result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, repeat(doy_list_temp), repeat(doy), xy_offset_blocked, repeat(_), repeat('denv'))
+
+                        pd_out = None
+                        result = list(result)
+                        for tt in result:
+                            if pd_out is None:
+                                pd_out = pd.DataFrame(tt)
+                            else:
+                                pd_out = pd.concat([pd_out, pd.DataFrame(tt)])
+
+                    xy_all = pd.merge(xy_all, pd_out, on=['x', 'y'], how='outer')
+                    xy_all.to_csv(f'{output_folder}{str(date)}\\{_}_index.csv')
+
+    def feature_table2tiffile(self, table: str, index: str, outputfolder: str):
 
         if table.endswith('.xlsx'):
             df_temp = pd.read_excel(table)
@@ -3345,20 +3424,18 @@ class Sentinel2_dcs(object):
             xy_all = pd.DataFrame(xy_all_m, columns=['y', 'x'])
             xy_all = xy_all.sort_values(['x', 'y'])
             if not os.path.exists(f'G:\A_veg\S2_all\\20220704\\{_}_index.csv'):
+
                 if _ not in self._index_list and _ not in self._phemetric_namelist:
                     raise TypeError(f'The {_} is not input or avaliable!')
+
                 elif _ in self._index_list and self._dc_typelist[self._index_list.index(_)] == Sentinel2_dc:
-                    pos = self._index_list.index(_)
                     y_all, x_all = list(xy_all['y']), list(xy_all['x'])
                     block_amount = os.cpu_count()
                     indi_block_size = int(np.ceil(len(y_all) / block_amount))
 
-                    if isinstance(self.dcs[self._index_list.index(_)].SM_group[self.dcs[self._index_list.index(_)].SM_namelist[0]], sm.coo_matrix):
-                        for q in self.dcs[self._index_list.index(_)].SM_namelist:
-                            self.dcs[self._index_list.index(_)].SM_group[q] = sm.csr_matrix(self.dcs[self._index_list.index(_)].SM_group[q])
-
                     # Allocate the GEDI_list and dc
                     y_all_blocked, x_all_blocked, dc_blocked, xy_offset_blocked, doy_list_temp = [], [], [], [], []
+
                     for i in range(block_amount):
                         if i != block_amount - 1:
                             y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
@@ -3372,6 +3449,7 @@ class Sentinel2_dcs(object):
                             sm_temp = self.dcs[self._index_list.index(_)].extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]), max(x_all_blocked[-1]) + 1], ['all']))
                             dc_blocked.append(sm_temp.drop_nanlayer())
                             doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
+
                         elif isinstance(self.dcs[self._index_list.index(_)], np.ndarray):
                             dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[-1].min():y_all_blocked[-1].max() + 1, x_all_blocked[-1].min(): x_all_blocked[-1].max() + 1, :])
                             doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
@@ -3519,26 +3597,26 @@ class Sentinel2_dcs(object):
 if __name__ == '__main__':
 
     # dc_temp_dic = Denv_dc(f'G:\\A_veg\\NCEI_temperature\\NCEI_19_22\\NCEI_Output\\floodplain_2020_Denv_datacube\\2022_relative\\')
-    # dcs_temp = Sentinel2_dcs(dc_temp_dic)
-    # dcs_temp.create_index_list_by_date(20220601, ['TEMP_relative'])
-    #
+    # dcs_temp = RS_dcs(dc_temp_dic)
+    # dcs_temp.create_feature_list_by_date(20220601, ['TEMP_relative'])
+    # #
     # dc_temp_dic = Denv_dc(f'G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\2022_relative\\')
-    # dcs_temp = Sentinel2_dcs(dc_temp_dic)
-    # dcs_temp.create_index_list_by_date(20220601, ['DPAR_relative'])
-
+    # dcs_temp = RS_dcs(dc_temp_dic)
+    # dcs_temp.create_feature_list_by_date(20220601, ['DPAR_relative'])
     #
-    dc_temp_dic = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2022\\')
-    dcs_temp = Sentinel2_dcs(dc_temp_dic)
-    # dcs_temp.table2tiffile('G:\\A_veg\\S2_all\\20220704\\pre_ch.csv', 'ch', 'G:\\A_veg\\S2_all\\20220704\\')
-    dcs_temp.create_index_list_by_date(20220601, ['peak_TEMP', 'peak_DPAR', 'static_TEMP', 'static_DPAR', 'DR', 'DR2', 'EOS', 'GR', 'peak_doy', 'peak_vi', 'SOS', 'trough_vi'])
+    # #
+    # dc_temp_dic = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2022\\')
+    # dcs_temp = RS_dcs(dc_temp_dic)
+    # # dcs_temp.table2tiffile('G:\\A_veg\\S2_all\\20220704\\pre_ch.csv', 'ch', 'G:\\A_veg\\S2_all\\20220704\\')
+    # dcs_temp.create_feature_list_by_date(20220601, ['peak_TEMP', 'peak_DPAR', 'static_TEMP', 'static_DPAR', 'DR', 'DR2', 'EOS', 'GR', 'peak_doy', 'peak_vi', 'SOS', 'trough_vi'])
 
     for _ in ['MNDWI', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B9', 'NDVI_20m', 'OSAVI_20m']:
         if _ != 'MNDWI':
             _ = _ + '_noninun'
         dc_temp_dic = Sentinel2_dc(f'G:\A_veg\S2_all\Sentinel2_L2A_Output\Sentinel2_MYZR_FP_2020_datacube\\{_}_sequenced_datacube')
-        dcs_temp = Sentinel2_dcs(dc_temp_dic)
-        dcs_temp.create_index_list_by_date(20220601, [_])
-    dcs_temp.link_GEDI_S2_inform('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_S2\\floodplain_2020_high_quality.xlsx', [_])
+        # dcs_temp = RS_dcs(dc_temp_dic)
+        # dcs_temp.create_feature_list_by_date(20220601, [_])
+    # dcs_temp.link_GEDI_S2_inform('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_S2\\floodplain_2020_high_quality.xlsx', [_])
 
     # dc_temp_dic = {}
     # for year in [2019, 2020, 2021, 2022]:
@@ -3550,14 +3628,14 @@ if __name__ == '__main__':
     for year in [2019, 2020, 2021, 2022]:
         dc_temp_dic[f'{str(year)}_Pheme'] = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{str(year)}\\')
         dc_temp_dic[f'{str(year)}_denv'] = Denv_dc(f'G:\\A_veg\\NCEI_temperature\\NCEI_19_22\\NCEI_Output\\floodplain_2020_Denv_datacube\\{str(year)}_relative\\')
-    dcs_temp = Sentinel2_dcs(dc_temp_dic[f'2019_Pheme'], dc_temp_dic[f'2020_Pheme'], dc_temp_dic[f'2021_Pheme'], dc_temp_dic[f'2022_Pheme'], dc_temp_dic[f'2019_denv'], dc_temp_dic[f'2020_denv'], dc_temp_dic[f'2021_denv'], dc_temp_dic[f'2022_denv'])
+    dcs_temp = RS_dcs(dc_temp_dic[f'2019_Pheme'], dc_temp_dic[f'2020_Pheme'], dc_temp_dic[f'2021_Pheme'], dc_temp_dic[f'2022_Pheme'], dc_temp_dic[f'2019_denv'], dc_temp_dic[f'2020_denv'], dc_temp_dic[f'2021_denv'], dc_temp_dic[f'2022_denv'])
     dcs_temp.link_GEDI_accumulated_Denv('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality.xlsx', ['TEMP_relative'])
 
     dc_temp_dic = {}
     for year in [2019, 2020, 2021, 2022]:
         dc_temp_dic[f'{str(year)}_Pheme'] = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{str(year)}\\')
         dc_temp_dic[f'{str(year)}_denv'] = Denv_dc(f'G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\{str(year)}_relative\\')
-    dcs_temp = Sentinel2_dcs(dc_temp_dic[f'2019_Pheme'], dc_temp_dic[f'2020_Pheme'], dc_temp_dic[f'2021_Pheme'], dc_temp_dic[f'2022_Pheme'], dc_temp_dic[f'2019_denv'], dc_temp_dic[f'2020_denv'], dc_temp_dic[f'2021_denv'], dc_temp_dic[f'2022_denv'])
+    dcs_temp = RS_dcs(dc_temp_dic[f'2019_Pheme'], dc_temp_dic[f'2020_Pheme'], dc_temp_dic[f'2021_Pheme'], dc_temp_dic[f'2022_Pheme'], dc_temp_dic[f'2019_denv'], dc_temp_dic[f'2020_denv'], dc_temp_dic[f'2021_denv'], dc_temp_dic[f'2022_denv'])
     dcs_temp.link_GEDI_accumulated_Denv('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality.xlsx', ['DPAR_relative'])
 
     # for year in [2019, 2020, 2021, 2022]:
@@ -3570,5 +3648,5 @@ if __name__ == '__main__':
     dc_temp_dic = []
     for year in [2019, 2020, 2021, 2022]:
         dc_temp_dic.append(Denv_dc(f'G:\\A_veg\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\{str(year)}_relative\\'))
-    dcs_temp = Sentinel2_dcs(*dc_temp_dic)
+    dcs_temp = RS_dcs(*dc_temp_dic)
     dcs_temp.link_GEDI_accumulated_Denv('G:\\A_veg\\S2_all\GEDI_v3\\GEDI_TEMP\\floodplain_2020_high_quality.xlsx', ['DPAR_relative'], )
