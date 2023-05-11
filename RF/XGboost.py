@@ -92,14 +92,15 @@ if __name__ == '__main__':
     # plt.show()
 
     gedi_ds = GEDI_list('G:\\A_veg\\S2_all\\GEDI_v3\\floodplain_2020_high_quality_merged.csv')
-    pre_df = pd.read_csv('G:\\A_veg\\S2_all\\20220704\\all_merged2.csv')
+    pre_df_list = [pd.read_csv(f'G:\\A_veg\\S2_all\\Feature_table4heightmap\\{str(_)}\\{str(_)}_merged.csv') for _ in ['peak_2021', 'peak_2022']]
+    output_location = [f'G:\\A_veg\\S2_all\\Feature_table4heightmap\\{str(_)}\\predicted_feature_table\\' for _ in ['peak_2021', 'peak_2022']]
 
-    for hei_limit in range(4, 15):
+    for hei_limit in range(5, 11):
         for mode in range(3):
 
             gedi_df = copy.copy(gedi_ds.GEDI_df)
             gedi_df = gedi_df.dropna()
-            pre_df_temp = copy.copy(pre_df.dropna())
+
             index_list = ['S2_OSAVI_20m_noninun_linear_interpolation', 'S2_MNDWI_linear_interpolation',
                           'S2_B8A_noninun_linear_interpolation', 'S2_B9_noninun_linear_interpolation',
                           'S2_B7_noninun_linear_interpolation', 'S2_B6_noninun_linear_interpolation',
@@ -112,52 +113,32 @@ if __name__ == '__main__':
                            'S2_B5_noninun_linear_interpolation',
                            'S2_B4_noninun_linear_interpolation', 'S2_B3_noninun_linear_interpolation',
                            'S2_B2_noninun_linear_interpolation', ]
-            phe_list = ['S2phemetric_DR', 'S2phemetric_DR2', 'S2phemetric_EOS', 'S2phemetric_GR', 'S2phemetric_peak_doy', 'S2phemetric_peak_vi', 'S2phemetric_SOS', 'S2phemetric_trough_vi',]
-            at_list = ['S2phemetric_static_TEMP', 'S2phemetric_static_DPAR', 'S2phemetric_peak_TEMP', 'S2phemetric_peak_DPAR', 'S2_accumulated_TEMP_relative']
+            phe_list = ['S2phemetric_DR', 'S2phemetric_DR2', 'S2phemetric_EOS', 'S2phemetric_GR',
+                        'S2phemetric_peak_doy', 'S2phemetric_peak_vi', 'S2phemetric_SOS', 'S2phemetric_trough_vi', ]
+            at_list = ['S2phemetric_static_TEMP', 'S2phemetric_static_DPAR', 'S2phemetric_peak_TEMP',
+                       'S2phemetric_peak_DPAR', 'S2_accumulated_TEMP_relative', 'S2_accumulated_DPAR_relative']
             gedi_df = gedi_df.loc[gedi_df['Canopy Height (rh100)'] < hei_limit]
-            gedi_df['S2_OSAVI_20m_noninun_linear_interpolation'] = (gedi_df['S2_OSAVI_20m_noninun_linear_interpolation'] - 32768) / 10000
-            gedi_df['S2_NDVI_20m_noninun_linear_interpolation'] = (gedi_df['S2_NDVI_20m_noninun_linear_interpolation'] - 32768) / 10000
+            gedi_df['S2_OSAVI_20m_noninun_linear_interpolation'] = (gedi_df[ 'S2_OSAVI_20m_noninun_linear_interpolation'] - 32768) / 10000
+            gedi_df['S2_NDVI_20m_noninun_linear_interpolation'] = (gedi_df[ 'S2_NDVI_20m_noninun_linear_interpolation'] - 32768) / 10000
             gedi_df['S2_MNDWI_linear_interpolation'] = (gedi_df['S2_MNDWI_linear_interpolation'] - 32768) / 10000
-    #
             res_dic = {}
 
             if mode == 0:
                 temp = copy.copy(index_list)
                 temp.extend(phe_list)
                 temp.extend(at_list)
-
-                for q, p in zip(['OSAVI_20m_noninun', 'MNDWI', 'B8A_noninun', 'B9_noninun', 'B7_noninun', 'B6_noninun', 'B5_noninun', 'B4_noninun', 'B3_noninun', 'B2_noninun', 'DR', 'DR2', 'EOS', 'GR', 'peak_doy', 'peak_vi', 'SOS', 'trough_vi', 'static_TEMP', 'static_DPAR', 'peak_TEMP', 'peak_DPAR', 'TEMP_relative'], temp):
-                    pre_df_temp.rename(columns={q: p}, inplace=True)
-                pre_df_temp['S2_MNDWI_linear_interpolation'] = (pre_df_temp['S2_MNDWI_linear_interpolation'] - 32768) / 10000
-
             elif mode == 1:
                 temp = copy.copy(index_list)
                 temp.extend(phe_list)
-
-                for q, p in zip(['OSAVI_20m_noninun', 'MNDWI', 'B8A_noninun', 'B9_noninun', 'B7_noninun', 'B6_noninun',
-                                 'B5_noninun', 'B4_noninun', 'B3_noninun', 'B2_noninun', 'DR', 'DR2', 'EOS', 'GR',
-                                 'peak_doy', 'peak_vi', 'SOS', 'trough_vi'], temp):
-                    pre_df_temp.rename(columns={q: p}, inplace=True)
-                pre_df_temp['S2_MNDWI_linear_interpolation'] = (pre_df_temp['S2_MNDWI_linear_interpolation'] - 32768) / 10000
-
             elif mode == 2:
-
                 temp = copy.copy(index_list2)
                 temp.extend(phe_list)
                 temp.extend(['S2phemetric_static_TEMP', 'S2phemetric_static_DPAR', 'S2phemetric_peak_TEMP', 'S2phemetric_peak_DPAR'])
-
-                for q, p in zip(['OSAVI_20m_noninun',  'B8A_noninun', 'B9_noninun', 'B7_noninun', 'B6_noninun', 'B5_noninun', 'B4_noninun', 'B3_noninun', 'B2_noninun', 'DR', 'DR2', 'EOS', 'GR', 'peak_doy', 'peak_vi', 'SOS', 'trough_vi', 'static_TEMP', 'static_DPAR', 'peak_TEMP', 'peak_DPAR', ], temp):
-                    pre_df_temp.rename(columns={q: p}, inplace=True)
-
-            pre_df_temp['S2_OSAVI_20m_noninun_linear_interpolation'] = (pre_df_temp['S2_OSAVI_20m_noninun_linear_interpolation'] - 32768) / 10000
-
+            else:
+                raise Exception('Error')
 
             x_train = gedi_df[temp]
             y_train = gedi_df['Canopy Height (rh100)']
-            x_pre = pre_df_temp[temp]
-            # x_test = gedi_df[temp]
-            # y_test = gedi_df['Canopy Height (rh100)']
-            feat_labels = x_train.columns[0:]
 
             XGB = xgb.XGBRegressor(max_depth=21,
                                    n_estimators=300,
@@ -172,12 +153,53 @@ if __name__ == '__main__':
                                    reg_alpha=0,
                                    tree_method='gpu_hist', )
             XGB.fit(x_train, y_train, eval_metric='mae')
-            # y_pred = XGB.predict(x_train)
-            y_pred2 = XGB.predict(x_pre)
 
-            out = pre_df_temp.loc[:, ['x', 'y']]
-            out.insert(out.shape[1], 'ch', list(y_pred2))
-            out.to_csv(f'G:\\A_veg\\S2_all\\20220704\\prediction\\out_mod{str(mode)}_heil{str(hei_limit)}.csv')
+            for pre_df, output_t in zip(pre_df_list, output_location):
+
+                bf.create_folder(output_t)
+                pre_df_temp = copy.copy(pre_df.dropna())
+
+                if mode == 0:
+                    temp = copy.copy(index_list)
+                    temp.extend(phe_list)
+                    temp.extend(at_list)
+
+                    for q, p in zip(['OSAVI_20m_noninun', 'MNDWI', 'B8A_noninun', 'B9_noninun', 'B7_noninun', 'B6_noninun', 'B5_noninun', 'B4_noninun', 'B3_noninun', 'B2_noninun', 'DR', 'DR2', 'EOS', 'GR', 'peak_doy', 'peak_vi', 'SOS', 'trough_vi', 'static_TEMP', 'static_DPAR', 'peak_TEMP', 'peak_DPAR', 'accumulated_TEMP', 'accumulated_DPAR'], temp):
+                        pre_df_temp.rename(columns={q: p}, inplace=True)
+                    pre_df_temp['S2_MNDWI_linear_interpolation'] = (pre_df_temp['S2_MNDWI_linear_interpolation'] - 32768) / 10000
+
+                elif mode == 1:
+                    temp = copy.copy(index_list)
+                    temp.extend(phe_list)
+
+                    for q, p in zip(['OSAVI_20m_noninun', 'MNDWI', 'B8A_noninun', 'B9_noninun', 'B7_noninun', 'B6_noninun',
+                                     'B5_noninun', 'B4_noninun', 'B3_noninun', 'B2_noninun', 'DR', 'DR2', 'EOS', 'GR',
+                                     'peak_doy', 'peak_vi', 'SOS', 'trough_vi'], temp):
+                        pre_df_temp.rename(columns={q: p}, inplace=True)
+                    pre_df_temp['S2_MNDWI_linear_interpolation'] = (pre_df_temp['S2_MNDWI_linear_interpolation'] - 32768) / 10000
+
+                elif mode == 2:
+
+                    temp = copy.copy(index_list2)
+                    temp.extend(phe_list)
+                    temp.extend(['S2phemetric_static_TEMP', 'S2phemetric_static_DPAR', 'S2phemetric_peak_TEMP', 'S2phemetric_peak_DPAR'])
+
+                    for q, p in zip(['OSAVI_20m_noninun',  'B8A_noninun', 'B9_noninun', 'B7_noninun', 'B6_noninun', 'B5_noninun', 'B4_noninun', 'B3_noninun', 'B2_noninun', 'DR', 'DR2', 'EOS', 'GR', 'peak_doy', 'peak_vi', 'SOS', 'trough_vi', 'static_TEMP', 'static_DPAR', 'peak_TEMP', 'peak_DPAR', ], temp):
+                        pre_df_temp.rename(columns={q: p}, inplace=True)
+
+                pre_df_temp['S2_OSAVI_20m_noninun_linear_interpolation'] = (pre_df_temp['S2_OSAVI_20m_noninun_linear_interpolation'] - 32768) / 10000
+
+                x_pre = pre_df_temp[temp]
+                # x_test = gedi_df[temp]
+                # y_test = gedi_df['Canopy Height (rh100)']
+                feat_labels = x_train.columns[0:]
+
+                # y_pred = XGB.predict(x_train)
+                y_pred2 = XGB.predict(x_pre)
+
+                out = pre_df_temp.loc[:, ['x', 'y']]
+                out.insert(out.shape[1], 'ch', list(y_pred2))
+                out.to_csv(f'{output_t}out_mod{str(mode)}_heil{str(hei_limit)}.csv')
 
             # print('----------------------------------------------------------------------------------------------')
             # print(f' Index:{str(name)}, Max depth:{str(max_d)}, N_est:{str(n_est)}')
@@ -292,7 +314,6 @@ if __name__ == '__main__':
             #         res_df.to_csv(
             #             f'G:\\A_veg\\S2_all\\GEDI_v3\\XGB\\RF_res_maxd{str(max_d)}_nes{str(n_est)}_v{str(_)}.csv')
             #         break
-
 
     # paras = {'silent': True,
     #          'max_depth': 8,

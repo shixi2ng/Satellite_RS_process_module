@@ -26,6 +26,7 @@ from built_in_index import built_in_index
 from lxml import etree
 from NDsm import NDSparseMatrix
 import json
+from tqdm.auto import tqdm
 from RSDatacube.RSdc import Phemetric_dc, Denv_dc
 from typing import Optional, Union
 import polars
@@ -3209,11 +3210,12 @@ class RS_dcs(object):
                     else:
                         pheme_array = self.dcs[self._pheyear_list.index(year_temp)][:, :, self._doys_backup_[self._pheyear_list.index(year_temp)].index(f'{str(year_temp)}_peak_doy')]
 
+                    pheme_array[pheme_array == 0] = np.nan
+                    pheme_array = pheme_array + year_temp * 1000
                     y_all, x_all = np.mgrid[:pheme_array.shape[0], :pheme_array.shape[1]]
                     arr_out = np.column_stack((y_all.ravel(), x_all.ravel(), pheme_array.ravel()))
                     df_temp = pd.DataFrame(arr_out, columns=['y', 'x', q])
-
-            xy_all = pd.merge(xy_all, df_temp, on=['x', 'y'], how='left')
+                    xy_all = pd.merge(xy_all, df_temp, on=['x', 'y'], how='left')
 
         # Itr through index
         for _ in index:
@@ -3265,7 +3267,7 @@ class RS_dcs(object):
                             if len(dc_blocked) != block_amount and len(doy_list_temp) != block_amount:
                                 if isinstance(self.dcs[self._index_list.index(_)], NDSparseMatrix):
                                     sm_temp = self.dcs[self._index_list.index(_)].extract_matrix(([min(y_all_blocked[i]), max(y_all_blocked[i]) + 1], [min(x_all_blocked[i]), max(x_all_blocked[i]) + 1], ['all']))
-                                    dc_blocked.append(sm_temp.drop_nanlayer())
+                                    dc_blocked.append(sm_temp)
                                     doy_list_temp.append(bf.date2doy(dc_blocked[i].SM_namelist))
                                 elif isinstance(self.dcs[self._index_list.index(_)], np.ndarray):
                                     dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[i].min():y_all_blocked[i].max() + 1, x_all_blocked[i].min(): x_all_blocked[i].max() + 1, :])
@@ -3277,7 +3279,7 @@ class RS_dcs(object):
                                 xy_offset_blocked.append([min(y_all_blocked[i]), min(x_all_blocked[i])])
 
                 with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                    result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, doy_list_temp, req_day_list, xy_offset_blocked, repeat(_), repeat(date_pro), repeat('index'), [n for n in range(block_amount)])
+                    result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, doy_list_temp, req_day_list, xy_offset_blocked, repeat(_), repeat(date_pro), repeat('index'))
 
                 pd_out = None
                 result = list(result)
@@ -3331,7 +3333,7 @@ class RS_dcs(object):
                         doy_list_temp.append(year_t)
 
                     elif isinstance(self.dcs[self._index_list.index(_)], np.ndarray):
-                        dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[-1].min():y_all_blocked[-1].max() + 1, x_all_blocked[-1].min(): x_all_blocked[-1].max() + 1, :])
+                        dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[-1].min(): y_all_blocked[-1].max() + 1, x_all_blocked[-1].min(): x_all_blocked[-1].max() + 1, :])
                         doy_list_temp.append(year_t)
 
                     xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
@@ -3351,7 +3353,6 @@ class RS_dcs(object):
 
                 # Allocate the GEDI_list and dc
                 mod_factor = 'denvdc'
-                array_temp = None
                 y_all_blocked, x_all_blocked, dc_blocked, xy_offset_blocked, doy_list_temp = [], [], [], [], []
                 y_all, x_all = list(xy_all['y']), list(xy_all['x'])
                 block_amount = os.cpu_count()
@@ -3387,14 +3388,16 @@ class RS_dcs(object):
                             denvdc_reconstructed = np.concatenate((denvdc_reconstructed, self.dcs[denvdc_pos[q]]),  axis=2)
                     doy_list_temp.extend(self._doys_backup_[denvdc_pos[q]])
 
+                # Accumulate the denv
+                array_temp, reconstructed_doy_list = None, []
                 for date_temp in date_pro:
-                    if not os.path.exists(f'{output_folder}{str(date_temp)}\\{_}_index.csv'):
-                        if isinstance(date_temp, str) and date_temp.startswith('peak'):
-                            if not os.path.exists(f"{output_folder}{str(date_temp)}\\peak_{_.split('_')[0]}_index.csv"):
-                                raise Exception()
-                            else:
-                                shutil.copyfile(f"{output_folder}{str(date_temp)}\\peak_{_.split('_')[0]}_index.csv", f"{output_folder}{str(date_temp)}\\peak_{_.split('_')[0]}_index.csv")
-                        else:
+                    if isinstance(date_temp, str) and date_temp.startswith('peak'):
+                        if not os.path.exists(f"{output_folder}{str(date_temp)}\\peak_{_.split('_')[0]}_index.csv"):
+                            raise Exception(f'Please generate the peak {_}')
+                        elif not os.path.exists(f"{output_folder}{str(date_temp)}\\accumulated_{_.split('_')[0]}_index.csv"):
+                            shutil.copyfile(f"{output_folder}{str(date_temp)}\\peak_{_.split('_')[0]}_index.csv", f"{output_folder}{str(date_temp)}\\accumulated_{_.split('_')[0]}_index.csv")
+                    else:
+                        if not os.path.exists(f"{output_folder}{str(bf.doy2date(date_temp))}\\accumulated_{_.split('_')[0]}_index.csv"):
                             year_temp = int(np.floor(date_temp / 1000))
                             doy_temp = np.mod(date_temp, 1000)
                             doy_templist = range(year_temp * 1000 + 1, year_temp * 1000 + doy_temp + 1)
@@ -3416,74 +3419,37 @@ class RS_dcs(object):
                                     array_temp.extend_layers(denvdc_reconstructed.extract_matrix((['all'], ['all'], [min(doy_pos), max(doy_pos) + 1])).sum(axis=2, new_layer_name=date_temp))
                                 else:
                                     array_temp = np.concatenate((array_temp, np.nansun(denvdc_reconstructed[:, :, min(doy_pos): max(doy_pos) + 1], axis=2)), axis=2)
+                            reconstructed_doy_list.append(date_temp)
 
-                            y_all, x_all = list(xy_all['y']), list(xy_all['x'])
-                            peak_doy_all = list(xy_all[date_temp]) if isinstance(date_temp, str) else None
-                            indi_block_size = int(np.ceil(len(y_all) / block_amount))
+                req_day_list = [[] for tt in range(block_amount)]
+                for i in range(block_amount):
+                    if i != block_amount - 1:
+                        if len(y_all_blocked) != block_amount:
+                            y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
+                            x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
+                        elif len(y_all_blocked) != len(x_all_blocked):
+                            raise Exception('Code Error in create feature list')
+                    else:
+                        if len(y_all_blocked) != block_amount:
+                            y_all_blocked.append(y_all[i * indi_block_size:])
+                            x_all_blocked.append(x_all[i * indi_block_size:])
+                        elif len(y_all_blocked) != len(x_all_blocked):
+                            raise Exception('Code Error in create feature list')
 
-                            if req_day_list == []:
-                                req_day_list = [[] for tt in range(block_amount)]
+                    if len(dc_blocked) != block_amount:
+                        if isinstance(array_temp, NDSparseMatrix):
+                            sm_temp = array_temp.extract_matrix(([min(y_all_blocked[i]), max(y_all_blocked[i]) + 1], [min(x_all_blocked[i]), max(x_all_blocked[i]) + 1], ['all']))
+                            dc_blocked.append(sm_temp)
+                        elif isinstance(array_temp, np.ndarray):
+                            dc_blocked.append(array_temp[min(y_all_blocked[-1]):max(y_all_blocked[-1]) + 1, min(x_all_blocked[-1]): max(x_all_blocked[-1]) + 1, :])
 
-                            for i in range(block_amount):
-                                if i != block_amount - 1:
-                                    if len(y_all_blocked) != block_amount:
-                                        y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
-                                        x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
-                                    elif len(y_all_blocked) != len(x_all_blocked):
-                                        raise Exception('Code Error in create feature list')
-
-                                    if isinstance(date_temp, str):
-                                        req_day_list[i].append(peak_doy_all[i * indi_block_size: (i + 1) * indi_block_size])
-                                    else:
-                                        req_day_list[i].append([date_temp for tt in range(i * indi_block_size, (i + 1) * indi_block_size)])
-
-                                else:
-                                    if len(y_all_blocked) != block_amount:
-                                        y_all_blocked.append(y_all[i * indi_block_size:])
-                                        x_all_blocked.append(x_all[i * indi_block_size:])
-                                    elif len(y_all_blocked) != len(x_all_blocked):
-                                        raise Exception('Code Error in create feature list')
-
-                                    if isinstance(date_temp, str):
-                                        req_day_list[i].append(peak_doy_all[i * indi_block_size: (i + 1) * indi_block_size])
-                                    else:
-                                        req_day_list[i].append([date_temp for tt in range(i * indi_block_size, (i + 1) * indi_block_size)])
-
-                                if len(dc_blocked) != block_amount and len(doy_list_temp) != block_amount:
-                                    if isinstance(self.dcs[self._index_list.index(_)], NDSparseMatrix):
-                                        sm_temp = self.dcs[self._index_list.index(_)].extract_matrix(([min(y_all_blocked[i]), max(y_all_blocked[i]) + 1], [min(x_all_blocked[i]), max(x_all_blocked[i]) + 1], ['all']))
-                                        dc_blocked.append(sm_temp.drop_nanlayer())
-                                        doy_list_temp.append(bf.date2doy(dc_blocked[i].SM_namelist))
-                                    elif isinstance(self.dcs[self._index_list.index(_)], np.ndarray):
-                                        dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[i].min():y_all_blocked[i].max() + 1, x_all_blocked[i].min(): x_all_blocked[i].max() + 1, :])
-                                        doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
-                                elif len(dc_blocked) != len(doy_list_temp):
-                                    raise Exception('Code Error in create feature list')
-
-                                if len(xy_offset_blocked) != block_amount:
-                                    xy_offset_blocked.append([min(y_all_blocked[i]), min(x_all_blocked[i])])
-
+                    if len(xy_offset_blocked) != block_amount:
+                        xy_offset_blocked.append([min(y_all_blocked[i]), min(x_all_blocked[i])])
+                    req_day_list[i] = reconstructed_doy_list
                 denvdc_reconstructed = None
 
-                for i in range(block_amount):
-
-                    if i != block_amount - 1:
-                        y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
-                        x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
-                    else:
-                        y_all_blocked.append(y_all[i * indi_block_size:])
-                        x_all_blocked.append(x_all[i * indi_block_size:])
-
-                    if isinstance(array_temp, NDSparseMatrix):
-                        sm_temp = array_temp.extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]), max(x_all_blocked[-1]) + 1], ['all']))
-                        dc_blocked.append(sm_temp.SM_group['sum'].toarray())
-                    else:
-                        dc_blocked.append(array_temp[min(y_all_blocked[-1]):max(y_all_blocked[-1]) + 1, min(x_all_blocked[-1]): max(x_all_blocked[-1]) + 1, :])
-
-                    xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
-
                 with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                    result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, repeat(doy_list_temp), repeat(date_temp), xy_offset_blocked, repeat(_), repeat('denv'))
+                    result = executor.map(get_index_by_date, dc_blocked, y_all_blocked, x_all_blocked, req_day_list, req_day_list, xy_offset_blocked, repeat(_), req_day_list, repeat('denv'))
 
                 pd_out = None
                 result = list(result)
@@ -3503,80 +3469,161 @@ class RS_dcs(object):
                     xy_temp.to_csv(f'{output_folder}{str(bf.doy2date(date_temp))}\\{_}_index.csv') if not isinstance(date_temp, str) else xy_temp.to_csv(f'{output_folder}{str(date_temp)}\\{_}_index.csv')
             elif mod_factor == 'denvdc':
                 for date_temp in date_pro:
-                    xy_temp = pd.DataFrame(pd_out, columns=['y', 'x', year_pro[date_pro.index(date_temp)]])
-                    xy_temp.to_csv(f'{output_folder}{str(bf.doy2date(date_temp))}\\{_}_index.csv') if not isinstance(date_temp, str) else xy_temp.to_csv(f'{output_folder}{str(date_temp)}\\{_}_index.csv')
+                    xy_temp = pd.DataFrame(pd_out, columns=['y', 'x', bf.doy2date(date_temp)]) if not isinstance(date_temp, str) else None
+                    xy_temp.to_csv(f"{output_folder}{str(bf.doy2date(date_temp))}\\accumulated_{_.split('_')[0]}_index.csv") if not isinstance(date_temp, str) else None
 
     def feature_table2tiffile(self, table: str, index: str, outputfolder: str):
 
         if table.endswith('.xlsx'):
             df_temp = pd.read_excel(table)
+            name = table.split('\\')[-1].split('.xlsx')[0]
         elif table.endswith('.csv'):
             df_temp = pd.read_csv(table)
+            name = table.split('\\')[-1].split('.csv')[0]
         else:
             raise TypeError(f'The {str(table)} is not a proper type!')
 
         if 'x' not in df_temp.keys() or 'y' not in df_temp.keys() or index not in df_temp.keys():
             raise TypeError(f'The {str(table)} missed x and y data!')
 
-        roi_ds = gdal.Open(self._ROI_tif_list[0])
-        roi_map = roi_ds.GetRasterBand(1).ReadAsArray()
-        roi_map = roi_map.astype(float)
+        if not os.path.exists(f'{outputfolder}ch_{name}.tif'):
+            roi_ds = gdal.Open(self._ROI_tif_list[0])
+            roi_map = roi_ds.GetRasterBand(1).ReadAsArray()
+            roi_map = roi_map.astype(float)
 
-        if np.max(df_temp['x']) > roi_map.shape[1] or np.max(df_temp['y']) > roi_map.shape[0]:
-            raise TypeError(f'The df exceed the roi map!')
-        else:
-            for _ in range(len(df_temp)):
-                roi_map[df_temp.loc[_, 'y'], df_temp.loc[_, 'x']] = df_temp.loc[_, index]
+            x_list = list(df_temp['x'])
+            y_list = list(df_temp['y'])
+            indi_list = list(df_temp[index])
 
-        roi_map[roi_map == -32768] = np.nan
-        roi_map[roi_map == 1] = np.nan
-        write_raster(roi_ds, roi_map, outputfolder, f'{str(index)}2.tif', raster_datatype=gdal.GDT_Float32)
+            if np.max(df_temp['x']) > roi_map.shape[1] or np.max(df_temp['y']) > roi_map.shape[0]:
+                raise TypeError(f'The df exceed the roi map!')
+            else:
+                with tqdm(total=len(df_temp), desc=f'feature table {name} to tiffiles', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                    for _ in range(len(df_temp)):
+                        roi_map[y_list[_], x_list[_]] = indi_list[_]
+                        pbar.update()
+
+            roi_map[roi_map == -32768] = np.nan
+            roi_map[roi_map == 1] = np.nan
+            write_raster(roi_ds, roi_map, outputfolder, f'ch_{name}.tif', raster_datatype=gdal.GDT_Float32)
 
 
 if __name__ == '__main__':
 
-    # dc_temp_dic = Denv_dc(f'G:\\A_veg\\NCEI_temperature\\NCEI_19_22\\NCEI_Output\\floodplain_2020_Denv_datacube\\2022_relative\\')
-    # dcs_temp = RS_dcs(dc_temp_dic)
-    # dcs_temp.create_feature_list_by_date(20220601, ['TEMP_relative'])
-    # #
-    # dc_temp_dic = Denv_dc(f'G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\2022_relative\\')
-    # dcs_temp = RS_dcs(dc_temp_dic)
-    # dcs_temp.create_feature_list_by_date(20220601, ['DPAR_relative'])
-    #
-    # #
-    # dc_temp_dic = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2022\\')
-    # dcs_temp = RS_dcs(dc_temp_dic)
-    # dcs_temp.table2tiffile('G:\\A_veg\\S2_all\\20220704\\pre_ch.csv', 'ch', 'G:\\A_veg\\S2_all\\20220704\\')
+    #############################################
+    # Get indicators for the entire study area
+    #############################################
+
+    # Phedc
+    dc_temp_dic = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2022\\')
+    dcs_temp = RS_dcs(dc_temp_dic)
+    for tt in ['peak_2022','peak_2021','peak_2020','peak_2019']:
+        predict_table = f'G:\\A_veg\\S2_all\\Feature_table4heightmap\\{str(tt)}\\predicted_feature_table\\'
+        predict_tif = f'G:\\A_veg\\S2_all\\Feature_table4heightmap\\{str(tt)}\\predicted_feature_tif\\'
+        bf.create_folder(predict_tif)
+        _ = bf.file_filter(predict_table, ['.csv'])
+        for __ in _:
+            dcs_temp.feature_table2tiffile(__, 'ch', predict_tif)
     # dcs_temp.create_feature_list_by_date([20220501, 20220509, 20220517, 20220525, 20220601, 20220609, 'peak_2022'],  ['peak_TEMP', 'peak_DPAR', 'static_TEMP', 'static_DPAR', 'DR', 'DR2', 'EOS', 'GR', 'peak_doy', 'peak_vi', 'SOS', 'trough_vi'], 'G:\\A_veg\\S2_all\\Feature_table4heightmap\\')
 
-    for _ in ['B8A', 'B9', 'NDVI_20m', 'OSAVI_20m']:
-        if _ != 'MNDWI':
-            _ = _ + '_noninun'
-        phedc = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2022\\')
-        dc_temp_dic = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{_}_sequenced_datacube')
-        dcs_temp = RS_dcs(dc_temp_dic, phedc)
-        dcs_temp.create_feature_list_by_date([20220501, 20220509, 20220517, 20220525, 20220601, 20220609, 'peak_2022'], [_], 'G:\\A_veg\\S2_all\\Feature_table4heightmap\\')
-    # dcs_temp.link_GEDI_S2_inform('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_S2\\floodplain_2020_high_quality.xlsx', [_])
+    # S2dc
+    # for _ in ['B8A', 'B9', 'OSAVI_20m', 'MNDWI']:
+    #     if _ != 'MNDWI':
+    #         _ = _ + '_noninun'
+    #     phedc1 = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2019\\')
+    #     phedc2 = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2020\\')
+    #     phedc3 = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2021\\')
+    #     phedc4 = Phemetric_dc( f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2022\\')
+    #     dc_temp_dic = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{_}_sequenced_datacube')
+    #     dcs_temp = RS_dcs(dc_temp_dic, phedc1, phedc2, phedc3, phedc4)
+    #     dcs_temp.create_feature_list_by_date(['peak_2019', 'peak_2020', 'peak_2021', 'peak_2022'], [_], 'G:\\A_veg\\S2_all\\Feature_table4heightmap\\')
 
+    # Phedc
+    # for year in [ '2022']:
+    #     dc_temp_dic = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{year}\\')
+    #     dcs_temp = RS_dcs(dc_temp_dic)
+    #     # for tt in [20220501, 20220509, 20220517, 20220525, 20220601, 20220609, 'peak_2022']:
+    #     #     predict_table = f'G:\\A_veg\\S2_all\\Feature_table4heightmap\\{str(tt)}\\predicted_feature_table\\'
+    #     #     predict_tif = f'G:\\A_veg\\S2_all\\Feature_table4heightmap\\{str(tt)}\\predicted_feature_tif\\'
+    #     #     bf.create_folder(predict_tif)
+    #     #     _ = bf.file_filter(predict_table, ['.csv'])
+    #     #     for __ in _:
+    #     #         dcs_temp.feature_table2tiffile(__, 'ch', predict_tif)
+    #     dcs_temp.create_feature_list_by_date([f'peak_{year}'],  ['peak_TEMP', 'peak_DPAR', 'static_TEMP', 'static_DPAR', 'DR', 'DR2', 'EOS', 'GR', 'peak_doy', 'peak_vi', 'SOS', 'trough_vi'], 'G:\\A_veg\\S2_all\\Feature_table4heightmap\\')
+
+    # Denvdc
+    # dc_temp_dic = Denv_dc(f'G:\\A_veg\\NCEI_temperature\\NCEI_19_22\\NCEI_Output\\floodplain_2020_Denv_datacube\\2022_relative\\')
+    # phedc = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\2022\\')
+    # dcs_temp = RS_dcs(dc_temp_dic, phedc)
+    # dcs_temp.create_feature_list_by_date([20220501, 20220509, 20220517, 20220525, 20220601, 20220609, 'peak_2022'], ['TEMP_relative'], 'G:\\A_veg\\S2_all\\Feature_table4heightmap\\')
+
+    # for year in ['2022']:
+    #     dc_temp_dic = Denv_dc(f'G:\\A_veg\\NCEI_temperature\\NCEI_19_22\\NCEI_Output\\floodplain_2020_Denv_datacube\\{year}_relative\\')
+    #     phedc = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{year}\\')
+    #     dcs_temp = RS_dcs(dc_temp_dic, phedc)
+    #     dcs_temp.create_feature_list_by_date([f'peak_{year}'], ['TEMP_relative'], 'G:\\A_veg\\S2_all\\Feature_table4heightmap\\')
+    #
+    #     dc_temp_dic = Denv_dc(f'G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\{year}_relative\\')
+    #     phedc = Phemetric_dc( f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{year}\\')
+    #     dcs_temp = RS_dcs(dc_temp_dic, phedc)
+    #     dcs_temp.create_feature_list_by_date([f'peak_{year}'], ['DPAR_relative'], 'G:\\A_veg\\S2_all\\Feature_table4heightmap\\')
+
+    # Combine
+    for _ in ['peak_2021', 'peak_2020', 'peak_2019', 'peak_2022']:
+        folder = f'G:\\A_veg\\S2_all\\Feature_table4heightmap\\{_}\\'
+        csv_files = bf.file_filter(folder, ['.csv'])
+        pd_merged = None
+        for __ in csv_files:
+            indicator = __.split('\\')[-1].split('_index.csv')[0]
+            pd_temp = pd.read_csv(__)
+
+            if str(_) in pd_temp.columns:
+                pd_temp = pd_temp.rename(columns={str(_): indicator})
+            elif _ == 'peak_2021' and '2021' in pd_temp.columns:
+                pd_temp = pd_temp.rename(columns={'2021': indicator})
+            elif _ == 'peak_2020' and '2020' in pd_temp.columns:
+                pd_temp = pd_temp.rename(columns={'2020': indicator})
+            elif _ == 'peak_2019' and '2019' in pd_temp.columns:
+                pd_temp = pd_temp.rename(columns={'2019': indicator})
+            elif _ == 'peak_2022' and '2022' in pd_temp.columns:
+                pd_temp = pd_temp.rename(columns={'2022': indicator})
+            elif str(_ // 10000) in pd_temp.columns:
+                pd_temp = pd_temp.rename(columns={str(_ // 10000): indicator})
+
+            if pd_merged is None:
+                pd_merged = copy.copy(pd_temp)
+            else:
+                pd_merged = pd.merge(pd_merged, pd_temp, on=['x', 'y'], how='left')
+
+        columns_t = [c_t for c_t in pd_merged.columns if 'Unnamed' in c_t]
+        pd_merged = pd_merged.drop(columns=columns_t)
+        pd_merged.to_csv(f'G:\\A_veg\\S2_all\\Feature_table4heightmap\\{_}\\{str(_)}_merged.csv')
+
+    #############################################
+    # Link indicators of the GEDI
+    #############################################
+
+    # Phedc
     # dc_temp_dic = {}
     # for year in [2019, 2020, 2021, 2022]:
     #     dc_temp_dic[f'{str(year)}_Pheme'] = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{str(year)}\\')
     # dcs_temp = Sentinel2_dcs(dc_temp_dic[f'2019_Pheme'], dc_temp_dic[f'2020_Pheme'], dc_temp_dic[f'2021_Pheme'], dc_temp_dic[f'2022_Pheme'])
     # dcs_temp.link_GEDI_S2_phenology_inform('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality.xlsx', ['peak_TEMP', 'peak_DPAR', 'static_TEMP', 'static_DPAR', 'DR', 'DR2', 'EOS', 'GR', 'peak_doy', 'peak_vi', 'SOS', 'trough_vi'])
 
+    # DenvDC
     dc_temp_dic = {}
     for year in [2019, 2020, 2021, 2022]:
         dc_temp_dic[f'{str(year)}_Pheme'] = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{str(year)}\\')
         dc_temp_dic[f'{str(year)}_denv'] = Denv_dc(f'G:\\A_veg\\NCEI_temperature\\NCEI_19_22\\NCEI_Output\\floodplain_2020_Denv_datacube\\{str(year)}_relative\\')
     dcs_temp = RS_dcs(dc_temp_dic[f'2019_Pheme'], dc_temp_dic[f'2020_Pheme'], dc_temp_dic[f'2021_Pheme'], dc_temp_dic[f'2022_Pheme'], dc_temp_dic[f'2019_denv'], dc_temp_dic[f'2020_denv'], dc_temp_dic[f'2021_denv'], dc_temp_dic[f'2022_denv'])
-    dcs_temp.link_GEDI_accumulated_Denv('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality.xlsx', ['TEMP_relative'])
+    dcs_temp.link_GEDI_accumulated_Denv('G:\\A_veg\\S2_all\\GEDI_V4\\GEDI_TEMP\\floodplain_2020_high_quality.xlsx', ['TEMP_relative'])
 
     dc_temp_dic = {}
     for year in [2019, 2020, 2021, 2022]:
         dc_temp_dic[f'{str(year)}_Pheme'] = Phemetric_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\OSAVI_20m_noninun_curfit_datacube\\MYZR_FP_2020_Phemetric_datacube\\{str(year)}\\')
         dc_temp_dic[f'{str(year)}_denv'] = Denv_dc(f'G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\{str(year)}_relative\\')
     dcs_temp = RS_dcs(dc_temp_dic[f'2019_Pheme'], dc_temp_dic[f'2020_Pheme'], dc_temp_dic[f'2021_Pheme'], dc_temp_dic[f'2022_Pheme'], dc_temp_dic[f'2019_denv'], dc_temp_dic[f'2020_denv'], dc_temp_dic[f'2021_denv'], dc_temp_dic[f'2022_denv'])
-    dcs_temp.link_GEDI_accumulated_Denv('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality.xlsx', ['DPAR_relative'])
+    dcs_temp.link_GEDI_accumulated_Denv('G:\\A_veg\\S2_all\\GEDI_V4\\GEDI_TEMP\\floodplain_2020_high_quality.xlsx', ['DPAR_relative'])
 
     # for year in [2019, 2020, 2021, 2022]:
     #     dc_temp_dic = {}
@@ -3585,8 +3632,4 @@ if __name__ == '__main__':
     #     dcs_temp = Sentinel2_dcs(dc_temp_dic[f'{str(year)}_Pheme'],  dc_temp_dic[f'{str(year)}_temp'])
     #     # dcs_temp.link_GEDI_S2_phenology_inform('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality.xlsx', ['SOS', 'EOS', 'trough_vi', 'peak_vi', 'peak_doy', 'GR', 'DR', 'DR2'])
     #     dcs_temp.process_denv_via_pheme('DPAR', 'SOS')
-    dc_temp_dic = []
-    for year in [2019, 2020, 2021, 2022]:
-        dc_temp_dic.append(Denv_dc(f'G:\\A_veg\MODIS_FPAR\\MODIS_Output\\floodplain_2020_Denv_datacube\\{str(year)}_relative\\'))
-    dcs_temp = RS_dcs(*dc_temp_dic)
-    dcs_temp.link_GEDI_accumulated_Denv('G:\\A_veg\\S2_all\GEDI_v3\\GEDI_TEMP\\floodplain_2020_high_quality.xlsx', ['DPAR_relative'], )
+

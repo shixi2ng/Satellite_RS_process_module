@@ -1142,58 +1142,59 @@ def get_index_by_date(dc_blocked, y_all_blocked: list, x_all_blocked: list, doy_
         raise TypeError('The date_name and req_date_list were not under the same size!')
 
     res = [np.nan for _ in range(len(y_all_blocked))]
-    res_out = [res for _ in range(len(req_date_list))]
+    res_out = [copy.copy(res) for _ in range(len(req_date_list))]
     if mode == 'index':
-        for __ in range(len(req_date_list)):
-            st = time.time()
-            for _ in range(len(y_all_blocked)):
-                y_, x_ = y_all_blocked[_] - xy_offset_blocked[0], x_all_blocked[_] - xy_offset_blocked[1]
+        with tqdm(total=len(req_date_list) * len(y_all_blocked), desc=f'Get {index} xyoffset={str(xy_offset_blocked[0])}, {str(xy_offset_blocked[1])}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}', position=0, leave=True) as pbar:
+            for __ in range(len(req_date_list)):
+                for _ in range(len(y_all_blocked)):
+                    y_, x_ = y_all_blocked[_] - xy_offset_blocked[0], x_all_blocked[_] - xy_offset_blocked[1]
 
-                date_temp = req_date_list[__][_]
-                data_positive, date_positive, data_negative, date_negative = None, None, None, None
+                    date_temp = req_date_list[__][_]
+                    if ~np.isnan(date_temp):
+                        date_temp = int(date_temp)
+                        data_positive, date_positive, data_negative, date_negative = None, None, None, None
 
-                for date_interval in range(search_window):
-                    if date_interval == 0 and date_interval + date_temp in doy_list:
-                        if isinstance(dc_blocked, NDSparseMatrix):
-                            if isinstance(dc_blocked.SM_group[bf.doy2date(date_temp)], sm.coo_matrix):
-                                info_temp = sm.csr_matrix(dc_blocked.SM_group[bf.doy2date(date_temp)])[y_, x_]
+                        for date_interval in range(search_window):
+                            if date_interval == 0 and date_interval + date_temp in doy_list:
+                                if isinstance(dc_blocked, NDSparseMatrix):
+                                    if isinstance(dc_blocked.SM_group[bf.doy2date(date_temp)], sm.coo_matrix):
+                                        info_temp = sm.csr_matrix(dc_blocked.SM_group[bf.doy2date(date_temp)])[y_, x_]
+                                    else:
+                                        info_temp = dc_blocked.SM_group[bf.doy2date(date_temp)][y_, x_]
+
+                                if info_temp != 0:
+                                    res_out[__][_] = info_temp
+                                    break
+
                             else:
-                                info_temp = dc_blocked.SM_group[bf.doy2date(date_temp)][y_, x_]
+                                if data_negative is None and date_temp - date_interval in doy_list:
+                                    date_temp_temp = date_temp - date_interval
+                                    if isinstance(dc_blocked, NDSparseMatrix):
+                                        if isinstance(dc_blocked.SM_group[bf.doy2date(date_temp_temp)], sm.coo_matrix):
+                                            info_temp = sm.csr_matrix(dc_blocked.SM_group[bf.doy2date(date_temp_temp)])[y_, x_]
+                                        else:
+                                            info_temp = dc_blocked.SM_group[bf.doy2date(date_temp_temp)][y_, x_]
 
-                        if info_temp != 0:
-                            res_out[__][_] = info_temp
-                            break
+                                    if info_temp != 0:
+                                        data_negative = np.float(info_temp)
+                                        date_negative = date_temp_temp
 
-                    else:
-                        if data_negative is None and date_temp - date_interval in doy_list:
-                            date_temp_temp = date_temp - date_interval
-                            if isinstance(dc_blocked, NDSparseMatrix):
-                                if isinstance(dc_blocked.SM_group[bf.doy2date(date_temp_temp)], sm.coo_matrix):
-                                    info_temp = sm.csr_matrix(dc_blocked.SM_group[bf.doy2date(date_temp_temp)])[y_, x_]
-                                else:
-                                    info_temp = dc_blocked.SM_group[bf.doy2date(date_temp_temp)][y_, x_]
+                                if data_positive is None and date_temp + date_interval in doy_list:
+                                    date_temp_temp = date_temp + date_interval
+                                    if isinstance(dc_blocked, NDSparseMatrix):
+                                        if isinstance(dc_blocked.SM_group[bf.doy2date(date_temp_temp)], sm.coo_matrix):
+                                            info_temp = sm.csr_matrix(dc_blocked.SM_group[bf.doy2date(date_temp_temp)])[y_, x_]
+                                        else:
+                                            info_temp = dc_blocked.SM_group[bf.doy2date(date_temp_temp)][y_, x_]
 
-                            if info_temp != 0:
-                                data_negative = np.float(info_temp)
-                                date_negative = date_temp_temp
+                                    if info_temp != 0:
+                                        data_positive = np.float(info_temp)
+                                        date_positive = date_temp_temp
 
-                        if data_positive is None and date_temp + date_interval in doy_list:
-                            date_temp_temp = date_temp + date_interval
-                            if isinstance(dc_blocked, NDSparseMatrix):
-                                if isinstance(dc_blocked.SM_group[bf.doy2date(date_temp_temp)], sm.coo_matrix):
-                                    info_temp = sm.csr_matrix(dc_blocked.SM_group[bf.doy2date(date_temp_temp)])[y_, x_]
-                                else:
-                                    info_temp = dc_blocked.SM_group[bf.doy2date(date_temp_temp)][y_, x_]
-
-                            if info_temp != 0:
-                                data_positive = np.float(info_temp)
-                                date_positive = date_temp_temp
-
-                        if data_positive is not None and data_negative is not None:
-                            res_out[__][_] = data_negative + (date_temp - date_negative) * (data_positive - data_negative) / (date_positive - date_negative)
-                            break
-
-            print(f'Finish get the {index} of {str(req_date_list[__])} in {str(time.time()-st)}s (xyoffset: {str(xy_offset_blocked[0]), str(xy_offset_blocked[1])})')
+                                if data_positive is not None and data_negative is not None:
+                                    res_out[__][_] = data_negative + (date_temp - date_negative) * (data_positive - data_negative) / (date_positive - date_negative)
+                                    break
+                    pbar.update()
 
         res_return = {'x': x_all_blocked, 'y': y_all_blocked}
         for _ in range(len(date_name)):
@@ -1205,7 +1206,6 @@ def get_index_by_date(dc_blocked, y_all_blocked: list, x_all_blocked: list, doy_
 
     elif mode == 'pheno':
 
-        bar_t = 0
         with tqdm(total=len(req_date_list) * len(y_all_blocked), desc=f'Get {index} xyoffset={str(xy_offset_blocked[0])}, {str(xy_offset_blocked[1])}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}', position=0, leave=True) as pbar:
             for __ in range(len(req_date_list)):
                 for _ in range(len(y_all_blocked)):
@@ -1215,29 +1215,24 @@ def get_index_by_date(dc_blocked, y_all_blocked: list, x_all_blocked: list, doy_
                         if info_temp != 0:
                             res_out[__][_] = info_temp
 
-                    bar_t += 1
-                    pbar.update(bar_t)
-
         res_return = {'x': x_all_blocked, 'y': y_all_blocked}
         for _ in range(len(date_name)):
             res_return[date_name[_]] = res_out[_]
         return res_return
 
     elif mode == 'denv':
-        year_temp = int(np.floor(req_date_list / 1000))
-        doy_temp = np.mod(req_date_list, 1000)
 
-        if isinstance(dc_blocked, NDSparseMatrix):
-            arr_temp = dc_blocked.SM_group['sum'].toarray()
-        else:
-            arr_temp = dc_blocked[:, :]
+        with tqdm(total=len(req_date_list) * len(y_all_blocked), desc=f'Get {index} xyoffset={str(xy_offset_blocked[0])}, {str(xy_offset_blocked[1])}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}', position=0, leave=True) as pbar:
+            for __ in range(len(req_date_list)):
+                for _ in range(len(y_all_blocked)):
+                    y_, x_ = y_all_blocked[_] - xy_offset_blocked[0], x_all_blocked[_] - xy_offset_blocked[1]
+                    if isinstance(dc_blocked, NDSparseMatrix):
+                        info_temp = dc_blocked.SM_group[req_date_list[__]][y_, x_]
+                    else:
+                        info_temp = dc_blocked[y_, x_, doy_list.index(req_date_list[__])]
 
-        for _ in range(len(y_all_blocked)):
-            y_, x_ = y_all_blocked[_] - xy_offset_blocked[0], x_all_blocked[_] - xy_offset_blocked[1]
-            info_temp = arr_temp[y_, x_]
-
-            if info_temp != 0:
-                res[_] = info_temp
+                    if info_temp != 0:
+                        res_out[__][_] = info_temp
 
         res_return = {'x': x_all_blocked, 'y': y_all_blocked}
         for _ in range(len(date_name)):

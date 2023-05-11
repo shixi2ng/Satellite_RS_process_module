@@ -215,7 +215,7 @@ class NDSparseMatrix:
             raise TypeError('The extended layers should under ndsm type')
         else:
             for _ in range(ndsm_temp.shape[2]):
-                self.add_layer(self.SM_group[self.SM_namelist[_]], self.SM_namelist[_], self.shape[2])
+                self.add_layer(ndsm_temp.SM_group[ndsm_temp.SM_namelist[_]], ndsm_temp.SM_namelist[_], self.shape[2])
         self._update_size_para()
 
     def remove_layer(self, layer_name):
@@ -379,7 +379,7 @@ class NDSparseMatrix:
 
         if axis == 0 or axis == 1:
             for _ in self.SM_namelist:
-                self.SM_group[_] = self.SM_group[_].sum(axis = axis)
+                self.SM_group[_] = self.SM_group[_].sum(axis=axis)
             self._update_size_para()
         elif axis == 2:
             temp = None
