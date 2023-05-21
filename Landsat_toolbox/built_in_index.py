@@ -1,0 +1,48 @@
+# coding=utf-8
+import sympy
+
+
+def convert_index_func(expr: str):
+    try:
+        f = sympy.sympify(expr)
+        dep_list = sorted(f.free_symbols, key=str)
+        num_f = sympy.lambdify(dep_list, f)
+        return dep_list, num_f
+    except:
+        raise ValueError(f'The {expr} is not valid!')
+
+
+class built_in_index(object):
+
+    def __init__(self, *args):
+        self.NDVI = 'NDVI = (NIR - RED) / (NIR + RED)'
+        self.OSAVI = 'OSAVI = 1.16 * (NIR - RED) / (NIR + RED + 0.16)'
+        self.AWEI = 'AWEI = 4 * (GREEN - MIR) - (0.25 * NIR + 2.75 * MIR2)'
+        self.AWEInsh = 'AWEInsh = BLUE + 2.5 * GREEN - 0.25 * MIR2 - 1.5 * (NIR + MIR1)'
+        self.MNDWI = 'MNDWI = (GREEN - MIR) / (MIR + GREEN)'
+        self.EVI = 'EVI = 2.5 * (NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1)'
+        self.EVI2 = 'EVI2 = 2.5 * (NIR - RED) / (NIR + 2.4 * RED + 1)'
+
+        self._exprs2index(*args)
+        self._built_in_index_dic()
+
+    def _exprs2index(self, *args):
+        for temp in args:
+            if type(temp) is not str:
+                raise ValueError(f'{temp} expression should be in a str type!')
+            elif '=' in temp:
+                self.__dict__[temp.split('=')[0]] = temp
+            else:
+                raise ValueError(f'{temp} expression should be in a str type!')
+
+    def add_index(self, *args):
+        self._exprs2index(*args)
+        self._built_in_index_dic()
+
+    def _built_in_index_dic(self):
+        self.index_dic = {}
+        for i in self.__dict__:
+            if i != 'index_dic':
+                var, func = convert_index_func(self.__dict__[i].split('=')[-1])
+                self.index_dic[i] = [var, func]
+

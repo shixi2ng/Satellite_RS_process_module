@@ -29,7 +29,7 @@ import json
 from tqdm.auto import tqdm
 from RSDatacube.RSdc import Phemetric_dc, Denv_dc
 from typing import Optional, Union
-import polars
+
 
 
 global topts
@@ -85,7 +85,7 @@ class Sentinel2_ds(object):
         self._manually_remove_datelist = None
 
         # Remove all the duplicated data
-        dup_data = bf.file_filter(self.ori_folder, ['.1.zip'])
+        dup_data = bf.file_filter(self.ori_folder, [f'.{str(_)}.zip' for _ in range(10)], and_or_factor='and')
         for dup in dup_data:
             os.remove(dup)
 
@@ -262,7 +262,7 @@ class Sentinel2_ds(object):
         #########################################################################
 
         # Start constructing metadata
-        print('---------------------------- Start the construction of Metadata ----------------------------')
+        print('---------------------------- Start the construction of the Sentinel2 ds metadata ----------------------------')
         start_temp = time.time()
 
         # process input files
@@ -272,8 +272,7 @@ class Sentinel2_ds(object):
             metadata_num = 0
 
         if not os.path.exists(self._work_env + 'Metadata.xlsx') or metadata_num != len(self.orifile_list):
-            corrupted_ori_file, corrupted_file_date, product_path, product_name, sensor_type, sensing_date, orbit_num, tile_num, width, height = (
-                [] for i in range(10))
+            corrupted_ori_file, corrupted_file_date, product_path, product_name, sensor_type, sensing_date, orbit_num, tile_num, width, height = ([] for i in range(10))
             corrupted_factor = 0
             for ori_file in self.orifile_list:
                 try:
@@ -344,6 +343,7 @@ class Sentinel2_ds(object):
                 self.S2_metadata = pd.read_excel(self._work_env + 'Metadata.xlsx')
         else:
             self.S2_metadata = pd.read_excel(self._work_env + 'Metadata.xlsx')
+
         self.S2_metadata.sort_values(by=['Sensing_Date'], ascending=True)
         self.S2_metadata_size = self.S2_metadata.shape[0]
         self.output_bounds = np.zeros([self.S2_metadata_size, 4]) * np.nan

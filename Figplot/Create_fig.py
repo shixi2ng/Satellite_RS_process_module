@@ -1,22 +1,17 @@
-import matplotlib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib import rcParams
 from scipy.optimize import curve_fit
 import scipy.stats as stats
-from scipy.spatial import ConvexHull, convex_hull_plot_2d
 import matplotlib.gridspec as gridspec
 import gdal
-import ogr
 import copy
 import Landsat_main_v1
 import sys
-import mpl_scatter_density
 from matplotlib.colors import LinearSegmentedColormap
 import basic_function as bf
 import seaborn as sns
-import Landsat_main_v2
+from Landsat_toolbox import Landsat_main_v2
 
 
 def guassain_dis(x, sig, mean):

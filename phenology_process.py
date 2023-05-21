@@ -1,11 +1,4 @@
-import gdal
-from osgeo import gdal_array, osr
-import sys
-import collections
-import pandas
-import numpy as np
-import Landsat_main_v2 as ls
-
+from Landsat_toolbox import Landsat_main_v2 as ls
 
 if __name__ == '__main__':
     roi_name_list = ['baishazhou', 'zhongzhou', 'nanmenzhou', 'nanyangzhou', 'tuanzhou']
