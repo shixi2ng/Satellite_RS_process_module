@@ -537,10 +537,13 @@ class Landsat_l2_ds(object):
                         if len(QI_filelist) != 1:
                             raise ValueError(f'There are more than one QI file for {str(filedate)} {str(tile_num)}!')
                         else:
+                            # qi_folder = f'{self._work_env}Landsat_constructed_index\\QI\\' if self.ROI is None else f'{self._work_env}Landsat_{str(self.ROI_name)}_index\\QI\\'
+                            # bf.create_folder(qi_folder)
                             QI_ds = gdal.Open(QI_filelist[0])
-                            QI_arr = QI_ds.GetRasterBand(1).ReadAsArray()
+                            QI_arr = QI_ds.GetRasterBand(1).ReadAsArray().astype(np.float)
                             QI_arr = self._process_QA_band(QI_arr, QI_filelist[0])
                             output_array = QI_arr * output_array
+                            # bf.write_raster(ds_list[0], output_array, qi_folder, file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
 
                     if self._scan_line_correction:
                         fill_landsat7_gap(output_array)
@@ -680,6 +683,7 @@ class Landsat_l2_ds(object):
             raise ValueError(f'This {filename} is not supported Landsat data!')
 
         # print(f's1 time {str(time.time() - start_time)}')
+        QI_temp_array[~np.isnan(QI_temp_array)] = 1
         return QI_temp_array
 
     def _retrieve_para(self, required_para_name_list, **kwargs):
@@ -4739,6 +4743,6 @@ class Landsat_dcs(object):
 
 if __name__ == '__main__':
 
-    landsat_temp = Landsat_l2_ds('D:\\MID_YZR\\Landsat\\Original_zip_files\\')
+    landsat_temp = Landsat_l2_ds('G:\\Landsat_test\\Original_zip_files\\')
     landsat_temp.construct_metadata(unzipped_para=False)
-    landsat_temp.mp_construct_index(['MNDWI', 'OSAVI'], cloud_removal_para=True, size_control_factor=True, ROI='D:\\MID_YZR\\ROI\\floodplain_2020.shp')
+    landsat_temp.mp_construct_index(['MNDWI', 'OSAVI'], cloud_removal_para=True, size_control_factor=True, ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
