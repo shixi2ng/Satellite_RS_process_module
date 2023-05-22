@@ -817,7 +817,7 @@ class Landsat_l2_ds(object):
         if _ not in self._band_sup:
             self._dc_infr[_ + 'input_path'] = self.unzipped_folder
         else:
-            self._dc_infr[_ + 'input_path'] = self._work_env + f'Landsat_constructed_index\\{_}\\' if self.ROI_name is None else self._dc_infr[_ + 'input_path'] = self._work_env + f'Landsat_{self.ROI_name}_index\\{_}\\'
+            self._dc_infr[_ + 'input_path'] = self._work_env + f'Landsat_constructed_index\\{_}\\' if self.ROI_name is None else self._work_env + f'Landsat_{self.ROI_name}_index\\{_}\\'
         if not os.path.exists(self._dc_infr[_ + 'input_path']):
             raise Exception(f'Please validate the roi name and {str(_)} for ds2dc!')
         elif len(bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
@@ -825,7 +825,7 @@ class Landsat_l2_ds(object):
         eliminating_all_not_required_file(self._dc_infr[_ + 'input_path'])
 
         # Define the output path
-        self._dc_infr[_] = self._work_env + 'Landsat_constructed_datacube\\' + _ + '_datacube\\' if self.ROI_name is None else self._dc_infr[_] = self._work_env + 'Landsat_' + self.ROI_name + '_datacube\\' + _ + '_datacube\\'
+        self._dc_infr[_] = self._work_env + 'Landsat_constructed_datacube\\' + _ + '_datacube\\' if self.ROI_name is None else self._work_env + 'Landsat_' + self.ROI_name + '_datacube\\' + _ + '_datacube\\'
         bf.create_folder(self._dc_infr[_])
 
         # Construct the dc

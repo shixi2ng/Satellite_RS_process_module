@@ -18,7 +18,6 @@ import json
 import psutil
 import scipy.sparse as sm
 import traceback
-import progressbar
 import os
 import pandas as pd
 from tqdm.auto import tqdm
