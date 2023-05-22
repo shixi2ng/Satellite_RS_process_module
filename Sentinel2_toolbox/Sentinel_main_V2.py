@@ -1590,6 +1590,7 @@ class Sentinel2_ds(object):
             _huge_matrix = True if len(doy_list) * cols * rows * 2 > dc_max_size else False
             _sparse_matrix = True if sparsify > 0.9 else False
 
+            # Generate the cube
             if _huge_matrix:
                 if _sparse_matrix:
 

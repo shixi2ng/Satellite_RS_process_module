@@ -1,3 +1,8 @@
+import concurrent.futures
+from itertools import repeat
+from tqdm.auto import tqdm
+from utils import *
+from built_in_index import built_in_index
 import gdal
 import pandas as pd
 from osgeo import gdal_array, osr
@@ -23,11 +28,9 @@ import basic_function as bf
 from basic_function import Path
 import pickle
 import traceback
-import concurrent.futures
-from itertools import repeat
-from tqdm.auto import tqdm
-from utils import *
-from built_in_index import built_in_index
+import psutil
+from NDsm import *
+import json
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
@@ -61,7 +64,7 @@ class Landsat_l2_ds(object):
         self.ROI_name = None
 
         # Define key var for to datacube
-        self.dc_vi = {}
+        self._dc_infr = {}
         self._dc_overwritten_para = False
         self._inherit_from_logfile = None
         self._remove_nan_layer = False
@@ -106,6 +109,7 @@ class Landsat_l2_ds(object):
                           'LC08_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B10'),
                           'LC08_bandname': ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'MIR2', 'PAN', 'TIR'),
                           }
+        self._band_sup = ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'MIR2', 'PAN', 'TIR')
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):
@@ -568,42 +572,38 @@ class Landsat_l2_ds(object):
                         file_list = bf.file_filter(f'{self.unzipped_folder}\\',  ['.TIF'], and_or_factor='and')
                         bf.create_folder(self._work_env + 'ROI_map\\')
                         ds_temp = gdal.Open(file_list[0])
-                        array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                        array_temp[:, :] = 1
-                        bf.write_raster(ds_temp, array_temp, self.cache_folder, 'temp_' + self.ROI_name + '.TIF', raster_datatype=gdal.GDT_Int16)
-
                         if retrieve_srs(ds_temp) != self.main_coordinate_system:
-                            gdal.Warp('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF',
-                                      self.cache_folder + 'temp_' + self.ROI_name + '.TIF',
+                            gdal.Warp(self.cache_folder + 'temp_' + self.ROI_name + '.TIF', ds_temp,
                                       dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI, cropToCutline=True,
                                       xRes=30, yRes=30, dstNodata=-32768)
                         else:
-                            gdal.Warp('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF',
-                                      self.cache_folder + 'temp_' + self.ROI_name + '.TIF', cutlineDSName=self.ROI,
-                                      cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
+                            gdal.Warp(self.cache_folder + 'temp_' + self.ROI_name + '.TIF', ds_temp,
+                                      cutlineDSName=self.ROI, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
 
-                        ds_ROI_array = gdal.Open('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF')
+                        ds_temp = gdal.Open(self.cache_folder + 'temp_' + self.ROI_name + '.TIF')
+                        array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                        array_temp[:, :] = 1
+                        bf.write_raster(ds_temp, array_temp, self.cache_folder, 'temp2_' + self.ROI_name + '.TIF', raster_datatype=gdal.GDT_Int16)
+                        gdal.Warp('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF',
+                                  self.cache_folder + 'temp2_' + self.ROI_name + '.TIF',
+                                  cutlineDSName=self.ROI, cropToCutline=True,
+                                  xRes=30, yRes=30, dstNodata=-32768)
+                        gdal.Translate(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF', '/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF', options=topts)
+
+                        ds_ROI_array = gdal.Open(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF')
                         ds_sa_array = ds_ROI_array.GetRasterBand(1).ReadAsArray()
 
                         if (ds_sa_array == -32768).all() == False:
                             np.save(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.npy', ds_sa_array)
-                            if retrieve_srs(ds_temp) != self.main_coordinate_system:
-                                gdal.Warp(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF',
-                                          self.cache_folder + 'temp_' + self.ROI_name + '.TIF',
-                                          dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI,
-                                          cropToCutline=True, xRes=30, yRes=30, dstNodata=-32768)
-                            else:
-                                gdal.Warp(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF',
-                                          self.cache_folder + 'temp_' + self.ROI_name + '.TIF', cutlineDSName=self.ROI,
-                                          cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
+
                         gdal.Unlink('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF')
                         ds_temp, ds_ROI_array = None, None
                         remove_all_file_and_folder(bf.file_filter(self.cache_folder, ['temp', '.TIF'], and_or_factor='and'))
 
                 # Generate Watermask map
-                water_mask_path = f'{self._work_env}Landsat_constructed_index\\Watermask\\' if self.ROI is None else f'{self._work_env}Landsat_{str(self.ROI_name)}_index\\Watermask\\'
+                water_mask_path = f'{self._work_env}Landsat_constructed_index\\watermask\\' if self.ROI is None else f'{self._work_env}Landsat_{str(self.ROI_name)}_index\\watermask\\'
                 bf.create_folder(water_mask_path)
-                if not os.path.exists(water_mask_path + str(filedate) + '_' + str(tile_num) + '_Watermask.TIF'):
+                if not os.path.exists(water_mask_path + str(filedate) + '_' + str(tile_num) + '_watermask.TIF'):
 
                     QI_filelist = bf.file_filter(self.unzipped_folder, [str(filedate), str(tile_num), 'QA_PIXEL'], and_or_factor='and', exclude_word_list=[f'{str(filedate)}_02'])
                     if len(QI_filelist) != 1:
@@ -616,7 +616,7 @@ class Landsat_l2_ds(object):
                         WATER_temp_array[np.logical_and(np.floor_divide(np.mod(WATER_temp_array, 256), 128) != 1, ~np.isnan(np.floor_divide(np.mod(WATER_temp_array, 256), 128)))] = 0
                         WATER_temp_array[np.divide(np.mod(WATER_temp_array, 256), 128) == 1] = 1
                         WATER_temp_array[np.isnan(WATER_temp_array)] = 65535
-                        bf.write_raster(QI_ds, WATER_temp_array, water_mask_path, str(filedate) + '_' + str(tile_num) + '_Watermask.TIF',  raster_datatype=gdal.GDT_UInt16)
+                        bf.write_raster(QI_ds, WATER_temp_array, water_mask_path, str(filedate) + '_' + str(tile_num) + '_watermask.TIF',  raster_datatype=gdal.GDT_UInt16)
                 print('All required VI were constructed in ' + str(time.time() - start_time) + 's (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
             else:
                 print('All required VI have already constructed(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
@@ -682,204 +682,6 @@ class Landsat_l2_ds(object):
         # print(f's1 time {str(time.time() - start_time)}')
         return QI_temp_array
 
-    def clip_landsat_vi(self, VI_list, ROI, i, *args, **kwargs):
-
-        # for the MP
-        if args != () and type(args[0]) == dict:
-            kwargs = copy.copy(args[0])
-
-        # process clip parameter
-        self._process_clip_para(ROI, **kwargs)
-
-        # Main procedure
-        if self.ROI is not None:
-
-            # Add the band list which also can be clipped
-            band_list = ['RED', 'BLUE', 'GREEN', 'NIR', 'MIR', 'MIR2']
-            l57_bandnum = ['B3.', 'B1.', 'B2.', 'B4.', 'B5.', 'B7.']
-            l89_bandnum = ['B4.', 'B2.', 'B3.', 'B5.', 'B6.', 'B7.']
-
-            # Create clipped vi path
-            for VI in VI_list:
-                # Check whether the VI is supported
-                if VI in band_list or VI in self.all_supported_vi_list:
-                    self.clipped_vi_path_dic[VI] = self._work_env + 'Landsat_' + self.ROI_name + '_index\\' + VI + '\\'
-                    try:
-                        bf.create_folder(self.clipped_vi_path_dic[VI])
-                    except:
-                        pass
-                else:
-                    raise ValueError('Please input a supported index for clipping')
-
-            # Main procedure
-            for VI in VI_list:
-
-                # Input the metadata
-                fileid = self.Landsat_metadata.FileID[i]
-                filedate = self.Landsat_metadata['Date'][i]
-                tile_num = self.Landsat_metadata['Tile_Num'][i]
-                start_time = time.time()
-
-                # Input folder
-                if VI in self.all_supported_vi_list:
-                    if self._clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF'):
-                        print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        # Retrieve the file list
-                        constructed_index_list = f'{self._work_env}Landsat_constructed_index\\{VI}\\'
-                        file_list = bf.file_filter(constructed_index_list, [str(tile_num), str(filedate), str(VI)], and_or_factor='and')
-
-                        # Clip the files
-                        if len(file_list) != 1:
-                            raise Exception(f'Incosistency problem for the {VI} of {fileid}!')
-                        elif not file_list[0].endswith('.tif') and not file_list[0].endswith('.TIF'):
-                            raise Exception(f'No valid tif file for the {VI} of {fileid}!')
-                        else:
-                            ds_temp = gdal.Open(file_list[0])
-                            if self.main_coordinate_system is not None and retrieve_srs(
-                                    ds_temp) != self.main_coordinate_system:
-                                gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(
-                                    tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF', ds_temp, cutlineDSName=self.ROI,
-                                          cropToCutline=True,
-                                          dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=-32768)
-                            else:
-                                gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(
-                                    tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF', ds_temp, cutlineDSName=self.ROI,
-                                          cropToCutline=True,
-                                          dstNodata=-32768, xRes=30, yRes=30)
-                        print('Finished in ' + str(time.time() - start_time) + ' s.')
-                    else:
-                        print(VI + ' file of the ' + self.ROI_name + ' has already clipped (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-
-                elif VI in band_list:
-                    if self._clipped_overwritten_para or not os.path.exists(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF'):
-                        print('Start clipping ' + VI + ' file of the ' + self.ROI_name + '(' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                        # Check the landsat sensor type
-                        if 'LT05' in fileid or 'LE07' in fileid or 'LT04' in fileid:
-                            VI_name = l57_bandnum[band_list.index(VI)]
-                        elif 'LC08' in fileid or 'LC09' in fileid:
-                            VI_name = l89_bandnum[band_list.index(VI)]
-                        else:
-                            raise Exception('The landsat datatype is not supported!')
-
-                        # Retrieve the file list
-                        constructed_index_list = f'{self._work_env}Landsat_original_tiffile\\'
-                        file_list = bf.file_filter(constructed_index_list, [str(filedate), str(tile_num), str(VI_name)], and_or_factor='and', exclude_word_list=[f'{str(filedate)}_02'])
-                        qi_list = bf.file_filter(constructed_index_list, [str(filedate), str(tile_num),'QA_PIXEL'], and_or_factor='and', exclude_word_list=[f'{str(filedate)}_02'])
-
-                        if 'cloud_removal_para' in kwargs.keys():
-                            if type(self._cloud_removal_para) is bool:
-                                self._cloud_removal_para = kwargs['cloud_removal_para']
-                            else:
-                                raise TypeError('Cloud removal para should be under bool type!')
-                        else:
-                            self._retrieve_para(['cloud_removal_para'])
-
-                        # Clip the files
-                        if len(file_list) != 1:
-                            raise Exception(f'Inconsistency problem for the {VI} of {fileid}!')
-                        elif not file_list[0].endswith('.tif') and not file_list[0].endswith('.TIF'):
-                            raise Exception(f'No valid tif file for the {VI} of {fileid}!')
-                        else:
-
-                            ds_temp = gdal.Open(file_list[0])
-                            # cloud removal situation
-                            if self._cloud_removal_para:
-
-                                # Input the qi array
-                                if len(qi_list) == 1:
-                                    if not os.path.exists(self._work_env + 'Landsat_constructed_index\\QA\\' + str(filedate) + '_' + str(tile_num) + '_QA.TIF'):
-                                        bf.create_folder(self._work_env + 'Landsat_constructed_index\\QA\\')
-                                        qi_ds = gdal.Open(self.unzipped_folder + fileid + '_QA_PIXEL.TIF')
-                                        qi_array = dataset2array(qi_ds, Band_factor=False)
-                                        qi_array = self._process_QA_band(qi_array, fileid)
-                                        bf.write_raster(qi_ds, qi_array,
-                                                        self._work_env + 'Landsat_constructed_index\\QA\\',
-                                                        str(filedate) + '_' + str(tile_num) + '_QA.TIF')
-                                        print('The QI zonal detection consumes about ' + str(time.time() - start_time) + ' s for processing all pixels')
-                                    else:
-                                        qi_ds = gdal.Open(self._work_env + 'Landsat_constructed_index\\QA\\' + str(filedate) + '_' + str(tile_num) + '_QA.TIF')
-                                        qi_array = dataset2array(qi_ds, Band_factor=False)
-                                else:
-                                    raise ValueError(f'The QA PIXEL file for {fileid} is not consistent!')
-
-                                s2_time = time.time()
-                                # Input the raster
-                                raster_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                                raster_temp = raster_temp * qi_array
-                                raster_temp[np.isnan(raster_temp)] = 0
-                                raster_temp = raster_temp.astype(np.uint16)
-                                bf.write_raster(ds_temp, raster_temp, '/vsimem/', f'{fileid}.tif')
-                                # print(f's2 time {str(time.time() - s2_time)}')
-
-                                s3_time = time.time()
-                                # Project to a defined coordinate sys
-                                if self.main_coordinate_system is not None and retrieve_srs(ds_temp) != self.main_coordinate_system:
-                                    gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF', f'/vsimem/{fileid}.tif',
-                                              cutlineDSName=self.ROI,
-                                              cropToCutline=True,
-                                              dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=0)
-                                else:
-                                    gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF', f'/vsimem/{fileid}.tif',
-                                              cutlineDSName=self.ROI,
-                                              cropToCutline=True,
-                                              dstNodata=0, xRes=30, yRes=30)
-
-                                # Unlink the cache file
-                                gdal.Unlink(f'/vsimem/{fileid}.tif')
-                                # print(f's3 time {str(time.time() - s3_time)}')
-
-                            elif not self._cloud_removal_para:
-
-                                # Project to a defined coordinate sys
-                                if self.main_coordinate_system is not None and retrieve_srs(ds_temp) != self.main_coordinate_system:
-                                    gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF', ds_temp,
-                                              cutlineDSName=self.ROI,
-                                              cropToCutline=True,
-                                              dstSRS=self.main_coordinate_system, xRes=30, yRes=30, dstNodata=0)
-                                else:
-                                    gdal.Warp(self.clipped_vi_path_dic[VI] + str(filedate) + '_' + str(tile_num) + '_' + VI + '_' + self.ROI_name + '.TIF', ds_temp,
-                                              cutlineDSName=self.ROI,
-                                              cropToCutline=True,
-                                              dstNodata=0, xRes=30, yRes=30)
-
-                        print('Finished in ' + str(time.time() - start_time) + ' s.')
-                    else:
-                        print(VI + ' file of the ' + self.ROI_name + ' has already clipped (' + str(i + 1) + ' of ' + str(self.Landsat_metadata_size) + ')')
-                else:
-                    raise ValueError('Please input a supported index for clipping')
-
-                # Generate SA map
-                if not os.path.exists(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.npy'):
-                    file_list = bf.file_filter(f'{self._work_env}Landsat_original_tiffile\\', [f'{str(tile_num)}_{str(filedate)}', '_B1.TIF'], and_or_factor='and', exclude_word_list=['LE07'])
-                    bf.create_folder(self._work_env + 'ROI_map\\')
-                    ds_temp = gdal.Open(file_list[0])
-                    array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                    array_temp[:, :] = 1
-                    bf.write_raster(ds_temp, array_temp, self.cache_folder, 'temp_' + self.ROI_name + '.TIF', raster_datatype=gdal.GDT_Int16)
-                    if retrieve_srs(ds_temp) != self.main_coordinate_system:
-                        gdal.Warp('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF', self.cache_folder + 'temp_' + self.ROI_name + '.TIF', dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI, cropToCutline=True, xRes=30, yRes=30, dstNodata=-32768)
-                    else:
-                        gdal.Warp('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF', self.cache_folder + 'temp_' + self.ROI_name + '.TIF', cutlineDSName=self.ROI, cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
-                    ds_sa_temp = gdal.Open('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF')
-                    ds_sa_array = ds_sa_temp.GetRasterBand(1).ReadAsArray()
-                    if (ds_sa_array == -32768).all() == False:
-                        np.save(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.npy', ds_sa_array)
-                        if retrieve_srs(ds_temp) != self.main_coordinate_system:
-                            gdal.Warp(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF',
-                                      self.cache_folder + 'temp_' + self.ROI_name + '.TIF',
-                                      dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI, cropToCutline=True,
-                                      xRes=30, yRes=30, dstNodata=-32768)
-                        else:
-                            gdal.Warp(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF',
-                                      self.cache_folder + 'temp_' + self.ROI_name + '.TIF', cutlineDSName=self.ROI,
-                                      cropToCutline=True, dstNodata=-32768, xRes=30, yRes=30)
-                    gdal.Unlink('/vsimem/' + 'ROI_map\\' + self.ROI_name + '_map.TIF')
-                    ds_temp = None
-                    ds_sa_temp = None
-                    remove_all_file_and_folder(bf.file_filter(self.cache_folder, ['temp', '.TIF'], and_or_factor='and'))
-        else:
-            raise Exception('Please input the ROI correctly!')
-
     def _retrieve_para(self, required_para_name_list, **kwargs):
 
         if not os.path.exists(f'{self.log_filepath}para_file.txt'):
@@ -914,7 +716,7 @@ class Landsat_l2_ds(object):
     def _process_2dc_para(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('inherit_from_logfile', 'ROI', 'ROI_name', 'dc_overwritten_para', 'remove_nan_layer', 'manually_remove_datelist'):
+            if kwarg_indicator not in ('inherit_from_logfile', 'ROI', 'ROI_name', 'dc_overwritten_para', 'remove_nan_layer', 'manually_remove_datelist', 'size_control_factor'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clipped_overwritten_para
@@ -924,7 +726,7 @@ class Landsat_l2_ds(object):
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be bool type!')
         else:
-            self._clipped_overwritten_para = False
+            self._dc_overwritten_para = False
 
         # process inherit from logfile
         if 'inherit_from_logfile' in kwargs.keys():
@@ -972,10 +774,37 @@ class Landsat_l2_ds(object):
             raise Exception('Notice the ROI was missed!')
 
         # Retrieve size control factor
-        self._retrieve_para(['size_control_factor'])
+        if 'size_control_factor' in kwargs.keys():
+            if type(kwargs['size_control_factor']) is bool:
+                self._size_control_factor = kwargs['size_control_factor']
+            else:
+                raise TypeError('Please mention the size_control_factor should be bool type!')
+        elif self._inherit_from_logfile:
+            self._retrieve_para(['size_control_factor'], protected_var=True)
+        else:
+            self._size_control_factor = False
 
     @save_log_file
-    def to_datacube(self, VI_list, *args, **kwargs):
+    def mp_ds2landsatdc(self, index_list, *args, **kwargs):
+        if 'chunk_size' in kwargs.keys() and type(kwargs['chunk_size']) is int:
+            chunk_size = min(os.cpu_count(), kwargs['chunk_size'])
+            del kwargs['chunk_size']
+        # elif 'chunk_size' in kwargs.keys() and kwargs['chunk_size'] == 'auto':
+        #     chunk_size = os.cpu_count()
+        else:
+            chunk_size = os.cpu_count()
+
+        # mp process
+        with concurrent.futures.ProcessPoolExecutor(max_workers=chunk_size) as executor:
+            executor.map(self.ds2landsatdc, index_list, repeat(kwargs))
+
+    @save_log_file
+    def seq_ds2landsatdc(self, index_list, *args, **kwargs):
+        # sequenced process
+        for index in index_list:
+            self.ds2landsatdc(index, *args, **kwargs)
+
+    def ds2landsatdc(self, _, *args, **kwargs):
 
         # for the MP
         if args != () and type(args[0]) == dict:
@@ -984,105 +813,178 @@ class Landsat_l2_ds(object):
         # process clip parameter
         self._process_2dc_para(**kwargs)
 
-        # generate dc_vi
-        for VI in VI_list:
-            # Remove all files which not meet the requirements
+        # Define the input path
+        if _ not in self._band_sup:
+            self._dc_infr[_ + 'input_path'] = self.unzipped_folder
+        else:
+            self._dc_infr[_ + 'input_path'] = self._work_env + f'Landsat_constructed_index\\{_}\\' if self.ROI_name is None else self._dc_infr[_ + 'input_path'] = self._work_env + f'Landsat_{self.ROI_name}_index\\{_}\\'
+        if not os.path.exists(self._dc_infr[_ + 'input_path']):
+            raise Exception(f'Please validate the roi name and {str(_)} for ds2dc!')
+        elif len(bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
+            raise ValueError(f'{_} of the {self.ROI_name} is not consistent')
+        eliminating_all_not_required_file(self._dc_infr[_ + 'input_path'])
+
+        # Define the output path
+        self._dc_infr[_] = self._work_env + 'Landsat_constructed_datacube\\' + _ + '_datacube\\' if self.ROI_name is None else self._dc_infr[_] = self._work_env + 'Landsat_' + self.ROI_name + '_datacube\\' + _ + '_datacube\\'
+        bf.create_folder(self._dc_infr[_])
+
+        # Construct the dc
+        if self._dc_overwritten_para or not os.path.exists(self._dc_infr[_] + _ + '_datacube.npy') or not os.path.exists(self._dc_infr[_] + 'date.npy') or not os.path.exists(self._dc_infr[_] + 'metadata.json'):
+
+            sa_map = np.load(bf.file_filter(self._work_env + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
             if self.ROI_name is None:
-                self.dc_vi[VI + 'input_path'] = self._work_env + f'Landsat_constructed_index\\{VI}\\'
+                print('Start processing ' + _ + ' datacube.')
+                metadata_dic = {'ROI_name': None, 'index': _, 'Datatype': 'float', 'ROI': None, 'ROI_array': None,
+                                'ROI_tif': None, 'sdc_factor': True, 'coordinate_system': self.main_coordinate_system,
+                                'size_control_factor': self._size_control_factor, 'oritif_folder': self._dc_infr[_ + 'input_path'],
+                                'dc_group_list': None,  'tiles': None}
             else:
-                self.dc_vi[VI + 'input_path'] = self._work_env + f'Landsat_{self.ROI_name}_index\\{VI}\\'
+                print('Start processing ' + _ + ' datacube of the ' + self.ROI_name + '.')
+                sa_map = np.load(bf.file_filter(self._work_env + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
+                metadata_dic = {'ROI_name': self.ROI_name, 'index': _, 'Datatype': 'float', 'ROI': self.ROI,
+                                'ROI_array': self._work_env + 'ROI_map\\' + self.ROI_name + '_map.npy',
+                                'ROI_tif': self._work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF',
+                                'sdc_factor': True, 'coordinate_system': self.main_coordinate_system,
+                                'size_control_factor': self._size_control_factor, 'oritif_folder': self._dc_infr[_ + 'input_path'],
+                                'dc_group_list': None, 'tiles': None}
 
-            # path check
-            if not os.path.exists(self.dc_vi[VI + 'input_path']):
-                raise Exception('Please validate the roi name and vi for datacube output!')
+            # Retrieve Var
+            start_time = time.time()
+            VI_stack_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and', exclude_word_list=['aux', 'xml']) if _ not in self._band_sup else bf.file_filter(self._dc_infr[_ + 'input_path'], ['B1.TIF'],  exclude_word_list=['aux', 'xml'])
+            VI_stack_list.sort()
+            doy_list = [int(filepath_temp.split('\\')[-1][0:8]) for filepath_temp in VI_stack_list]
+            doy_list = list(set(doy_list))
+            doy_list.sort()
+            temp_ds = gdal.Open(VI_stack_list[0])
+            nodata_value = temp_ds.GetRasterBand(1).GetNoDataValue()
 
-            eliminating_all_not_required_file(self.dc_vi[VI + 'input_path'])
-            if self.ROI_name is None:
-                self.dc_vi[VI] = self._work_env + 'Landsat_constructed_datacube\\' + VI + '_datacube\\'
-            else:
-                self.dc_vi[VI] = self._work_env + 'Landsat_' + self.ROI_name + '_datacube\\' + VI + '_datacube\\'
-            bf.create_folder(self.dc_vi[VI])
+            # Evaluate the size and sparsity of sdc
+            mem = psutil.virtual_memory()
+            dc_max_size = int((mem.free) * 0.90)
+            cols, rows = temp_ds.RasterXSize, temp_ds.RasterYSize
+            sparsify = np.sum(sa_map == -32768) / (sa_map.shape[0] * sa_map.shape[1])
+            _huge_matrix = True if len(doy_list) * cols * rows * 2 > dc_max_size else False
+            _sparse_matrix = True if sparsify > 0.9 else False
 
-            if len(bf.file_filter(self.dc_vi[VI + 'input_path'], [VI, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
-                raise ValueError(f'{VI} of the {self.ROI_name} is not consistent')
+            # Generate the cube
+            if _huge_matrix:
+                if _sparse_matrix:
 
-        for VI in VI_list:
-            if self._dc_overwritten_para or not os.path.exists(self.dc_vi[VI] + VI + '_datacube.npy') or not os.path.exists(self.dc_vi[VI] + 'date.npy') or not os.path.exists(self.dc_vi[VI] + 'header.npy'):
+                    i = 0
+                    data_cube = NDSparseMatrix()
+                    data_valid_array = np.zeros([len(doy_list)], dtype=int)
+                    while i < len(doy_list):
 
-                if self.ROI_name is None:
-                    print('Start processing ' + VI + ' datacube.')
-                    header_dic = {'ROI_name': None, 'VI': VI, 'Datatype': 'float', 'ROI': None, 'Study_area': None, 'sdc_factor': False}
+                        try:
+                            t1 = time.time()
+                            file_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [str(doy_list[i]), f'{_}.TIF'], and_or_factor='and')
+                            if len(file_list) == 0:
+                                raise Exception(f'The {str(doy_list[i])}_{_} is not properly generated!')
+                            else:
+                                ds_list = [gdal.Open(file_temp) for file_temp in file_list]
+                                array_list = [ds_temp.GetRasterBand(1).ReadAsArray() for ds_temp in ds_list]
+
+                            if self._size_control_factor and _ not in self._band_sup:
+                                array_temp = array_temp.astype(int) + 32768
+                            elif np.isnan(nodata_value):
+                                array_temp[np.isnan(array_temp)] = 0
+                            else:
+                                array_temp[array_temp == nodata_value] = 0
+
+                            sm_temp = sm.csr_matrix(array_temp.astype(np.uint16))
+                            data_cube.append(sm_temp, name=doy_list[i])
+                            data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
+
+                            print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
+                            i += 1
+                        except:
+                            error_inf = traceback.format_exc()
+                            print(error_inf)
+
+                    # remove nan layer
+                    if self._manually_remove_para is True and self._manually_remove_datelist is not None:
+                        i_temp = 0
+                        while i_temp < len(doy_list):
+                            if doy_list[i_temp] in self._manually_remove_datelist:
+                                data_valid_array[i] = 1
+                                self._manually_remove_datelist.remove(doy_list[i_temp])
+                            i_temp += 1
+
+                    elif self._manually_remove_para is True and self._manually_remove_datelist is None:
+                        raise ValueError('Please correctly input the manual input date list')
+
+                    if self._remove_nan_layer or self._manually_remove_para:
+                        i_temp = 0
+                        while i_temp < len(doy_list):
+                            if data_valid_array[i_temp]:
+                                if doy_list[i_temp] in data_cube.SM_namelist:
+                                    data_cube.remove_layer(doy_list[i_temp])
+                                doy_list.remove(doy_list[i_temp])
+                                data_valid_array = np.delete(data_valid_array, i_temp, 0)
+                                i_temp -= 1
+                            i_temp += 1
+
+                    # Save the sdc
+                    np.save(self._dc_infr[_] + f'doy.npy', doy_list)
+                    bf.create_folder(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
+                    data_cube.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
+
                 else:
-                    print('Start processing ' + VI + ' datacube of the ' + self.ROI_name + '.')
-                    sa_map = np.load(bf.bf.file_filter(self._work_env + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
-                    header_dic = {'ROI_name': self.ROI_name, 'VI': VI, 'Datatype': 'float', 'ROI': self.ROI, 'Study_area': sa_map, 'sdc_factor': False}
+                    pass
 
-                start_time = time.time()
-                VI_stack_list = bf.file_filter(self.dc_vi[VI + 'input_path'], [VI, '.TIF'])
-                VI_stack_list.sort()
-                temp_ds = gdal.Open(VI_stack_list[0])
-                cols, rows = temp_ds.RasterXSize, temp_ds.RasterYSize
-                data_cube_temp = np.zeros((rows, cols, len(VI_stack_list)), dtype=np.float16)
-                date_cube_temp = np.zeros((len(VI_stack_list)), dtype=np.uint32)
-                header_dic['ds_file'] = VI_stack_list[0]
-
+            else:
                 i = 0
-                while i < len(VI_stack_list):
-                    date_cube_temp[i] = int(VI_stack_list[i][VI_stack_list[i].find(VI + '\\') + 1 + len(VI): VI_stack_list[i].find(VI + '\\') + 9 + len(VI)])
-                    i += 1
+                data_cube = np.zeros([rows, cols, len(doy_list)])
+                data_valid_array = np.zeros([len(doy_list)], dtype=int)
+                while i < len(doy_list):
 
-                nodata_value = np.nan
-                i = 0
-                while i < len(VI_stack_list):
-                    temp_ds2 = gdal.Open(VI_stack_list[i])
-                    temp_band = temp_ds2.GetRasterBand(1)
-                    if i != 0 and nodata_value != temp_band.GetNoDataValue():
-                        raise Exception(f"The nodata value for the {VI} file list is not consistent!")
+                    t1 = time.time()
+                    if not os.path.exists(f"{self._dc_infr[_ + 'input_path']}{str(doy_list[i])}_{_}.TIF"):
+                        raise Exception(f'The {str(doy_list[i])}_{_} is not properly generated!')
                     else:
-                        nodata_value = temp_band.GetNoDataValue()
-                    temp_raster = temp_ds2.GetRasterBand(1).ReadAsArray()
-                    data_cube_temp[:, :, i] = temp_raster
+                        ds_temp = gdal.Open(f"{self._dc_infr[_ + 'input_path']}{str(doy_list[i])}_{_}.TIF")
+                        array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+
+                    data_cube[:, :, i] = array_temp
+                    data_valid_array[i] = 1 if [array_temp == nodata_value].all() else 0
+
+                    print(
+                        f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
                     i += 1
 
-                if self._size_control_factor:
-                    data_cube_temp[data_cube_temp == -32768] = np.nan
-                    data_cube_temp = data_cube_temp / 10000
-
+                # remove nan layer (NEED FIX)
                 if self._manually_remove_para is True and self._manually_remove_datelist is not None:
                     i_temp = 0
-                    manual_remove_date_list_temp = copy.copy(self._manually_remove_datelist)
-                    while i_temp < date_cube_temp.shape[0]:
-                        if str(date_cube_temp[i_temp]) in manual_remove_date_list_temp:
-                            manual_remove_date_list_temp.remove(str(date_cube_temp[i_temp]))
-                            date_cube_temp = np.delete(date_cube_temp, i_temp, 0)
-                            data_cube_temp = np.delete(data_cube_temp, i_temp, 2)
-                            i_temp -= 1
+                    while i_temp < len(doy_list):
+                        if doy_list[i_temp] in self._manually_remove_datelist:
+                            data_valid_array[i] = 1
+                            self._manually_remove_datelist.remove(doy_list[i_temp])
                         i_temp += 1
-
-                    if manual_remove_date_list_temp:
-                        raise Exception('Some manual input date is not properly removed')
 
                 elif self._manually_remove_para is True and self._manually_remove_datelist is None:
-                    raise ValueError('Please correctly input the manual input datelist')
+                    raise ValueError('Please correctly input the manual input date list')
 
-                if self._remove_nan_layer:
+                if self._remove_nan_layer or self._manually_remove_para:
                     i_temp = 0
-                    while i_temp < date_cube_temp.shape[0]:
-                        if np.isnan(data_cube_temp[:,:,i_temp]).all() == True or (data_cube_temp[:,:,i_temp] == nodata_value).all() == True:
-                            date_cube_temp = np.delete(date_cube_temp, i_temp, 0)
-                            data_cube_temp = np.delete(data_cube_temp, i_temp, 2)
+                    while i_temp < len(doy_list):
+                        if data_valid_array[i_temp]:
+                            data_cube = np.delete(data_cube, i_temp, 2)
+                            doy_list.remove(doy_list[i_temp])
+                            data_valid_array = np.delete(data_valid_array, i_temp, 0)
                             i_temp -= 1
                         i_temp += 1
-                print('Finished in ' + str(time.time() - start_time) + ' s.')
 
-                # Write the datacube
-                print('Start writing the ' + VI + ' datacube.')
-                start_time = time.time()
-                np.save(self.dc_vi[VI] + 'header.npy', header_dic)
-                np.save(self.dc_vi[VI] + 'date.npy', date_cube_temp.astype(np.uint32).tolist())
-                np.save(self.dc_vi[VI] + str(VI) + '_datacube.npy', data_cube_temp.astype(np.float16))
-                end_time = time.time()
-                print('Finished writing ' + VI + ' datacube in ' + str(end_time - start_time) + ' s.')
+                # Save the sdc
+                np.save(self._dc_infr[_] + f'doy.npy', doy_list)
+                bf.create_folder(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
+                np.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube.npy', data_cube)
+
+            # Save the metadata dic
+            metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
+            with open(self._dc_infr[_] + 'metadata.json', 'w') as js_temp:
+                json.dump(metadata_dic, js_temp)
+
+        print(f'Finished writing the sdc in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
 
 class Landsat_dc(object):
@@ -4839,7 +4741,7 @@ if __name__ == '__main__':
 
     landsat_temp = Landsat_l2_ds('G:\\Landsat_test\\Original_zip_files\\')
     landsat_temp.construct_metadata(unzipped_para=True)
-    landsat_temp.mp_construct_index(['NDVI', 'OSAVI'])
+    landsat_temp.mp_construct_index(['NDVI', 'OSAVI'], size_control_factor=True, ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
 
     # sample_midlow_YZR = Landsat_l2_ds('G:\\Landsat\\midlower_YZR_2002_2020\\Original_zipfile\\')
     # sample_midlow_YZR.generate_landsat_metadata(unzipped_para=False)
@@ -4860,7 +4762,7 @@ if __name__ == '__main__':
     sample122124.mp_construct_index(['OSAVI', 'MNDWI', 'AWEI'], cloud_removal_para=True, size_control_factor=True)
     for roi, coord_sys in zip(roi_name_list,  coord_list):
         sample122124.mp_clip_vi(['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2'], f'G:\\Landsat\\Jingjiang_shp\\shpfile_123\\Intersect\\{roi}.shp', main_coordinate_system=coord_sys)
-        sample122124.to_datacube(['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2'], remove_nan_layer=True, ROI=f'G:\\Landsat\\Jingjiang_shp\\shpfile_123\\Intersect\\{roi}.shp', ROI_name=roi)
+        sample122124.ds2landsatdc(['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2'], remove_nan_layer=True, ROI=f'G:\\Landsat\\Jingjiang_shp\\shpfile_123\\Intersect\\{roi}.shp', ROI_name=roi)
         dc_temp_dic = {}
         for vi in ['OSAVI', 'MNDWI', 'AWEI', 'NIR', 'MIR2']:
             dc_temp_dic[vi] = Landsat_dc(f'G:\\Landsat\\Sample123039\\Landsat_{roi}_datacube\\{vi}_datacube\\').to_sdc(sdc_substitued=True)
@@ -4888,7 +4790,7 @@ if __name__ == '__main__':
         sample122124.mp_clip_vi(['OSAVI',  'AWEI', 'EVI', 'NDVI', 'MNDWI'],
                                 f'G:\\Landsat\\Jingjiang_shp\\shpfile\\Main\\{roi}.shp',
                                 main_coordinate_system=coord_sys)
-        sample122124.to_datacube(['OSAVI', 'AWEI', 'EVI', 'NDVI', 'MNDWI'], remove_nan_layer=True,
+        sample122124.ds2landsatdc(['OSAVI', 'AWEI', 'EVI', 'NDVI', 'MNDWI'], remove_nan_layer=True,
                                  ROI=f'G:\\Landsat\\Jingjiang_shp\\shpfile\\Main\\{roi}.shp', ROI_name=roi)
         dc_temp_dic = {}
         for vi in ['OSAVI','AWEI', 'EVI', 'NDVI', 'MNDWI']:
@@ -4976,7 +4878,7 @@ if __name__ == '__main__':
 
     for roi, coord_sys, short in zip(roi_name_list,  coord_list, short_list):
         sample122124.mp_clip_vi(['OSAVI', 'MNDWI'], f'G:\\Landsat\\Jingjiang_shp\\shp_all\\{roi}.shp', main_coordinate_system=coord_sys)
-        sample122124.to_datacube(['OSAVI', 'MNDWI'], remove_nan_layer=True, ROI=f'G:\\Landsat\\Jingjiang_shp\\shp_all\\{roi}.shp', ROI_name=roi)
+        sample122124.ds2landsatdc(['OSAVI', 'MNDWI'], remove_nan_layer=True, ROI=f'G:\\Landsat\\Jingjiang_shp\\shp_all\\{roi}.shp', ROI_name=roi)
         dc_temp_dic = {}
         for vi in ['OSAVI', 'MNDWI']:
             dc_temp_dic[vi] = Landsat_dc(f'G:\\Landsat\\Sample122_124039\\Landsat_{roi}_datacube\\{vi}_datacube\\').to_sdc(sdc_substitued=True)
@@ -4996,7 +4898,7 @@ if __name__ == '__main__':
     for roi, coord_sys, short in zip(roi_name_list, coord_list, short_list):
         sample123.mp_clip_vi(['OSAVI', 'MNDWI'], f'G:\\Landsat\\Jingjiang_shp\\shp_all\\{roi}.shp',
                                 main_coordinate_system=coord_sys)
-        sample123.to_datacube(['OSAVI', 'MNDWI'], remove_nan_layer=True,
+        sample123.ds2landsatdc(['OSAVI', 'MNDWI'], remove_nan_layer=True,
                                  ROI=f'G:\\Landsat\\Jingjiang_shp\\shp_all\\{roi}.shp', ROI_name=roi)
         dc_temp_dic = {}
         for vi in ['OSAVI', 'MNDWI']:
