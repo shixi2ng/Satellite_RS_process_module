@@ -28,13 +28,10 @@ from NDsm import NDSparseMatrix
 import json
 from tqdm.auto import tqdm
 from RSDatacube.RSdc import Phemetric_dc, Denv_dc
-from typing import Optional, Union
-
 
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
-
 
 # Set np para
 np.seterr(divide='ignore', invalid='ignore')
