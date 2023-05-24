@@ -1024,7 +1024,7 @@ class Landsat_l2_ds(object):
                             pass
                     else:
                         data_cube_list.append(output_arr)
-                        data_valid_array[i] = 1 if [output_arr == nodata_value].all() else 0
+                        data_valid_array[i] = 1 if np.all(output_arr == nodata_value) else 0
 
                     print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
                     i += 1
@@ -1036,38 +1036,53 @@ class Landsat_l2_ds(object):
             if not _huge_matrix:
                 data_cube = np.stack(data_cube_list, axis=2)
 
-            # remove nan layer
-            if self._manually_remove_para is True and self._manually_remove_datelist is not None:
-                i_temp = 0
-                while i_temp < len(doy_list):
-                    if doy_list[i_temp] in self._manually_remove_datelist:
-                        data_valid_array[i] = 1
-                        self._manually_remove_datelist.remove(doy_list[i_temp])
-                    i_temp += 1
-            elif self._manually_remove_para is True and self._manually_remove_datelist is None:
-                raise ValueError('Please correctly input the manual input date list')
+            try:
+                # remove nan layer
+                if self._manually_remove_para is True and self._manually_remove_datelist is not None:
+                    i_temp = 0
+                    while i_temp < len(doy_list):
+                        if doy_list[i_temp] in self._manually_remove_datelist:
+                            data_valid_array[i] = 1
+                            self._manually_remove_datelist.remove(doy_list[i_temp])
+                        i_temp += 1
+                elif self._manually_remove_para is True and self._manually_remove_datelist is None:
+                    raise ValueError('Please correctly input the manual input date list')
 
-            if self._remove_nan_layer or self._manually_remove_para:
-                i_temp = 0
-                while i_temp < len(doy_list):
-                    if data_valid_array[i_temp]:
-                        if doy_list[i_temp] in data_cube.SM_namelist:
-                            data_cube.remove_layer(doy_list[i_temp])
-                        doy_list.remove(doy_list[i_temp])
-                        data_valid_array = np.delete(data_valid_array, i_temp, 0)
-                        i_temp -= 1
-                    i_temp += 1
+                if self._remove_nan_layer or self._manually_remove_para:
+                    i_temp = 0
+                    while i_temp < len(doy_list):
+                        if data_valid_array[i_temp]:
+                            if doy_list[i_temp] in data_cube.SM_namelist:
+                                data_cube.remove_layer(doy_list[i_temp])
+                            doy_list.remove(doy_list[i_temp])
+                            data_valid_array = np.delete(data_valid_array, i_temp, 0)
+                            i_temp -= 1
+                        i_temp += 1
+            except:
+                print(traceback.format_exc())
+                raise Exception(f'Dc construction failed during remove nan layer!')
 
-                    # Save the sdc
+            try:
+                if _huge_matrix:
+                    if _sparse_matrix:
+                        # Save the sdc
+                        np.save(self._dc_infr[_] + f'doy.npy', doy_list)
+                        bf.create_folder(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
+                        data_cube.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
+                    else:
+                        pass
+                else:
                     np.save(self._dc_infr[_] + f'doy.npy', doy_list)
-                    bf.create_folder(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
-                    data_cube.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
+                    np.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube.npy', data_cube)
 
-            # Save the metadata dic
-            metadata_dic['Datatype'], metadata_dic['Zoffset'] = dtype_out, - nodata_value
-            metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
-            with open(self._dc_infr[_] + 'metadata.json', 'w') as js_temp:
-                json.dump(metadata_dic, js_temp)
+                # Save the metadata dic
+                metadata_dic['Datatype'], metadata_dic['Zoffset'] = dtype_out, - nodata_value
+                metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
+                with open(self._dc_infr[_] + 'metadata.json', 'w') as js_temp:
+                    json.dump(metadata_dic, js_temp)
+            except:
+                print(traceback.format_exc())
+                raise Exception(f'Dc construction failed during saving the datacube!')
 
         print(f'Finished writing the sdc in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
