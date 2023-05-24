@@ -887,7 +887,9 @@ class Landsat_l2_ds(object):
                     data_cube = NDSparseMatrix()
                     data_valid_array = np.zeros([len(doy_list)], dtype=int)
                 else:
-                    pass
+                    i, nodata_value, dtype_temp, dtype_out = 0, None, None, None
+                    data_cube = NDSparseMatrix()
+                    data_valid_array = np.zeros([len(doy_list)], dtype=int)
             else:
                 i, nodata_value, dtype_temp, dtype_out = 0, None, None, None
                 data_cube_list = []
