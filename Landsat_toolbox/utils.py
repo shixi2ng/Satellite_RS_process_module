@@ -5,31 +5,15 @@ import sys
 import collections
 import pandas
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 import os
-import zipfile
-import tarfile
 import shutil
 import datetime
-from datetime import date
-import rasterio
-import math
 import copy
-from scipy.optimize import curve_fit
 from scipy.signal import convolve2d
 import time
 from itertools import chain
 from collections import Counter
-import glob
-import subprocess
 import basic_function as bf
-from basic_function import Path
-from gdalconst import *
-import pickle
-import traceback
-import concurrent.futures
-from itertools import repeat
 
 
 def union_list(small_list, big_list) -> list:

@@ -1356,7 +1356,8 @@ class Sentinel2_ds(object):
                     import numpy as np
 
                     def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
-                         np.amin(in_ar, axis=0, initial=255, out=out_ar)
+                         np.amax(in_ar, axis=0, initial=255, out=out_ar)
+                         
                     """)
 
                 else:

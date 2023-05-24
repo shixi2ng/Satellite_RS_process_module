@@ -7,30 +7,21 @@ import gdal
 import pandas as pd
 from osgeo import gdal_array, osr
 import sys
-import collections
 import pandas
-import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-import os
-import zipfile
 import tarfile
 import shutil
 import datetime
 from datetime import date
-import rasterio
-import math
-import copy
 from scipy.optimize import curve_fit
 import time
 import glob
-import basic_function as bf
-from basic_function import Path
-import pickle
+from lxml import etree
 import traceback
 import psutil
 from NDsm import *
 import json
+
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
@@ -38,6 +29,7 @@ gdal.UseExceptions()
 
 # Set np para
 np.seterr(divide='ignore', invalid='ignore')
+
 
 class Landsat_l2_ds(object):
 
@@ -86,7 +78,7 @@ class Landsat_l2_ds(object):
                 print('There has no base dir for the ori_folder and the ori_folder will be treated as the work env')
                 self._work_env = self.ori_folder
         else:
-            self._work_env = Path(work_env).path_name
+            self._work_env = bf.Path(work_env).path_name
 
         # Create output path
         self.unzipped_folder = self._work_env + 'Landsat_original_tiffile\\'
@@ -235,14 +227,14 @@ class Landsat_l2_ds(object):
             raise ValueError('There has no valid Landsat L2 data in the original folder!')
 
         if (os.path.exists(self._work_env + 'Metadata.xlsx') and len(self.orifile_list) != pd.read_excel(self._work_env + 'Metadata.xlsx').shape[0]) or not os.path.exists(self._work_env + 'Metadata.xlsx'):
-            File_path, FileID, Data_type, Tile, Date, Tier_level, Corrupted_FileID, Corrupted_Data_type, Corrupted_Tile, Corrupted_Date, Corrupted_Tier_level = ([] for _ in range(11))
+            File_path, FileID, Sensor_type, Tile, Date, Tier_level = ([] for _ in range(6))
             with tqdm(total=len(self.orifile_list), desc=f'Obtain the metadata of Landsat dataset', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for i in self.orifile_list:
                     try:
                         unzipped_file = tarfile.TarFile(i)
                         if unzipped_para:
                             # print('Start unzipped ' + str(i) + '.')
-                            start_time = time.time()
+                            # start_time = time.time()
                             unzipped_file.extractall(path=self.unzipped_folder)
                             # print('End Unzipped ' + str(i) + ' in ' + str(time.time() - start_time) + ' s.')
                         unzipped_file.close()
@@ -250,7 +242,7 @@ class Landsat_l2_ds(object):
                         landsat_indi = False
                         for _ in ['LE07', 'LC08', 'LT04', 'LT05']:
                             if _ in i:
-                                Data_type.append(i[i.find(_): i.find(_) + 4])
+                                Sensor_type.append(i[i.find(_): i.find(_) + 4])
                                 FileID.append(i[i.find(_): i.find('.tar')])
                                 landsat_indi = True
 
@@ -266,7 +258,7 @@ class Landsat_l2_ds(object):
                         shutil.move(i, corrupted_file_folder + i[i.find('L2S') - 5:])
 
                     pbar.update()
-            File_metadata = pandas.DataFrame({'File_Path': File_path, 'FileID': FileID, 'Data_Type': Data_type, 'Tile_Num': Tile, 'Date': Date, 'Tier_Level': Tier_level})
+            File_metadata = pandas.DataFrame({'File_Path': File_path, 'FileID': FileID, 'Sensor_Type': Sensor_type, 'Tile_Num': Tile, 'Date': Date, 'Tier_Level': Tier_level})
             File_metadata.to_excel(self._work_env + 'Metadata.xlsx')
 
         self.Landsat_metadata = pandas.read_excel(self._work_env + 'Metadata.xlsx')
@@ -302,7 +294,7 @@ class Landsat_l2_ds(object):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
             if kwarg_indicator not in ('ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_para', 'scan_line_correction',
-                                       'main_coordinate_system', 'overwritten_factor', 'cloud_removal_para'):
+                                       'main_coordinate_system', 'overwritten_factor', 'cloud_removal_para', 'metadata_range'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process cloud removal parameter
@@ -369,7 +361,7 @@ class Landsat_l2_ds(object):
         # Move all roi file into the new folder with specific sa name
         if self.ROI is not None:
             if not os.path.exists(shp_file_path + self.ROI_name + '.shp'):
-                file_all = bf.file_filter(Path(os.path.dirname(self.ROI)).path_name, [os.path.basename(self.ROI).split('.')[0]], subfolder_detection=True)
+                file_all = bf.file_filter(bf.Path(os.path.dirname(self.ROI)).path_name, [os.path.basename(self.ROI).split('.')[0]], subfolder_detection=True)
                 roi_remove_factor = True
                 for ori_file in file_all:
                     try:
@@ -776,14 +768,6 @@ class Landsat_l2_ds(object):
             self._manually_remove_datelist = False
             self._manually_remove_para = False
 
-        # process ROI_NAME
-        if 'ROI_name' in kwargs.keys():
-            self.ROI_name = kwargs['ROI_name']
-        elif self.ROI_name is None and self._inherit_from_logfile:
-            self._retrieve_para(['ROI_name'])
-        elif self.ROI_name is None:
-            raise Exception('Notice the ROI name was missed!')
-
         # process ROI
         if 'ROI' in kwargs.keys():
             self.ROI = kwargs['ROI']
@@ -791,6 +775,16 @@ class Landsat_l2_ds(object):
             self._retrieve_para(['ROI'])
         elif self.ROI is None:
             raise Exception('Notice the ROI was missed!')
+
+        # process ROI_NAME
+        if 'ROI_name' in kwargs.keys():
+            self.ROI_name = kwargs['ROI_name']
+        elif self.ROI_name is None and self._inherit_from_logfile:
+            self._retrieve_para(['ROI_name'])
+            if self.ROI_name is None:
+                self.ROI_name = self.ROI.split('\\')[-1].split('.shp')[0]
+        elif self.ROI_name is None:
+            raise Exception('Notice the ROI name was missed!')
 
         # Retrieve size control factor
         if 'size_control_factor' in kwargs.keys():
@@ -804,7 +798,7 @@ class Landsat_l2_ds(object):
             self._size_control_factor = False
 
     @save_log_file
-    def mp_ds2landsatdc(self, index_list, *args, **kwargs):
+    def mp_ds2landsatdc(self, index_list: list, *args, **kwargs):
 
         # Define the chunk size
         if 'chunk_size' in kwargs.keys() and type(kwargs['chunk_size']) is int:
@@ -816,11 +810,8 @@ class Landsat_l2_ds(object):
             chunk_size = os.cpu_count()
 
         # MP process
-        try:
-            with concurrent.futures.ProcessPoolExecutor(max_workers=chunk_size) as executor:
-                executor.map(self.ds2landsatdc, index_list, repeat(kwargs))
-        except OSError:
-            print('The OSError during the thread close for py38')
+        with concurrent.futures.ProcessPoolExecutor(max_workers=chunk_size) as executor:
+            executor.map(self.ds2landsatdc, index_list, repeat(kwargs))
 
     @save_log_file
     def seq_ds2landsatdc(self, index_list, *args, **kwargs):
@@ -838,14 +829,16 @@ class Landsat_l2_ds(object):
         self._process_2dc_para(**kwargs)
 
         # Define the input path
-        if _ not in self._band_sup:
+        if _ in self._band_sup:
             self._dc_infr[_ + 'input_path'] = self.unzipped_folder
         else:
             self._dc_infr[_ + 'input_path'] = self._work_env + f'Landsat_constructed_index\\{_}\\' if self.ROI_name is None else self._work_env + f'Landsat_{self.ROI_name}_index\\{_}\\'
+
         if not os.path.exists(self._dc_infr[_ + 'input_path']):
             raise Exception(f'Please validate the roi name and {str(_)} for ds2dc!')
         elif len(bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
             raise ValueError(f'{_} of the {self.ROI_name} is not consistent')
+
         eliminating_all_not_required_file(self._dc_infr[_ + 'input_path'])
 
         # Define the output path
@@ -856,12 +849,8 @@ class Landsat_l2_ds(object):
         if self._dc_overwritten_para or not os.path.exists(self._dc_infr[_] + _ + '_datacube.npy') or not os.path.exists(self._dc_infr[_] + 'date.npy') or not os.path.exists(self._dc_infr[_] + 'metadata.json'):
 
             sa_map = np.load(bf.file_filter(self._work_env + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
-            if self.ROI_name is None:
-                print('Start processing ' + _ + ' datacube.')
-                metadata_dic = {'ROI_name': None, 'index': _, 'ROI': None, 'ROI_array': None,
-                                'ROI_tif': None, 'sdc_factor': True, 'coordinate_system': self.main_coordinate_system,
-                                'size_control_factor': self._size_control_factor, 'oritif_folder': self._dc_infr[_ + 'input_path'],
-                                'dc_group_list': None,  'tiles': None}
+            if self.ROI_name is None or self.ROI is None:
+                raise ValueError('ROI needs to be specified before the Landsat dc construction')
             else:
                 print('Start processing ' + _ + ' datacube of the ' + self.ROI_name + '.')
                 sa_map = np.load(bf.file_filter(self._work_env + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
@@ -889,175 +878,191 @@ class Landsat_l2_ds(object):
             _huge_matrix = True if len(doy_list) * cols * rows * 2 > dc_max_size else False
             _sparse_matrix = True if sparsify > 0.9 else False
 
-            # Generate the cube
+            # Generate the datacube
             # There are 2 * 2 * 2 types of datacubes, determined by their size, sparsity, and inclusion of band data
-
+            # Define the var for different types
             if _huge_matrix:
                 if _sparse_matrix:
-
                     i, nodata_value, dtype_temp, dtype_out = 0, None, None, None
                     data_cube = NDSparseMatrix()
                     data_valid_array = np.zeros([len(doy_list)], dtype=int)
-                    while i < len(doy_list):
+                else:
+                    pass
+            else:
+                i, nodata_value, dtype_temp, dtype_out = 0, None, None, None
+                data_cube_list = []
+                data_valid_array = np.zeros([len(doy_list)], dtype=int)
 
-                        try:
-                            t1 = time.time()
-                            if _ not in self._band_sup:
-                                file_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [str(doy_list[i]), f'{_}.TIF'], and_or_factor='and')
-                                if len(file_list) == 0:
-                                    raise Exception(f'The {str(doy_list[i])}_{_} is not properly generated!')
-                                else:
-                                    ds_list = [gdal.Open(file_temp) for file_temp in file_list]
-                                    array_list = [ds_temp.GetRasterBand(1).ReadAsArray() for ds_temp in ds_list]
-                                    nodata_list = [ds_temp.GetRasterBand(1).GetNoDataValue() for ds_temp in ds_list]
-                                    dtype_list = [array_temp.dtype for array_temp in array_list]
+            while i < len(doy_list):
+                try:
+                    t1 = time.time()
+                    if _ not in self._band_sup:
+                        file_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [str(doy_list[i]), f'{_}.TIF'], and_or_factor='and')
+                        if len(file_list) == 0:
+                            raise Exception(f'The {str(doy_list[i])}_{_} is not properly generated!')
+                        else:
+                            ds_list = [gdal.Open(file_temp) for file_temp in file_list]
+                            array_list = [ds_temp.GetRasterBand(1).ReadAsArray() for ds_temp in ds_list]
+                            nodata_list = [ds_temp.GetRasterBand(1).GetNoDataValue() for ds_temp in ds_list]
+                            dtype_list = [array_temp.dtype for array_temp in array_list]
 
-                                    if len(list(set(nodata_list))) != 1:
-                                        raise ValueError(f'The nodatavalue is not consistent for {str(_)} in {str(doy_list[i])}')
-                                    elif nodata_value is None:
-                                        nodata_value = list(set(nodata_list))[0]
-                                    elif nodata_value != list(set(nodata_list))[0]:
-                                        raise ValueError(f'The nodatavalue is not consistent for {str(_)} in {str(doy_list[i])}')
+                            if len(list(set(nodata_list))) != 1:
+                                raise ValueError(f'The nodatavalue is not consistent for {str(_)} in {str(doy_list[i])}')
+                            elif nodata_value is None:
+                                nodata_value = list(set(nodata_list))[0]
+                            elif nodata_value != list(set(nodata_list))[0]:
+                                raise ValueError(f'The nodatavalue is not consistent for {str(_)} in {str(doy_list[i])}')
 
-                                    if len(list(set(dtype_list))) != 1:
-                                        raise ValueError(f'The dtype is not consistent for {str(_)} in {str(doy_list[i])}')
-                                    elif dtype_temp is None:
-                                        dtype_temp = list(set(dtype_list))[0]
-                                    elif dtype_temp != list(set(dtype_list))[0]:
-                                        raise ValueError(f'The dtype is not consistent for {str(_)} in {str(doy_list[i])}')
+                            if len(list(set(dtype_list))) != 1:
+                                raise ValueError(f'The dtype is not consistent for {str(_)} in {str(doy_list[i])}')
+                            elif dtype_temp is None:
+                                dtype_temp = list(set(dtype_list))[0]
+                            elif dtype_temp != list(set(dtype_list))[0]:
+                                raise ValueError(f'The dtype is not consistent for {str(_)} in {str(doy_list[i])}')
 
-                                # Mean array
-                                if len(array_list) == 1:
-                                    output_arr = array_list[0]
-                                else:
-                                    output_arr = np.stack(array_list, axis=2)
-                                    if np.isnan(nodata_value):
-                                        output_arr = np.nanmean(output_arr, axis=2)
-                                    else:
-                                        # Alternative method but raised RuntimeWarning: Mean of empty slice.
-                                        # output_arr = np.mean(output_arr, axis=2, where=output_arr != nodata_value)
-                                        output_arr = output_arr.astype(float)
-                                        output_arr[output_arr == nodata_value] = np.nan
-                                        output_arr = np.nanmean(output_arr, axis=2)
-
-                                # Convert the nodata value to 0
-                                if np.isnan(nodata_value):
-                                    output_arr[np.isnan(output_arr)] = 0
-                                    dtype_temp = np.float
-                                else:
-                                    output_arr[np.isnan(output_arr)] = nodata_value
-                                    output_arr = output_arr - nodata_value
-                                    max_v = np.iinfo(dtype_temp).max - nodata_value
-                                    min_v = np.iinfo(dtype_temp).min - nodata_value
-                                    if min_v < 0:
-                                        for type_temp in [np.int8, np.int16, np.int32, np.int64]:
-                                            if min_v >= np.iinfo(type_temp).min and max_v <= np.iinfo(type_temp).max:
-                                                dtype_out = type_temp
-                                                break
-                                    elif min_v >= 0:
-                                        for type_temp in [np.uint8, np.uint16, np.uint32, np.uint64]:
-                                            if max_v <= np.iinfo(type_temp).max:
-                                                dtype_out = type_temp
-                                                break
-                                    if dtype_out is None:
-                                        raise Exception('Code error for generating the datatype of output array!')
+                        # Mean array
+                        if len(array_list) == 1:
+                            output_arr = array_list[0]
+                        else:
+                            output_arr = np.stack(array_list, axis=2)
+                            if np.isnan(nodata_value):
+                                output_arr = np.nanmean(output_arr, axis=2)
                             else:
-                                pass
+                                # Alternative method but raised RuntimeWarning: Mean of empty slice.
+                                # output_arr = np.mean(output_arr, axis=2, where=output_arr != nodata_value)
+                                output_arr = output_arr.astype(float)
+                                output_arr[output_arr == nodata_value] = np.nan
+                                output_arr = np.nanmean(output_arr, axis=2)
 
-                            # Process the array temp
+                        # Convert the nodata value to 0
+                        if np.isnan(nodata_value):
+                            output_arr[np.isnan(output_arr)] = 0
+                            dtype_temp = np.float
+                        else:
+                            output_arr[np.isnan(output_arr)] = nodata_value
+                            output_arr = output_arr - nodata_value
+                            max_v = np.iinfo(dtype_temp).max - nodata_value
+                            min_v = np.iinfo(dtype_temp).min - nodata_value
+                            if min_v < 0:
+                                for type_temp in [np.int8, np.int16, np.int32, np.int64]:
+                                    if min_v >= np.iinfo(type_temp).min and max_v <= np.iinfo(type_temp).max:
+                                        dtype_out = type_temp
+                                        break
+                            elif min_v >= 0:
+                                for type_temp in [np.uint8, np.uint16, np.uint32, np.uint64]:
+                                    if max_v <= np.iinfo(type_temp).max:
+                                        dtype_out = type_temp
+                                        break
+                            if dtype_out is None:
+                                raise Exception('Code error for generating the datatype of output array!')
+                    else:
+                        reqfile_metadata = self.Landsat_metadata[self.Landsat_metadata['Date'] == doy_list[i]]
+                        reqfile_list = []
+                        bound_temp = None
+
+                        # Obtain the filepath for each band tiffile
+                        for i in range(reqfile_metadata.shape[0]):
+                            band_name = self._band_tab[f"{reqfile_metadata['Sensor_Type'][i]}_bandnum"][self._band_tab[f"{reqfile_metadata['Sensor_Type'][i]}_bandname"].index(i)]
+                            file_name = reqfile_metadata['File_Path'][i].split('.tar')[0] + f'_{str(band_name)}.TIF'
+                            if not os.path.exists(file_name):
+                                raise Exception(f'The band file {file_name} is not exists!')
+                            else:
+                                reqfile_list.append(file_name)
+
+                        # Generate the bound
+                        if bound_temp is None:
+                            ds_temp = gdal.Open(metadata_dic['ROI_tif'])
+                            ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
+                            bound_temp = (ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize, ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp)
+
+                        # Generate the bound
+                        if len(reqfile_list) == 1:
+                            vrt = gdal.BuildVRT(
+                                f"/vsimem/{str(doy_list[i])}_{_}.vrt",
+                                reqfile_list, xRes=30, yRes=30, outputBounds=bound_temp,
+                                srcNodata=0, VRTNodata=0)
+
+                        elif len(reqfile_list) > 1:
+                            vrt = gdal.BuildVRT(
+                                f"/vsimem/{str(doy_list[i])}_{_}.vrt",
+                                reqfile_list, xRes=30, yRes=30, outputBounds=bound_temp,
+                                srcNodata=0, VRTNodata=0)
+
+                            vrt_tree = etree.parse(f"/vsimem/{str(doy_list[i])}_{_}.vrt",)
+                            vrt_root = vrt_tree.getroot()
+                            vrtband1 = vrt_root.findall(".//VRTRasterBand[@band='1']")[0]
+
+                            vrtband1.set("subClass", "VRTDerivedRasterBand")
+                            pixelFunctionType = etree.SubElement(vrtband1, 'PixelFunctionType')
+                            pixelFunctionType.text = "find_max"
+                            pixelFunctionLanguage = etree.SubElement(vrtband1, 'PixelFunctionLanguage')
+                            pixelFunctionLanguage.text = "Python"
+                            pixelFunctionCode = etree.SubElement(vrtband1, 'PixelFunctionCode')
+                            pixelFunctionCode.text = etree.CDATA("""
+                            import numpy as np
+
+                            def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
+                                    np.amax(in_ar, axis=0, initial=255, out=out_ar)
+                            """)
+
+                        else:
+                            raise Exception('Code error')
+
+                        gdal.Warp(vrt, f"/vsimem/{str(doy_list[i])}_{_}.TIF", cutlineDSName=self.ROI, cropToCutline=True, xRes=30, yRes=30, dstNodata=0)
+                        output_ds = gdal.Open(f"/vsimem/{str(doy_list[i])}_{_}.TIF")
+                        output_arr = output_ds.GetRasterBand(1).ReadAsArray()
+
+                    if _huge_matrix:
+                        if _sparse_matrix:
+                            # Convert the output_arr 2 sparse matrix
                             sm_temp = sm.csr_matrix(output_arr.astype(dtype_out))
                             data_cube.append(sm_temp, name=doy_list[i])
                             data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
+                        else:
+                            pass
+                    else:
+                        data_cube_list.append(output_arr)
+                        data_valid_array[i] = 1 if [output_arr == nodata_value].all() else 0
 
-                            print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
-                            i += 1
+                    print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
+                    i += 1
 
-                        except:
-                            print(traceback.format_exc())
-                            raise Exception(f'Dc construction failed during process {str(doy_list[i])}!')
+                except:
+                    print(traceback.format_exc())
+                    raise Exception(f'Dc construction failed during process {str(doy_list[i])}!')
 
-                    # Set the metadata
-                    metadata_dic['Datatype'] = dtype_out
-                    metadata_dic['Zoffset'] = - nodata_value
+            if not _huge_matrix:
+                data_cube = np.stack(data_cube_list, axis=2)
 
-                    # remove nan layer
-                    if self._manually_remove_para is True and self._manually_remove_datelist is not None:
-                        i_temp = 0
-                        while i_temp < len(doy_list):
-                            if doy_list[i_temp] in self._manually_remove_datelist:
-                                data_valid_array[i] = 1
-                                self._manually_remove_datelist.remove(doy_list[i_temp])
-                            i_temp += 1
-                    elif self._manually_remove_para is True and self._manually_remove_datelist is None:
-                        raise ValueError('Please correctly input the manual input date list')
+            # remove nan layer
+            if self._manually_remove_para is True and self._manually_remove_datelist is not None:
+                i_temp = 0
+                while i_temp < len(doy_list):
+                    if doy_list[i_temp] in self._manually_remove_datelist:
+                        data_valid_array[i] = 1
+                        self._manually_remove_datelist.remove(doy_list[i_temp])
+                    i_temp += 1
+            elif self._manually_remove_para is True and self._manually_remove_datelist is None:
+                raise ValueError('Please correctly input the manual input date list')
 
-                    if self._remove_nan_layer or self._manually_remove_para:
-                        i_temp = 0
-                        while i_temp < len(doy_list):
-                            if data_valid_array[i_temp]:
-                                if doy_list[i_temp] in data_cube.SM_namelist:
-                                    data_cube.remove_layer(doy_list[i_temp])
-                                doy_list.remove(doy_list[i_temp])
-                                data_valid_array = np.delete(data_valid_array, i_temp, 0)
-                                i_temp -= 1
-                            i_temp += 1
+            if self._remove_nan_layer or self._manually_remove_para:
+                i_temp = 0
+                while i_temp < len(doy_list):
+                    if data_valid_array[i_temp]:
+                        if doy_list[i_temp] in data_cube.SM_namelist:
+                            data_cube.remove_layer(doy_list[i_temp])
+                        doy_list.remove(doy_list[i_temp])
+                        data_valid_array = np.delete(data_valid_array, i_temp, 0)
+                        i_temp -= 1
+                    i_temp += 1
 
                     # Save the sdc
                     np.save(self._dc_infr[_] + f'doy.npy', doy_list)
                     bf.create_folder(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
                     data_cube.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
 
-                else:
-                    pass
-
-            else:
-                i, nodata_value = 0, None
-                data_cube = np.zeros([rows, cols, len(doy_list)])
-                data_valid_array = np.zeros([len(doy_list)], dtype=int)
-                while i < len(doy_list):
-
-                    t1 = time.time()
-                    if not os.path.exists(f"{self._dc_infr[_ + 'input_path']}{str(doy_list[i])}_{_}.TIF"):
-                        raise Exception(f'The {str(doy_list[i])}_{_} is not properly generated!')
-                    else:
-                        ds_temp = gdal.Open(f"{self._dc_infr[_ + 'input_path']}{str(doy_list[i])}_{_}.TIF")
-                        array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-
-                    data_cube[:, :, i] = array_temp
-                    data_valid_array[i] = 1 if [array_temp == nodata_value].all() else 0
-
-                    print(
-                        f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
-                    i += 1
-
-                # remove nan layer (NEED FIX)
-                if self._manually_remove_para is True and self._manually_remove_datelist is not None:
-                    i_temp = 0
-                    while i_temp < len(doy_list):
-                        if doy_list[i_temp] in self._manually_remove_datelist:
-                            data_valid_array[i] = 1
-                            self._manually_remove_datelist.remove(doy_list[i_temp])
-                        i_temp += 1
-
-                elif self._manually_remove_para is True and self._manually_remove_datelist is None:
-                    raise ValueError('Please correctly input the manual input date list')
-
-                if self._remove_nan_layer or self._manually_remove_para:
-                    i_temp = 0
-                    while i_temp < len(doy_list):
-                        if data_valid_array[i_temp]:
-                            data_cube = np.delete(data_cube, i_temp, 2)
-                            doy_list.remove(doy_list[i_temp])
-                            data_valid_array = np.delete(data_valid_array, i_temp, 0)
-                            i_temp -= 1
-                        i_temp += 1
-
-                # Save the sdc
-                np.save(self._dc_infr[_] + f'doy.npy', doy_list)
-                bf.create_folder(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
-                np.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube.npy', data_cube)
-
             # Save the metadata dic
+            metadata_dic['Datatype'], metadata_dic['Zoffset'] = dtype_out, - nodata_value
             metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
             with open(self._dc_infr[_] + 'metadata.json', 'w') as js_temp:
                 json.dump(metadata_dic, js_temp)
@@ -1165,10 +1170,10 @@ class Landsat_dc(object):
 
         # Check work env
         if work_env is not None:
-            self.work_env = Path(work_env).path_name
+            self.work_env = bf.Path(work_env).path_name
         else:
-            self.work_env = Path(os.path.dirname(os.path.dirname(self.dc_filepath))).path_name
-        self.root_path = Path(os.path.dirname(os.path.dirname(self.work_env))).path_name
+            self.work_env = bf.Path(os.path.dirname(os.path.dirname(self.dc_filepath))).path_name
+        self.root_path = bf.Path(os.path.dirname(os.path.dirname(self.work_env))).path_name
 
         # Inundation parameter process
         self._DSWE_threshold = None
@@ -1341,7 +1346,7 @@ class Landsat_dcs(object):
 
         #  Define the output_path
         if work_env is None:
-            self.work_env = Path(os.path.dirname(os.path.dirname(self.Landsat_dcs[0].Denv_dc_filepath))).path_name
+            self.work_env = bf.Path(os.path.dirname(os.path.dirname(self.Landsat_dcs[0].Denv_dc_filepath))).path_name
         else:
             self.work_env = work_env
         
@@ -4820,3 +4825,4 @@ if __name__ == '__main__':
     landsat_temp = Landsat_l2_ds('G:\\Landsat_test\\Original_zip_files\\')
     landsat_temp.construct_metadata(unzipped_para=False)
     landsat_temp.mp_construct_index(['MNDWI', 'OSAVI'], cloud_removal_para=True, size_control_factor=True, ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
+    landsat_temp.mp_ds2landsatdc(['MNDWI', 'OSAVI'], inherit_from_logfile=True)
