@@ -202,6 +202,7 @@ class Landsat_l2_ds(object):
         # SINCE the Landsat 9 was not struggled with the scan line corrector issue
         # It has a priority than the Landsat
         ##################################################################
+
         date_tile_combined_list = [filepath_temp.split('\\')[-1].split('.')[0].split('_L2SP_')[-1][0: 15] for filepath_temp in self.orifile_list]
         for date_tile_temp in date_tile_combined_list:
             if date_tile_combined_list.count(date_tile_temp) == 2:
@@ -414,12 +415,7 @@ class Landsat_l2_ds(object):
             print('The OSError during the thread close for py38')
 
         # Process issue file
-        if self.construction_issue_factor:
-            issue_files = open(f"{self.log_filepath}construction_failure_files.txt", "w+")
-            issue_files.writelines(['#' * 50 + 'Construction issue files' + '#' * 50])
-            issue_files.writelines([q + '\n' for q in self.construction_failure_files])
-            issue_files.writelines(['#' * 50 + 'Construction issue files' + '#' * 50])
-            issue_files.close()
+        self._process_issused_files(args[0], **kwargs)
 
     @save_log_file
     def sequenced_construct_vi(self, *args, **kwargs):
@@ -433,13 +429,50 @@ class Landsat_l2_ds(object):
         for i in range(self.Landsat_metadata_size):
             self.construct_landsat_index(args[0], i, **kwargs)
 
+        # Process issue file
+        self._process_issused_files(args[0], **kwargs)
+
+    def _process_issused_files(self, index_, **kwargs):
         if self.construction_issue_factor:
+            corrupted_file_folder = os.path.join(self._work_env, 'Corrupted_zip_file\\')
+            bf.create_folder(corrupted_file_folder)
             issue_files = open(f"{self.log_filepath}construction_failure_files.txt", "w+")
             issue_files.writelines(['#' * 50 + 'Construction issue files' + '#' * 50])
-            issue_files.writelines([q + '\n' for q in self.construction_failure_files])
+            for _ in self.construction_failure_files:
+                remove_factor = False
+                filenum = self.Landsat_metadata[self.Landsat_metadata['FileID'] == self.Landsat_metadata['FileID'][0]].index[0]
+                try:
+                    self.construct_landsat_index(index_, filenum, **kwargs)
+                except:
+                    remove_factor = True
+
+                if self.construction_failure_files.count(_) >= 1 and self.construction_failure_files[-1] == _:
+                    self.construction_failure_files = self.construction_failure_files[:-1]
+                    remove_factor = True
+
+                if remove_factor:
+                    shutil.move(self.Landsat_metadata['File_Path'][filenum], corrupted_file_folder + self.Landsat_metadata['File_Path'][filenum].split('\\')[-1])
+                    corrupted_filename = self.Landsat_metadata['File_Path'][filenum].split('\\')[-1].split('.tar')[0]
+                    unzipped_corrupted_files = bf.file_filter(self.unzipped_folder, [corrupted_filename])
+                    for temp in unzipped_corrupted_files:
+                        try:
+                            os.remove(temp)
+                        except:
+                            raise Exception(f'Failed to remove the corrupted unzipped tiffile {temp}!')
+
+                    output_folder = f'{self._work_env}Landsat_constructed_index\\' if self.ROI is None else f'{self._work_env}Landsat_{str(self.ROI_name)}_index\\'
+                    output_issued_files = bf.file_filter(output_folder, [str(self.Landsat_metadata['Tile_Num'][filenum]), str(self.Landsat_metadata['Date'][filenum])], and_or_factor='and', subfolder_detection=True)
+                    for temp in output_issued_files:
+                        try:
+                            os.remove(temp)
+                        except:
+                            raise Exception(f'Failed to remove the corrupted unzipped tiffile {temp}!')
+
+                    issue_files.writelines([q + '\n' for q in self.construction_failure_files])
+
             issue_files.writelines(['#' * 50 + 'Construction issue files' + '#' * 50])
             issue_files.close()
-    
+
     def _check_output_band_statue(self, band_name, tiffile_serial_num):
 
         # Define local var
