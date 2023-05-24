@@ -1076,7 +1076,7 @@ class Landsat_l2_ds(object):
                     np.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube.npy', data_cube)
 
                 # Save the metadata dic
-                metadata_dic['Datatype'], metadata_dic['Zoffset'] = dtype_out, - nodata_value
+                metadata_dic['Datatype'], metadata_dic['Zoffset'] = str(np.iinfo(dtype_out).dtype), - nodata_value
                 metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
                 with open(self._dc_infr[_] + 'metadata.json', 'w') as js_temp:
                     json.dump(metadata_dic, js_temp)
