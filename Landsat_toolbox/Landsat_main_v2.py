@@ -1031,17 +1031,21 @@ class Landsat_l2_ds(object):
                                         date_temp = file_temp.split('\\')[-1].split('_')[0]
                                         tile = file_temp.split('\\')[-1].split('_')[1]
                                         index_name = file_temp.split('\\')[-1].split('_')[2]
-                                        os.remove(file_temp)
-                                        self.construct_landsat_index([index_name], self.Landsat_metadata[(self.Landsat_metadata['Date'] == int(date_temp)) & (self.Landsat_metadata['Tile_Num'] == int(tile))].index[0], inherit_from_logfile=True)
 
                                     try:
+                                        os.remove(file_temp)
+                                    except PermissionError:
+                                        pass
+
+                                    try:
+                                        self.construct_landsat_index([index_name], self.Landsat_metadata[(self.Landsat_metadata['Date'] == int(date_temp)) & (self.Landsat_metadata['Tile_Num'] == int(tile))].index[0], inherit_from_logfile=True)
                                         ds_list = [gdal.Open(file_temp) for file_temp in file_list]
                                         array_list = [ds_temp.GetRasterBand(1).ReadAsArray() for ds_temp in ds_list]
                                         nodata_list = [ds_temp.GetRasterBand(1).GetNoDataValue() for ds_temp in ds_list]
                                         dtype_list = [array_temp.dtype for array_temp in array_list]
                                     except RuntimeError:
                                         self._process_issued_files(index_name, self.Landsat_metadata[(self.Landsat_metadata['Date'] == int(date_temp)) & (self.Landsat_metadata['Tile_Num'] == int(tile))].index[0])
-                                        raise Exception(f'The {index_name} of {str(date_temp)} {str(tile)}.Please manually rerun the program')
+                                        raise Exception(f'The {index_name} of {str(date_temp)} {str(tile)} is corrupted. Please manually rerun the program')
 
                                 if len(list(set(nodata_list))) != 1:
                                     raise ValueError(f'The nodata value is not consistent for {str(_)} in {str(doy_list[i])}')
