@@ -1044,7 +1044,7 @@ class Landsat_l2_ds(object):
                                         nodata_list = [ds_temp.GetRasterBand(1).GetNoDataValue() for ds_temp in ds_list]
                                         dtype_list = [array_temp.dtype for array_temp in array_list]
                                     except RuntimeError:
-                                        self._process_issued_files(index_name, self.Landsat_metadata[(self.Landsat_metadata['Date'] == int(date_temp)) & (self.Landsat_metadata['Tile_Num'] == int(tile))].index[0])
+                                        self._process_issued_files(index_name, [self.Landsat_metadata[(self.Landsat_metadata['Date'] == int(date_temp)) & (self.Landsat_metadata['Tile_Num'] == int(tile))].index[0]])
                                         raise Exception(f'The {index_name} of {str(date_temp)} {str(tile)} is corrupted. Please manually rerun the program')
 
                                 if len(list(set(nodata_list))) != 1:
