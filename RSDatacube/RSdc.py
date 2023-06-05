@@ -1,3 +1,4 @@
+# coding=utf-8
 import gdal
 import sys
 import pandas as pd
@@ -13,13 +14,13 @@ import basic_function as bf
 import concurrent.futures
 from itertools import repeat
 import datetime
+from Landsat_toolbox.Landsat_main_v2 import Landsat_dc
 import traceback
 from GEDI_toolbox import GEDI_main as gedi
 from scipy import sparse as sm
-from Sentinel2_toolbox.utils import retrieve_srs, write_raster, remove_all_file_and_folder, link_GEDI_inform, cf2phemetric_dc, \
-    link_GEDI_pheinform, get_index_by_date, seven_para_logistic_function, two_term_fourier, curfit4bound_annual, curfit_pd2raster, link_GEDI_accdenvinform, get_base_denv
-from Sentinel2_toolbox.built_in_index import built_in_index
+from Sentinel2_toolbox.utils import *
 from Sentinel2_toolbox.Sentinel_main_V2 import Sentinel2_dc, Sentinel2_ds
+from Landsat_toolbox.utils import *
 from NDsm import NDSparseMatrix
 import json
 from tqdm.auto import tqdm
@@ -31,6 +32,45 @@ def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
 
 def two_term_fourier(x, a0, a1, b1, a2, b2, w):
     return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x)+b2 * np.sin(2 * w * x)
+
+
+def invert_data(data, size_control, offset_value, nodata_value, original_dtype: bool =False):
+
+    # Convert the data to ndarray
+    if isinstance(data, np.ndarray):
+        dtype = np.ndarray
+    elif isinstance(data, (sm.coo_matrix, sm.csr_matrix, sm.csc_matrix, sm.bsr_matrix, sm.lil_matrix, sm.dok_matrix)):
+        dtype = type(data)
+        data = data.toarray()
+    elif isinstance(data, list):
+        dtype = list
+        try:
+            data = np.ndarray(data)
+        except TypeError:
+            print(traceback.format_exc())
+            raise TypeError('There are str type in the input data during the data inversion!')
+    else:
+        raise TypeError(f'The input data is not under a proper type!')
+
+    # Convert nodata value to np.nan
+    if not np.nan(nodata_value):
+        data = data.astype(float)
+        data[data == nodata_value] = np.nan
+    else:
+        data = data.astype(float)
+
+    # Data inversion
+    if offset_value is not None and ~np.isnan(offset_value) and isinstance(offset_value, (float, int)):
+        data = data - offset_value
+
+    if isinstance(size_control, bool) and size_control:
+        data = data / 10000
+
+    # Return data
+    if original_dtype:
+        return dtype(data)
+    else:
+        return data
 
 
 class Denv_dc(object):
@@ -597,114 +637,137 @@ class RS_dcs(object):
         # init_key_var
         self._sdc_factor_list = []
         self.sparse_matrix, self.huge_matrix = False, False
-        self.s2dc_doy_list, self.size_control_factor_list, self.oritif_folder_list = [], [], []
+        self.s2dc_doy_list = []
         self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = None, None, None, None
         self.year_list = []
 
         # Generate the datacubes list
-        self._dcs_backup_ = []
-        self._doys_backup_ = []
-        self._dc_typelist = []
         self.dcs = []
+        self._dcs_backup_, self._doys_backup_, self._dc_typelist = [], [], []
+        self._index_list = []
+        self._size_control_factor_list, self.oritif_folder_list = [], []
+        self._Zoffset_list, self._Nodata_value_list = [], []
+        self._space_optimised = space_optimised
+        self._sparse_matrix_list, self._huge_matrix_list = [], []
 
         # Construct the indicator for different dcs
         self._phemetric_namelist, self._pheyear_list = None, []
-        self._withPhemetricdc_, self._withDenvdc_, self._withS2dc_ = False, False, False
+        self._withPhemetricdc_, self._withDenvdc_, self._withS2dc_, self._withLandsatdc_ = False, False, False, False
         self._s2dc_work_env, self._phemetric_work_env, self._denv_work_env = None, None, None
 
         # Separate into Denv Phemetric and Sentinel-2 datacube
         for args_temp in args:
-            if not isinstance(args_temp, Sentinel2_dc) and not isinstance(args_temp, Denv_dc) and not isinstance(
-                    args_temp, Phemetric_dc):
-                raise TypeError(
-                    'The Sentinel2 datacubes should be a bunch of Sentinel2 datacube, phemetric datacube or Denv datacube!')
+            if not isinstance(args_temp, (Sentinel2_dc, Denv_dc, Phemetric_dc, Landsat_dc)):
+                raise TypeError('The RS datacubes should be a bunch of Sentinel2 datacube, Landsat datacube, phemetric datacube or Denv datacube!')
             else:
                 self._dcs_backup_.append(args_temp)
                 if isinstance(args_temp, Phemetric_dc):
                     self._doys_backup_.append(args_temp.paraname_list)
-                elif isinstance(args_temp, Sentinel2_dc) or isinstance(args_temp, Denv_dc):
+                elif isinstance(args_temp, (Sentinel2_dc, Denv_dc, Landsat_dc)):
                     self._doys_backup_.append(args_temp.sdc_doylist)
                 self._dc_typelist.append(type(args_temp))
 
         if len(self._dcs_backup_) == 0:
-            raise ValueError('Please input at least one valid Sentinel2/Phemetric/Denv datacube')
+            raise ValueError('Please input at least one valid Sentinel2/Phemetric/Denv/Landsat datacube')
 
         if type(auto_harmonised) != bool:
             raise TypeError('Please input the auto harmonised factor as bool type!')
         else:
             harmonised_factor = False
 
-        # Merge all the fundamental factor
-        factor_all = ['dc_XSize', 'dc_YSize', 'dc_ZSize']
-        for args_temp in args:
-            factor_all.extend(list(args_temp._fund_factor))
-        factor_all = list(set(factor_all))
+        # Merge all the factor found in metadata
+        try:
+            factor_all = ['dc_XSize', 'dc_YSize', 'dc_ZSize']
+            for args_temp in args:
+                factor_all.extend(list(args_temp._fund_factor))
+            factor_all = list(set(factor_all))
 
-        # Input all metadata
-        for args_temp in args:
+            for args_temp in args:
+                for factor_temp in factor_all:
+                    if f'_{factor_temp}_list' not in self.__dict__.keys():
+                        self.__dict__[f'_{factor_temp}_list'] = []
+
+                    if factor_temp in args_temp.__dict__.keys():
+                        self.__dict__[f'_{factor_temp}_list'].append(args_temp.__dict__[factor_temp])
+                    else:
+                        self.__dict__[f'_{factor_temp}_list'].append(None)
+
             for factor_temp in factor_all:
-                if f'_{factor_temp}_list' not in self.__dict__.keys():
-                    self.__dict__[f'_{factor_temp}_list'] = []
-
-                if factor_temp in args_temp.__dict__.keys():
-                    self.__dict__[f'_{factor_temp}_list'].append(args_temp.__dict__[factor_temp])
-                else:
-                    self.__dict__[f'_{factor_temp}_list'].append(None)
-
-        for factor_temp in factor_all:
-            if len(self.__dict__[f'_{factor_temp}_list']) != len(self.__dict__[f'_{factor_all[0]}_list']):
-                raise ImportError('The factor of some dcs is not properly imported!')
+                if len(self.__dict__[f'_{factor_temp}_list']) != len(self.__dict__[f'_{factor_all[0]}_list']):
+                    raise ImportError('The factor of some dcs is not properly imported!')
+        except:
+            print(traceback.format_exc())
+            raise Exception('The metadata is not properly imported due to the reason above!')
 
         # Check the consistency of datacube size
-        x_size, y_size, z_S2size, z_Phemetric_size, z_Denv_size = 0, 0, 0, 0, 0
-        for _ in range(len(self._dc_typelist)):
+        try:
+            x_size, y_size, z_S2_size, z_Phemetric_size, z_Denv_size, z_Landsat_size = 0, 0, 0, 0, 0, 0
+            for _ in range(len(self._dc_typelist)):
 
-            if self._dc_typelist[_] == Sentinel2_dc:
-                self._withS2dc_ = True
-                # Retrieve the shape inform
-                if x_size == 0 and y_size == 0:
-                    x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
+                if self._dc_typelist[_] == Sentinel2_dc:
+                    self._withS2dc_ = True
+                    # Retrieve the shape inform
+                    if x_size == 0 and y_size == 0:
+                        x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
 
-                if z_S2size == 0:
-                    z_S2size = self._dcs_backup_[_].dc_ZSize
+                    if z_S2_size == 0:
+                        z_S2_size = self._dcs_backup_[_].dc_ZSize
 
-                if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
-                    raise Exception('Please make sure all the Sentinel-2 datacube share the same size!')
-                elif z_S2size != self._dcs_backup_[_].dc_ZSize:
-                    if auto_harmonised:
-                        harmonised_factor = True
-                    else:
-                        raise Exception(
-                            'The Sentinel-2datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
+                    if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
+                        raise Exception('Please make sure all the Sentinel-2 datacube share the same size!')
+                    elif z_S2_size != self._dcs_backup_[_].dc_ZSize:
+                        if auto_harmonised:
+                            harmonised_factor = True
+                        else:
+                            raise Exception('The Sentinel-2 datacube are not consistent in the Z dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
 
-            elif self._dc_typelist[_] == Denv_dc:
-                self._withDenvdc_ = True
-                # Retrieve the shape inform
-                if x_size == 0 and y_size == 0:
-                    x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
+                elif self._dc_typelist[_] == Landsat_dc:
+                    self._withLandsatdc_ = True
+                    # Retrieve the shape inform
+                    if x_size == 0 and y_size == 0:
+                        x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
 
-                if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
-                    raise Exception('Please make sure all the Denv datacube share the same size!')
+                    if z_Landsat_size == 0:
+                        z_Landsat_size = self._dcs_backup_[_].dc_ZSize
 
-            elif self._dc_typelist[_] == Phemetric_dc:
-                self._withPhemetricdc_ = True
-                # Retrieve the shape inform
-                if x_size == 0 and y_size == 0:
-                    x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
+                    if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
+                        raise Exception('Please make sure all the Landsat datacube share the same size!')
+                    elif z_Landsat_size != self._dcs_backup_[_].dc_ZSize:
+                        if auto_harmonised:
+                            harmonised_factor = True
+                        else:
+                            raise Exception('The Landsat datacubes are not consistent in the Z dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
 
-                if z_Phemetric_size == 0:
-                    z_Phemetric_size = self._dcs_backup_[_].dc_ZSize
+                elif self._dc_typelist[_] == Denv_dc:
+                    self._withDenvdc_ = True
+                    # Retrieve the shape inform
+                    if x_size == 0 and y_size == 0:
+                        x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
 
-                if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
-                    raise Exception('Please make sure all the Denv datacube share the same size!')
-                elif z_Phemetric_size != self._dcs_backup_[_].dc_ZSize:
-                    raise Exception(
-                        'The Phemetric_dc datacubes is not consistent in the Z dimension! Double check the input!')
+                    if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
+                        raise Exception('Please make sure all the Denv datacube share the same size!')
 
-        if x_size != 0 and y_size != 0:
-            self.dcs_XSize, self.dcs_YSize = x_size, y_size
-        else:
-            raise Exception('Error occurred when obtaining the x y size of s2 dcs!')
+                elif self._dc_typelist[_] == Phemetric_dc:
+                    self._withPhemetricdc_ = True
+                    # Retrieve the shape inform
+                    if x_size == 0 and y_size == 0:
+                        x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
+
+                    if z_Phemetric_size == 0:
+                        z_Phemetric_size = self._dcs_backup_[_].dc_ZSize
+
+                    if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
+                        raise Exception('Please make sure all the Denv datacube share the same size!')
+                    elif z_Phemetric_size != self._dcs_backup_[_].dc_ZSize:
+                        raise Exception('The Phemetric_dc datacubes is not consistent in the Z dimension! Double check the input!')
+
+            if x_size != 0 and y_size != 0:
+                self.dcs_XSize, self.dcs_YSize = x_size, y_size
+            else:
+                raise Exception('Error occurred when obtaining the x y size of s2 dcs!')
+        except:
+            print(traceback.format_exc())
+            raise Exception('Error occurred during the consistency check of datacube size!')
 
         # Check the consistency of S2dcs
         if self._withS2dc_:
@@ -712,9 +775,7 @@ class RS_dcs(object):
             if len(s2dc_pos) != 1:
                 for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'ROI_tif', 'coordinate_system',
                                     'sparse_matrix', 'huge_matrix', 'sdc_factor', 'dc_group_list', 'tiles']:
-                    if False in [
-                        self.__dict__[f'_{factor_temp}_list'][s2dc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos]
-                        for pos in s2dc_pos]:
+                    if False in [self.__dict__[f'_{factor_temp}_list'][s2dc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos] for pos in s2dc_pos]:
                         raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
 
                 # Read the doy or date list
@@ -722,32 +783,67 @@ class RS_dcs(object):
                     raise Exception('Please sequenced the Sentinel-2 datacubes before further process!')
                 else:
                     if False in [len(self._doys_backup_[s2dc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp
-                                 in s2dc_pos] or False in [
-                        (self._doys_backup_[pos_temp] == self._doys_backup_[s2dc_pos[0]]) for pos_temp in s2dc_pos]:
+                                 in s2dc_pos] or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[s2dc_pos[0]]) for pos_temp in s2dc_pos]:
                         if auto_harmonised:
                             harmonised_factor = True
                         else:
-                            raise Exception(
-                                'The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
+                            raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
                     else:
                         self.s2dc_doy_list = self._doys_backup_[s2dc_pos[0]]
 
                 # Harmonised the dcs
                 if harmonised_factor:
-                    self._auto_harmonised_s2dcs()
+                    self._auto_harmonised_dcs(Sentinel2_dc)
 
                 # Determine the Zsize
-                if z_S2size != 0:
-                    self.S2dc_ZSize = z_S2size
+                if z_S2_size != 0:
+                    self.S2dc_ZSize = z_S2_size
                 else:
                     raise Exception('Error occurred when obtaining the Z size of s2 dc!')
 
                 # Define the output_path
                 if work_env is None:
-                    self._s2dc_work_env = Path(
-                        os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
+                    self._s2dc_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
                 else:
                     self._s2dc_work_env = work_env
+
+        # Check the consistency of S2dcs
+        if self._withLandsatdc_:
+            Landsatdc_pos = [i for i, v in enumerate(self._dc_typelist) if v == Landsat_dc]
+            if len(Landsatdc_pos) != 1:
+                for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'ROI_tif', 'coordinate_system',
+                                    'sparse_matrix', 'huge_matrix', 'sdc_factor', 'dc_group_list', 'tiles']:
+                    if False in [self.__dict__[f'_{factor_temp}_list'][Landsatdc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos] for pos in Landsatdc_pos]:
+                        raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
+
+                # Read the doy or date list
+                if False in [self._sdc_factor_list[pos_temp] for pos_temp in Landsatdc_pos]:
+                    raise Exception('Please sequenced the Landsat datacubes before further process!')
+                else:
+                    if False in [len(self._doys_backup_[Landsatdc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp in Landsatdc_pos] or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[Landsatdc_pos[0]]) for pos_temp in Landsatdc_pos]:
+                        if auto_harmonised:
+                            harmonised_factor = True
+                        else:
+                            raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
+                    else:
+                        self.Landsatdc_doy_list = self._doys_backup_[Landsatdc_pos[0]]
+
+                # Harmonised the dcs
+                if harmonised_factor:
+                    self._auto_harmonised_dcs(Landsat_dc)
+
+                # Determine the Zsize
+                if z_Landsat_size != 0:
+                    self.Landsatdc_ZSize = z_Landsat_size
+                else:
+                    raise Exception('Error occurred when obtaining the Z size of Landsat dc!')
+
+                # Define the output_path
+                if work_env is None:
+                    self._Landsatdc_work_env = Path(
+                        os.path.dirname(os.path.dirname(self._dcs_backup_[Landsatdc_pos[0]].dc_filepath))).path_name
+                else:
+                    self._Landsatdc_work_env = work_env
 
         # Check the consistency of Denv dcs
         if self._withDenvdc_:
@@ -773,8 +869,7 @@ class RS_dcs(object):
                 self._denv_work_env = work_env
 
             # Determine the denv index
-            self.Denv_indexlist = list(
-                set([self._index_list[_] for _ in range(len(self._index_list)) if self._dc_typelist[_] == Denv_dc]))
+            self.Denv_indexlist = list(set([self._index_list[_] for _ in range(len(self._index_list)) if self._dc_typelist[_] == Denv_dc]))
 
         # Check the consistency of Phemetric dcs
         if self._withPhemetricdc_:
@@ -802,8 +897,7 @@ class RS_dcs(object):
             # Construct phemetric namelist
             self._phemetric_namelist = []
             for _ in Phemetricdc_pos:
-                self._phemetric_namelist.extend(
-                    [temp.split(str(self._pheyear_list[_]) + '_')[-1] for temp in self._doys_backup_[_]])
+                self._phemetric_namelist.extend([temp.split(str(self._pheyear_list[_]) + '_')[-1] for temp in self._doys_backup_[_]])
             self._phemetric_namelist = list(set(self._phemetric_namelist))
 
             pheyear = []
@@ -815,88 +909,41 @@ class RS_dcs(object):
 
         # Check consistency between different types of dcs (ROI/Time range)
         # Check the ROI consistency
-        if [self._withS2dc_, self._withDenvdc_, self._withPhemetricdc_].count(True) > 1:
-            if False in [temp == self._ROI_list[0] for temp in self._ROI_list] or [temp == self._ROI_name_list[0] for
-                                                                                   temp in self._ROI_name_list]:
+        if [self._withS2dc_, self._withDenvdc_, self._withPhemetricdc_, self._withLandsatdc_].count(True) > 1:
+            if False in [temp == self._ROI_list[0] for temp in self._ROI_list] or [temp == self._ROI_name_list[0] for temp in self._ROI_name_list]:
                 bounds_list = [bf.raster_ds2bounds(temp) for temp in self._ROI_tif_list]
                 crs_list = [gdal.Open(temp).GetProjection() for temp in self._ROI_tif_list]
-                if False in [temp == bounds_list[0] for temp in bounds_list] or False in [temp == crs_list[0] for temp
-                                                                                          in crs_list]:
+                if False in [temp == bounds_list[0] for temp in bounds_list] or False in [temp == crs_list[0] for temp in crs_list]:
                     try:
                         array_list = [np.sum(np.load(temp)) for temp in self._ROI_array_list]
                     except MemoryError:
                         array_list = [len(sm.csr_matrix(np.load(temp)).data) for temp in self._ROI_array_list]
+
                     if False in [temp == array_list[0] for temp in array_list]:
                         raise Exception('The ROIs between different types of datacube were not consistent')
                     else:
                         if self._withS2dc_:
-                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[s2dc_pos[0]], \
-                            self._ROI_name_list[s2dc_pos[0]], self._ROI_tif_list[s2dc_pos[0]], self._ROI_array_list[
-                                s2dc_pos[0]]
+                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[s2dc_pos[0]],  self._ROI_name_list[s2dc_pos[0]], self._ROI_tif_list[s2dc_pos[0]], self._ROI_array_list[s2dc_pos[0]]
+                        elif self._withLandsatdc_:
+                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Landsatdc_pos[0]],  self._ROI_name_list[Landsatdc_pos[0]], self._ROI_tif_list[Landsatdc_pos[0]], self._ROI_array_list[Landsatdc_pos[0]]
                         elif self._withPhemetricdc_:
-                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Denvdc_pos[0]], \
-                            self._ROI_name_list[Denvdc_pos[0]], self._ROI_tif_list[Denvdc_pos[0]], self._ROI_array_list[
-                                Denvdc_pos[0]]
+                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Denvdc_pos[0]], self._ROI_name_list[Denvdc_pos[0]], self._ROI_tif_list[Denvdc_pos[0]], self._ROI_array_list[ Denvdc_pos[0]]
                 else:
                     if self._withS2dc_:
-                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[s2dc_pos[0]], \
-                        self._ROI_name_list[s2dc_pos[0]], self._ROI_tif_list[s2dc_pos[0]], self._ROI_array_list[
-                            s2dc_pos[0]]
+                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[s2dc_pos[0]], self._ROI_name_list[s2dc_pos[0]], self._ROI_tif_list[s2dc_pos[0]], self._ROI_array_list[s2dc_pos[0]]
+                    elif self._withLandsatdc_:
+                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Landsatdc_pos[0]], self._ROI_name_list[Landsatdc_pos[0]], self._ROI_tif_list[Landsatdc_pos[0]], self._ROI_array_list[Landsatdc_pos[0]]
                     elif self._withPhemetricdc_:
-                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Denvdc_pos[0]], \
-                        self._ROI_name_list[Denvdc_pos[0]], self._ROI_tif_list[Denvdc_pos[0]], self._ROI_array_list[
-                            Denvdc_pos[0]]
+                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Denvdc_pos[0]], self._ROI_name_list[Denvdc_pos[0]], self._ROI_tif_list[Denvdc_pos[0]], self._ROI_array_list[Denvdc_pos[0]]
             else:
-                self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], \
-                self._ROI_tif_list[0], self._ROI_array_list[0]
+                self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], self._ROI_tif_list[0], self._ROI_array_list[0]
         else:
-            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], \
-            self._ROI_tif_list[0], self._ROI_array_list[0]
-
-        # Check the temporal consistency
-        if [self._withS2dc_, self._withDenvdc_, self._withPhemetricdc_].count(True) > 1:
-            if self._withS2dc_:
-                s2dc_year_range = set([int(np.floor(temp / 10000)) for temp in self.s2dc_doy_list])
-            else:
-                s2dc_year_range = None
-
-            if self._withPhemetricdc_:
-                phedc_year_range = [_ for _ in self._pheyear_list if _ is not None]
-            else:
-                phedc_year_range = None
-
-            if self._withDenvdc_:
-                Denvdc_year_range = []
-                for _ in Denvdc_pos:
-                    Denvdc_year_range.extend(self._doys_backup_[_])
-                Denvdc_year_range = set([int(np.floor(_ / 1000)) for _ in Denvdc_year_range])
-            else:
-                Denvdc_year_range = None
-
-        # Check the matrix consistency
-        if [self._withS2dc_, self._withDenvdc_, self._withPhemetricdc_].count(True) > 1:
-            if self._withS2dc_:
-                s2dc_year_range = set([int(np.floor(temp / 10000)) for temp in self.s2dc_doy_list])
-            else:
-                s2dc_year_range = None
-
-            if self._withPhemetricdc_:
-                phedc_year_range = [_ for _ in self._pheyear_list if _ is not None]
-            else:
-                phedc_year_range = None
-
-            if self._withDenvdc_:
-                Denvdc_year_range = []
-                for _ in Denvdc_pos:
-                    Denvdc_year_range.extend(self._doys_backup_[_])
-                Denvdc_year_range = set([int(np.floor(_ / 1000)) for _ in Denvdc_year_range])
-            else:
-                Denvdc_year_range = None
+            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], self._ROI_tif_list[0], self._ROI_array_list[0]
 
         # Construct the datacube list
         for _ in self._dcs_backup_:
             self.dcs.append(copy.copy(_.dc))
-            if space_optimised is True:
+            if self._space_optimised is True:
                 _.dc = None
 
         # Define var for the flood mapping
@@ -909,7 +956,7 @@ class RS_dcs(object):
         self._flood_mapping_accuracy_evaluation_factor = False
         self._sample_rs_link_list = None
         self._sample_data_path = None
-        self._flood_mapping_method = ['Unet', 'MNDWI_thr', 'DT']
+        self._flood_mapping_method = ['Unet', 'MNDWI_thr', 'DSWE', 'DT', 'AWEI', 'rs_dem']
 
         # Define var for the phenological analysis
         self._curve_fitting_algorithm = None
@@ -936,155 +983,510 @@ class RS_dcs(object):
             size += dc.__sizeof__()
         return size
 
-    def _auto_harmonised_s2dcs(self):
+    def _auto_harmonised_dcs(self, dc_type):
+
+        if dc_type not in (Landsat_dc, Sentinel2_dc):
+            raise TypeError('The datatype cannot be auto harmonised!')
 
         doy_all = np.array([])
-        for doy_temp in self._doys_backup_:
-            doy_all = np.concatenate([doy_all, doy_temp], axis=0)
+        for _ in range(len(self._dc_typelist)):
+            if self._dc_typelist[_] == dc_type:
+                doy_all = np.concatenate([doy_all, self._doys_backup_[_]], axis=0)
         doy_all = np.sort(np.unique(doy_all))
 
         i = 0
-        while i < len(self._doys_backup_):
-            for doy in doy_all:
-                if doy not in self._doys_backup_[i]:
-                    m_factor = True
-                    if not self.sparse_matrix:
-                        self.dcs[i] = np.insert(self.dcs[i], np.argwhere(doy_all == doy).flatten()[0],
-                                                np.nan * np.zeros([self.dcs_YSize, self.dcs_XSize, 1]), axis=2)
-                    else:
-                        self.dcs[i].append(self.dcs[i]._matrix_type(np.zeros([self.dcs_YSize, self.dcs_XSize])),
-                                           name=int(doy), pos=np.argwhere(doy_all == doy).flatten()[0])
+        while i < len(self._dc_typelist):
+            if self._dc_typelist[i] == dc_type and self._dcs_backup_[i].dc_ZSize != doy_all.shape[0]:
+                for doy in doy_all:
+                    if doy not in self._doys_backup_[i]:
+                        if not self.sparse_matrix:
+                            self.dcs[i] = np.insert(self._dcs_backup_[i], np.argwhere(doy_all == doy).flatten()[0], np.nan * np.zeros([self.dcs_YSize, self.dcs_XSize, 1]), axis=2)
+                        else:
+                            self.dcs[i].append(self._dcs_backup_[i]._matrix_type(np.zeros([self.dcs_YSize, self.dcs_XSize])), name=int(doy), pos=np.argwhere(doy_all == doy).flatten()[0])
             i += 1
 
-        if False in [doy_all.shape[0] == self.dcs[i].shape[2] for i in range(len(self.dcs))]:
-            raise ValueError('The autoharmised is failed')
+        if False in [doy_all.shape[0] == self._dcs_backup_[i].shape[2] for i in range(len(self._dc_typelist)) if self._dc_typelist[i] == dc_type]:
+            raise ValueError('The auto harmonised is failed')
 
-        self.S2dc_ZSize = len(doy_all)
-        self.s2dc_doy_list = doy_all.tolist()
+        if dc_type == Sentinel2_dc:
+            self.S2dc_ZSize = doy_all.shape[0]
+            self.s2dc_doy_list = doy_all.tolist()
+        elif dc_type == Landsat_dc:
+            self.Landsatdc_ZSize = doy_all.shape[0]
+            self.Landsatdc_doy_list = doy_all.tolist()
 
-        for t in range(len(self._doys_backup_)):
-            self._doys_backup_[t] = self.s2dc_doy_list
+        for _ in range(len(self._doys_backup_)):
+            if self._dc_typelist[_] == dc_type:
+                self._doys_backup_[_] = doy_all.tolist()
+                self._dcs_backup_.sdc_doy_list = doy_all.tolist()
+                self._dcs_backup_.dc_ZSize = doy_all.shape[0]
 
-        for tt in self._dcs_backup_:
-            tt.sdc_doylist = self.s2dc_doy_list
-            tt.dc_ZSize = self.S2dc_ZSize
+    def append(self, dc_temp) -> None:
+        if type(dc_temp) not in [Sentinel2_dc, Landsat_dc, Denv_dc, Phemetric_dc]:
+            raise TypeError('The appended data should be a Sentinel2_dc, Landsat_dc, Denv_dc or Phemetric_dc!')
 
-    def append(self, dc_temp: Sentinel2_dc) -> None:
-        if type(dc_temp) is not Sentinel2_dc:
-            raise TypeError('The appended data should be a Sentinel2_dc!')
+        if self._space_optimised:
+            for _ in range(len(self.dcs)):
+                self._dcs_backup_[_].dc = copy.copy(self.dcs[_])
+                self.dcs[_] = None
 
-        for indicator in ['ROI', 'ROI_name', 'sdc_factor', 'coordinate_system', 'sparse_matrix', 'huge_matrix']:
-            if dc_temp.__dict__[indicator] != self.__dict__[indicator]:
-                raise ValueError('The appended datacube is not consistent with the original datacubes')
-
-        if self.dcs_XSize != dc_temp.dc_XSize or self.dcs_YSize != dc_temp.dc_YSize or self.S2dc_ZSize != dc_temp.dc_ZSize:
-            raise ValueError('The appended datacube has different size compared to the original datacubes')
-
-        if self.s2dc_doy_list != dc_temp.sdc_doylist:
-            raise ValueError('The appended datacube has doy list compared to the original datacubes')
-
-        self.index_list.append(dc_temp.index)
-        self.oritif_folder_list.append(dc_temp.oritif_folder)
-        self.dcs.append(dc_temp.dc)
-        self._doys_backup_.append(dc_temp.sdc_doylist)
         self._dcs_backup_.append(dc_temp)
-        self._dcs_backup_[-1].dc = None
+        self.__init__(*self._dcs_backup_, work_env=self._s2dc_work_env, auto_harmonised=True, space_optimised=self._space_optimised)
 
     def remove(self, index):
-        if index not in self.index_list:
-            raise ValueError(f'The {index} is not in the index list!')
+        if self._space_optimised:
+            for _ in range(len(self.dcs)):
+                self._dcs_backup_[_].dc = copy.copy(self.dcs[_])
+                self.dcs[_] = None
 
-        num = self.index_list.index(index)
-        self.dcs.remove(self.dcs[num])
-        self.size_control_factor_list.remove(self.size_control_factor_list[num])
-        self.oritif_folder_list.remove(self.oritif_folder_list[num])
-        self.index_list.remove(self.index_list[num])
+        if index not in self._index_list:
+            raise ValueError(f'The remove index {str(index)} is not in the dcs')
+        else:
+            self._dcs_backup_.remove(self._dcs_backup_[self._index_list.index(index)])
 
-    def extend(self, dcs_temp) -> None:
-        if type(dcs_temp) is not RS_dcs:
-            raise TypeError('The appended data should be a Sentinel2_dcs!')
+        self.__init__(*self._dcs_backup_, work_env=self._s2dc_work_env, auto_harmonised=True, space_optimised=self._space_optimised)
 
-        for indicator in ['ROI', 'ROI_name', 'sdc_factor', 'dcs_XSize', 'dcs_YSize', 'dcs_ZSize', 'doy_list',
-                          'coordinate_system']:
-            if dcs_temp.__dict__[indicator] != self.__dict__[indicator]:
-                raise ValueError('The appended datacube is not consistent with the original datacubes')
+    def extend(self, dcs_temp: list) -> None:
+        for dc_temp in dcs_temp:
+            if type(dc_temp) not in [Sentinel2_dc, Landsat_dc, Denv_dc, Phemetric_dc]:
+                raise TypeError('The appended data should be a Sentinel2_dc, Landsat_dc, Denv_dc or Phemetric_dc!')
 
-        self.index_list.extend(dcs_temp.index_list)
-        self.oritif_folder.extend(dcs_temp.oritif_folder)
-        self._doys_backup_.extend(dcs_temp._doys_backup_)
-        self.dcs.extend(dcs_temp.dcs)
+        if self._space_optimised:
+            for _ in range(len(self.dcs)):
+                self._dcs_backup_[_].dc = copy.copy(self.dcs[_])
+                self.dcs[_] = None
 
-    def _process_inun_det_para(self, **kwargs):
-        self._append_inundated_dc = True
-        self._inundated_ow_para = False
+        self._dcs_backup_.extend(dcs_temp)
+        self.__init__(*self._dcs_backup_, work_env=self._s2dc_work_env, auto_harmonised=True, space_optimised=self._space_optimised)
 
-        for key_temp in kwargs.keys():
-            if key_temp not in ['append_inundated_dc', 'overwritten_para']:
-                raise ValueError(f'The {str(key_temp)} for func inundation detection is not supported!')
+    def _process_inundation_para(self, **kwargs: dict) -> None:
 
-            if key_temp == 'append_inundated_dc' and type(kwargs['append_inundated_dc']) is bool:
+        # Detect whether all the indicators are valid
+        for kwarg_indicator in kwargs.keys():
+            if kwarg_indicator not in ('DT_bimodal_histogram_factor', 'DSWE_threshold', 'flood_month_list', 'DEM_path',
+                                       'overwritten_para', 'append_inundated_dc', 'DT_std_fig_construction', 'variance_num',
+                                       'inundation_mapping_accuracy_evaluation_factor', 'sample_rs_link_list', 'construct_inundated_dc',
+                                       'sample_data_path', 'static_wi_threshold', 'flood_mapping_accuracy_evaluation_factor'
+                                       ):
+                raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
+
+        # Detect the append_inundated_dc
+        if 'append_inundated_dc' in kwargs.keys():
+            if type(kwargs['append_inundated_dc']) != bool:
+                raise TypeError('Please input the append_inundated_dc as a bool type!')
+            else:
                 self._append_inundated_dc = kwargs['append_inundated_dc']
-            elif key_temp == 'overwritten_para' and type(kwargs['overwritten_para']) is bool:
-                self._inundated_ow_para = kwargs['overwritten_para']
+        else:
+            self._append_inundated_dc = False
 
-    def inundation_detection(self, method: str, **kwargs):
+        # Detect the construct_inundated_dc
+        if 'construct_inundated_dc' in kwargs.keys():
+            if type(kwargs['construct_inundated_dc']) != bool:
+                raise TypeError('Please input the construct_inundated_dc as a bool type!')
+            else:
+                self._construct_inundated_dc = (kwargs['construct_inundated_dc'])
+        else:
+            self._construct_inundated_dc = False
+
+        # Detect the static water index threshold
+        if 'static_wi_threshold' not in kwargs.keys():
+            self._static_wi_threshold = 0.1
+        elif 'static_wi_threshold' in kwargs.keys():
+            if type(kwargs['static_wi_threshold']) != float:
+                raise TypeError('Please input the static_wi_threshold as a float number!')
+            else:
+                self._static_wi_threshold = kwargs['static_wi_threshold']
+
+        # Detect the DSWE_threshold
+        if 'DSWE_threshold' not in kwargs.keys():
+            self._DSWE_threshold = [0.123, -0.5, 0.2, 0.1]
+        elif 'DSWE_threshold' in kwargs.keys():
+            if type(kwargs['DSWE_threshold']) != list:
+                raise TypeError('Please input the DSWE threshold as a list with four number in it')
+            elif len(kwargs['DSWE_threshold']) != 4:
+                raise TypeError('Please input the DSWE threshold as a list with four number in it')
+            else:
+                self._DSWE_threshold = kwargs['DSWE_threshold']
+
+        # Detect the variance num
+        if 'variance_num' in kwargs.keys():
+            if type(kwargs['variance_num']) is not float or type(kwargs['variance_num']) is not int:
+                raise Exception('Please input the variance_num as a num!')
+            elif kwargs['variance_num'] < 0:
+                raise Exception('Please input the variance_num as a positive number!')
+            else:
+                self._variance_num = kwargs['variance_num']
+        else:
+            self._variance_num = 2
+
+        # Detect the flood month para
+        all_month_list = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']
+        if 'flood_month_list' not in kwargs.keys():
+            self._flood_month_list = ['7', '8', '9', '10']
+        elif 'flood_month_list' in kwargs.keys():
+            if type(kwargs['flood_month_list'] is not list):
+                raise TypeError('Please make sure the para flood month list is a list')
+            elif False in [_ in all_month_list for _ in kwargs['flood_month_list']]:
+                raise ValueError('Please double check the month list')
+            else:
+                self._flood_month_list = kwargs['flood_month_list']
+        else:
+            self._flood_month_list = None
+
+        # Define the inundation_overwritten_factor
+        if 'overwritten_para' in kwargs.keys():
+            if type(kwargs['overwritten_para']) is not bool:
+                raise Exception('Please input the overwritten_para as a bool factor!')
+            else:
+                self._inundation_overwritten_para = kwargs['overwritten_para']
+        else:
+            self._inundation_overwritten_para = False
+
+        # Define the flood_mapping_accuracy_evaluation_factor
+        if 'flood_mapping_accuracy_evaluation_factor' in kwargs.keys():
+            if type(kwargs['flood_mapping_accuracy_evaluation_factor']) is not bool:
+                raise Exception('Please input the flood_mapping_accuracy_evaluation_factor as a bool factor!')
+            else:
+                self._flood_mapping_accuracy_evaluation_factor = kwargs['flood_mapping_accuracy_evaluation_factor']
+        else:
+            self._flood_mapping_accuracy_evaluation_factor = False
+
+        # Define the DT_bimodal_histogram_factor
+        if 'DT_bimodal_histogram_factor' in kwargs.keys():
+            if type(kwargs['DT_bimodal_histogram_factor']) is not bool:
+                raise Exception('Please input the DT_bimodal_histogram_factor as a bool factor!')
+            else:
+                self._DT_bimodal_histogram_factor = kwargs['DT_bimodal_histogram_factor']
+        else:
+            self._DT_bimodal_histogram_factor = True
+
+        # Define the DT_std_fig_construction
+        if 'DT_std_fig_construction' in kwargs.keys():
+            if type(kwargs['DT_std_fig_construction']) is not bool:
+                raise Exception('Please input the DT_std_fig_construction as a bool factor!')
+            else:
+                self._DT_std_fig_construction = kwargs['DT_std_fig_construction']
+        else:
+            self._DT_std_fig_construction = False
+
+        # Define the sample_data_path
+        if 'sample_data_path' in kwargs.keys():
+
+            if type(kwargs['sample_data_path']) is not str:
+                raise TypeError('Please input the sample_data_path as a dir!')
+
+            if not os.path.exists(kwargs['sample_data_path']):
+                raise TypeError('Please input the sample_data_path as a dir!')
+
+            if not os.path.exists(kwargs['sample_data_path'] + self.ROI_name + '\\'):
+                raise Exception('Please input the correct sample path or missing the ' + self.ROI_name + ' sample data')
+
+            self._sample_data_path = kwargs['sample_data_path']
+
+        else:
+            self._sample_data_path = None
+
+        # Define the sample_rs_link_list
+        if 'sample_rs_link_list' in kwargs.keys():
+            if type(kwargs['sample_rs_link_list']) is not list and type(kwargs['sample_rs_link_list']) is not np.ndarray:
+                raise TypeError('Please input the sample_rs_link_list as a list factor!')
+            else:
+                self._sample_rs_link_list = kwargs['sample_rs_link_list']
+        else:
+            self._sample_rs_link_list = False
+
+        # Get the dem path
+        if 'DEM_path' in kwargs.keys():
+            if os.path.isfile(kwargs['DEM_path']) and (kwargs['DEM_path'].endswith('.tif') or kwargs['DEM_path'].endswith('.TIF')):
+                self._DEM_path = kwargs['DEM_path']
+            else:
+                raise TypeError('Please input a valid dem tiffile')
+        else:
+            self._DEM_path = None
+
+    def inundation_detection(self, inundation_mapping_method: str, index: str, dc_type, **kwargs):
+
+        # Several method to identify the inundation area including:
+        # Something need to be mentioned:
+        # (1) To fit the sparse matrix, 0 in the output means nodata, 1 means non-inundated and 2 means inundated
+        # (2) All the dc was under the data type of uint8
+
         # process inundation detection method
-        self._process_inun_det_para(**kwargs)
+        self._process_inundation_para(**kwargs)
+
+        # proces args*
+        if index not in self._index_list:
+            raise ValueError(f'The {index} is not imported')
+
+        if dc_type == 'Sentinel2':
+            dc_type = Sentinel2_dc
+            doy_list = self.s2dc_doy_list
+            output_path = self._s2dc_work_env
+        elif dc_type == 'Landsat':
+            dc_type = Landsat_dc
+            doy_list = self.Landsatdc_doy_list
+            output_path = self._Landsatdc_work_env
+        else:
+            raise ValueError('Only Sentinel-2 and Landsat dc is supported for inundation detection!')
+
+        dc_num = []
+        for _ in range(len(self._index_list)):
+            if self._index_list[_] == index and self._dc_typelist[_] == dc_type:
+                dc_num.append(_)
+
+        if len(dc_num) > 1:
+            raise ValueError(f'There are more than one {str(dc_type)} dc of {str(dc_type)}')
+        elif len(dc_num) == 0:
+            raise ValueError(f'The {str(dc_type)} dc of {str(dc_type)} has not been imported')
+        else:
+            dc_num = dc_num[0]
 
         start_time = time.time()
-        print(f'Start detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m')
+        print(f'Start detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m using \033[1;35m{inundation_mapping_method}\033[0m')
 
-        # Method 1 MNDWI static threshold
-        if method not in self._flood_mapping_method:
-            raise ValueError(f'The inundation detection method {str(method)} is not supported')
+        if inundation_mapping_method not in self._flood_mapping_method:
+            raise ValueError(f'The inundation detection method {str(inundation_mapping_method)} is not supported')
 
-        if method == 'MNDWI_thr':
-            if self.size_control_factor_list[self.index_list.index('MNDWI')]:
-                MNDWI_static_thr = 33768
-            else:
-                MNDWI_static_thr = 0.1
+        # Method 1 static threshold
+        if inundation_mapping_method == 'static_thr':
 
-            if 'inundation_MNDWI_thr' not in self.index_list or self._inundated_ow_para:
-                if not os.path.exists(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\header.npy'):
-                    bf.create_folder(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
-                    if 'MNDWI' in self.index_list:
-                        if self.sparse_matrix:
-                            namelist = self.dcs[self.index_list.index('MNDWI')].SM_namelist
-                            inundation_sm = NDSparseMatrix()
-                            for z_temp in range(self.S2dc_ZSize):
-                                inundation_array = self.dcs[self.index_list.index('MNDWI')].SM_group[namelist[z_temp]]
-                                inundation_array.data[inundation_array.data < MNDWI_static_thr] = -1
-                                inundation_array.data[inundation_array.data > MNDWI_static_thr] = 0
-                                inundation_array.data[inundation_array.data == -1] = 1
-                                inundation_sm.append(inundation_array, name=namelist[z_temp])
+            # Flood mapping by static threshold
+            if 'Inundation_static_wi_thr' not in self._index_list or self._inundation_overwritten_para:
 
-                            inundation_dc = copy.deepcopy(self._dcs_backup_[self.index_list.index('MNDWI')])
-                            inundation_dc.dc = inundation_sm
-                            inundation_dc.index = 'inundation_' + method
-                            inundation_dc.sdc_doylist = self.s2dc_doy_list
-                            inundation_dc.save(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                # Define static thr output
+                static_output = output_path + 'Inundation_static_wi_thr_datacube\\'
+                bf.create_folder(static_output)
 
-                        else:
-                            inundation_array = copy.deepcopy(self.dcs[self.index_list.index('MNDWI')])
-                            inundation_array = inundation_array >= MNDWI_static_thr
+                if not os.path.exists(static_output + 'metadata.json'):
 
-                            inundation_dc = copy.deepcopy(self._dcs_backup_[self.index_list.index('MNDWI')])
-                            inundation_dc.dc = inundation_array
-                            inundation_dc.index = 'inundation_' + method
-                            inundation_dc.save(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
+                    inundation_dc = copy.deepcopy(self._dcs_backup_[dc_num])
+                    if self._sparse_matrix_list[dc_num]:
+                        namelist = self.dcs[dc_num].SM_namelist
+                        inundation_sm = NDSparseMatrix()
+                        for z_temp in range(self.S2dc_ZSize):
+                            inundation_array = self.dcs[dc_num].SM_group[namelist[z_temp]]
+                            dtype_temp = type(inundation_array)
+                            inundation_array = invert_data(inundation_array, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
+                            inundation_array[inundation_array < self._static_wi_threshold] = 1
+                            inundation_array[inundation_array >= self._static_wi_threshold] = 2
+                            inundation_array[np.isnan(inundation_array)] = 0
+                            inundation_array = inundation_array.astype(np.bytes)
+                            inundation_sm.append(dtype_temp(inundation_array), name=namelist[z_temp])
 
-                        if self._append_inundated_dc:
-                            self.append(inundation_dc)
-                            self.remove('MNDWI')
+                        inundation_dc.dc = inundation_sm
                     else:
-                        raise ValueError('Please construct a valid datacube with MNDWI sdc inside!')
-                else:
-                    inundation_dc = Sentinel2_dc(self._s2dc_work_env + 'inundation_MNDWI_thr_sequenced_datacube\\')
-                    self.append(inundation_dc)
-                    self.remove('MNDWI')
+                        inundation_array = copy.deepcopy(self.dcs[dc_num])
+                        inundation_array = invert_data(inundation_array, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
+                        inundation_array = inundation_array >= self._static_wi_threshold
+                        inundation_array = inundation_array + 1
+                        inundation_array[np.isnan(inundation_array)] = 0
+                        inundation_array = inundation_array.astype(np.bytes)
+                        inundation_dc.dc = inundation_array
 
-        print(
-            f'Finish detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0m s!')
+                    inundation_dc.index = 'Inundation_' + inundation_mapping_method
+                    inundation_dc.Datatype = np.bytes
+                    inundation_dc.sdc_doylist = doy_list
+                    inundation_dc.Zoffset = None
+                    inundation_dc.size_control_factor = False
+                    inundation_dc.Nodata_value = 0
+                    inundation_dc.save(static_output)
+
+                    if self._append_inundated_dc:
+                        self.append(inundation_dc)
+                        self.remove(self._index_list[dc_num])
+
+                else:
+                    inundation_dc = dc_type(static_output)
+                    self.append(inundation_dc)
+                    self.remove(self._index_list[dc_num])
+
+        # Method 2 Dynamic threshold
+        elif inundation_mapping_method == 'DT':
+
+            # Flood mapping by DT method (DYNAMIC MNDWI THRESHOLD using time-series water index!)
+            if 'Inundation_DT' not in self._index_list or self._inundation_overwritten_para:
+
+                # Define output path
+                DT_output_path = output_path + 'Inundation_DT_sequenced_datacube\\'
+                DT_inditif_path = DT_output_path + 'Individual_tif\\'
+                DT_threshold_path = DT_output_path + 'DT_threshold\\'
+                bf.create_folder(DT_output_path)
+                bf.create_folder(DT_inditif_path)
+                bf.create_folder(DT_threshold_path)
+
+                WI_sdc = copy.copy(self.dcs[dc_num])
+                doy_array = copy.copy(self._doys_backup_[dc_num])
+                nodata_value = self._Nodata_value_list[dc_num]
+
+                if not os.path.exists(DT_threshold_path + 'threshold_map.TIF') or not os.path.exists(DT_threshold_path + 'bh_threshold_map.TIF'):
+
+                    DT_threshold = np.ones([WI_sdc.shape[0], WI_sdc.shape[1]]) * -2
+                    bh_threshold_array = np.ones([WI_sdc.shape[0], WI_sdc.shape[1]]) * -2
+
+                    # DT method with empirical and bimodal threshold
+                    for y_temp in range(WI_sdc.shape[0]):
+                        for x_temp in range(WI_sdc.shape[1]):
+
+                            # Extract the wi series
+                            if self._sparse_matrix_list[dc_num]:
+                                ___, wi_series, __ = WI_sdc._extract_matrix_y1x1zh((y_temp, x_temp, 'all'),nodata_export=True)
+                            else:
+                                wi_series = WI_sdc[y_temp, x_temp, :]
+                            wi_series = invert_data(wi_series, self._size_control_factor_list[dc_num],self._Zoffset_list[dc_num], nodata_value)
+                            wi_series = wi_series.flatten()
+                            
+                            # Create the bimodal histogram threshold
+                            if self._DT_bimodal_histogram_factor:
+
+                                doy_array_pixel = np.mod(doy_array[y_temp, x_temp, :].flatten(), 1000)
+                                doy_array_pixel = np.delete(doy_array_pixel, np.argwhere(np.isnan(wi_series))) if np.isnan(nodata_value) else np.delete(doy_array_pixel, np.argwhere(wi_series == nodata_value))
+                                wi_series = np.delete(wi_series, np.argwhere(np.isnan(wi_series))) if np.isnan(nodata_value) else np.delete(wi_series, np.argwhere(wi_series == nodata_value))
+
+                                bh_threshold = bimodal_histogram_threshold(wi_series, init_threshold=0.1)
+                                if np.isnan(bh_threshold):
+                                    bh_threshold = -2
+                            else:
+                                bh_threshold = 0.123
+                            
+                            # Create the dynamic threshold
+                            wi_series = np.delete(wi_series, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 300)))
+                            wi_series = np.delete(wi_series, np.argwhere(wi_series < -0.7))
+                            all_dry_sum = wi_series.shape[0]
+                            wi_series = np.delete(wi_series, np.argwhere(wi_series > bh_threshold))
+
+                            if wi_series.shape[0] < 0.5 * all_dry_sum:
+                                DT_threshold[y_temp, x_temp] = np.nan
+                                bh_threshold_array[y_temp, x_temp] = np.nan
+                            elif wi_series.shape[0] < 5:
+                                DT_threshold[y_temp, x_temp] = np.nan
+                                bh_threshold_array[y_temp, x_temp] = np.nan
+                            else:
+                                mndwi_temp_std = np.nanstd(wi_series)
+                                mndwi_ave = np.mean(wi_series)
+                                DT_threshold[y_temp, x_temp] = mndwi_ave + self._variance_num * mndwi_temp_std
+                                bh_threshold_array[y_temp, x_temp] = bh_threshold
+
+                            DT_threshold[DT_threshold > bh_threshold] = bh_threshold
+
+                    bf.write_raster(gdal.Open(self.ROI_tif), DT_threshold, DT_threshold_path, 'threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    bf.write_raster(gdal.Open(self.ROI_tif), bh_threshold_array, DT_threshold_path, 'bh_threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                else:
+                    bh_threshold_ds = gdal.Open(DT_threshold_path + 'bh_threshold_map.TIF')
+                    threshold_ds = gdal.Open(DT_threshold_path + 'threshold_map.TIF')
+                    DT_threshold = threshold_ds.GetRasterBand(1).ReadAsArray()
+                    bh_threshold_array = bh_threshold_ds.GetRasterBand(1).ReadAsArray()
+
+                # Construct the MNDWI distribution figure
+                if self._DT_std_fig_construction:
+
+                    DT_distribution_fig_path = DT_output_path + 'DT_distribution_fig\\'
+                    bf.create_folder(DT_distribution_fig_path)
+
+                    # Generate the MNDWI distribution at the pixel level
+                    for y_temp in range(WI_sdc.shape[0]):
+                        for x_temp in range(WI_sdc.shape[1]):
+                            if not os.path.exists(f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png'):
+
+                                # Extract the wi series
+                                if self._sparse_matrix_list[dc_num]:
+                                    ___, wi_series, __ = WI_sdc._extract_matrix_y1x1zh((y_temp, x_temp, 'all'), nodata_export=True)
+                                else:
+                                    wi_series = WI_sdc[y_temp, x_temp, :]
+                                wi_series = invert_data(wi_series, self._size_control_factor_list[dc_num],self._Zoffset_list[dc_num], nodata_value)
+                                wi_series = wi_series.flatten()
+
+                                doy_array_pixel = np.mod(doy_array, 1000).flatten()
+                                wi_ori_series = copy.copy(wi_series)
+                                wi_series = np.delete(wi_series, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 285)))
+                                wi_series = np.delete(wi_series, np.argwhere(np.isnan(wi_series))) if np.isnan(nodata_value) else np.delete(wi_series, np.argwhere(wi_series == nodata_value))
+                                wi_series = np.delete(wi_series, np.argwhere(wi_series > DT_threshold[y_temp, x_temp])) if not np.isnan(DT_threshold[y_temp, x_temp]) else np.delete(wi_series, np.argwhere(wi_series > 0.123))
+
+                                if wi_series.shape[0] != 0:
+                                    yy = np.arange(0, 100, 1)
+                                    xx = np.ones([100])
+                                    mndwi_temp_std = np.std(wi_series)
+                                    mndwi_ave = np.mean(wi_series)
+                                    plt.xlim(xmax=1, xmin=-1)
+                                    plt.ylim(ymax=50, ymin=0)
+                                    plt.hist(wi_ori_series, bins=50, color='#FFA500')
+                                    plt.hist(wi_series, bins=20, color='#00FFA5')
+                                    plt.plot(xx * mndwi_ave, yy, color='#FFFF00')
+                                    plt.plot(xx * bh_threshold_array[y_temp, x_temp], yy, color='#CD0000', linewidth='3')
+                                    plt.plot(xx * DT_threshold[y_temp, x_temp], yy, color='#0000CD', linewidth='1.5')
+                                    plt.plot(xx * (mndwi_ave - mndwi_temp_std), yy, color='#00CD00')
+                                    plt.plot(xx * (mndwi_ave + mndwi_temp_std), yy, color='#00CD00')
+                                    plt.plot(xx * (mndwi_ave - self._variance_num * mndwi_temp_std), yy, color='#00CD00')
+                                    plt.plot(xx * (mndwi_ave + self._variance_num * mndwi_temp_std), yy, color='#00CD00')
+                                    plt.savefig(f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png', dpi=150)
+                                    plt.close()
+
+                # Construct inundation dc
+                if not os.path.exists(DT_output_path + 'doy.npy') or not os.path.exists(DT_output_path + 'metadata.json'):
+
+                    inundation_dc = copy.deepcopy(self._dcs_backup_[dc_num])
+                    inundated_arr = copy.copy(WI_sdc)
+                    DT_threshold = DT_threshold.astype(np.float)
+
+                    for date_num in range(doy_array.shape[0]):
+                        if not os.path.exists(f'{DT_inditif_path}\\DT_{str(doy_array[date_num])}.TIF') or self._inundation_overwritten_factor:
+
+                            if self._sparse_matrix_list[dc_num]:
+                                WI_arr = WI_sdc.SM_group[WI_sdc.SM_namelist[date_num]]
+                            else:
+                                WI_arr = WI_sdc[:, :, date_num].reshape(WI_sdc.shape[0], WI_sdc.shape[1])
+
+                            WI_arr = invert_data(WI_arr, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
+
+                            pos_temp = np.argwhere(WI_arr > 0.15)
+                            inundation_map = WI_arr - DT_threshold
+                            inundation_map[inundation_map >= 0] = 2
+                            inundation_map[inundation_map < 0] = 1
+                            inundation_map[np.isnan(inundation_map)] = 0
+                            for i in pos_temp:
+                                inundation_map[i[0], i[1]] = 2
+                            inundation_map = reassign_sole_pixel(inundation_map, Nan_value=0, half_size_window=2)
+                            inundation_map = inundation_map.astype(np.bytes)
+
+                            bf.write_raster(gdal.Open(self.ROI_tif), inundation_map, DT_inditif_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                        else:
+                            inundated_ds = gdal.Open(f'{DT_inditif_path}DT_{str(doy_array[date_num])}.TIF')
+                            inundation_map = inundated_ds.GetRasterBand(1).ReadAsArray()
+
+                        if self._sparse_matrix_list[dc_num]:
+                            inundated_arr.SM_group[inundated_arr.SM_namelist[date_num]] = inundation_map
+                        else:
+                            inundated_arr[:, :, date_num] = inundation_map.reshape((inundation_map.shape[0], inundation_map.shape[1], 1))
+
+                    inundation_dc.index = 'Inundation_' + inundation_mapping_method
+                    inundation_dc.Datatype = np.bytes
+                    inundation_dc.sdc_doylist = doy_list
+                    inundation_dc.Zoffset = None
+                    inundation_dc.size_control_factor = False
+                    inundation_dc.Nodata_value = 0
+                    inundation_dc.save(DT_output_path)
+                else:
+                    inundation_dc = dc_type(DT_output_path)
+
+                # Create annual inundation map
+                DT_annualtif_path = DT_output_path + 'Annual_tif\\'
+                bf.create_folder(DT_annualtif_path)
+
+                year_array = np.unique(inundation_dc.sdc_doylist // 1000)
+                temp_ds = gdal.Open(bf.file_filter(DT_inditif_path, ['.TIF'])[0])
+                for year in year_array:
+                    annual_inundated_map = np.zeros([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]])
+
+                    if not os.path.exists(self.inun_det_method_dic['DT_annual_' + self.ROI_name] + 'DT_' + str(year) + '.TIF') or self._inundation_overwritten_factor:
+                        for doy_index in range(doy_array.shape[0]):
+                            if doy_array[doy_index] // 1000 == year and 182 <= np.mod(doy_array[doy_index], 1000) <= 285:
+                                annual_inundated_map[inundation_dc.dc[:, :, doy_index] > 0] = 1
+                        bf.write_raster(temp_ds, annual_inundated_map,
+                                        self.inun_det_method_dic['DT_annual_' + self.ROI_name], 'DT_' + str(year) + '.TIF',
+                                        raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+
+                print(f'Flood mapping using DT algorithm within {self.ROI_name} consumes {str(time.time() - start_time)}s!')
+
+        print(f'Finish detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0m s!')
 
     def _process_inundation_removal_para(self, **kwargs):
         pass

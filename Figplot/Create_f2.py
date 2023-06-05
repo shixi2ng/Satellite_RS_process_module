@@ -424,15 +424,19 @@ def fig11_func():
     plt.rc('font', size=14)
     fig, ax = plt.subplots(figsize=(5.8, 5), constrained_layout=True)
     # ax.scatter(combine_arr[1, :], combine_arr[0, :], s=12 ** 2, edgecolor=(0.1, 0.1, 0.1), facecolor=(47/256,85/256,151/256), alpha=0.8, linewidth=1.2, marker='^', zorder=5)
-    qq = ax.hist2d(pd1['gedi_ch_x'], pd1['uav_ch_x'], bins=60, range=[[1, 6], [1, 6]])
+    qq = ax.hist2d(pd1['gedi_ch_x'], pd1['uav_ch_x'], bins=80, range=[[1, 6], [1, 6]], cmap=plt.cm.BuPu)
     fig.colorbar(qq[3], ax=ax)
-    ax.plot(np.linspace(0, chl, chl), np.linspace(0, chl, chl), c=(1, 1, 1), lw=1.5, zorder=3, ls='--')
+    ax.plot(np.linspace(0, chl, chl), np.linspace(0, chl, chl), c=(0, 0, 0), lw=1.5, zorder=3, ls='--')
+    ax.plot(np.linspace(0, chl, chl), np.linspace(0.89, chl+0.89, chl), c=(0.3, 0.3, 0.3), lw=0.5, zorder=3, ls='--')
+    ax.plot(np.linspace(0, chl, chl), np.linspace(-0.89, chl-0.89, chl), c=(0.3, 0.3, 0.3), lw=0.5, zorder=3, ls='--')
+    ax.fill_between(np.linspace(0, chl, chl), np.linspace(-0.89, chl - 0.89, chl), np.linspace(0.89, chl+0.89, chl), color=(0.3, 0.3, 0.3), alpha=0.1)
     ax.set_xlabel('外推植被高度/m', fontname='Times New Roman', fontsize=20, fontweight='bold')
     ax.set_ylabel('UAV航测高度/m', fontname='Times New Roman', fontsize=20, fontweight='bold')
+
     RMSE_NDVI = np.sqrt(np.nanmean((pd1['gedi_ch_x'] - pd1['uav_ch_x']) ** 2))
     MAE_NDVI = np.nanmean(np.absolute(pd1['gedi_ch_x'] - pd1['uav_ch_x']))
-    ax.text(1.3, 6 - 0.5, f'MAE={str(MAE_NDVI)[0: 4]}m', c=(1, 1, 1), fontsize=18)
-    ax.text(1.3, 6 - 1, f'RMSE={str(RMSE_NDVI)[0: 4]}m', c=(1, 1, 1), fontsize=18)
+    ax.text(1.3, 6 - 0.5, f'MAE={str(MAE_NDVI)[0: 4]}m', c=(0, 0, 0), fontsize=18)
+    ax.text(1.3, 6 - 1, f'RMSE={str(RMSE_NDVI)[0: 4]}m', c=(0, 0, 0), fontsize=18)
     ax.set_ylim(1, 6)
     ax.set_xlim(1, 6)
     plt.savefig(f'G:\A_veg\Paper\Figure\Fig9\\fig91.png', dpi=300)
@@ -441,15 +445,17 @@ def fig11_func():
     plt.rc('font', size=14)
     fig2, ax2 = plt.subplots(figsize=(5, 5), constrained_layout=True)
     # ax.scatter(combine_arr[1, :], combine_arr[0, :], s=12 ** 2, edgecolor=(0.1, 0.1, 0.1), facecolor=(47/256,85/256,151/256), alpha=0.8, linewidth=1.2, marker='^', zorder=5)
-    qq = ax2.hist2d(pd1['gedi_ch_y'], pd1['uav_ch_y'], bins=60, range=[[1, 6], [1, 6]])
-
-    ax2.plot(np.linspace(0, chl, chl), np.linspace(0, chl, chl), c=(1, 1, 1), lw=1.5, zorder=3, ls='--')
+    qq = ax2.hist2d(pd1['gedi_ch_y'], pd1['uav_ch_y'], bins=80, range=[[1, 6], [1, 6]], cmap=plt.cm.BuPu)
+    ax2.plot(np.linspace(0, chl, chl), np.linspace(0, chl, chl), c=(0, 0, 0), lw=1.5, zorder=3, ls='--')
+    ax2.plot(np.linspace(0, chl, chl), np.linspace(0.93, chl+0.93, chl), c=(0.3, 0.3, 0.3), lw=0.5, zorder=3, ls='--')
+    ax2.plot(np.linspace(0, chl, chl), np.linspace(-0.93, chl-0.93, chl), c=(0.3, 0.3, 0.3), lw=0.5, zorder=3, ls='--')
+    ax2.fill_between(np.linspace(0, chl, chl), np.linspace(-0.93, chl -0.93, chl), np.linspace(+0.93, chl +0.93, chl), color=(0.3, 0.3, 0.3), alpha=0.1)
     ax2.set_xlabel('外推植被高度/m', fontname='Times New Roman', fontsize=20, fontweight='bold')
     ax2.set_ylabel('UAV航测高度/m', fontname='Times New Roman', fontsize=20, fontweight='bold')
     RMSE_NDVI = np.sqrt(np.nanmean((pd1['gedi_ch_y'] - pd1['uav_ch_y']) ** 2))
     MAE_NDVI = np.nanmean(np.absolute(pd1['gedi_ch_y'] - pd1['uav_ch_y']))
-    ax2.text(1.3, 6 - 0.5, f'MAE={str(MAE_NDVI)[0: 4]}m', c=(1, 1, 1), fontsize=18)
-    ax2.text(1.3, 6 - 1, f'RMSE={str(RMSE_NDVI)[0: 4]}m', c=(1, 1, 1), fontsize=18)
+    ax2.text(1.3, 6 - 0.5, f'MAE={str(MAE_NDVI)[0: 4]}m', c=(0, 0, 0), fontsize=18)
+    ax2.text(1.3, 6 - 1, f'RMSE={str(RMSE_NDVI)[0: 4]}m', c=(0, 0, 0), fontsize=18)
     ax2.set_ylim(1, 6)
     ax2.set_xlim(1, 6)
     plt.savefig(f'G:\A_veg\Paper\Figure\Fig9\\fig92.png', dpi=300)
@@ -710,20 +716,21 @@ def fig14_func():
     plt.rc('axes', edgecolor=(0,0,0))
     fig, ax = plt.subplots(figsize=(10, 4.5), constrained_layout=True)
 
-    dic_temp = {'sn':[], 'ch': []}
-    for section in ['ch', 'jj', 'hh', 'yz']:
-        _ =  res_dic[f'{section}_2022']
-        _ = _.flatten()
-        _ = np.delete(_, np.argwhere(np.isnan(_)))
-        dic_temp['ch'].extend(_.tolist())
-        dic_temp['sn'].extend([section for temp in range(_.shape[0])])
-    df_temp = pd.DataFrame(dic_temp)
-    seaborn.boxenplot(data=df_temp, x = 'sn', y='ch', scale="area", saturation = 0.6, width=0.6, order=['yz', 'jj', 'ch','hh'],  color="b")
-    ax.set_ylim([2, 7])
-    plt.savefig(f'G:\\A_veg\\Paper\\Figure\\Fig11\\fig\\sect4.png', dpi=300)
+    # dic_temp = {'sn':[], 'ch': []}
+    # for section in ['ch', 'jj', 'hh', 'yz']:
+    #     _ =  res_dic[f'{section}_2022']
+    #     _ = _.flatten()
+    #     _ = np.delete(_, np.argwhere(np.isnan(_)))
+    #     dic_temp['ch'].extend(_.tolist())
+    #     dic_temp['sn'].extend([section for temp in range(_.shape[0])])
+    # df_temp = pd.DataFrame(dic_temp)
+    # seaborn.boxenplot(data=df_temp, x = 'sn', y='ch', scale="area", saturation = 0.6, width=0.6, order=['yz', 'jj', 'ch','hh'],  color="b")
+    # ax.set_ylim([2, 7])
+    # plt.savefig(f'G:\\A_veg\\Paper\\Figure\\Fig11\\fig\\sect4.png', dpi=300)
 
     # Diff
-    a = [np.mean(res_dic[f'{section}_{2020}'] - res_dic[f'{section}_{str(int(2020) - 1)}']) for section in ['ch', 'jj', 'hh', 'yz']]
+    a = [np.nanmean(res_dic[f'{section}_{2020}'] - np.nanmean(res_dic[f'{section}_{str(int(2020) - 1)}'])) for section in ['ch', 'jj', 'hh', 'yz']]
+
     for section in ['ch', 'jj', 'hh', 'yz']:
         for year in ['2020', '2021', '2022']:
             arr_temp = res_dic[f'{section}_{year}'] - res_dic[f'{section}_{str(int(year) - 1)}']
@@ -737,7 +744,7 @@ def fig14_func():
         # fig, ax = None, None
 
 
-fig14_func()
+fig11_func()
 
 
 

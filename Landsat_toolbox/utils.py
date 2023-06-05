@@ -1149,15 +1149,6 @@ def eliminating_all_not_required_file(file_path_f, filename_extension=None):
                 raise Exception(f'file {file} cannot be removed')
 
 
-def list_containing_check(small_list, big_list):
-    containing_result = True
-    for i in small_list:
-        if i not in big_list:
-            containing_result = False
-            break
-    return containing_result
-
-
 def remove_same_element_from_lists(list1, list2):
     list2_temp = copy.copy(list2)
     list1_temp = []
@@ -1278,9 +1269,12 @@ def reassign_sole_pixel(twod_array, Nan_value=0, half_size_window=2):
                 else:
                     x_min = x - half_size_window
                 array_temp = twod_array[y_min: y_max, x_min: x_max]
+
                 if twod_array[y, x] != Nan_value and np.sum(np.logical_and(array_temp != twod_array[y, x], array_temp != Nan_value)) == (array_temp.shape[0] * array_temp.shape[1] - 1):
                     twod_array_temp[y, x] = [i for i in unique_value_list if i != twod_array_temp[y, x]][0]
+
         return twod_array_temp
+
     else:
         print('This function can reassign the value for this raster')
         sys.exit(-1)

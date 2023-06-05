@@ -1076,26 +1076,30 @@ class Landsat_l2_ds(object):
                                     output_arr = np.nanmean(output_arr, axis=2)
 
                             # Convert the nodata value to 0
-                            if np.isnan(nodata_value):
-                                output_arr[np.isnan(output_arr)] = 0
-                                dtype_temp = np.float
+                            if _sparse_matrix:
+                                if np.isnan(nodata_value):
+                                    output_arr[np.isnan(output_arr)] = 0
+                                    dtype_temp = np.float
+                                else:
+                                    output_arr[np.isnan(output_arr)] = nodata_value
+                                    output_arr = output_arr - nodata_value
+                                    max_v = np.iinfo(dtype_temp).max - nodata_value
+                                    min_v = np.iinfo(dtype_temp).min - nodata_value
+                                    if min_v < 0:
+                                        for type_temp in [np.int8, np.int16, np.int32, np.int64]:
+                                            if min_v >= np.iinfo(type_temp).min and max_v <= np.iinfo(type_temp).max:
+                                                dtype_out = type_temp
+                                                break
+                                    elif min_v >= 0:
+                                        for type_temp in [np.uint8, np.uint16, np.uint32, np.uint64]:
+                                            if max_v <= np.iinfo(type_temp).max:
+                                                dtype_out = type_temp
+                                                break
+                                    if dtype_out is None:
+                                        raise Exception('Code error for generating the datatype of output array!')
                             else:
-                                output_arr[np.isnan(output_arr)] = nodata_value
-                                output_arr = output_arr - nodata_value
-                                max_v = np.iinfo(dtype_temp).max - nodata_value
-                                min_v = np.iinfo(dtype_temp).min - nodata_value
-                                if min_v < 0:
-                                    for type_temp in [np.int8, np.int16, np.int32, np.int64]:
-                                        if min_v >= np.iinfo(type_temp).min and max_v <= np.iinfo(type_temp).max:
-                                            dtype_out = type_temp
-                                            break
-                                elif min_v >= 0:
-                                    for type_temp in [np.uint8, np.uint16, np.uint32, np.uint64]:
-                                        if max_v <= np.iinfo(type_temp).max:
-                                            dtype_out = type_temp
-                                            break
-                                if dtype_out is None:
-                                    raise Exception('Code error for generating the datatype of output array!')
+                                dtype_out = type_temp
+
                         else:
                             reqfile_metadata = self.Landsat_metadata[self.Landsat_metadata['Date'] == doy_list[i]]
                             reqfile_list = []
@@ -1153,14 +1157,11 @@ class Landsat_l2_ds(object):
                             output_ds = gdal.Open(f"/vsimem/{str(doy_list[i])}_{_}.TIF")
                             output_arr = output_ds.GetRasterBand(1).ReadAsArray()
 
-                        if _huge_matrix:
-                            if _sparse_matrix:
-                                # Convert the output_arr 2 sparse matrix
-                                sm_temp = sm.csr_matrix(output_arr.astype(dtype_out))
-                                data_cube.append(sm_temp, name=doy_list[i])
-                                data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
-                            else:
-                                pass
+                        if _sparse_matrix:
+                            # Convert the output_arr 2 sparse matrix
+                            sm_temp = sm.csr_matrix(output_arr.astype(dtype_out))
+                            data_cube.append(sm_temp, name=doy_list[i])
+                            data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
                         else:
                             data_cube_list.append(output_arr)
                             data_valid_array[i] = 1 if np.all(output_arr == nodata_value) else 0
@@ -1174,8 +1175,8 @@ class Landsat_l2_ds(object):
             if not _huge_matrix:
                 data_cube = np.stack(data_cube_list, axis=2)
 
+            # remove nan layer
             try:
-                # remove nan layer
                 if self._manually_remove_para is True and self._manually_remove_datelist is not None:
                     i_temp = 0
                     while i_temp < len(doy_list):
@@ -1200,6 +1201,7 @@ class Landsat_l2_ds(object):
                 print(traceback.format_exc())
                 raise Exception(f'Dc construction failed during remove nan layer!')
 
+            # Save Landsat dc
             start_time = time.time()
             try:
                 if _huge_matrix:
@@ -1208,14 +1210,16 @@ class Landsat_l2_ds(object):
                         np.save(self._dc_infr[_] + f'doy.npy', doy_list)
                         bf.create_folder(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
                         data_cube.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
+                        metadata_dic['Zoffset'], metadata_dic['Nodata_value'] = - nodata_value, 0
                     else:
                         pass
                 else:
+                    metadata_dic['Zoffset'], metadata_dic['Nodata_value'] = None, nodata_value
                     np.save(self._dc_infr[_] + f'doy.npy', doy_list)
                     np.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube.npy', data_cube)
 
                 # Save the metadata dic
-                metadata_dic['Datatype'], metadata_dic['Zoffset'] = str(np.iinfo(dtype_out).dtype), - nodata_value
+                metadata_dic['Datatype'] = str(np.iinfo(dtype_out).dtype),
                 metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
                 with open(self._dc_infr[_] + 'metadata.json', 'w') as js_temp:
                     json.dump(metadata_dic, js_temp)
@@ -1232,11 +1236,16 @@ class Landsat_dc(object):
         # Check the dcfile path
         self.dc_filepath = bf.Path(dc_filepath).path_name
 
-        # Init key var
+        # Def key var
         self.ROI_name, self.ROI, self.ROI_tif = None, None, None
         self.index, self.Datatype, self.coordinate_system = None, None, None
         self.dc_group_list, self.tiles = None, None
         self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
+
+        # Def Inundation parameter
+        self._DSWE_threshold = None
+        self._flood_month_list = None
+        self.flood_mapping_method = []
 
         # Check work env
         if work_env is not None:
@@ -1248,14 +1257,14 @@ class Landsat_dc(object):
         # Define the basic var name
         self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'sdc_factor',
                              'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
-                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles', 'Zoffset')
+                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles', 'Zoffset', 'Nodata_value')
 
         # Read header
         metadata_file = bf.file_filter(self.dc_filepath, ['metadata.json'])
         if len(metadata_file) == 0:
             raise ValueError('There has no valid sdc or the metadata file of the sdc was missing!')
         elif len(metadata_file) > 1:
-            raise ValueError('There has more than one metadata file in the dir')
+            raise ValueError('There has more than one metadata file in the dir!')
         else:
             try:
                 with open(metadata_file[0]) as js_temp:
@@ -1279,70 +1288,50 @@ class Landsat_dc(object):
             if self.sdc_factor is True:
                 # Read doylist
                 if self.ROI_name is None:
-                    doy_file = bf.file_filter(self.dc_filepath, ['doy.npy', str(self.VI)], and_or_factor='and')
+                    doy_file = bf.file_filter(self.dc_filepath, ['doy.npy'], and_or_factor='and')
                 else:
-                    doy_file = bf.file_filter(self.dc_filepath, ['doy.npy', str(self.VI), str(self.ROI_name)],
-                                            and_or_factor='and')
+                    doy_file = bf.file_filter(self.dc_filepath, ['doy.npy'], and_or_factor='and')
 
                 if len(doy_file) == 0:
                     raise ValueError('There has no valid doy file or file was missing!')
                 elif len(doy_file) > 1:
                     raise ValueError('There has more than one doy file in the dc dir')
                 else:
-                    self.sdc_doylist = np.load(doy_file[0], allow_pickle=True)
-
+                    sdc_doylist = np.load(doy_file[0], allow_pickle=True)
+                    self.sdc_doylist = [int(sdc_doy) for sdc_doy in sdc_doylist]
             else:
-                # Read datelist
-                if self.ROI_name is None:
-                    date_file = bf.file_filter(self.dc_filepath, ['date.npy', str(self.VI)], and_or_factor='and')
-                else:
-                    date_file = bf.file_filter(self.dc_filepath, ['date.npy', str(self.VI), str(self.ROI_name)], and_or_factor='and')
-
-                if len(date_file) == 0:
-                    raise ValueError('There has no valid dc or the date file of the dc was missing!')
-                elif len(date_file) > 1:
-                    raise ValueError('There has more than one date file in the dc dir')
-                else:
-                    self.dc_datelist = np.load(date_file[0], allow_pickle=True)
-
-                # Define var for sequenced_dc
-                self.sdc_output_folder = None
-                self.sdc_doylist = []
-                self.sdc_overwritten_para = False
+                raise TypeError('Please construct a sdc (running the latest version)')
         except:
-            raise Exception('Something went wrong when reading the doy and date list!')
+            raise Exception('Something went wrong when reading the doy list!')
 
         # Read datacube
         try:
-            if self.ROI_name is None:
-                self.dc_filename = bf.file_filter(self.dc_filepath, ['datacube.npy', str(self.VI)], and_or_factor='and')
-            else:
-                self.dc_filename = bf.file_filter(self.dc_filepath, ['datacube.npy', str(self.VI), str(self.ROI_name)], and_or_factor='and')
-
-            if len(self.dc_filename) == 0:
-                raise ValueError('There has no valid dc or the dc was missing!')
-            elif len(self.dc_filename) > 1:
-                raise ValueError('There has more than one date file in the dc dir')
-            else:
-                self.dc = np.load(self.dc_filename[0], allow_pickle=True)
+            if self.sparse_matrix and self.huge_matrix:
+                if os.path.exists(self.dc_filepath + f'{self.index}_sequenced_datacube\\'):
+                    self.dc = NDSparseMatrix().load(self.dc_filepath + f'{self.index}_sequenced_datacube\\')
+                else:
+                    raise Exception('Please double check the code if the sparse huge matrix is generated properly')
+            elif not self.huge_matrix:
+                self.dc_filename = bf.file_filter(self.dc_filepath, ['sequenced_datacube.npy'])
+                if len(self.dc_filename) == 0:
+                    raise ValueError('There has no valid dc or the dc was missing!')
+                elif len(self.dc_filename) > 1:
+                    raise ValueError('There has more than one date file in the dc dir')
+                else:
+                    self.dc = np.load(self.dc_filename[0], allow_pickle=True)
+            elif self.huge_matrix and not self.sparse_matrix:
+                self.dc_filename = bf.file_filter(self.dc_filepath, ['sequenced_datacube', '.npy'], and_or_factor='and')
         except:
             raise Exception('Something went wrong when reading the datacube!')
 
-        self.dc_XSize = self.dc.shape[0]
-        self.dc_YSize = self.dc.shape[1]
-        self.dc_ZSize = self.dc.shape[2]
+        # autotrans sparse matrix
+        if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
+            self._autotrans_sparse_matrix()
 
-        # Check work env
-        if work_env is not None:
-            self.work_env = bf.Path(work_env).path_name
-        else:
-            self.work_env = bf.Path(os.path.dirname(os.path.dirname(self.dc_filepath))).path_name
-        self.root_path = bf.Path(os.path.dirname(os.path.dirname(self.work_env))).path_name
+        # Size calculation and shape definition
+        self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
 
-        # Inundation parameter process
-        self._DSWE_threshold = None
-        self._flood_month_list = None
-        self.flood_mapping_method = []
+        print( f'Finish loading the Sentinel2 dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()
@@ -1490,7 +1479,7 @@ class Landsat_dcs(object):
         self.inundation_para_folder = self.work_env + '\\Landsat_Inundation_Condition\\Inundation_para\\'
         self._sample_rs_link_list = None
         self._sample_data_path = None
-        self._flood_mapping_method = ['DSWE', 'DT', 'AWEI', 'rs_dem']
+
         bf.create_folder(self.inundation_para_folder)
 
         # Define var for the phenological analysis
@@ -1573,146 +1562,6 @@ class Landsat_dcs(object):
 
         self.index_list.extend(dcs_temp.index_list)
         self.Landsat_dcs.extend(dcs_temp)
-
-    def _process_inundation_para(self, **kwargs: dict) -> None:
-        
-        # Detect whether all the indicators are valid
-        for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('DT_bimodal_histogram_factor', 'DSWE_threshold', 'flood_month_list', 'DEM_path'
-                                       'inundation_overwritten_factor', 'DT_std_fig_construction', 'variance_num',
-                                       'inundation_mapping_accuracy_evaluation_factor', 'sample_rs_link_list',
-                                       'sample_data_path', 'MNDWI_threshold', 'flood_mapping_accuracy_evaluation_factor',
-                                       'construct_inundated_dc'):
-                raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
-
-        # Detect the construct_inundated_dc
-        if 'construct_inundated_dc' in kwargs.keys():
-            if type(kwargs['construct_inundated_dc']) != bool:
-                raise TypeError('Please input the construct_inundated_dc as a bool type!')
-            else:
-                self._construct_inundated_dc = (kwargs['construct_inundated_dc'])
-        else:
-            self._construct_inundated_dc = False
-
-        # Detect the empirical MNDWI threshold
-        if 'MNDWI_threshold' not in kwargs.keys():
-            self._MNDWI_threshold = 0
-        elif 'MNDWI_threshold' in kwargs.keys():
-            if type(kwargs['MNDWI_threshold']) != float:
-                raise TypeError('Please input the MNDWI_threshold as a float number!')
-            else:
-                self._MNDWI_threshold = kwargs['MNDWI_threshold']
-        else:
-            self._MNDWI_threshold = None
-
-        # Detect the DSWE_threshold
-        if 'DSWE_threshold' not in kwargs.keys():
-            self._DSWE_threshold = [0.123, -0.5, 0.2, 0.1]
-        elif 'DSWE_threshold' in kwargs.keys():
-            if type(kwargs['DSWE_threshold']) != list:
-                raise TypeError('Please input the DSWE threshold as a list with four number in it')
-            elif len(kwargs['DSWE_threshold']) != 4:
-                raise TypeError('Please input the DSWE threshold as a list with four number in it')
-            else:
-                self._DSWE_threshold = kwargs['DSWE_threshold']
-        else:
-            self._DSWE_threshold = None
-
-        # Detect the variance num
-        if 'variance_num' in kwargs.keys():
-            if type(kwargs['variance_num']) is not float or type(kwargs['variance_num']) is not int:
-                raise Exception('Please input the variance_num as a num!')
-            elif kwargs['variance_num'] < 0:
-                raise Exception('Please input the variance_num as a positive number!')
-            else:
-                self._variance_num = kwargs['variance_num']
-        else:
-            self._variance_num = 2
-
-        # Detect the flood month para
-        all_month_list = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']
-        if 'flood_month_list' not in kwargs.keys():
-            self._flood_month_list = ['7', '8', '9', '10']
-        elif 'flood_month_list' in kwargs.keys():
-            if type(kwargs['flood_month_list'] is not list):
-                raise TypeError('Please make sure the para flood month list is a list')
-            elif not list_containing_check(kwargs['flood_month_list'], all_month_list):
-                raise ValueError('Please double check the month list')
-            else:
-                self._flood_month_list = kwargs['flood_month_list']
-        else:
-            self._flood_month_list = None
-
-        # Define the inundation_overwritten_factor
-        if 'inundation_overwritten_factor' in kwargs.keys():
-            if type(kwargs['inundation_overwritten_factor']) is not bool:
-                raise Exception('Please input the inundation_overwritten_factor as a bool factor!')
-            else:
-                self._inundation_overwritten_factor = kwargs['inundation_overwritten_factor']
-        else:
-            self._inundation_overwritten_factor = False
-
-        # Define the flood_mapping_accuracy_evaluation_factor
-        if 'flood_mapping_accuracy_evaluation_factor' in kwargs.keys():
-            if type(kwargs['flood_mapping_accuracy_evaluation_factor']) is not bool:
-                raise Exception('Please input the flood_mapping_accuracy_evaluation_factor as a bool factor!')
-            else:
-                self._flood_mapping_accuracy_evaluation_factor = kwargs['flood_mapping_accuracy_evaluation_factor']
-        else:
-            self._flood_mapping_accuracy_evaluation_factor = False
-
-        # Define the DT_bimodal_histogram_factor
-        if 'DT_bimodal_histogram_factor' in kwargs.keys():
-            if type(kwargs['DT_bimodal_histogram_factor']) is not bool:
-                raise Exception('Please input the DT_bimodal_histogram_factor as a bool factor!')
-            else:
-                self._DT_bimodal_histogram_factor = kwargs['DT_bimodal_histogram_factor']
-        else:
-            self._DT_bimodal_histogram_factor = True
-
-        # Define the DT_std_fig_construction
-        if 'DT_std_fig_construction' in kwargs.keys():
-            if type(kwargs['DT_std_fig_construction']) is not bool:
-                raise Exception('Please input the DT_std_fig_construction as a bool factor!')
-            else:
-                self._DT_std_fig_construction = kwargs['DT_std_fig_construction']
-        else:
-            self._DT_std_fig_construction = False
-
-        # Define the sample_data_path
-        if 'sample_data_path' in kwargs.keys():
-
-            if type(kwargs['sample_data_path']) is not str:
-                raise TypeError('Please input the sample_data_path as a dir!')
-
-            if not os.path.exists(kwargs['sample_data_path']):
-                raise TypeError('Please input the sample_data_path as a dir!')
-
-            if not os.path.exists(kwargs['sample_data_path'] + self.ROI_name + '\\'):
-                raise Exception('Please input the correct sample path or missing the ' + self.ROI_name + ' sample data')
-
-            self._sample_data_path = kwargs['sample_data_path']
-
-        else:
-            self._sample_data_path = None
-
-        # Define the sample_rs_link_list
-        if 'sample_rs_link_list' in kwargs.keys():
-            if type(kwargs['sample_rs_link_list']) is not list and type(kwargs['sample_rs_link_list']) is not np.ndarray:
-                raise TypeError('Please input the sample_rs_link_list as a list factor!')
-            else:
-                self._sample_rs_link_list = kwargs['sample_rs_link_list']
-        else:
-            self._sample_rs_link_list = False
-            
-        # Get the dem path
-        if 'DEM_path' in kwargs.keys():
-            if os.path.isfile(kwargs['DEM_path']) and (kwargs['DEM_path'].endswith('.tif') or kwargs['DEM_path'].endswith('.TIF')):
-                self._DEM_path = kwargs['DEM_path']
-            else:
-                raise TypeError('Please input a valid dem tiffile')
-        else:
-            self._DEM_path = None
 
     def inundation_detection(self, flood_mapping_method, **kwargs):
 
@@ -2630,8 +2479,7 @@ class Landsat_dcs(object):
                     for unique_level in range(unique_level_array.shape[0]):
                         max_temp = 0
                         for i in range(information_array.shape[1]):
-                            if np.fix(information_array[0, i] // 10000) == year_array[year] and information_array[
-                                1, i] == unique_level_array[unique_level]:
+                            if np.fix(information_array[0, i] // 10000) == year_array[year] and information_array[1, i] == unique_level_array[unique_level]:
                                 max_temp = max(max_temp, information_array[2, i])
                         annual_max_water_level[year, unique_level] = max_temp
                 annual_max = np.array(annual_max)

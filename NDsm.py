@@ -1,10 +1,9 @@
 import scipy.sparse as sm
 import pickle
 import basic_function as bf
-import copy
 import numpy as np
 import os
-import progressbar
+from tqdm.auto import tqdm
 
 
 class NDSparseMatrix:
@@ -70,6 +69,10 @@ class NDSparseMatrix:
             for temp in self.SM_group:
                 size += len(pickle.dumps(temp))
 
+    def __getitem__(self, keys):
+        if len(keys) == 3:
+            pass
+
     def _update_size_para(self):
         for ele in self.SM_group.values():
             if self._cols == -1 or self._rows == -1:
@@ -124,22 +127,17 @@ class NDSparseMatrix:
 
     def save(self, output_path, overwritten_para=True):
 
-        widgets = ['Saving ND sparse matrix: ',
-                   ' [', progressbar.Timer(), '] ',
-                   progressbar.Bar(),
-                   ' (', progressbar.ETA(), ') ',
-                   ]
-
-        bar = progressbar.ProgressBar(maxval=len(self.SM_namelist) + 1, widgets=widgets).start()
-
         bf.create_folder(output_path)
         output_path = bf.Path(output_path).path_name
         i = 0
-        for sm_name in self.SM_namelist:
-            if not os.path.exists(output_path + str(sm_name) + '.npz') or overwritten_para:
-                sm.save_npz(output_path + str(sm_name) + '.npz', self.SM_group[sm_name])
-            i += 1
-            bar.update(i)
+
+        with tqdm(total=len(self.SM_namelist), desc=f'Saving the N-D sparse matrix', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            for sm_name in self.SM_namelist:
+                if not os.path.exists(output_path + str(sm_name) + '.npz') or overwritten_para:
+                    sm.save_npz(output_path + str(sm_name) + '.npz', self.SM_group[sm_name])
+                i += 1
+                pbar.update()
+
         np.save(output_path + 'SMsequence.npz', np.array(self.SM_namelist))
 
     def load(self, input_path):
@@ -299,7 +297,7 @@ class NDSparseMatrix:
             raise Exception('Code error for the NDsparsematrix extraction')
         return output_array
 
-    def _extract_matrix_y1x1zh(self, tuple_temp: tuple, nodata_export= False):
+    def _extract_matrix_y1x1zh(self, tuple_temp: tuple, nodata_export=False):
 
         # tt0, tt1, tt2 = 0, 0, 0
         # start_time = time.time()
