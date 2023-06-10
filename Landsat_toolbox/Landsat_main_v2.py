@@ -1,26 +1,15 @@
 import concurrent.futures
 from itertools import repeat
-from tqdm.auto import tqdm
-from utils import *
-from built_in_index import built_in_index
-import gdal
-import pandas as pd
-from osgeo import gdal_array, osr
-import sys
-import pandas
+from .built_in_index import built_in_index
 import matplotlib.pyplot as plt
 import tarfile
-import shutil
-import datetime
 from datetime import date
 from scipy.optimize import curve_fit
-import time
 import glob
 from lxml import etree
-import traceback
 import psutil
-from NDsm import *
 import json
+from RSDatacube.utils import *
 
 
 global topts
@@ -1241,6 +1230,7 @@ class Landsat_dc(object):
         self.index, self.Datatype, self.coordinate_system = None, None, None
         self.dc_group_list, self.tiles = None, None
         self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
+        self.Nodata_value, self.Zoffset = None, None
 
         # Def Inundation parameter
         self._DSWE_threshold = None
@@ -1344,6 +1334,7 @@ class Landsat_dc(object):
         for _ in self.dc.SM_namelist:
             if isinstance(self.dc.SM_group[_], sm.coo_matrix):
                 self.dc.SM_group[_] = sm.csr_matrix(self.dc.SM_group[_])
+
         self.dc._update_size_para()
         self.dc._matrix_type = sm.csr_matrix
         self.save(self.dc_filepath)
@@ -1356,23 +1347,26 @@ class Landsat_dc(object):
             bf.create_folder(output_path)
         output_path = bf.Path(output_path).path_name
 
+        # Save the datacube
+        if self.sparse_matrix:
+            self.dc.save(f'{output_path}{str(self.index)}_sequenced_datacube\\')
+        else:
+            np.save(f'{output_path}{str(self.index)}_sequenced_datacube.npy', self.dc)
+
+        # Save the doy list
+        doy = self.sdc_doylist
+        np.save(f'{output_path}doy.npy', doy)
+
+        # Save the metadata
         metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI,
-                        'ROI_array': self.ROI_array,
+                        'ROI_array': self.ROI_array, 'Zoffset': self.Zoffset, 'Nodata_value': self.Nodata_value,
                         'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
                         'coordinate_system': self.coordinate_system,
                         'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
                         'size_control_factor': self.size_control_factor,
                         'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles}
-
-        doy = self.sdc_doylist
-        np.save(f'{output_path}doy.npy', doy)
         with open(f'{output_path}metadata.json', 'w') as js_temp:
             json.dump(metadata_dic, js_temp)
-
-        if self.sparse_matrix:
-            self.dc.save(f'{output_path}{str(self.index)}_sequenced_datacube\\')
-        else:
-            np.save(f'{output_path}{str(self.index)}_sequenced_datacube.npy', self.dc)
 
         print(f'Finish saving the Sentinel2 dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
@@ -3012,7 +3006,7 @@ class Landsat_dcs(object):
             raise FileExistsError(f'The {file_folder} folder was missing!')
         else:
             if not os.path.exists(output_folder + 'header.npy') or not os.path.exists(output_folder + 'date.npy') or not os.path.exists(output_folder + str(index) + '_datacube.npy'):
-                files = bf.bf.file_filter(file_folder, ['.TIF', str(index)], and_or_factor='and')
+                files = bf.file_filter(file_folder, ['.TIF', str(index)], and_or_factor='and')
                 if len(files) != self.dcs_ZSize:
                     raise Exception('Consistent error')
                 else:
@@ -3022,7 +3016,7 @@ class Landsat_dcs(object):
 
                     i = 0
                     for doy in self.doy_list:
-                        file_list = bf.bf.file_filter(file_folder, ['.TIF', str(index), str(doy)], and_or_factor='and')
+                        file_list = bf.file_filter(file_folder, ['.TIF', str(index), str(doy)], and_or_factor='and')
                         if len(file_list) == 1:
                             temp_ds = gdal.Open(file_list[0])
                             temp_raster = temp_ds.GetRasterBand(1).ReadAsArray()

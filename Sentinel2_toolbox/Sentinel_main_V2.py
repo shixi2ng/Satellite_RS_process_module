@@ -1,5 +1,5 @@
 # coding=utf-8
-import gdal
+from osgeo import gdal
 import sys
 import pandas as pd
 import numpy as np

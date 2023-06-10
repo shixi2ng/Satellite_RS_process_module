@@ -71,7 +71,17 @@ class NDSparseMatrix:
 
     def __getitem__(self, keys):
         if len(keys) == 3:
-            pass
+            y_r, x_r, z_r = keys
+        else:
+            raise TypeError('ND matrix was under at least three dimension')
+
+        arr_list = []
+        for _ in range(self.shape[2])[z_r]:
+            if isinstance(x_r, (int, np.int8, np.int16, np.int32, np.int64)) and isinstance(y_r, (int, np.int8, np.int16, np.int32, np.int64)):
+                arr_list.append(np.array([[self.SM_group[self.SM_namelist[_]][y_r, x_r]]]))
+            else:
+                arr_list.append(self.SM_group[self.SM_namelist[_]][y_r, x_r].toarray())
+        return np.stack(arr_list, axis=2)
 
     def _update_size_para(self):
         for ele in self.SM_group.values():
@@ -230,40 +240,20 @@ class NDSparseMatrix:
         if len(list_temp) == 1:
             if list_temp[0] == 'all':
                 return [min(range_temp), max(range_temp)]
-            elif (isinstance(list_temp[0], int) or isinstance(list_temp[0], np.int16) or isinstance(list_temp[0], np.int32)) and list_temp[0] in range_temp:
+            elif isinstance(list_temp[0], (int, np.int16, np.int32, np.int64)) and list_temp[0] in range_temp:
                 return [list_temp[0], list_temp[0] + 1]
             else:
                 raise ValueError('Please input a supported type!')
 
         elif len(list_temp) == 2:
-            if (isinstance(list_temp[0], int) or isinstance(list_temp[0], np.int16) or isinstance(list_temp[0], np.int32)) and (isinstance(list_temp[1], int) or isinstance(list_temp[1], np.int16) or isinstance(list_temp[1], np.int32)):
+            if isinstance(list_temp[0], (int, np.int16, np.int32, np.int64)) and isinstance(list_temp[1], (int, np.int16, np.int32, np.int64)):
                 if list_temp[0] in range_temp and list_temp[1] in range_temp and list_temp[0] <= list_temp[1]:
                     return [list_temp[0], list_temp[1]]
             else:
                 raise ValueError('Please input a supported type!')
 
-        elif len(list_temp) >= 2:
+        elif len(list_temp) > 2:
             raise ValueError('Please input a supported type!')
-
-    def slice_matrix(self, tuple_temp: tuple):
-
-        if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
-            raise TypeError(f'Please input the index array in a 3D tuple')
-        else:
-            rows_range = self._understand_range(tuple_temp[0], range(self._rows + 1))
-            cols_range = self._understand_range(tuple_temp[1], range(self._cols + 1))
-            heights_range = self._understand_range(tuple_temp[2], range(self._height + 1))
-
-        try:
-            output_array = np.zeros([rows_range[1]-rows_range[0], cols_range[1]-cols_range[0], heights_range[1]- heights_range[0]], dtype=np.float16)
-        except MemoryError:
-            return None
-
-        for height in range(heights_range[0], heights_range[1]):
-            array_temp = self.SM_group[self.SM_namelist[height]]
-            array_out = array_temp[rows_range[0]:rows_range[1], cols_range[0]: cols_range[1]]
-            output_array[:, :, height - heights_range[0]] = array_out.toarray()
-        return output_array
 
     def extract_matrix(self, tuple_temp: tuple):
 

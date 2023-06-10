@@ -3,8 +3,8 @@ import os
 import sys
 import numpy as np
 import datetime
-import gdal
-from osgeo import gdal_array, osr
+import h5py
+from osgeo import gdal, gdal_array, osr
 import shutil
 import geopandas as gp
 from types import ModuleType, FunctionType

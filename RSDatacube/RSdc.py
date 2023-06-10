@@ -1,22 +1,9 @@
 # coding=utf-8
-import gdal
-import sys
-import pandas as pd
-import numpy as np
-import os
-import zipfile
-import shutil
-import scipy.sparse as sp
-import copy
-import time
 from basic_function import Path
-import basic_function as bf
 import concurrent.futures
 from itertools import repeat
-import datetime
-from Landsat_toolbox.Landsat_main_v2 import Landsat_dc
-import traceback
 from GEDI_toolbox import GEDI_main as gedi
+from Landsat_toolbox.Landsat_main_v2 import Landsat_dc
 from scipy import sparse as sm
 from Sentinel2_toolbox.utils import *
 from Sentinel2_toolbox.Sentinel_main_V2 import Sentinel2_dc, Sentinel2_ds
@@ -24,6 +11,8 @@ from Landsat_toolbox.utils import *
 from NDsm import NDSparseMatrix
 import json
 from tqdm.auto import tqdm
+from tqdm import tqdm as tq
+from .utils import *
 
 
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
@@ -32,45 +21,6 @@ def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
 
 def two_term_fourier(x, a0, a1, b1, a2, b2, w):
     return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x)+b2 * np.sin(2 * w * x)
-
-
-def invert_data(data, size_control, offset_value, nodata_value, original_dtype: bool =False):
-
-    # Convert the data to ndarray
-    if isinstance(data, np.ndarray):
-        dtype = np.ndarray
-    elif isinstance(data, (sm.coo_matrix, sm.csr_matrix, sm.csc_matrix, sm.bsr_matrix, sm.lil_matrix, sm.dok_matrix)):
-        dtype = type(data)
-        data = data.toarray()
-    elif isinstance(data, list):
-        dtype = list
-        try:
-            data = np.ndarray(data)
-        except TypeError:
-            print(traceback.format_exc())
-            raise TypeError('There are str type in the input data during the data inversion!')
-    else:
-        raise TypeError(f'The input data is not under a proper type!')
-
-    # Convert nodata value to np.nan
-    if not np.nan(nodata_value):
-        data = data.astype(float)
-        data[data == nodata_value] = np.nan
-    else:
-        data = data.astype(float)
-
-    # Data inversion
-    if offset_value is not None and ~np.isnan(offset_value) and isinstance(offset_value, (float, int)):
-        data = data - offset_value
-
-    if isinstance(size_control, bool) and size_control:
-        data = data / 10000
-
-    # Return data
-    if original_dtype:
-        return dtype(data)
-    else:
-        return data
 
 
 class Denv_dc(object):
@@ -710,16 +660,8 @@ class RS_dcs(object):
                     if x_size == 0 and y_size == 0:
                         x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
 
-                    if z_S2_size == 0:
-                        z_S2_size = self._dcs_backup_[_].dc_ZSize
-
                     if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
                         raise Exception('Please make sure all the Sentinel-2 datacube share the same size!')
-                    elif z_S2_size != self._dcs_backup_[_].dc_ZSize:
-                        if auto_harmonised:
-                            harmonised_factor = True
-                        else:
-                            raise Exception('The Sentinel-2 datacube are not consistent in the Z dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
 
                 elif self._dc_typelist[_] == Landsat_dc:
                     self._withLandsatdc_ = True
@@ -727,16 +669,8 @@ class RS_dcs(object):
                     if x_size == 0 and y_size == 0:
                         x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
 
-                    if z_Landsat_size == 0:
-                        z_Landsat_size = self._dcs_backup_[_].dc_ZSize
-
                     if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
                         raise Exception('Please make sure all the Landsat datacube share the same size!')
-                    elif z_Landsat_size != self._dcs_backup_[_].dc_ZSize:
-                        if auto_harmonised:
-                            harmonised_factor = True
-                        else:
-                            raise Exception('The Landsat datacubes are not consistent in the Z dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
 
                 elif self._dc_typelist[_] == Denv_dc:
                     self._withDenvdc_ = True
@@ -779,71 +713,57 @@ class RS_dcs(object):
                         raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
 
                 # Read the doy or date list
-                if False in [self._sdc_factor_list[pos_temp] for pos_temp in s2dc_pos]:
-                    raise Exception('Please sequenced the Sentinel-2 datacubes before further process!')
-                else:
-                    if False in [len(self._doys_backup_[s2dc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp
-                                 in s2dc_pos] or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[s2dc_pos[0]]) for pos_temp in s2dc_pos]:
-                        if auto_harmonised:
-                            harmonised_factor = True
-                        else:
-                            raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
+                if False in [len(self._doys_backup_[s2dc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp
+                             in s2dc_pos] or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[s2dc_pos[0]]) for pos_temp in s2dc_pos]:
+                    if auto_harmonised:
+                        harmonised_factor = True
                     else:
-                        self.s2dc_doy_list = self._doys_backup_[s2dc_pos[0]]
+                        raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
 
                 # Harmonised the dcs
                 if harmonised_factor:
                     self._auto_harmonised_dcs(Sentinel2_dc)
 
-                # Determine the Zsize
-                if z_S2_size != 0:
-                    self.S2dc_ZSize = z_S2_size
-                else:
-                    raise Exception('Error occurred when obtaining the Z size of s2 dc!')
+            # Define the output_path
+            if work_env is None:
+                self._s2dc_work_env = Path(
+                    os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
+            else:
+                self._s2dc_work_env = work_env
 
-                # Define the output_path
-                if work_env is None:
-                    self._s2dc_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
-                else:
-                    self._s2dc_work_env = work_env
+            # Determine the Zsize
+            self.s2dc_doy_list = self._doys_backup_[s2dc_pos[0]]
+            self.S2dc_ZSize = len(self.s2dc_doy_list)
 
-        # Check the consistency of S2dcs
+        # Check the consistency of Landsat dcs
         if self._withLandsatdc_:
             Landsatdc_pos = [i for i, v in enumerate(self._dc_typelist) if v == Landsat_dc]
             if len(Landsatdc_pos) != 1:
-                for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'ROI_tif', 'coordinate_system',
+                for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'ROI_tif', 'coordinate_system',
                                     'sparse_matrix', 'huge_matrix', 'sdc_factor', 'dc_group_list', 'tiles']:
                     if False in [self.__dict__[f'_{factor_temp}_list'][Landsatdc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos] for pos in Landsatdc_pos]:
                         raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
 
                 # Read the doy or date list
-                if False in [self._sdc_factor_list[pos_temp] for pos_temp in Landsatdc_pos]:
-                    raise Exception('Please sequenced the Landsat datacubes before further process!')
-                else:
-                    if False in [len(self._doys_backup_[Landsatdc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp in Landsatdc_pos] or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[Landsatdc_pos[0]]) for pos_temp in Landsatdc_pos]:
-                        if auto_harmonised:
-                            harmonised_factor = True
-                        else:
-                            raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
+                if False in [len(self._doys_backup_[Landsatdc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp in Landsatdc_pos] or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[Landsatdc_pos[0]]) for pos_temp in Landsatdc_pos]:
+                    if auto_harmonised:
+                        harmonised_factor = True
                     else:
-                        self.Landsatdc_doy_list = self._doys_backup_[Landsatdc_pos[0]]
+                        raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
 
                 # Harmonised the dcs
                 if harmonised_factor:
                     self._auto_harmonised_dcs(Landsat_dc)
 
-                # Determine the Zsize
-                if z_Landsat_size != 0:
-                    self.Landsatdc_ZSize = z_Landsat_size
-                else:
-                    raise Exception('Error occurred when obtaining the Z size of Landsat dc!')
+            # Define the output_path
+            if work_env is None:
+                self._Landsatdc_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[Landsatdc_pos[0]].dc_filepath))).path_name
+            else:
+                self._Landsatdc_work_env = work_env
 
-                # Define the output_path
-                if work_env is None:
-                    self._Landsatdc_work_env = Path(
-                        os.path.dirname(os.path.dirname(self._dcs_backup_[Landsatdc_pos[0]].dc_filepath))).path_name
-                else:
-                    self._Landsatdc_work_env = work_env
+            # Determine the Zsize
+            self.Landsatdc_doy_list = self._doys_backup_[Landsatdc_pos[0]]
+            self.Landsatdc_ZSize = len(self.Landsatdc_doy_list)
 
         # Check the consistency of Denv dcs
         if self._withDenvdc_:
@@ -1022,7 +942,7 @@ class RS_dcs(object):
                 self._dcs_backup_.dc_ZSize = doy_all.shape[0]
 
     def append(self, dc_temp) -> None:
-        if type(dc_temp) not in [Sentinel2_dc, Landsat_dc, Denv_dc, Phemetric_dc]:
+        if not isinstance(dc_temp, (Sentinel2_dc, Landsat_dc, Denv_dc, Phemetric_dc)):
             raise TypeError('The appended data should be a Sentinel2_dc, Landsat_dc, Denv_dc or Phemetric_dc!')
 
         if self._space_optimised:
@@ -1031,7 +951,7 @@ class RS_dcs(object):
                 self.dcs[_] = None
 
         self._dcs_backup_.append(dc_temp)
-        self.__init__(*self._dcs_backup_, work_env=self._s2dc_work_env, auto_harmonised=True, space_optimised=self._space_optimised)
+        self.__init__(*self._dcs_backup_, auto_harmonised=True, space_optimised=self._space_optimised)
 
     def remove(self, index):
         if self._space_optimised:
@@ -1044,11 +964,11 @@ class RS_dcs(object):
         else:
             self._dcs_backup_.remove(self._dcs_backup_[self._index_list.index(index)])
 
-        self.__init__(*self._dcs_backup_, work_env=self._s2dc_work_env, auto_harmonised=True, space_optimised=self._space_optimised)
+        self.__init__(*self._dcs_backup_, auto_harmonised=True, space_optimised=self._space_optimised)
 
     def extend(self, dcs_temp: list) -> None:
         for dc_temp in dcs_temp:
-            if type(dc_temp) not in [Sentinel2_dc, Landsat_dc, Denv_dc, Phemetric_dc]:
+            if not isinstance(dc_temp, (Sentinel2_dc, Landsat_dc, Denv_dc, Phemetric_dc)):
                 raise TypeError('The appended data should be a Sentinel2_dc, Landsat_dc, Denv_dc or Phemetric_dc!')
 
         if self._space_optimised:
@@ -1057,7 +977,7 @@ class RS_dcs(object):
                 self.dcs[_] = None
 
         self._dcs_backup_.extend(dcs_temp)
-        self.__init__(*self._dcs_backup_, work_env=self._s2dc_work_env, auto_harmonised=True, space_optimised=self._space_optimised)
+        self.__init__(*self._dcs_backup_, auto_harmonised=True, space_optimised=self._space_optimised)
 
     def _process_inundation_para(self, **kwargs: dict) -> None:
 
@@ -1209,7 +1129,7 @@ class RS_dcs(object):
         # Several method to identify the inundation area including:
         # Something need to be mentioned:
         # (1) To fit the sparse matrix, 0 in the output means nodata, 1 means non-inundated and 2 means inundated
-        # (2) All the dc was under the data type of uint8
+        # (2) All the dc was under the uint8 data type
 
         # process inundation detection method
         self._process_inundation_para(**kwargs)
@@ -1270,7 +1190,7 @@ class RS_dcs(object):
                             inundation_array[inundation_array < self._static_wi_threshold] = 1
                             inundation_array[inundation_array >= self._static_wi_threshold] = 2
                             inundation_array[np.isnan(inundation_array)] = 0
-                            inundation_array = inundation_array.astype(np.bytes)
+                            inundation_array = inundation_array.astype(np.byte)
                             inundation_sm.append(dtype_temp(inundation_array), name=namelist[z_temp])
 
                         inundation_dc.dc = inundation_sm
@@ -1280,11 +1200,11 @@ class RS_dcs(object):
                         inundation_array = inundation_array >= self._static_wi_threshold
                         inundation_array = inundation_array + 1
                         inundation_array[np.isnan(inundation_array)] = 0
-                        inundation_array = inundation_array.astype(np.bytes)
+                        inundation_array = inundation_array.astype(np.byte)
                         inundation_dc.dc = inundation_array
 
                     inundation_dc.index = 'Inundation_' + inundation_mapping_method
-                    inundation_dc.Datatype = np.bytes
+                    inundation_dc.Datatype = str(np.byte)
                     inundation_dc.sdc_doylist = doy_list
                     inundation_dc.Zoffset = None
                     inundation_dc.size_control_factor = False
@@ -1307,74 +1227,58 @@ class RS_dcs(object):
             if 'Inundation_DT' not in self._index_list or self._inundation_overwritten_para:
 
                 # Define output path
-                DT_output_path = output_path + 'Inundation_DT_sequenced_datacube\\'
+                DT_output_path = output_path + 'Inundation_DT_datacube\\'
                 DT_inditif_path = DT_output_path + 'Individual_tif\\'
                 DT_threshold_path = DT_output_path + 'DT_threshold\\'
                 bf.create_folder(DT_output_path)
                 bf.create_folder(DT_inditif_path)
                 bf.create_folder(DT_threshold_path)
 
-                WI_sdc = copy.copy(self.dcs[dc_num])
-                doy_array = copy.copy(self._doys_backup_[dc_num])
-                nodata_value = self._Nodata_value_list[dc_num]
-
                 if not os.path.exists(DT_threshold_path + 'threshold_map.TIF') or not os.path.exists(DT_threshold_path + 'bh_threshold_map.TIF'):
 
-                    DT_threshold = np.ones([WI_sdc.shape[0], WI_sdc.shape[1]]) * -2
-                    bh_threshold_array = np.ones([WI_sdc.shape[0], WI_sdc.shape[1]]) * -2
+                    # Define input
+                    WI_sdc = copy.deepcopy(self.dcs[dc_num])
+                    doy_array = copy.copy(self._doys_backup_[dc_num])
+                    doy_array = bf.date2doy(doy_array)
+                    doy_array = np.array(doy_array)
+                    nodata_value = self._Nodata_value_list[dc_num]
+
+                    roi_arr = np.load(self.ROI_array)
+                    roi_coord = np.argwhere(roi_arr == 1).tolist()
+
+                    sz_ctrl_fac = self._size_control_factor_list[dc_num]
+                    zoffset = self._Zoffset_list[dc_num]
+                    nd_v = self._Nodata_value_list[dc_num]
+                    variance = self._variance_num
+                    bio_factor = self._DT_bimodal_histogram_factor
+
+                    # Define output
+                    DT_threshold_arr = np.ones([WI_sdc.shape[0], WI_sdc.shape[1]]) * np.nan
+                    bh_threshold_arr = np.ones([WI_sdc.shape[0], WI_sdc.shape[1]]) * np.nan
 
                     # DT method with empirical and bimodal threshold
-                    for y_temp in range(WI_sdc.shape[0]):
-                        for x_temp in range(WI_sdc.shape[1]):
+                    dc_list, pos_list, yxoffset_list = slice_datacube(WI_sdc, roi_coord)
+                    with concurrent.futures.ProcessPoolExecutor() as executor:
+                        res = executor.map(create_bimodal_histogram_threshold, dc_list, pos_list, yxoffset_list, repeat(doy_array), repeat(sz_ctrl_fac), repeat(zoffset), repeat(nd_v), repeat(variance), repeat(bio_factor))
 
-                            # Extract the wi series
-                            if self._sparse_matrix_list[dc_num]:
-                                ___, wi_series, __ = WI_sdc._extract_matrix_y1x1zh((y_temp, x_temp, 'all'),nodata_export=True)
-                            else:
-                                wi_series = WI_sdc[y_temp, x_temp, :]
-                            wi_series = invert_data(wi_series, self._size_control_factor_list[dc_num],self._Zoffset_list[dc_num], nodata_value)
-                            wi_series = wi_series.flatten()
-                            
-                            # Create the bimodal histogram threshold
-                            if self._DT_bimodal_histogram_factor:
+                    res = list(res)
+                    res_concat = []
+                    for res_temp in res:
+                        res_concat.extend(res_temp)
 
-                                doy_array_pixel = np.mod(doy_array[y_temp, x_temp, :].flatten(), 1000)
-                                doy_array_pixel = np.delete(doy_array_pixel, np.argwhere(np.isnan(wi_series))) if np.isnan(nodata_value) else np.delete(doy_array_pixel, np.argwhere(wi_series == nodata_value))
-                                wi_series = np.delete(wi_series, np.argwhere(np.isnan(wi_series))) if np.isnan(nodata_value) else np.delete(wi_series, np.argwhere(wi_series == nodata_value))
+                    for r_ in range(len(res_concat)):
+                        DT_threshold_arr[res_concat[r_][0], res_concat[r_][1]] = res_concat[r_][2]
+                        bh_threshold_arr[res_concat[r_][0], res_concat[r_][1]] = res_concat[r_][3]
 
-                                bh_threshold = bimodal_histogram_threshold(wi_series, init_threshold=0.1)
-                                if np.isnan(bh_threshold):
-                                    bh_threshold = -2
-                            else:
-                                bh_threshold = 0.123
-                            
-                            # Create the dynamic threshold
-                            wi_series = np.delete(wi_series, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 300)))
-                            wi_series = np.delete(wi_series, np.argwhere(wi_series < -0.7))
-                            all_dry_sum = wi_series.shape[0]
-                            wi_series = np.delete(wi_series, np.argwhere(wi_series > bh_threshold))
-
-                            if wi_series.shape[0] < 0.5 * all_dry_sum:
-                                DT_threshold[y_temp, x_temp] = np.nan
-                                bh_threshold_array[y_temp, x_temp] = np.nan
-                            elif wi_series.shape[0] < 5:
-                                DT_threshold[y_temp, x_temp] = np.nan
-                                bh_threshold_array[y_temp, x_temp] = np.nan
-                            else:
-                                mndwi_temp_std = np.nanstd(wi_series)
-                                mndwi_ave = np.mean(wi_series)
-                                DT_threshold[y_temp, x_temp] = mndwi_ave + self._variance_num * mndwi_temp_std
-                                bh_threshold_array[y_temp, x_temp] = bh_threshold
-
-                            DT_threshold[DT_threshold > bh_threshold] = bh_threshold
-
-                    bf.write_raster(gdal.Open(self.ROI_tif), DT_threshold, DT_threshold_path, 'threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
-                    bf.write_raster(gdal.Open(self.ROI_tif), bh_threshold_array, DT_threshold_path, 'bh_threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    bf.write_raster(gdal.Open(self.ROI_tif), DT_threshold_arr, DT_threshold_path, 'threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    bf.write_raster(gdal.Open(self.ROI_tif), bh_threshold_arr, DT_threshold_path, 'bh_threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    WI_sdc = None
+                    doy_array = None
                 else:
                     bh_threshold_ds = gdal.Open(DT_threshold_path + 'bh_threshold_map.TIF')
                     threshold_ds = gdal.Open(DT_threshold_path + 'threshold_map.TIF')
-                    DT_threshold = threshold_ds.GetRasterBand(1).ReadAsArray()
-                    bh_threshold_array = bh_threshold_ds.GetRasterBand(1).ReadAsArray()
+                    DT_threshold_arr = threshold_ds.GetRasterBand(1).ReadAsArray()
+                    bh_threshold_arr = bh_threshold_ds.GetRasterBand(1).ReadAsArray()
 
                 # Construct the MNDWI distribution figure
                 if self._DT_std_fig_construction:
@@ -1389,7 +1293,7 @@ class RS_dcs(object):
 
                                 # Extract the wi series
                                 if self._sparse_matrix_list[dc_num]:
-                                    ___, wi_series, __ = WI_sdc._extract_matrix_y1x1zh((y_temp, x_temp, 'all'), nodata_export=True)
+                                    ___, wi_series, __ = WI_sdc._extract_matrix_y1x1zh(([y_temp], [x_temp], ['all']), nodata_export=True)
                                 else:
                                     wi_series = WI_sdc[y_temp, x_temp, :]
                                 wi_series = invert_data(wi_series, self._size_control_factor_list[dc_num],self._Zoffset_list[dc_num], nodata_value)
@@ -1399,7 +1303,7 @@ class RS_dcs(object):
                                 wi_ori_series = copy.copy(wi_series)
                                 wi_series = np.delete(wi_series, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 285)))
                                 wi_series = np.delete(wi_series, np.argwhere(np.isnan(wi_series))) if np.isnan(nodata_value) else np.delete(wi_series, np.argwhere(wi_series == nodata_value))
-                                wi_series = np.delete(wi_series, np.argwhere(wi_series > DT_threshold[y_temp, x_temp])) if not np.isnan(DT_threshold[y_temp, x_temp]) else np.delete(wi_series, np.argwhere(wi_series > 0.123))
+                                wi_series = np.delete(wi_series, np.argwhere(wi_series > DT_threshold_arr[y_temp, x_temp])) if not np.isnan(DT_threshold_arr[y_temp, x_temp]) else np.delete(wi_series, np.argwhere(wi_series > 0.123))
 
                                 if wi_series.shape[0] != 0:
                                     yy = np.arange(0, 100, 1)
@@ -1411,8 +1315,8 @@ class RS_dcs(object):
                                     plt.hist(wi_ori_series, bins=50, color='#FFA500')
                                     plt.hist(wi_series, bins=20, color='#00FFA5')
                                     plt.plot(xx * mndwi_ave, yy, color='#FFFF00')
-                                    plt.plot(xx * bh_threshold_array[y_temp, x_temp], yy, color='#CD0000', linewidth='3')
-                                    plt.plot(xx * DT_threshold[y_temp, x_temp], yy, color='#0000CD', linewidth='1.5')
+                                    plt.plot(xx * bh_threshold_arr[y_temp, x_temp], yy, color='#CD0000', linewidth='3')
+                                    plt.plot(xx * DT_threshold_arr[y_temp, x_temp], yy, color='#0000CD', linewidth='1.5')
                                     plt.plot(xx * (mndwi_ave - mndwi_temp_std), yy, color='#00CD00')
                                     plt.plot(xx * (mndwi_ave + mndwi_temp_std), yy, color='#00CD00')
                                     plt.plot(xx * (mndwi_ave - self._variance_num * mndwi_temp_std), yy, color='#00CD00')
@@ -1424,41 +1328,57 @@ class RS_dcs(object):
                 if not os.path.exists(DT_output_path + 'doy.npy') or not os.path.exists(DT_output_path + 'metadata.json'):
 
                     inundation_dc = copy.deepcopy(self._dcs_backup_[dc_num])
-                    inundated_arr = copy.copy(WI_sdc)
-                    DT_threshold = DT_threshold.astype(np.float)
+                    inundated_arr = copy.deepcopy(self.dcs[dc_num])
+                    doy_array = copy.copy(self._doys_backup_[dc_num])
+                    doy_array = bf.date2doy(doy_array)
+                    doy_array = np.array(doy_array)
+                    DT_threshold = DT_threshold_arr.astype(float)
+                    num_list = [q for q in range(doy_array.shape[0])]
+                    if self._sparse_matrix_list[dc_num]:
+                        inundated_arr_list = [inundated_arr.SM_group[inundated_arr.SM_namelist[_]] for _ in range(inundated_arr.shape[2])]
+                    else:
+                        inundated_arr_list = [inundated_arr[:, :, _].reshape([inundated_arr.shape[0], inundated_arr.shape[1]]) for _ in range(inundated_arr.shape[2])]
 
-                    for date_num in range(doy_array.shape[0]):
-                        if not os.path.exists(f'{DT_inditif_path}\\DT_{str(doy_array[date_num])}.TIF') or self._inundation_overwritten_factor:
+                    with concurrent.futures.ProcessPoolExecutor() as executor:
+                        res = list(tq(executor.map(create_indi_DT_inundation_map,
+                                                   inundated_arr_list, repeat(doy_array),
+                                                   num_list, repeat(DT_threshold),
+                                                   repeat(DT_inditif_path), repeat(self._inundation_overwritten_para),
+                                                   repeat(self._size_control_factor_list[dc_num]), repeat(self._Zoffset_list[dc_num]),
+                                                   repeat(self._Nodata_value_list[dc_num]), repeat(self.ROI_tif)), total = len(num_list)))
 
-                            if self._sparse_matrix_list[dc_num]:
-                                WI_arr = WI_sdc.SM_group[WI_sdc.SM_namelist[date_num]]
-                            else:
-                                WI_arr = WI_sdc[:, :, date_num].reshape(WI_sdc.shape[0], WI_sdc.shape[1])
-
-                            WI_arr = invert_data(WI_arr, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
-
-                            pos_temp = np.argwhere(WI_arr > 0.15)
-                            inundation_map = WI_arr - DT_threshold
-                            inundation_map[inundation_map >= 0] = 2
-                            inundation_map[inundation_map < 0] = 1
-                            inundation_map[np.isnan(inundation_map)] = 0
-                            for i in pos_temp:
-                                inundation_map[i[0], i[1]] = 2
-                            inundation_map = reassign_sole_pixel(inundation_map, Nan_value=0, half_size_window=2)
-                            inundation_map = inundation_map.astype(np.bytes)
-
-                            bf.write_raster(gdal.Open(self.ROI_tif), inundation_map, DT_inditif_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
-                        else:
-                            inundated_ds = gdal.Open(f'{DT_inditif_path}DT_{str(doy_array[date_num])}.TIF')
-                            inundation_map = inundated_ds.GetRasterBand(1).ReadAsArray()
-
+                    for _ in res:
                         if self._sparse_matrix_list[dc_num]:
-                            inundated_arr.SM_group[inundated_arr.SM_namelist[date_num]] = inundation_map
+                            inundated_arr.SM_group[inundated_arr.SM_namelist[_[0]]] = _[1]
                         else:
-                            inundated_arr[:, :, date_num] = inundation_map.reshape((inundation_map.shape[0], inundation_map.shape[1], 1))
+                            inundated_arr[:, :, [_[0]]] = _[1]
 
+                    # for date_num in range(doy_array.shape[0]):
+                    #     if not os.path.exists(f'{DT_inditif_path}\\DT_{str(doy_array[date_num])}.TIF') or self._inundation_overwritten_factor:
+                    #
+                    #         if self._sparse_matrix_list[dc_num]:
+                    #             WI_arr = inundated_arr.SM_group[inundated_arr.SM_namelist[date_num]]
+                    #         else:
+                    #             WI_arr = inundated_arr[:, :, date_num].reshape(inundated_arr.shape[0], inundated_arr.shape[1])
+                    #
+                    #         WI_arr = invert_data(WI_arr, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
+                    #
+                    #         inundation_map = WI_arr - DT_threshold
+                    #         inundation_map[inundation_map >= 0] = 2
+                    #         inundation_map[inundation_map < 0] = 1
+                    #         inundation_map[np.isnan(inundation_map)] = 0
+                    #         inundation_map[WI_arr > 0.16] = 2
+                    #         inundation_map = reassign_sole_pixel(inundation_map, Nan_value=0, half_size_window=2)
+                    #         inundation_map = inundation_map.astype(np.byte)
+                    #
+                    #         bf.write_raster(gdal.Open(self.ROI_tif), inundation_map, DT_inditif_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                    #     else:
+                    #         inundated_ds = gdal.Open(f'{DT_inditif_path}DT_{str(doy_array[date_num])}.TIF')
+                    #         inundation_map = inundated_ds.GetRasterBand(1).ReadAsArray()
+
+                    inundation_dc.dc = inundated_arr
                     inundation_dc.index = 'Inundation_' + inundation_mapping_method
-                    inundation_dc.Datatype = np.bytes
+                    inundation_dc.Datatype = str(np.byte)
                     inundation_dc.sdc_doylist = doy_list
                     inundation_dc.Zoffset = None
                     inundation_dc.size_control_factor = False
@@ -1471,18 +1391,25 @@ class RS_dcs(object):
                 DT_annualtif_path = DT_output_path + 'Annual_tif\\'
                 bf.create_folder(DT_annualtif_path)
 
-                year_array = np.unique(inundation_dc.sdc_doylist // 1000)
+                doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
+                year_array = np.unique(doy_array // 1000)
                 temp_ds = gdal.Open(bf.file_filter(DT_inditif_path, ['.TIF'])[0])
                 for year in year_array:
-                    annual_inundated_map = np.zeros([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]])
-
-                    if not os.path.exists(self.inun_det_method_dic['DT_annual_' + self.ROI_name] + 'DT_' + str(year) + '.TIF') or self._inundation_overwritten_factor:
+                    if not os.path.exists(f'{DT_annualtif_path}DT_{str(year)}.TIF') or self._inundation_overwritten_factor:
+                        annual_vi_list = []
                         for doy_index in range(doy_array.shape[0]):
-                            if doy_array[doy_index] // 1000 == year and 182 <= np.mod(doy_array[doy_index], 1000) <= 285:
-                                annual_inundated_map[inundation_dc.dc[:, :, doy_index] > 0] = 1
-                        bf.write_raster(temp_ds, annual_inundated_map,
-                                        self.inun_det_method_dic['DT_annual_' + self.ROI_name], 'DT_' + str(year) + '.TIF',
-                                        raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+                            if doy_array[doy_index] // 1000 == year and 120 <= np.mod(doy_array[doy_index], 1000) <= 300:
+                                if isinstance(inundation_dc.dc, NDSparseMatrix):
+                                    arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
+                                    annual_vi_list.append(arr_temp.toarray())
+                                else:
+                                    annual_vi_list.append(inundation_dc.dc[:, :, doy_index])
+
+                        if annual_vi_list == []:
+                            annual_inundated_map = np.zeros([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]], dtype=np.byte)
+                        else:
+                            annual_inundated_map = np.nanmax(np.stack(annual_vi_list, axis=2), axis=2)
+                            bf.write_raster(temp_ds, annual_inundated_map, DT_annualtif_path, 'DT_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
 
                 print(f'Flood mapping using DT algorithm within {self.ROI_name} consumes {str(time.time() - start_time)}s!')
 
@@ -1491,29 +1418,56 @@ class RS_dcs(object):
     def _process_inundation_removal_para(self, **kwargs):
         pass
 
-    def inundation_removal(self, processed_index, inundation_method, append_new_dc=True, **kwargs):
+    def inundation_removal(self, processed_index: str, inundation_method: str, dc_type: str, append_new_dc=True, **kwargs):
+
+        print(f'Start remove the inundation area of the \033[1;34m{processed_index}\033[0m!')
+
+        self._process_inundation_removal_para(**kwargs)
+        if dc_type == 'Sentinel2':
+            dc_type = Sentinel2_dc
+            doy_list = self.s2dc_doy_list
+            output_path = self._s2dc_work_env
+            z_size = self.S2dc_ZSize
+        elif dc_type == 'Landsat':
+            dc_type = Landsat_dc
+            doy_list = self.Landsatdc_doy_list
+            output_path = self._Landsatdc_work_env
+            z_size = self.Landsatdc_ZSize
+        else:
+            raise ValueError('Only Sentinel-2 and Landsat dc is supported for inundation detection!')
+
+        # Retrieve inundation dc
+        if inundation_method not in self._flood_mapping_method:
+            raise ValueError(f'The inundation method {str(inundation_method)} is not supported!')
+        inundation_index = 'Inundation_' + inundation_method
+        inundation_dc_num = [_ for _ in range(len(self._index_list)) if self._dc_typelist[_] == dc_type and self._index_list[_] == inundation_index]
+        if inundation_dc_num == 0:
+            raise ValueError('The inundated dc for inundation removal is not properly imported')
+        else:
+            inundation_dc = copy.deepcopy(self.dcs[inundation_dc_num[0]])
+
+        # Retrieve processed dc
+        processed_dc_num = [_ for _ in range(len(self._index_list)) if self._dc_typelist[_] == dc_type and self._index_list[_] == processed_index]
+        if processed_dc_num == 0:
+            raise ValueError('The processed dc for inundation removal is not properly imported')
+        else:
+            processed_dc = copy.deepcopy(self.dcs[processed_dc_num[0]])
+            processed_dc4save = copy.deepcopy(self._dcs_backup_[processed_dc_num[0]])
+
+        if self._doys_backup_[inundation_dc_num[0]] != self._doys_backup_[processed_dc_num[0]]:
+            raise TypeError('The inundation removal method must processed on two datacube with same doy list!')
+
+        processed_dc_path = f'{str(output_path)}{str(processed_index)}_noninun_datacube\\'
+        bf.create_folder(processed_dc_path)
 
         start_time = time.time()
+        if not os.path.exists(processed_dc_path + 'metadata.json'):
 
-        # process arguments
-        inundation_index = inundation_method
-        self._process_inundation_removal_para(**kwargs)
-
-        if processed_index not in self.index_list or inundation_index not in self.index_list:
-            raise ValueError('The inundation removal or index is not properly generated!')
-
-        inundation_dc = self.dcs[self.index_list.index(inundation_index)]
-        processed_dc = copy.deepcopy(self.dcs[self.index_list.index(processed_index)])
-        processed_dc4save = copy.deepcopy(self._dcs_backup_[self.index_list.index(processed_index)])
-
-        if not os.path.exists(self._s2dc_work_env + processed_index + '_noninun_sequenced_datacube\\header.npy'):
-            bf.create_folder(self._s2dc_work_env + processed_index + '_noninun_sequenced_datacube\\')
-            if self.sparse_matrix:
-
-                for height in range(self.S2dc_ZSize):
-                    processed_dc.SM_group[processed_dc.SM_namelist[height]] = processed_dc.SM_group[
-                        processed_dc.SM_namelist[height]].multiply(
-                        inundation_dc.SM_group[inundation_dc.SM_namelist[height]])
+            if self._sparse_matrix_list[processed_dc_num[0]]:
+                for height in range(z_size):
+                    inundation_arr = copy.deepcopy(inundation_dc.SM_group[inundation_dc.SM_namelist[height]])
+                    inundation_arr[inundation_arr == 2] = 0
+                    processed_dc.SM_group[processed_dc.SM_namelist[height]] = processed_dc.SM_group[processed_dc.SM_namelist[height]].multiply(inundation_arr)
 
                 # if self._remove_nan_layer or self._manually_remove_para:
                 #     i_temp = 0
@@ -1529,19 +1483,18 @@ class RS_dcs(object):
                 processed_index = processed_index + '_noninun'
                 processed_dc4save.index = processed_index
                 processed_dc4save.dc = processed_dc
-                processed_dc4save.save(self._s2dc_work_env + processed_index + '_sequenced_datacube\\')
+                processed_dc4save.save(output_path + processed_index + '_datacube\\')
 
-                if append_new_dc:
-                    self.append(processed_dc4save)
             else:
                 pass
-        else:
-            processed_dc = Sentinel2_dc(self._s2dc_work_env + processed_index + '_noninun_sequenced_datacube\\')
-            if append_new_dc:
-                self.append(processed_dc)
 
-        print(
-            f'Finish remove the inundation area of the \033[1;34m{processed_index}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0m s!')
+        else:
+            processed_dc4save = dc_type(output_path + processed_index + '_noninun_datacube\\')
+
+        if append_new_dc:
+            self.append(processed_dc4save)
+
+        print(f'Finish remove the inundation area of the \033[1;34m{processed_index}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0m s!')
 
     def _process_curve_fitting_para(self, **kwargs):
 
@@ -1584,29 +1537,47 @@ class RS_dcs(object):
         if 'overwritten' in kwargs.keys():
             self._curve_fitting_algorithm = kwargs['curve_fitting_algorithm']
 
-    def curve_fitting(self, index, **kwargs):
+    def curve_fitting(self, index: str, dc_type, **kwargs):
 
         # Check vi availability
-        if index not in self.index_list:
+        if index not in self._index_list:
             raise ValueError('Please make sure the vi datacube is constructed!')
+
+        if dc_type == 'Sentinel2':
+            dc_type = Sentinel2_dc
+            doy_list = self.s2dc_doy_list
+            output_path = self._s2dc_work_env
+        elif dc_type == 'Landsat':
+            dc_type = Landsat_dc
+            doy_list = self.Landsatdc_doy_list
+            output_path = self._Landsatdc_work_env
+        else:
+            raise ValueError('Only Sentinel-2 and Landsat dc is supported for inundation detection!')
 
         # Process paras
         self._process_curve_fitting_para(**kwargs)
 
         # Get the index/doy dc
-        index_dc = copy.copy(self.dcs[self.index_list.index(index)])
-        doy_dc = copy.copy(self.s2dc_doy_list)
-        doy_all = np.mod(doy_dc, 1000)
-        size_control_fac = self.size_control_factor_list[self.index_list.index(index)]
+        dc_num = [_ for _ in range(len(self._index_list)) if self._dc_typelist[_] == dc_type and self._index_list[_] == index]
+        if dc_num == 0:
+            raise TypeError('None imported datacube meets the requirement for curve fitting!')
+        else:
+            dc_num = dc_num[0]
 
-        # Define the study region
+        index_dc = copy.deepcopy(self.dcs[dc_num])
+        doy_dc = copy.deepcopy(doy_list)
+        doy_dc = bf.date2doy(doy_dc)
+        doy_all = np.mod(doy_dc, 1000)
+        size_control_fac = self._size_control_factor_list[dc_num]
+
+        # Retrieve the ROI
         sa_map = np.load(self.ROI_array)
         ds_temp = gdal.Open(self.ROI_tif)
 
         # Create output path
-        curfit_output_path = self._s2dc_work_env + index + '_curfit_datacube\\'
+        curfit_output_path = output_path + index + '_curfit_datacube\\'
         para_output_path = curfit_output_path + str(self._curve_fitting_dic['CFM']) + '_para\\'
-        phemetric_output_path = self._s2dc_work_env + index + f'_curfit_datacube\\{self.ROI_name}_Phemetric_datacube\\'
+        phemetric_output_path = curfit_output_path + f'\\{self.ROI_name}_Phemetric_datacube\\'
         csv_para_output_path = para_output_path + 'csv_file\\'
         tif_para_output_path = para_output_path + 'tif_file\\'
         bf.create_folder(curfit_output_path)
@@ -1614,8 +1585,7 @@ class RS_dcs(object):
         bf.create_folder(phemetric_output_path)
         bf.create_folder(csv_para_output_path)
         bf.create_folder(tif_para_output_path)
-        self._curve_fitting_dic[
-            str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = para_output_path
+        self._curve_fitting_dic[str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = para_output_path
 
         # Define the cache folder
         cache_folder = f'{para_output_path}cache\\'
@@ -1632,43 +1602,34 @@ class RS_dcs(object):
         # Generate all the curve fitting para into a table
         if not os.path.exists(csv_para_output_path + 'curfit_all.csv'):
 
-            if self.huge_matrix:
+            # Slice into several tasks/blocks to use all cores
+            work_num = os.cpu_count()
+            doy_all_list, pos_list, xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(np.ceil(pos_df.shape[0] / work_num))
+            for i_size in range(work_num):
+                if i_size != work_num - 1:
+                    pos_list.append(pos_df[indi_size * i_size: indi_size * (i_size + 1)])
+                else:
+                    pos_list.append(pos_df[indi_size * i_size: -1])
 
-                # Slice into several tasks/blocks to use all cores
-                work_num = int(os.cpu_count() / 2)
-                doy_all_list, pos_list, xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(
-                    np.ceil(pos_df.shape[0] / work_num))
-                for i_size in range(work_num):
-                    if i_size != work_num - 1:
-                        pos_list.append(pos_df[indi_size * i_size: indi_size * (i_size + 1)])
-                    else:
-                        pos_list.append(pos_df[indi_size * i_size: -1])
+                index_size_list.append(
+                    [int(max(0, pos_list[-1]['y'].min())), int(min(sa_map.shape[0], pos_list[-1]['y'].max())),
+                     int(max(0, pos_list[-1]['x'].min())), int(min(sa_map.shape[1], pos_list[-1]['x'].max()))])
+                xy_offset_list.append([int(max(0, pos_list[-1]['y'].min())), int(max(0, pos_list[-1]['x'].min()))])
 
-                    index_size_list.append(
-                        [int(max(0, pos_list[-1]['y'].min())), int(min(sa_map.shape[0], pos_list[-1]['y'].max())),
-                         int(max(0, pos_list[-1]['x'].min())), int(min(sa_map.shape[1], pos_list[-1]['x'].max()))])
-                    xy_offset_list.append([int(max(0, pos_list[-1]['y'].min())), int(max(0, pos_list[-1]['x'].min()))])
+                if self._sparse_matrix_list[dc_num]:
+                    dc_temp = index_dc.extract_matrix(([index_size_list[-1][0], index_size_list[-1][1]], [index_size_list[-1][2], index_size_list[-1][3]], ['all']))
+                    index_dc_list.append(dc_temp.drop_nanlayer())
+                    doy_all_list.append(bf.date2doy(index_dc_list[-1].SM_namelist))
+                else:
+                    index_dc_list.append(index_dc[index_size_list[-1][0]: index_size_list[-1][2],
+                                         index_size_list[-1][1]: index_size_list[-1][3], :])
+                    doy_all_list.append(doy_all)
 
-                    if self.sparse_matrix:
-                        dc_temp = index_dc.extract_matrix(([index_size_list[-1][0], index_size_list[-1][1]],
-                                                           [index_size_list[-1][2], index_size_list[-1][3]], ['all']))
-                        index_dc_list.append(dc_temp.drop_nanlayer())
-                        doy_all_list.append(bf.date2doy(index_dc_list[-1].SM_namelist))
-                    else:
-                        index_dc_list.append(index_dc[index_size_list[-1][0]: index_size_list[-1][2],
-                                             index_size_list[-1][1]: index_size_list[-1][3], :])
-
-                with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as executor:
-                    result = executor.map(curfit4bound_annual, pos_list, index_dc_list, doy_all_list,
-                                          repeat(self._curve_fitting_dic), repeat(self.sparse_matrix),
-                                          repeat(size_control_fac), xy_offset_list, repeat(cache_folder))
-                result_list = list(result)
-
-            else:
-                result_list = []
-                result_list.append(
-                    curfit4bound_annual(pos_df, index_dc, doy_all, self._curve_fitting_dic, self.sparse_matrix,
-                                        size_control_fac, [0, 0], cache_folder))
+            with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as executor:
+                result = executor.map(curfit4bound_annual, pos_list, index_dc_list, doy_all_list,
+                                      repeat(self._curve_fitting_dic), repeat(self._sparse_matrix_list[dc_num]),
+                                      repeat(size_control_fac), xy_offset_list, repeat(cache_folder))
+            result_list = list(result)
 
             # Integrate all the result into the para dict
             self._curfit_result = None
@@ -2056,12 +2017,7 @@ class RS_dcs(object):
                                 f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}',
                                 phedc_reconstructed.shape[2] + 1)
                         else:
-                            phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [
-                                                                                                                     self._doys_backup_[
-                                                                                                                         phepos[
-                                                                                                                             _]].index(
-                                                                                                                         [
-                                                                                                                             f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]),
+                            phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]),
                                                                  axis=2)
                     year_list_temp.append(self._pheyear_list[phepos[_]])
 

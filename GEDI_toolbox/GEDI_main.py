@@ -6,13 +6,11 @@ from shapely.geometry import Point,LineString, Polygon, shape
 # import geoviews as gv
 # from geoviews import opts, tile_sources as gvts
 import basic_function as bf
-import sys
 import requests as r
 import os
 import time
 import concurrent.futures
 import traceback
-from Sentinel2_toolbox.utils import create_circle_polygon
 
 
 # def pointVisual(features, vdims):

@@ -1,4 +1,4 @@
-import gdal
+from osgeo import gdal
 import pandas as pd
 from osgeo import gdal_array, osr
 import sys
@@ -28,6 +28,7 @@ def union_list(small_list, big_list) -> list:
             union_list_temp.append(i)
     return union_list_temp
 
+
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
     return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
 
@@ -51,57 +52,6 @@ class Readable_key_dic(pd.DataFrame):
 
     def export(self, path):
         self.ori_pd.to_excel(path)
-
-
-def bimodal_histogram_threshold(input_temp, method=None, init_threshold=0.123):
-
-    # Detect whether the input temp is valid
-    if type(input_temp) is not list and type(input_temp) is not np.ndarray:
-        raise TypeError('Please input a list for the generation of bimodal histogram threshold!')
-    elif False in [type(data_temp) is int or type(data_temp) is np.float16 or np.isnan(data_temp) for data_temp in input_temp]:
-        raise TypeError('Please input the list with all numbers in it!')
-
-    # Turn the input temp as np.ndarray
-    if type(input_temp) is list:
-        array_temp = np.array(input_temp)
-    else:
-        array_temp = input_temp
-
-    # Define the init_threshold
-    if np.isnan(init_threshold):
-        init_threshold = (array_temp.max() + array_temp.min()) / 2
-    elif type(init_threshold) is not int and type(init_threshold) is not float:
-        raise TypeError('Please input the init_threshold as a num!')
-
-    # Check whether the array is bimodal
-    list_lower = [q for q in input_temp if q < init_threshold]
-    list_greater = [q for q in input_temp if q >= init_threshold]
-
-    if np.sum(np.array([~np.isnan(temp) for temp in array_temp])) < 8:
-        return np.nan
-    elif len(list_lower) == 0 or len(list_greater) == 0:
-        return np.nan
-    elif len(list_greater) >= 0.9 * (len(list_lower) + len(list_greater)):
-        return np.nan
-    else:
-        ith_threshold = init_threshold
-        while True:
-            list_lower = [q for q in input_temp if q < ith_threshold]
-            list_greater = [q for q in input_temp if q >= ith_threshold]
-            i1th_threshold = (np.array(list_greater).mean() + np.array(list_lower).mean()) / 2
-            if i1th_threshold == ith_threshold or np.isnan(ith_threshold) or np.isnan(i1th_threshold):
-                break
-            else:
-                ith_threshold = i1th_threshold
-
-        if np.isnan(ith_threshold) or np.isnan(i1th_threshold):
-            return init_threshold
-        elif i1th_threshold < -0.05:
-            return 0.123
-        elif i1th_threshold > 0.2:
-            return 0.123
-        else:
-            return i1th_threshold
 
 
 def mostCommon(nd_array, indicator_array, nan_value=0):
@@ -1241,6 +1191,7 @@ def neighbor_average_convolve2d(array, size=4):
 
 
 def reassign_sole_pixel(twod_array, Nan_value=0, half_size_window=2):
+
     if len(twod_array.shape) != 2:
         print('Please correctly inputting a 2d array!')
         sys.exit(-1)
@@ -1250,34 +1201,39 @@ def reassign_sole_pixel(twod_array, Nan_value=0, half_size_window=2):
         return twod_array
     elif len(unique_value_list) == 2:
         twod_array_temp = copy.copy(twod_array)
+
         for y in range(twod_array.shape[0]):
             for x in range(twod_array.shape[1]):
-                if y + half_size_window + 1 > twod_array_temp.shape[0]:
-                    y_max = twod_array_temp.shape[0]
-                else:
-                    y_max = y + half_size_window + 1
-                if y - half_size_window < 0:
-                    y_min = 0
-                else:
-                    y_min = y - half_size_window
-                if x + half_size_window + 1 > twod_array_temp.shape[1]:
-                    x_max = twod_array_temp.shape[1]
-                else:
-                    x_max = x + half_size_window + 1
-                if x - half_size_window < 0:
-                    x_min = 0
-                else:
-                    x_min = x - half_size_window
-                array_temp = twod_array[y_min: y_max, x_min: x_max]
 
-                if twod_array[y, x] != Nan_value and np.sum(np.logical_and(array_temp != twod_array[y, x], array_temp != Nan_value)) == (array_temp.shape[0] * array_temp.shape[1] - 1):
-                    twod_array_temp[y, x] = [i for i in unique_value_list if i != twod_array_temp[y, x]][0]
+                if twod_array[y, x] != Nan_value:
+
+                    if y + half_size_window + 1 > twod_array_temp.shape[0]:
+                        y_max = twod_array_temp.shape[0]
+                    else:
+                        y_max = y + half_size_window + 1
+                    if y - half_size_window < 0:
+                        y_min = 0
+                    else:
+                        y_min = y - half_size_window
+
+                    if x + half_size_window + 1 > twod_array_temp.shape[1]:
+                        x_max = twod_array_temp.shape[1]
+                    else:
+                        x_max = x + half_size_window + 1
+                    if x - half_size_window < 0:
+                        x_min = 0
+                    else:
+                        x_min = x - half_size_window
+
+                    array_temp = twod_array[y_min: y_max, x_min: x_max]
+
+                    if np.sum(np.logical_and(array_temp != twod_array[y, x], array_temp != Nan_value)) == (array_temp.shape[0] * array_temp.shape[1] - 1):
+                        twod_array_temp[y, x] = [_ for _ in unique_value_list if _ != twod_array_temp[y, x]][0]
 
         return twod_array_temp
 
     else:
-        print('This function can reassign the value for this raster')
-        sys.exit(-1)
+        raise TypeError('This function can not reassign the sole value for this raster')
 
 
 def remove_sole_pixel(twod_array, Nan_value=0, half_size_window=2):
