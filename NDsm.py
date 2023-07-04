@@ -167,11 +167,13 @@ class NDSparseMatrix:
 
         self.SM_namelist = np.sort(header_file).tolist()
         self.SM_group = {}
+        missing_sm = []
 
         for SM_name in self.SM_namelist:
             SM_arr_path = bf.file_filter(input_path, [f'{str(SM_name)}.npz'], and_or_factor='and')
             if len(SM_arr_path) == 0:
-                raise ValueError(f'The file {str(SM_name)} is missing！')
+                missing_sm.append(SM_name)
+                # raise ValueError(f'The file {str(SM_name)} is missing！')
             elif len(SM_arr_path) > 1:
                 raise ValueError(f'There are more than one file sharing name {str(SM_name)}')
             else:
@@ -179,7 +181,12 @@ class NDSparseMatrix:
                     SM_arr_temp = sm.load_npz(SM_arr_path[0])
                 except:
                     raise Exception(f'file {str(SM_name)} cannot be loaded')
-            self.SM_group[SM_name] = SM_arr_temp
+                self.SM_group[SM_name] = SM_arr_temp
+
+        if missing_sm:
+            for _ in missing_sm:
+                self.SM_namelist.remove(_)
+            self.save(input_path, overwritten_para=True)
 
         self._update_size_para()
         self._matrix_type = type(SM_arr_temp)

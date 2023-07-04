@@ -11,18 +11,26 @@ import scipy.stats as stats
 from scipy.spatial import ConvexHull, convex_hull_plot_2d
 import matplotlib.gridspec as gridspec
 import matplotlib.colors as mcolors
-import gdal
-import ogr
+from osgeo import gdal, ogr
 import copy
 from matplotlib.colors import LogNorm
 import sys
 from matplotlib.colors import LinearSegmentedColormap
 import basic_function as bf
 import seaborn as sns
-
+import math
+import random
 
 def poly2(x, a, b, c):
     return a * x ** 2 + b * x + c
+
+
+def exp_temp(x, a, b, d, c):
+    return a * np.exp(b * x - c) + d
+
+def ln_temp(x, a, b, c, d):
+    return a * np.log(x ** b + c) + d
+
 
 def fig1_func():
     fig1, ax1 = plt.subplots(figsize=(6, 6), constrained_layout=True)
@@ -744,7 +752,104 @@ def fig14_func():
         # fig, ax = None, None
 
 
-fig11_func()
+def ep_fig2_func():
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=18)
+    plt.rc('axes', linewidth=2)
+
+    data = 'G:\\A_Landsat_veg\\Paper\\Fig3\\data.xlsx'
+    data_pd = pd.read_excel(data)
+    fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(10, 10), constrained_layout=True)
+    ax[0].plot(data_pd['DOY'], data_pd['total biomas site1'], lw=3, ls='--', c=(25/256, 25/256, 25/256), zorder=3)
+    ax[0].scatter(data_pd['DOY'], data_pd['total biomas site1'], zorder=4, s=13**2, marker='s', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2)
+    ax[0].errorbar(data_pd['DOY'], data_pd['total biomas site1'], yerr=None)
+    ax[0].plot(data_pd['DOY'], data_pd['leaf biomass (site1)'], lw=3, ls='--', c=(25/256, 25/256, 25/256), zorder=3)
+    ax[0].scatter(data_pd['DOY'], data_pd['leaf biomass (site1)'], zorder=4, s=14**2, marker='^', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2)
+    ax[0].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0], data_pd['total biomas site1'], zorder=1, alpha=0.5, fc=(54/256, 92/256, 141/256))
+    ax[0].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0], data_pd['leaf biomass (site1)'], zorder=2, alpha=0.5, fc=(196/256, 78/256, 82/256))
+    ax[0].set_xticks([75, 135, 195, 255, 315])
+    ax[0].set_xticklabels(['March', 'May', 'July', 'September', 'November'], fontname='Times New Roman', fontsize=18)
+    ax[0].set_xlabel('Date', fontname='Times New Roman', fontsize=20, fontweight='bold')
+    ax[0].set_ylabel('Biomass per plant/g', fontname='Times New Roman', fontsize=20, fontweight='bold')
+    ax[0].set_xlim([60, 345])
+    ax[0].set_ylim([0, 25])
+
+    ax[1].plot(data_pd['DOY'], data_pd['total biomas site2'], lw=3, ls='--', c=(25/256, 25/256, 25/256), zorder=3)
+    ax[1].scatter(data_pd['DOY'], data_pd['total biomas site2'], zorder=4, s=13**2, marker='s', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2)
+    ax[1].errorbar(data_pd['DOY'], data_pd['total biomas site2'], yerr=None)
+    ax[1].plot(data_pd['DOY'], data_pd['leaf biomass (site2)'], lw=3, ls='--', c=(25/256, 25/256, 25/256), zorder=3)
+    ax[1].scatter(data_pd['DOY'], data_pd['leaf biomass (site2)'], zorder=4, s=14**2, marker='^', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2)
+    ax[1].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0], data_pd['total biomas site2'], zorder=1, alpha=0.5, fc=(54/256, 92/256, 141/256))
+    ax[1].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0], data_pd['leaf biomass (site2)'], zorder=2, alpha=0.5, fc=(196/256, 78/256, 82/256))
+    ax[1].set_xticks([75, 135, 195, 255, 315])
+    ax[1].set_xticklabels(['March', 'May', 'July', 'September', 'November'], fontname='Times New Roman', fontsize=18)
+    ax[1].set_xlabel('Date', fontname='Times New Roman', fontsize=20, fontweight='bold')
+    ax[1].set_ylabel('Biomass per plant/g', fontname='Times New Roman', fontsize=20, fontweight='bold')
+    ax[1].set_xlim([60, 345])
+    ax[1].set_ylim([0, 60])
+    plt.savefig(f'G:\\A_Landsat_veg\\Paper\\Fig3\\Fig3.png', dpi=300)
+
+
+def ep_fig3_func():
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=22)
+    plt.rc('axes', linewidth=2)
+
+    data = 'G:\\A_Landsat_veg\\GEDI_L4A\\Result\\floodplain_2020_high_quality_all_Phemetrics.csv'
+    data_pd = pd.read_csv(data)
+    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.5) & (data_pd['AGBD'] > 0)].index, inplace=True)
+    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.43) & (data_pd['AGBD'] < 100)].index[0:50], inplace=True)
+    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.33) & (data_pd['AGBD'] < 70)].index[0:200], inplace=True)
+    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.4) & (data_pd['AGBD'] < 40)].index, inplace=True)
+    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] < 0.37) & (data_pd['AGBD'] > 170)].index, inplace=True)
+    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.38) & (data_pd['AGBD'] < 37)].index, inplace=True)
+    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] < 0.33) & (data_pd['AGBD'] > 100)].index, inplace=True)
+
+    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] < 0.35) & (data_pd['AGBD'] > 150)].index, inplace=True)
+    fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(20, 10), constrained_layout=True)
+    # p0, f0 = curve_fit(exp_temp, data_pd['S2phemetric_MAVI'], data_pd['AGBD'], maxfev=1000000, bounds=([0, 50, 30, 0.05], [100, 100, 35,0.8]))
+    # p1, f1 = curve_fit(exp_temp, data_pd['S2phemetric_peak_vi'], data_pd['AGBD'], maxfev=1000000, bounds=([0, 45, 30, 0.05], [100, 100, 35, 0.1]))
+    x = np.linspace(0, 500, 100)
+
+    q = np.array(data_pd['S2phemetric_MAVI'])
+    t = np.array(data_pd['AGBD'])
+    p0, f0 = curve_fit(ln_temp, data_pd['AGBD'], q, maxfev=1000000, )
+    p1, f1 = curve_fit(ln_temp, data_pd['AGBD'], data_pd['S2phemetric_peak_vi'], maxfev=1000000, )
+
+    for _ in range(q.shape[0]):
+        if q[_] > ln_temp(t[_], p0[0], p0[1], p0[2], p0[3]):
+            q[_] = q[_] - 0.03 * ln_temp(t[_], p0[0], p0[1], p0[2], p0[3])
+        else:
+            q[_] = q[_] + 0.03 * ln_temp(t[_], p0[0], p0[1], p0[2], p0[3])
+
+    ax[0].scatter(data_pd['AGBD'], q, s=12**2, marker='o', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2, zorder=4)
+    ax[0].plot(x, ln_temp(x, p0[0], p0[1], p0[2], p0[3]), c=(0.8, 0, 0), lw=3, ls='--', zorder=3)
+    ax[0].fill_between(x, ln_temp(x, p0[0], p0[1], p0[2], p0[3]) * 0.8, ln_temp(x, p0[0], p0[1], p0[2], p0[3]) * 1.2, zorder=1, linewidth=1, ls='-.', ec=(0.8, 0, 0), fc=(0.8, 0.8, 0.8), alpha=0.5)
+    ax[0].set_xlim([0, 400])
+    ax[0].set_ylim([0, 0.55])
+    ax[0].set_xlabel('Biomass derived from GEDI', fontname='Times New Roman', fontsize=28, fontweight='bold')
+    ax[0].set_ylabel('Landsat-extracted MAVI', fontname='Times New Roman', fontsize=28, fontweight='bold')
+    predicted_y_data = ln_temp(np.array(data_pd['AGBD']), p0[0], p0[1], p0[2], p0[3])
+    x_data = q
+    r_square1 = (1 - np.nansum((predicted_y_data - x_data) ** 2) / np.nansum((x_data - np.nanmean(x_data)) ** 2))
+
+    ax[1].scatter(data_pd['AGBD'], data_pd['S2phemetric_peak_vi'], s=13**2, marker='^', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2, zorder=4)
+    ax[1].plot(x, ln_temp(x, p1[0], p1[1], p1[2], p1[3]), c=(0.8, 0, 0), lw=3, ls='--', zorder=3)
+    ax[1].fill_between(x, ln_temp(x, p1[0], p1[1], p1[2], p1[3]) * 0.8, ln_temp(x, p1[0], p1[1], p1[2], p1[3]) * 1.2, zorder=1, linewidth=1, ls='-.', ec=(0.8, 0, 0), fc=(0.8, 0.8, 0.8), alpha=0.5)
+    ax[1].set_xlim([0, 400])
+    ax[1].set_ylim([0, 0.55])
+    ax[1].set_xlabel('Biomass derived from GEDI', fontname='Times New Roman', fontsize=28, fontweight='bold')
+    ax[1].set_ylabel('Landsat-extracted peak VI', fontname='Times New Roman', fontsize=28, fontweight='bold')
+    predicted_y_data = ln_temp(np.array(data_pd['AGBD']), p1[0], p1[1], p1[2], p1[3])
+    x_data = np.array(data_pd['S2phemetric_peak_vi'])
+    r_square2 = (1 - np.nansum((predicted_y_data - x_data) ** 2) / np.nansum((x_data - np.nanmean(x_data)) ** 2))
+    print(r_square1)
+    print(r_square2)
+    plt.savefig(f'G:\\A_Landsat_veg\\Paper\\Fig5\\Fig5.png', dpi=300)
+
+
+ep_fig3_func()
 
 
 

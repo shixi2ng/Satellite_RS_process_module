@@ -70,7 +70,7 @@ if __name__ == '__main__':
         for index in index_temp:
             list_temp.append(Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{index}_sequenced_datacube\\'))
         dcs_temp = Sentinel2_dcs(list_temp[0])
-        dcs_temp.link_GEDI_S2_inform('G:\A_veg\S2_all\GEDI_v3\\floodplain_2020_high_quality.xlsx', index_temp, retrieval_method='linear_interpolation')
+        dcs_temp.link_GEDI_rs_inform('G:\A_veg\S2_all\GEDI_v3\\floodplain_2020_high_quality.xlsx', index_temp, retrieval_method='linear_interpolation')
 
     # dc_temp_dic = {}
     # for index in ['NDVI_20m_noninun', 'OSAVI_20m_noninun']:

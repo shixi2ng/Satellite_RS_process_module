@@ -13,11 +13,14 @@ import json
 from tqdm.auto import tqdm
 from tqdm import tqdm as tq
 from .utils import *
+import seaborn as sns
 
 
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
     return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
 
+def linear_f(x, a, b):
+    return a * (x + 1985) + b
 
 def two_term_fourier(x, a0, a1, b1, a2, b2, w):
     return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x)+b2 * np.sin(2 * w * x)
@@ -301,7 +304,7 @@ class Phemetric_dc(object):
         self.curfit_dic = {}
 
         # Init protected var
-        self._support_pheme_list = ['SOS', 'EOS', 'trough_vi', 'peak_vi', 'peak_doy', 'GR', 'DR', 'DR2']
+        self._support_pheme_list = ['SOS', 'EOS', 'trough_vi', 'peak_vi', 'peak_doy', 'GR', 'DR', 'DR2', 'MAVI']
 
         # Check work env
         if work_env is not None:
@@ -313,7 +316,7 @@ class Phemetric_dc(object):
         # Define the basic var name
         self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'curfit_dic', 'pheyear',
                              'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
-                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles')
+                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles', 'Nodata_value', 'Zoffset')
 
         # Read the metadata file
         metadata_file = bf.file_filter(self.Phemetric_dc_filepath, ['metadata.json'])
@@ -345,6 +348,7 @@ class Phemetric_dc(object):
                         else:
                             self.__dict__[dic_name] = dc_metadata[dic_name]
             except:
+                print(traceback.format_exc())
                 raise Exception('Something went wrong when reading the metadata!')
 
         start_time = time.time()
@@ -484,7 +488,9 @@ class Phemetric_dc(object):
                     para_dic = {}
                     for para_num in range(self.curfit_dic['para_num']):
                         if isinstance(self.dc, NDSparseMatrix):
-                            para_dic[para_num] = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
+                            arr_temp = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
+                            arr_temp[arr_temp == self.Nodata_value] = np.nan
+                            para_dic[para_num] = arr_temp
                         else:
                             para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
 
@@ -514,6 +520,53 @@ class Phemetric_dc(object):
                     else:
                         self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_6')], 'DR2')
 
+                elif pheme_temp == 'MAVI':
+                    para_dic = {}
+                    for para_num in range(self.curfit_dic['para_num']):
+                        if isinstance(self.dc, NDSparseMatrix):
+                            arr_temp = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
+                            arr_temp[arr_temp == self.Nodata_value] = np.nan
+                            para_dic[para_num] = arr_temp
+                        else:
+                            para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
+
+                    try:
+                        MAVI_array = np.zeros([para_dic[0].shape[0], para_dic[0].shape[1]]) * np.nan
+                        d_temp = np.linspace(1, 365, 365)
+                        with tqdm(total=para_dic[0].shape[0] * para_dic[0].shape[1], desc=f'Generate the MAVI of {str(self.pheyear)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                            for y_temp in range(para_dic[0].shape[0]):
+                                for x_temp in range(para_dic[0].shape[1]):
+                                    para_list = [para_dic[_][y_temp, x_temp] for _ in range(7)]
+                                    if True not in [np.isnan(_) for _ in para_list]:
+                                        index_arr = seven_para_logistic_function(d_temp, para_list[0], para_list[1], para_list[2],
+                                                                                 para_list[3], para_list[4], para_list[5], para_list[6])
+                                        if np.sum(np.isnan(index_arr)) == 0:
+                                            max_index = np.argmax(index_arr)
+                                            derivative_arr = np.zeros_like(index_arr) * np.nan
+
+                                            for _ in range(1, 364):
+                                                derivative_arr[_] = (index_arr[_ + 1] - index_arr[_ - 1]) / 2
+                                            try:
+                                                derivative_index = np.min(np.argwhere(derivative_arr < - ((para_list[1] - (para_list[4] * para_list[6])) / (8 * para_list[5]))))
+                                            except:
+                                                derivative_index = int(para_list[4] - 3 * para_list[5])
+
+                                            if derivative_index > max_index:
+                                                try:
+                                                    MAVI_array[y_temp, x_temp] = np.mean(index_arr[max_index: derivative_index])
+                                                except:
+                                                    pass
+                                            else:
+                                                MAVI_array[y_temp, x_temp] = index_arr[max_index]
+                                        else:
+                                            pass
+                                    else:
+                                        pass
+                                    pbar.update()
+                        MAVI_array[np.isnan(MAVI_array)] = 0
+                    except:
+                        raise Exception('Error occured during the MAVI generation!')
+                    self._add_layer(MAVI_array, 'MAVI')
         else:
             pass
 
@@ -565,7 +618,8 @@ class Phemetric_dc(object):
                         'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
                         'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
                         'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles,
-                        'pheyear': self.pheyear, 'curfit_dic': self.curfit_dic, 'Phemetric_factor': self.Phemetric_factor}
+                        'pheyear': self.pheyear, 'curfit_dic': self.curfit_dic, 'Phemetric_factor': self.Phemetric_factor,
+                        'Nodata_value': self.Nodata_value, 'Zoffset': self.Zoffset}
 
         paraname = self.paraname_list
         np.save(f'{output_path}paraname.npy', paraname)
@@ -588,7 +642,7 @@ class RS_dcs(object):
         self._sdc_factor_list = []
         self.sparse_matrix, self.huge_matrix = False, False
         self.s2dc_doy_list = []
-        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = None, None, None, None
+        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array, self.coordinate_system = None, None, None, None, None
         self.year_list = []
 
         # Generate the datacubes list
@@ -726,8 +780,7 @@ class RS_dcs(object):
 
             # Define the output_path
             if work_env is None:
-                self._s2dc_work_env = Path(
-                    os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
+                self._s2dc_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
             else:
                 self._s2dc_work_env = work_env
 
@@ -857,9 +910,14 @@ class RS_dcs(object):
                         self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Denvdc_pos[0]], self._ROI_name_list[Denvdc_pos[0]], self._ROI_tif_list[Denvdc_pos[0]], self._ROI_array_list[Denvdc_pos[0]]
             else:
                 self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], self._ROI_tif_list[0], self._ROI_array_list[0]
+
+            if False in [temp == self._coordinate_system_list[0] for temp in self._coordinate_system_list]:
+                raise ValueError('Please make sure all the datacube was under the same coordinate')
+            else:
+                self.coordinate_system = self._coordinate_system_list[0]
         else:
             self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], self._ROI_tif_list[0], self._ROI_array_list[0]
-
+            self.coordinate_system = self._coordinate_system_list[0]
         # Construct the datacube list
         for _ in self._dcs_backup_:
             self.dcs.append(copy.copy(_.dc))
@@ -889,8 +947,6 @@ class RS_dcs(object):
         self._NIPY_overwritten_factor = False
 
         # Define var for phenology metrics generation
-        self._phenology_index_all = ['annual_ave_VI', 'flood_ave_VI', 'unflood_ave_VI', 'max_VI', 'max_VI_doy',
-                                     'bloom_season_ave_VI', 'well_bloom_season_ave_VI']
         self._curve_fitting_dic = {}
         self._all_quantify_str = None
 
@@ -1509,7 +1565,7 @@ class RS_dcs(object):
             self._curve_fitting_dic['para_num'] = 7
             self._curve_fitting_dic['initial_para_ori'] = [0.3, 0.5, 108.2, 7.596, 280.4, 7.473, 0.00225]
             self._curve_fitting_dic['initial_para_boundary'] = (
-                [0.2, 0.2, 40, 3, 180, 3, 0.001], [0.6, 0.8, 180, 17, 330, 17, 0.01])
+                [0.08, 0, 40, 3, 180, 3, 0.0001], [0.6, 0.8, 180, 20, 330, 20, 0.01])
             self._curve_fitting_dic['para_ori'] = [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225]
             self._curve_fitting_dic['para_boundary'] = (
                 [0.08, 0.0, 50, 6.2, 285, 4.5, 0.0015], [0.20, 0.8, 130, 11.5, 350, 8.8, 0.0028])
@@ -1572,7 +1628,6 @@ class RS_dcs(object):
 
         # Retrieve the ROI
         sa_map = np.load(self.ROI_array)
-        ds_temp = gdal.Open(self.ROI_tif)
 
         # Create output path
         curfit_output_path = output_path + index + '_curfit_datacube\\'
@@ -1617,7 +1672,7 @@ class RS_dcs(object):
                 xy_offset_list.append([int(max(0, pos_list[-1]['y'].min())), int(max(0, pos_list[-1]['x'].min()))])
 
                 if self._sparse_matrix_list[dc_num]:
-                    dc_temp = index_dc.extract_matrix(([index_size_list[-1][0], index_size_list[-1][1]], [index_size_list[-1][2], index_size_list[-1][3]], ['all']))
+                    dc_temp = index_dc.extract_matrix(([index_size_list[-1][0], index_size_list[-1][1] + 1], [index_size_list[-1][2], index_size_list[-1][3] + 1], ['all']))
                     index_dc_list.append(dc_temp.drop_nanlayer())
                     doy_all_list.append(bf.date2doy(index_dc_list[-1].SM_namelist))
                 else:
@@ -1628,7 +1683,7 @@ class RS_dcs(object):
             with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as executor:
                 result = executor.map(curfit4bound_annual, pos_list, index_dc_list, doy_all_list,
                                       repeat(self._curve_fitting_dic), repeat(self._sparse_matrix_list[dc_num]),
-                                      repeat(size_control_fac), xy_offset_list, repeat(cache_folder))
+                                      repeat(size_control_fac), xy_offset_list, repeat(cache_folder), repeat(self._Nodata_value_list[dc_num]), repeat(self._Zoffset_list[dc_num]))
             result_list = list(result)
 
             # Integrate all the result into the para dict
@@ -1642,7 +1697,6 @@ class RS_dcs(object):
             key_list = []
             for key_temp in self._curfit_result.keys():
                 if key_temp not in pos_df.keys() and 'para' in key_temp:
-                    pos_df.insert(len(pos_df.keys()), key_temp, np.nan)
                     key_list.append(key_temp)
 
             self._curfit_result.to_csv(csv_para_output_path + 'curfit_all.csv')
@@ -1653,184 +1707,26 @@ class RS_dcs(object):
         key_list = []
         df_list = []
         for key_temp in self._curfit_result.keys():
-            if True not in [nr_key in key_temp for nr_key in
-                            ['Unnamed', 'level', 'index', 'Rsquare']] and key_temp != 'y' and key_temp != 'x':
+            if True not in [nr_key in key_temp for nr_key in ['Unnamed', 'level', 'index', 'Rsquare']] and key_temp != 'y' and key_temp != 'x':
                 key_list.append(key_temp)
                 df_list.append(self._curfit_result.loc[:, ['y', 'x', key_temp]])
 
         # Create tif file based on phenological parameter
-        for _ in range(len(key_list)):
-            if not os.path.exists(tif_para_output_path + key_list[_] + '.TIF'):
-                arr_result = curfit_pd2raster(df_list[_], key_list[_], ds_temp.RasterYSize, ds_temp.RasterXSize)
-                bf.write_raster(ds_temp, arr_result[1], tif_para_output_path, arr_result[0] + '.TIF',
-                                raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            res = list(tq(executor.map(curfit_pd2tif, repeat(tif_para_output_path), df_list, key_list, repeat(self.ROI_tif)),
+                          total=len(key_list), desc=f'Curve fitting result to tif file', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}'))
 
         # Create Phemetric dc
-        year_list = set([int(np.floor(temp / 10000)) for temp in self.s2dc_doy_list])
-
+        year_list = set([int(np.floor(temp / 10000)) for temp in doy_list])
         metadata_dic = {'ROI_name': self.ROI_name, 'index': index, 'Datatype': 'float', 'ROI': self.ROI,
                         'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'Phemetric_factor': True,
                         'coordinate_system': self.coordinate_system, 'size_control_factor': False,
                         'oritif_folder': tif_para_output_path, 'dc_group_list': None, 'tiles': None,
-                        'curfit_dic': self._curve_fitting_dic}
+                        'curfit_dic': self._curve_fitting_dic, 'Zoffset': None,
+                        'sparse_matrix': self._sparse_matrix_list[dc_num], 'huge_matrix': self._huge_matrix_list[dc_num]}
 
-        with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
-            executor.map(cf2phemetric_dc, repeat(tif_para_output_path), repeat(phemetric_output_path), year_list,
-                         repeat(index), repeat(metadata_dic))
-
-    def _process_phenology_metrics_para(self, **kwargs):
-
-        self._curve_fitting_algorithm = None
-        if 'curve_fitting_algorithm' in kwargs.keys():
-            self._curve_fitting_algorithm = kwargs['curve_fitting_algorithm']
-
-        # Curve fitting method
-        all_supported_curve_fitting_method = ['seven_para_logistic', 'two_term_fourier']
-        self._curve_fitting_dic = {}
-        if self._curve_fitting_algorithm is None or self._curve_fitting_algorithm == 'seven_para_logistic':
-            self._curve_fitting_dic['CFM'] = 'SPL'
-            self._curve_fitting_dic['para_num'] = 7
-            self._curve_fitting_algorithm = seven_para_logistic_function
-        elif self._curve_fitting_algorithm == 'two_term_fourier':
-            self._curve_fitting_dic['CFM'] = 'TTF'
-            self._curve_fitting_dic['para_num'] = 6
-            self._curve_fitting_algorithm = two_term_fourier
-        elif self._curve_fitting_algorithm not in all_supported_curve_fitting_method:
-            print('Please double check the curve fitting method')
-            sys.exit(-1)
-
-    def phenology_metrics_generation(self, index_list, phenology_index, **kwargs):
-
-        # Check the VI method
-        if type(index_list) is str and index_list in self.index_list:
-            index_list = [index_list]
-        elif type(index_list) is list and False not in [VI_temp in self.index_list for VI_temp in index_list]:
-            pass
-        else:
-            raise TypeError(
-                f'The input VI {index_list} was not in supported type (list or str) or some input VI is not in the Landsat_dcs!')
-
-        # Detect the para
-        self._process_phenology_metrics_para(**kwargs)
-
-        # Determine the phenology metrics extraction method
-        if phenology_index is None:
-            phenology_index = ['annual_ave_VI']
-        elif type(phenology_index) == str:
-            if phenology_index in self._phenology_index_all:
-                phenology_index = [phenology_index]
-            elif phenology_index not in self._phenology_index_all:
-                raise NameError(f'{phenology_index} is not supported!')
-        elif type(phenology_index) == list:
-            for phenology_index_temp in phenology_index:
-                if phenology_index_temp not in self._phenology_index_all:
-                    phenology_index.remove(phenology_index_temp)
-            if len(phenology_index) == 0:
-                print('Please choose the correct phenology index!')
-                sys.exit(-1)
-        else:
-            print('Please choose the correct phenology index!')
-            sys.exit(-1)
-
-        sa_map = np.load(self.ROI_array, allow_pickle=True)
-        for index_temp in index_list:
-
-            # input the cf dic
-            input_annual_file = self._s2dc_work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic[
-                'CFM'] + '\\annual_cf_para.npy'
-            input_year_file = self._s2dc_work_env + index_temp + '_curfit_datacube\\' + self._curve_fitting_dic[
-                'CFM'] + '\\year.npy'
-            if not os.path.exists(input_annual_file) or not os.path.exists(input_year_file):
-                raise Exception('Please generate the cf para before the generation of phenology metrics')
-            else:
-                cf_para_dc = np.load(input_annual_file, allow_pickle=True).item()
-                year_list = np.load(input_year_file)
-
-            phenology_metrics_inform_dic = {}
-            root_output_folder = self._s2dc_work_env + index_temp + '_phenology_metrics\\' + str(
-                self._curve_fitting_dic['CFM']) + '\\'
-            bf.create_folder(root_output_folder)
-            for phenology_index_temp in phenology_index:
-                phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
-                    self._curve_fitting_dic['CFM']) + '_path'] = root_output_folder + phenology_index_temp + '\\'
-                phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
-                    self._curve_fitting_dic['CFM']) + '_year'] = year_list
-                bf.create_folder(phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
-                    self._curve_fitting_dic['CFM']) + '_path'])
-
-            # Main procedure
-            doy_temp = np.linspace(1, 365, 365)
-            for year in year_list:
-                year = int(year)
-                annual_para = cf_para_dc[str(year) + '_cf_para']
-                if not os.path.exists(root_output_folder + 'annual\\' + str(year) + '_phe_metrics.npy'):
-                    annual_phe = np.zeros([annual_para.shape[0], annual_para.shape[1], 365])
-
-                    for y_temp in range(annual_para.shape[0]):
-                        for x_temp in range(annual_para.shape[1]):
-                            if sa_map[y_temp, x_temp] == -32768:
-                                annual_phe[y_temp, x_temp, :] = np.nan
-                            else:
-                                if self._curve_fitting_dic['para_num'] == 7:
-                                    annual_phe[y_temp, x_temp, :] = self._curve_fitting_algorithm(
-                                        doy_temp, annual_para[y_temp, x_temp, 0], annual_para[y_temp, x_temp, 1],
-                                        annual_para[y_temp, x_temp, 2], annual_para[y_temp, x_temp, 3],
-                                        annual_para[y_temp, x_temp, 4], annual_para[y_temp, x_temp, 5],
-                                        annual_para[y_temp, x_temp, 6]).reshape([1, 1, 365])
-                                elif self._curve_fitting_dic['para_num'] == 6:
-                                    annual_phe[y_temp, x_temp, :] = self._curve_fitting_algorithm(
-                                        doy_temp, annual_para[y_temp, x_temp, 0], annual_para[y_temp, x_temp, 1],
-                                        annual_para[y_temp, x_temp, 2], annual_para[y_temp, x_temp, 3],
-                                        annual_para[y_temp, x_temp, 4], annual_para[y_temp, x_temp, 5]).reshape(
-                                        [1, 1, 365])
-
-                    bf.create_folder(root_output_folder + 'annual\\')
-                    np.save(root_output_folder + 'annual\\' + str(year) + '_phe_metrics.npy', annual_phe)
-                else:
-                    annual_phe = np.load(root_output_folder + 'annual\\' + str(year) + '_phe_metrics.npy')
-
-                # Generate the phenology metrics
-                for phenology_index_temp in phenology_index:
-                    phe_metrics = np.zeros([self.dcs_YSize, self.dcs_XSize])
-                    phe_metrics[sa_map == -32768] = np.nan
-
-                    if not os.path.exists(
-                            phenology_metrics_inform_dic[phenology_index_temp + '_' + index_temp + '_' + str(
-                                    self._curve_fitting_dic['CFM']) + '_path'] + str(year) + '_phe_metrics.TIF'):
-                        if phenology_index_temp == 'annual_ave_VI':
-                            phe_metrics = np.mean(annual_phe, axis=2)
-                        elif phenology_index_temp == 'flood_ave_VI':
-                            phe_metrics = np.mean(annual_phe[:, :, 182: 302], axis=2)
-                        elif phenology_index_temp == 'unflood_ave_VI':
-                            phe_metrics = np.mean(
-                                np.concatenate((annual_phe[:, :, 0:181], annual_phe[:, :, 302:364]), axis=2), axis=2)
-                        elif phenology_index_temp == 'max_VI':
-                            phe_metrics = np.max(annual_phe, axis=2)
-                        elif phenology_index_temp == 'max_VI_doy':
-                            phe_metrics = np.argmax(annual_phe, axis=2) + 1
-                        elif phenology_index_temp == 'bloom_season_ave_VI':
-                            phe_temp = copy.copy(annual_phe)
-                            phe_temp[phe_temp < 0.3] = np.nan
-                            phe_metrics = np.nanmean(phe_temp, axis=2)
-                        elif phenology_index_temp == 'well_bloom_season_ave_VI':
-                            phe_temp = copy.copy(annual_phe)
-                            max_index = np.argmax(annual_phe, axis=2)
-                            for y_temp_temp in range(phe_temp.shape[0]):
-                                for x_temp_temp in range(phe_temp.shape[1]):
-                                    phe_temp[y_temp_temp, x_temp_temp, 0: max_index[y_temp_temp, x_temp_temp]] = np.nan
-                            phe_temp[phe_temp < 0.3] = np.nan
-                            phe_metrics = np.nanmean(phe_temp, axis=2)
-                        phe_metrics = phe_metrics.astype(np.float)
-                        phe_metrics[sa_map == -32768] = np.nan
-                        write_raster(gdal.Open(self.ROI_tif), phe_metrics, phenology_metrics_inform_dic[
-                            phenology_index_temp + '_' + index_temp + '_' + str(
-                                self._curve_fitting_dic['CFM']) + '_path'],
-                                     str(year) + '_phe_metrics.TIF', raster_datatype=gdal.GDT_Float32)
-            np.save(self._s2dc_work_env + index_temp + '_phenology_metrics\\' + str(
-                self._curve_fitting_dic['CFM']) + '_phenology_metrics.npy', phenology_metrics_inform_dic)
-
-    def generate_phenology_metric(self, **kwargs):
-        pass
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            executor.map(cf2phemetric_dc, repeat(tif_para_output_path), repeat(phemetric_output_path), year_list, repeat(index), repeat(metadata_dic))
 
     def _process_link_GEDI_temp_DPAR(self, **kwargs):
         # Detect whether all the indicators are valid
@@ -1934,8 +1830,7 @@ class RS_dcs(object):
                             ([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
                         denvdc_blocked.append(sm_temp)
                     else:
-                        denvdc_blocked.append(
-                            denvdc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
+                        denvdc_blocked.append(denvdc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
 
                 try:
                     # Sequenced code for debug
@@ -1962,16 +1857,16 @@ class RS_dcs(object):
                 except:
                     raise Exception('The df output procedure was interrupted by error!')
 
-    def _process_link_GEDI_S2_phenology_para(self, **kwargs):
+    def _process_link_GEDI_phenology_para(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
             if kwarg_indicator not in []:
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
-    def link_GEDI_S2_phenology_inform(self, GEDI_xlsx_file, phemetric_list, **kwargs):
+    def link_GEDI_phenology_inform(self, GEDI_xlsx_file, phemetric_list, **kwargs):
 
         # Process para
-        self._process_link_GEDI_S2_para(**kwargs)
+        self._process_link_GEDI_RS_para(**kwargs)
 
         # Retrieve the S2 inform
         raster_gt = gdal.Open(self.ROI_tif).GetGeoTransform()
@@ -2040,9 +1935,8 @@ class RS_dcs(object):
                                            raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
 
                     if isinstance(phedc_reconstructed, NDSparseMatrix):
-                        sm_temp = phedc_reconstructed.extract_matrix(
-                            ([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
-                        phedc_blocked.append(sm_temp.drop_nanlayer())
+                        sm_temp = phedc_reconstructed.extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
+                        phedc_blocked.append(sm_temp)
                     else:
                         phedc_blocked.append(phedc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
 
@@ -2086,7 +1980,7 @@ class RS_dcs(object):
                 i += 1
             phemetric_output.to_csv(GEDI_xlsx_file.split('.')[0] + f'_all_Phemetrics.csv')
 
-    def _process_link_GEDI_S2_para(self, **kwargs):
+    def _process_link_GEDI_RS_para(self, **kwargs):
 
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
@@ -2095,18 +1989,17 @@ class RS_dcs(object):
 
         # process clipped_overwritten_para
         if 'retrieval_method' in kwargs.keys():
-            if type(kwargs['retrieval_method']) is str and kwargs['retrieval_method'] in ['nearest_neighbor',
-                                                                                          'linear_interpolation']:
+            if type(kwargs['retrieval_method']) is str and kwargs['retrieval_method'] in ['nearest_neighbor', 'linear_interpolation']:
                 self._GEDI_link_S2_retrieval_method = kwargs['retrieval_method']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be str type!')
         else:
             self._GEDI_link_S2_retrieval_method = 'nearest_neighbor'
 
-    def link_GEDI_S2_inform(self, GEDI_xlsx_file, index_list, **kwargs):
+    def link_GEDI_RS_inform(self, GEDI_xlsx_file, index_list, **kwargs):
 
         # Two different method Nearest neighbor and linear interpolation
-        self._process_link_GEDI_S2_para(**kwargs)
+        self._process_link_GEDI_RS_para(**kwargs)
 
         # Retrieve the S2 inform
         raster_gt = gdal.Open(self.ROI_tif).GetGeoTransform()
@@ -2150,8 +2043,7 @@ class RS_dcs(object):
                     doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
                 elif isinstance(self.dcs[self._index_list.index(index_temp)], np.ndarray):
                     dc_blocked.append(
-                        self.dcs[self._index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1,
-                        :])
+                        self.dcs[self._index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
                     doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
                 raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2],
                                        raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
@@ -2210,19 +2102,14 @@ class RS_dcs(object):
                         phepos = self._pheyear_list.index(year_temp)
                         if f'{str(year_temp)}_static_{denvname}' not in self._doys_backup_[phepos]:
                             try:
-                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed,
-                                                                              NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_reconstructed.SM_namelist) or (
-                                        isinstance(pheme_reconstructed,
-                                                   np.ndarray) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_namelist):
+                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed, NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_reconstructed.SM_namelist) or (
+                                        isinstance(pheme_reconstructed, np.ndarray) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_namelist):
                                     if pheme_reconstructed is None:
                                         if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed = NDSparseMatrix(
-                                                self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
+                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
                                                 SM_namelist=[f'{str(self._pheyear_list[phepos])}_SOS'])
                                         else:
-                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[
-                                                                                              phepos].index(
-                                                [f'{str(self._pheyear_list[phepos])}_SOS'])]]
+                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]
                                             pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
                                     else:
                                         if self._sparse_matrix_list[phepos]:
@@ -2232,42 +2119,27 @@ class RS_dcs(object):
                                                 pheme_reconstructed.shape[2] + 1)
                                         else:
                                             pheme_reconstructed = np.concatenate((pheme_reconstructed,
-                                                                                  self.dcs[phepos][:, :, [
-                                                                                                             self._doys_backup_[
-                                                                                                                 phepos].index(
-                                                                                                                 [
-                                                                                                                     f'{str(self._pheyear_list[phepos])}_SOS'])]]),
+                                                                                  self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]),
                                                                                  axis=2)
                                             pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
 
-                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed,
-                                                                              NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_reconstructed.SM_namelist) or (
-                                        isinstance(pheme_reconstructed,
-                                                   np.ndarray) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_namelist):
+                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed,NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_reconstructed.SM_namelist) or (
+                                        isinstance(pheme_reconstructed, np.ndarray) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_namelist):
                                     if pheme_reconstructed is None:
                                         if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[
-                                                                                     f'{str(self._pheyear_list[phepos])}_peak_doy'],
-                                                                                 SM_namelist=[
-                                                                                     f'{str(self._pheyear_list[phepos])}_peak_doy'])
+                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],
+                                                                                 SM_namelist=[f'{str(self._pheyear_list[phepos])}_peak_doy'])
                                         else:
-                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[
-                                                                                              phepos].index(
-                                                [f'{str(self._pheyear_list[phepos])}_peak_doy'])]]
+                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]
                                             pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
                                     else:
                                         if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[
-                                                                              f'{str(self._pheyear_list[phepos])}_peak_doy'],
+                                            pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],
                                                                           f'{str(self._pheyear_list[phepos])}_peak_doy',
                                                                           pheme_reconstructed.shape[2] + 1)
                                         else:
                                             pheme_reconstructed = np.concatenate((pheme_reconstructed,
-                                                                                  self.dcs[phepos][:, :, [
-                                                                                                             self._doys_backup_[
-                                                                                                                 phepos].index(
-                                                                                                                 [
-                                                                                                                     f'{str(self._pheyear_list[phepos])}_peak_doy'])]]),
+                                                                                  self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]),
                                                                                  axis=2)
                                         pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
 
@@ -2555,11 +2427,9 @@ class RS_dcs(object):
                                 if isinstance(self.dcs[self._index_list.index(_)], NDSparseMatrix):
                                     sm_temp = self.dcs[self._index_list.index(_)].extract_matrix((
                                                                                                  [min(y_all_blocked[i]),
-                                                                                                  max(y_all_blocked[
-                                                                                                          i]) + 1],
+                                                                                                  max(y_all_blocked[i]) + 1],
                                                                                                  [min(x_all_blocked[i]),
-                                                                                                  max(x_all_blocked[
-                                                                                                          i]) + 1],
+                                                                                                  max(x_all_blocked[i]) + 1],
                                                                                                  ['all']))
                                     dc_blocked.append(sm_temp)
                                     doy_list_temp.append(bf.date2doy(dc_blocked[i].SM_namelist))
@@ -2619,11 +2489,7 @@ class RS_dcs(object):
                                     self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_{_}'],
                                     name=[f'{str(self._pheyear_list[phepos])}_{_}'])
                             else:
-                                phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos][:, :, [
-                                                                                                                      self._doys_backup_[
-                                                                                                                          phepos].index(
-                                                                                                                          [
-                                                                                                                              f'{str(self._pheyear_list[phepos])}_{_}'])]]),
+                                phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_{_}'])]]),
                                                                      axis=2)
 
                 for i in range(block_amount):
@@ -2841,3 +2707,725 @@ class RS_dcs(object):
             roi_map[roi_map == -32768] = np.nan
             roi_map[roi_map == 1] = np.nan
             write_raster(roi_ds, roi_map, outputfolder, f'ch_{name}.tif', raster_datatype=gdal.GDT_Float32)
+
+    def phemetrics_comparison(self, phemetric_index: list, year_range: list, output_path: str, out_format='percentage'):
+
+        # Check the input arg
+        for _ in phemetric_index:
+            if _ not in self._phemetric_namelist:
+                phemetric_index.remove(_)
+                print(f'{str(_)} is not input into the RSdcs')
+        if phemetric_index == []:
+            raise ValueError('Please input a valid phemetric index')
+
+        for _ in year_range:
+            if _ not in self._pheyear_list or _ + 1 not in self._pheyear_list:
+                year_range.remove(_)
+                print(f'The phemetrics of {str(_)} is not input into the RSdcs')
+
+        if year_range == []:
+            raise ValueError('Please input a valid year range')
+
+        # Check the kwargs
+        if out_format not in ['percentage', 'value']:
+            raise ValueError('The output format is not supported')
+
+        for phemetric_ in phemetric_index:
+
+            # Create output path
+            output_path = Path(output_path).path_name
+            if not os.path.exists(f'{output_path}{phemetric_}\\{out_format}\\'):
+                bf.create_folder(f'{output_path}{phemetric_}\\{out_format}\\')
+            for year_ in year_range:
+
+                dc_base = self.dcs[self._pheyear_list.index(year_)]
+                dc_impr = self.dcs[self._pheyear_list.index(year_ + 1)]
+
+                if self._sparse_matrix_list[self._pheyear_list.index(year_)]:
+                    arr_base = dc_base.SM_group[f'{str(year_)}_{phemetric_}'].toarray()
+                    arr_impr = dc_impr.SM_group[f'{str(year_ + 1)}_{phemetric_}'].toarray()
+                    if out_format == 'percentage':
+                        arr_out = (arr_impr - arr_base) / arr_base
+                    elif out_format == 'value':
+                        arr_out = (arr_impr - arr_base) / arr_base
+                else:
+                    pass
+
+    def phemetrics_variation(self, phemetric_index: list, year_range: list, output_path: str, ):
+        # Check the input arg
+        for _ in phemetric_index:
+            if _ not in self._phemetric_namelist:
+                phemetric_index.remove(_)
+                print(f'{str(_)} is not input into the RSdcs')
+        if phemetric_index == []:
+            raise ValueError('Please input a valid phemetric index')
+
+        for _ in year_range:
+            if _ not in self._pheyear_list:
+                year_range.remove(_)
+                print(f'The phemetrics of {str(_)} is not input into the RSdcs')
+        if year_range == []:
+            raise ValueError('Please input a valid year range')
+
+        # Check the kwargs
+        for phemetric_ in phemetric_index:
+            # Create output path
+            output_path = Path(output_path).path_name
+            pheme_dic = {}
+            pheme_mean = []
+            if not os.path.exists(f'{output_path}{phemetric_}_var\\'):
+                bf.create_folder(f'{output_path}{phemetric_}_var\\')
+
+            for year_ in year_range:
+                dc_base = self.dcs[self._pheyear_list.index(year_)]
+                nodata_value = self._Nodata_value_list[self._pheyear_list.index(year_)]
+
+                if self._sparse_matrix_list[self._pheyear_list.index(year_)]:
+                    arr_base = dc_base.SM_group[f'{str(year_)}_{phemetric_}'].toarray()
+                    arr_base = arr_base.flatten()
+                    if np.isnan(nodata_value):
+                        arr_base = np.delete(arr_base, np.isnan(arr_base))
+                    else:
+                        arr_base = np.delete(arr_base, arr_base == nodata_value)
+                    pheme_dic[str(year_)] = arr_base
+                    pheme_mean.append(np.nanmean(arr_base))
+                else:
+                    pass
+
+            pheme_all = [pheme_dic[str(_)] for _ in year_range]
+            plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+            plt.rc('font', size=18)
+            plt.rc('axes', linewidth=2)
+
+            fig, ax = plt.subplots(figsize=(23, 3.5), constrained_layout=True)
+            box = ax.boxplot(pheme_all, vert = True, labels=[str(_) for _ in year_range],  notch=True, widths=0.5, patch_artist=True, whis=(10, 90), showfliers=False, zorder=4)
+            p0, f0 = curve_fit(linear_f, [_ for _ in range(2, 9)], pheme_mean[1:8])
+            p1, f1 = curve_fit(linear_f, [_ for _ in range(19, 38)], pheme_mean[18:])
+            p2, f2 = curve_fit(linear_f, [_ for _ in range(9, 19)], pheme_mean[8:18])
+            # sns.regplot(np.linspace(0, 7, 100), linear_f(np.linspace(0, 7, 100), p0[0], p0[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
+            # sns.regplot(np.linspace(19, 37, 100), linear_f(np.linspace(19, 37, 100), p1[0], p1[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
+            # sns.regplot(np.linspace(8, 18, 100), linear_f(np.linspace(8, 18, 100), p2[0], p2[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
+            ax.plot(np.linspace(0, 7, 100), linear_f(np.linspace(0, 7, 100), p0[0], p0[1]), lw=4, ls='--', c=(0, 0, 0.8))
+            ax.plot(np.linspace(19, 37, 100), linear_f(np.linspace(19, 37, 100), p1[0], p1[1]), lw=4, ls='--', c=(0.8, 0, 0))
+            ax.plot(np.linspace(8, 18, 100), linear_f(np.linspace(8, 18, 100), p2[0], p2[1]), lw=4, ls='--', c=(0, 0, 0.8))
+            ax.set_xlim(1, 38)
+            print(p0[0])
+            print(p0[1])
+            print(p1[0])
+            print(p1[1])
+            print(p2[0])
+            print(p2[1])
+            plt.setp(box['boxes'], color=(89 / 256, 117 / 256, 164 / 256), edgecolor=(60 / 256, 60 / 256, 60 / 256), alpha=0.4)
+            plt.savefig(f'{output_path}{phemetric_}_var\\fig.png', dpi=300)
+
+    def est_inunduration(self, inundated_dc: str, output_path: str, water_level_data,
+                         nan_value=-2, inundated_value=1, generate_inundation_status_factor=True, process_extent=[],
+                         generate_max_water_level_factor=False, example_date=None):
+
+        # Check the var
+        output_path = Path(output_path).path_name
+        if not os.path.exists(f'{output_path}'):
+            bf.create_folder(f'{output_path}')
+
+        if generate_inundation_status_factor and (example_date is None):
+            print('Please input the required para')
+            sys.exit(-1)
+        else:
+            example_date = str(bf.doy2date(example_date))
+
+        if not isinstance(water_level_data, np.ndarray):
+            try:
+                water_level_data = np.array(water_level_data)
+            except:
+                print('Please input the water level data in a right format!')
+                pass
+
+        if water_level_data.shape[1] != 2:
+            print('Please input the water level data as a 2d array with shape under n*2!')
+            sys.exit(-1)
+
+        water_level_data[:, 0] = water_level_data[:, 0].astype(np.int)
+        date_range = [np.min(water_level_data[:, 0]), np.max(water_level_data[:, 0])]
+        if not os.path.exists(output_path + '\\recession.xlsx'):
+            recession_list = []
+            year_list = np.unique(water_level_data[:, 0] // 10000).astype(np.int)
+            for year in year_list:
+                recession_turn = 0
+                for data_size in range(1, water_level_data.shape[0]):
+                    if year * 10000 + 3 * 100 <= water_level_data[data_size, 0] < year * 10000 + 1200:
+                        if recession_turn == 0:
+                            if (water_level_data[data_size, 1] > water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size, 1] < water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] == water_level_data[data_size, 1] == water_level_data[data_size + 1, 1]):
+                                recession_list.append([water_level_data[data_size, 0], 0])
+                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <=water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] <= water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]):
+                                recession_list.append([water_level_data[data_size, 0], 1])
+                                recession_turn = 1
+                            elif (water_level_data[data_size - 1, 1] > water_level_data[data_size, 1] >= water_level_data[data_size + 1, 1])\
+                                    or (water_level_data[data_size - 1, 1] >= water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]):
+                                recession_list.append([water_level_data[data_size, 0], -1])
+                                recession_turn = -1
+                            else:
+                                print('error occurred recession!')
+                                sys.exit(-1)
+
+                        elif recession_turn != 0:
+                            if (water_level_data[data_size, 1] > water_level_data[data_size - 1, 1] and
+                                water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]) or (
+                                    water_level_data[data_size, 1] < water_level_data[data_size - 1, 1] and
+                                    water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]) or (
+                                    water_level_data[data_size - 1, 1] == water_level_data[data_size, 1] ==
+                                    water_level_data[data_size + 1, 1]):
+                                recession_list.append([water_level_data[data_size, 0], 0])
+                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <=
+                                  water_level_data[data_size + 1, 1]) or (
+                                    water_level_data[data_size - 1, 1] <= water_level_data[data_size, 1] <
+                                    water_level_data[data_size + 1, 1]):
+                                if recession_turn > 0:
+                                    recession_list.append([water_level_data[data_size, 0], recession_turn])
+                                else:
+                                    recession_turn = -recession_turn + 1
+                                    recession_list.append([water_level_data[data_size, 0], recession_turn])
+                            elif (water_level_data[data_size - 1, 1] > water_level_data[data_size, 1] >=
+                                  water_level_data[data_size + 1, 1]) or (
+                                    water_level_data[data_size - 1, 1] >= water_level_data[data_size, 1] >
+                                    water_level_data[data_size + 1, 1]):
+                                if recession_turn < 0:
+                                    recession_list.append([water_level_data[data_size, 0], recession_turn])
+                                else:
+                                    recession_turn = -recession_turn
+                                    recession_list.append([water_level_data[data_size, 0], recession_turn])
+                            else:
+                                print('error occrrued recession!')
+                                sys.exit(-1)
+            recession_list = np.array(recession_list)
+            recession_list = pd.DataFrame(recession_list)
+            recession_list.to_excel(output_path + '\\recession.xlsx')
+        else:
+            recession_list = pandas.read_excel(output_path + '\\recession.xlsx')
+            recession_list = np.array(recession_list).astype(np.object)[:, 1:]
+            recession_list[:, 0] = recession_list[:, 0].astype(np.int)
+
+        # water_level_data[:, 0] = doy2date(water_level_data[:, 0])
+        tif_file = []
+        for folder in file_folder:
+            if os.path.exists(folder):
+                tif_file_temp = bf.file_filter(folder, ['.tif', '.TIF'], and_or_factor='or', exclude_word_list=['.xml', '.aux', '.cpg', '.dbf', '.lock'])
+                tif_file.extend(tif_file_temp)
+            else:
+                pass
+        if len(tif_file) == 0:
+            print('None file meet the requirement')
+            sys.exit(-1)
+
+        if generate_max_water_level_factor:
+            date_list = []
+            priority_list = []
+            water_level_list = []
+            for file_path in tif_file:
+                ds_temp = gdal.Open(file_path)
+                raster_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                true_false_array = raster_temp == nan_value
+                if not true_false_array.all():
+                    for length in range(len(file_path)):
+                        try:
+                            date_temp = int(file_path[length: length + 8])
+                            break
+                        except:
+                            pass
+
+                        try:
+                            date_temp = int(file_path[length: length + 7])
+                            date_temp = bf.doy2date(date_temp)
+                            break
+                        except:
+                            pass
+                    if date_range[0] < date_temp < date_range[1]:
+                        date_list.append(date_temp)
+                        date_num = np.argwhere(water_level_data == date_temp)[0, 0]
+                        water_level_list.append(water_level_data[date_num, 1])
+                        for folder_num in range(len(file_folder)):
+                            if file_folder[folder_num] in file_path:
+                                priority_list.append(file_priority[folder_num])
+
+            if len(date_list) == len(priority_list) and len(priority_list) == len(water_level_list) and len(
+                    date_list) != 0:
+                information_array = np.ones([3, len(date_list)])
+                information_array[0, :] = np.array(date_list)
+                information_array[1, :] = np.array(priority_list)
+                information_array[2, :] = np.array(water_level_list)
+                year_array = np.unique(np.fix(information_array[0, :] // 10000))
+                unique_level_array = np.unique(information_array[1, :])
+                annual_max_water_level = np.ones([year_array.shape[0], unique_level_array.shape[0]])
+                annual_max = []
+                for year in range(year_array.shape[0]):
+                    water_level_max = 0
+                    for date_temp in range(water_level_data.shape[0]):
+                        if water_level_data[date_temp, 0] // 10000 == year_array[year]:
+                            water_level_max = max(water_level_max, water_level_data[date_temp, 1])
+                    annual_max.append(water_level_max)
+                    for unique_level in range(unique_level_array.shape[0]):
+                        max_temp = 0
+                        for i in range(information_array.shape[1]):
+                            if np.fix(information_array[0, i] // 10000) == year_array[year] and information_array[1, i] == unique_level_array[unique_level]:
+                                max_temp = max(max_temp, information_array[2, i])
+                        annual_max_water_level[year, unique_level] = max_temp
+                annual_max = np.array(annual_max)
+                annual_max_water_level_dic = np.zeros([year_array.shape[0] + 1, unique_level_array.shape[0] + 2])
+                annual_max_water_level_dic[1:, 2:] = annual_max_water_level
+                annual_max_water_level_dic[1:, 0] = year_array.transpose()
+                annual_max_water_level_dic[1:, 1] = annual_max.transpose()
+                annual_max_water_level_dic[0, 2:] = unique_level_array
+                dic_temp = pd.DataFrame(annual_max_water_level_dic)
+                dic_temp.to_excel(output_path + self.ROI_name + '.xlsx')
+
+        if generate_inundation_status_factor:
+            combined_file_path = output_path + 'Original_Inundation_File\\'
+            bf.create_folder(combined_file_path)
+
+            for file_path in tif_file:
+                ds_temp = gdal.Open(file_path)
+                raster_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                if self.sa_map.shape[0] != raster_temp.shape[0] or self.sa_map.shape[1] != raster_temp.shape[1]:
+                    print('Consistency error sa map')
+                    sys.exit(-1)
+                true_false_array = raster_temp == nan_value
+                if not true_false_array.all():
+                    for length in range(len(file_path)):
+                        try:
+                            date_temp = int(file_path[length: length + 8])
+                            break
+                        except:
+                            pass
+
+                        try:
+                            date_temp = int(file_path[length: length + 7])
+                            date_temp = bf.doy2date(date_temp)
+                            break
+                        except:
+                            pass
+                    if date_range[0] < date_temp < date_range[1]:
+                        if 6 <= np.mod(date_temp, 10000) // 100 <= 10:
+                            if not os.path.exists(combined_file_path + 'inundation_' + str(date_temp) + '.tif'):
+                                for folder_num in range(len(file_folder)):
+                                    if file_folder[folder_num] in file_path:
+                                        priority_temp = file_priority[folder_num]
+                                if priority_temp == 0:
+                                    shutil.copyfile(file_path,
+                                                    combined_file_path + 'inundation_' + str(date_temp) + '.tif')
+                                else:
+                                    ds_temp_temp = gdal.Open(file_path)
+                                    raster_temp_temp = ds_temp_temp.GetRasterBand(1).ReadAsArray()
+                                    raster_temp_temp[raster_temp_temp != inundated_value] = nan_value
+                                    bf.write_raster(ds_temp_temp, raster_temp_temp, combined_file_path,
+                                                 'inundation_' + str(date_temp) + '.tif',
+                                                 raster_datatype=gdal.GDT_Int16)
+
+            inundation_file = bf.file_filter(combined_file_path, containing_word_list=['.tif'])
+            sole_file_path = output_path + 'Sole_Inundation_File\\'
+            bf.create_folder(sole_file_path)
+
+            date_dc = []
+            inundation_dc = []
+            sole_area_dc = []
+            river_sample = []
+            recession_dc = []
+            num_temp = 0
+
+            if not os.path.exists(output_path + 'example.tif'):
+                for file in inundation_file:
+                    if example_date in file:
+                        example_ds = gdal.Open(file)
+                        example_raster = example_ds.GetRasterBand(1).ReadAsArray()
+                        example_sole = identify_all_inundated_area(example_raster,
+                                                                   inundated_pixel_indicator=inundated_value,
+                                                                   nanvalue_pixel_indicator=nan_value)
+                        unique_sole = np.unique(example_sole.flatten())
+                        unique_sole = np.delete(unique_sole, np.argwhere(unique_sole == 0))
+                        amount_sole = [np.sum(example_sole == value) for value in unique_sole]
+                        example_sole[example_sole != unique_sole[np.argmax(amount_sole)]] = -10
+                        example_sole[example_sole == unique_sole[np.argmax(amount_sole)]] = 1
+                        example_sole = example_sole.astype(np.float)
+                        example_sole[example_sole == -10] = np.nan
+                        river_sample = example_sole
+                        bf.write_raster(example_ds, river_sample, output_path, 'example.tif',
+                                     raster_datatype=gdal.GDT_Float32)
+                        break
+            else:
+                example_ds = gdal.Open(output_path + 'example.tif')
+                river_sample = example_ds.GetRasterBand(1).ReadAsArray()
+
+            if river_sample == []:
+                print('Error in river sample creation.')
+                sys.exit(-1)
+
+            if not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(
+                    output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy'):
+                for file in inundation_file:
+                    ds_temp3 = gdal.Open(file)
+                    raster_temp3 = ds_temp3.GetRasterBand(1).ReadAsArray()
+                    for length in range(len(file)):
+                        try:
+                            date_temp = int(file[length: length + 8])
+                            break
+                        except:
+                            pass
+                    date_dc.append(date_temp)
+
+                    if inundation_dc == []:
+                        inundation_dc = np.zeros([raster_temp3.shape[0], raster_temp3.shape[1], len(inundation_file)])
+                        inundation_dc[:, :, 0] = raster_temp3
+                    else:
+                        inundation_dc[:, :, num_temp] = raster_temp3
+
+                    if not os.path.exists(sole_file_path + str(date_temp) + '_individual_area.tif'):
+                        sole_floodplain_temp = identify_all_inundated_area(raster_temp3,
+                                                                           inundated_pixel_indicator=inundated_value,
+                                                                           nanvalue_pixel_indicator=nan_value)
+                        sole_result = np.zeros_like(sole_floodplain_temp)
+                        unique_value = np.unique(sole_floodplain_temp.flatten())
+                        unique_value = np.delete(unique_value, np.argwhere(unique_value == 0))
+                        for u_value in unique_value:
+                            if np.logical_and(sole_floodplain_temp == u_value, river_sample == 1).any():
+                                sole_result[sole_floodplain_temp == u_value] = 1
+                        sole_result[river_sample == 1] = 0
+                        bf.write_raster(ds_temp3, sole_result, sole_file_path, str(date_temp) + '_individual_area.tif',
+                                     raster_datatype=gdal.GDT_Int32)
+                    else:
+                        sole_floodplain_ds_temp = gdal.Open(sole_file_path + str(date_temp) + '_individual_area.tif')
+                        sole_floodplain_temp = sole_floodplain_ds_temp.GetRasterBand(1).ReadAsArray()
+
+                    if sole_area_dc == []:
+                        sole_area_dc = np.zeros([raster_temp3.shape[0], raster_temp3.shape[1], len(inundation_file)])
+                        sole_area_dc[:, :, 0] = sole_floodplain_temp
+                    else:
+                        sole_area_dc[:, :, num_temp] = sole_floodplain_temp
+                    num_temp += 1
+                date_dc = np.array(date_dc).transpose()
+
+                if date_dc.shape[0] == sole_area_dc.shape[2] == inundation_dc.shape[2]:
+                    np.save(output_path + 'date_dc.npy', date_dc)
+                    np.save(output_path + 'sole_area_dc.npy', sole_area_dc)
+                    np.save(output_path + 'inundation_dc.npy', inundation_dc)
+                else:
+                    print('Consistency error during outout!')
+                    sys.exit(-1)
+            else:
+                inundation_dc = np.load(output_path + 'inundation_dc.npy')
+                sole_area_dc = np.load(output_path + 'sole_area_dc.npy')
+                date_dc = np.load(output_path + 'date_dc.npy')
+
+            date_list = []
+            for file_path in inundation_file:
+                for length in range(len(file_path)):
+                    try:
+                        date_temp = int(file_path[length: length + 8])
+                        break
+                    except:
+                        pass
+                    date_list.append(date_temp)
+
+            year_list = np.unique(np.fix(date_dc // 10000).astype(np.int))
+            annual_inundation_folder = output_path + 'annual_inundation_status\\'
+            annual_inundation_epoch_folder = output_path + 'annual_inundation_epoch\\'
+            annual_inundation_beg_folder = output_path + 'annual_inundation_beg\\'
+            annual_inundation_end_folder = output_path + 'annual_inundation_end\\'
+            bf.create_folder(annual_inundation_folder)
+            bf.create_folder(annual_inundation_epoch_folder)
+            bf.create_folder(annual_inundation_beg_folder)
+            bf.create_folder(annual_inundation_end_folder)
+
+            for year in year_list:
+                inundation_temp = []
+                sole_area_temp = []
+                date_temp = []
+                recession_temp = []
+                water_level_temp = []
+                annual_inundation_epoch = np.zeros_like(self.sa_map).astype(np.float)
+                annual_inundation_status = np.zeros_like(self.sa_map).astype(np.float)
+                annual_inundation_beg = np.zeros_like(self.sa_map).astype(np.float)
+                annual_inundation_end = np.zeros_like(self.sa_map).astype(np.float)
+                annual_inundation_status[np.isnan(self.sa_map)] = np.nan
+                annual_inundation_epoch[np.isnan(self.sa_map)] = np.nan
+                annual_inundation_beg[np.isnan(self.sa_map)] = np.nan
+                annual_inundation_end[np.isnan(self.sa_map)] = np.nan
+                water_level_epoch = []
+                len1 = 0
+                while len1 < date_dc.shape[0]:
+                    if date_dc[len1] // 10000 == year:
+                        date_temp.append(date_dc[len1])
+                        recession_temp.append(recession_list[np.argwhere(recession_list == date_dc[len1])[0, 0], 1])
+                        water_level_temp.append(
+                            water_level_data[np.argwhere(water_level_data == date_dc[len1])[0, 0], 1])
+                        if inundation_temp == [] or sole_area_temp == []:
+                            inundation_temp = inundation_dc[:, :, len1].reshape(
+                                [inundation_dc.shape[0], inundation_dc.shape[1], 1])
+                            sole_area_temp = sole_area_dc[:, :, len1].reshape(
+                                [sole_area_dc.shape[0], sole_area_dc.shape[1], 1])
+                        else:
+                            inundation_temp = np.concatenate((inundation_temp, inundation_dc[:, :, len1].reshape(
+                                [inundation_dc.shape[0], inundation_dc.shape[1], 1])), axis=2)
+                            sole_area_temp = np.concatenate((sole_area_temp, sole_area_dc[:, :, len1].reshape(
+                                [sole_area_dc.shape[0], sole_area_dc.shape[1], 1])), axis=2)
+                    len1 += 1
+
+                len1 = 0
+                while len1 < water_level_data.shape[0]:
+                    if water_level_data[len1, 0] // 10000 == year:
+                        if 6 <= np.mod(water_level_data[len1, 0], 10000) // 100 <= 10:
+                            recession_temp2 = recession_list[np.argwhere(water_level_data[len1, 0])[0][0], 1]
+                            water_level_epoch.append(
+                                [water_level_data[len1, 0], water_level_data[len1, 1], recession_temp2])
+                    len1 += 1
+                water_level_epoch = np.array(water_level_epoch)
+
+                for y_temp in range(annual_inundation_status.shape[0]):
+                    for x_temp in range(annual_inundation_status.shape[1]):
+                        if self.sa_map[y_temp, x_temp] != -32768:
+                            inundation_series_temp = inundation_temp[y_temp, x_temp, :].reshape(
+                                [inundation_temp.shape[2]])
+                            sole_series_temp = sole_area_temp[y_temp, x_temp, :].reshape([sole_area_temp.shape[2]])
+                            water_level_min = np.nan
+                            recession_level_min = np.nan
+
+                            inundation_status = False
+                            len2 = 0
+                            while len2 < len(date_temp):
+                                if inundation_series_temp[len2] == 1:
+                                    if sole_series_temp[len2] != 1:
+                                        if recession_temp[len2] < 0:
+                                            sole_local = sole_area_temp[
+                                                         max(0, y_temp - 8): min(annual_inundation_status.shape[0],
+                                                                                 y_temp + 8),
+                                                         max(0, x_temp - 8): min(annual_inundation_status.shape[1],
+                                                                                 x_temp + 8), len2]
+                                            if np.sum(sole_local == 1) == 0:
+                                                inundation_series_temp[len2] == 3
+                                            else:
+                                                inundation_series_temp[len2] == 2
+                                        else:
+                                            inundation_local = inundation_temp[max(0, y_temp - 8): min(
+                                                annual_inundation_status.shape[0], y_temp + 8), max(0, x_temp - 8): min(
+                                                annual_inundation_status.shape[1], x_temp + 8), len2]
+                                            sole_local = sole_area_temp[
+                                                         max(0, y_temp - 5): min(annual_inundation_status.shape[0],
+                                                                                 y_temp + 5),
+                                                         max(0, x_temp - 5): min(annual_inundation_status.shape[1],
+                                                                                 x_temp + 5), len2]
+
+                                            if np.sum(inundation_local == -2) == 0:
+                                                if np.sum(inundation_local == 1) == 1:
+                                                    inundation_series_temp[len2] == 6
+                                                else:
+                                                    if np.sum(sole_local == 1) != 0:
+                                                        inundation_series_temp[len2] == 4
+                                                    else:
+                                                        inundation_series_temp[len2] == 5
+                                            else:
+                                                if np.sum(inundation_local == 1) == 1:
+                                                    inundation_series_temp[len2] == 6
+                                                else:
+                                                    if np.sum(sole_local == 1) != 0:
+                                                        np.sum(sole_local == 1) != 0
+                                                        inundation_series_temp[len2] == 4
+                                                    else:
+                                                        inundation_series_temp[len2] == 5
+                                len2 += 1
+                            if np.sum(inundation_series_temp == 1) + np.sum(inundation_series_temp == 2) + np.sum(
+                                    inundation_series_temp == 3) == 0:
+                                annual_inundation_status[y_temp, x_temp] = 0
+                                annual_inundation_epoch[y_temp, x_temp] = 0
+                                annual_inundation_beg[y_temp, x_temp] = 0
+                                annual_inundation_end[y_temp, x_temp] = 0
+                            elif np.sum(inundation_series_temp >= 2) / np.sum(inundation_series_temp >= 1) > 0.8:
+                                annual_inundation_status[y_temp, x_temp] = 0
+                                annual_inundation_epoch[y_temp, x_temp] = 0
+                                annual_inundation_beg[y_temp, x_temp] = 0
+                                annual_inundation_end[y_temp, x_temp] = 0
+                            elif np.sum(inundation_series_temp == 1) != 0:
+                                len2 = 0
+                                while len2 < len(date_temp):
+                                    if inundation_series_temp[len2] == 1:
+                                        if np.isnan(water_level_min):
+                                            water_level_min = water_level_temp[len2]
+                                        else:
+                                            water_level_min = min(water_level_temp[len2], water_level_min)
+                                    elif inundation_series_temp[len2] == 2:
+                                        if np.isnan(recession_level_min):
+                                            recession_level_min = water_level_temp[len2]
+                                        else:
+                                            recession_level_min = min(recession_level_min, water_level_temp[len2])
+                                    len2 += 1
+
+                                len3 = 0
+                                while len3 < len(date_temp):
+                                    if inundation_series_temp[len3] == 3 and (
+                                            recession_level_min > water_level_temp[len3] or np.isnan(
+                                            recession_level_min)):
+                                        len4 = 0
+                                        while len4 < len(date_temp):
+                                            if inundation_series_temp[len4] == 1 and abs(recession_temp[len4]) == abs(
+                                                    recession_temp[len3]):
+                                                if np.isnan(recession_level_min):
+                                                    recession_level_min = water_level_temp[len3]
+                                                else:
+                                                    recession_level_min = min(recession_level_min,
+                                                                              water_level_temp[len3])
+                                                    inundation_series_temp[len3] = 2
+                                                break
+                                            len4 += 1
+                                    len3 += 1
+
+                                len5 = 0
+                                while len5 < len(date_temp):
+                                    if (inundation_series_temp[len5] == 4 or inundation_series_temp[len5] == 5) and \
+                                            water_level_temp[len5] < water_level_min:
+                                        len6 = 0
+                                        while len6 < len(date_temp):
+                                            if inundation_series_temp[len6] == 2 and abs(recession_temp[len6]) == abs(
+                                                    recession_temp[len5]):
+                                                water_level_min = min(water_level_min, water_level_temp[len5])
+                                                break
+                                            len6 += 1
+                                    len5 += 1
+
+                                annual_inundation_status[y_temp, x_temp] = 1
+                                if np.isnan(water_level_min):
+                                    print('WATER_LEVEL_1_ERROR!')
+                                    sys.exit(-1)
+                                elif np.isnan(recession_level_min):
+                                    annual_inundation_epoch[y_temp, x_temp] = np.sum(
+                                        water_level_epoch[:, 1] >= water_level_min)
+                                    date_min = 200000000
+                                    date_max = 0
+                                    for len0 in range(water_level_epoch.shape[0]):
+                                        if water_level_epoch[len0, 1] >= water_level_min:
+                                            date_min = min(date_min, water_level_epoch[len0, 0])
+                                            date_max = max(date_max, water_level_epoch[len0, 0])
+                                    annual_inundation_beg[y_temp, x_temp] = date_min
+                                    annual_inundation_end[y_temp, x_temp] = date_max
+                                else:
+                                    len0 = 0
+                                    annual_inundation_epoch = 0
+                                    inundation_recession = []
+                                    date_min = 200000000
+                                    date_max = 0
+                                    while len0 < water_level_epoch.shape[0]:
+                                        if water_level_epoch[len0, 2] >= 0:
+                                            if water_level_epoch[len0, 1] >= water_level_min:
+                                                annual_inundation_epoch += 1
+                                                inundation_recession.append(water_level_epoch[len0, 2])
+                                                date_min = min(date_min, water_level_epoch[len0, 0])
+                                                date_max = max(date_max, water_level_epoch[len0, 0])
+                                        elif water_level_epoch[len0, 2] < 0 and abs(
+                                                water_level_epoch[len0, 2]) in inundation_recession:
+                                            if water_level_epoch[len0, 1] >= recession_level_min:
+                                                annual_inundation_epoch += 1
+                                                date_min = min(date_min, water_level_epoch[len0, 0])
+                                                date_max = max(date_max, water_level_epoch[len0, 0])
+                                        len0 += 1
+                                    annual_inundation_beg[y_temp, x_temp] = date_min
+                                    annual_inundation_end[y_temp, x_temp] = date_max
+
+                            elif np.sum(inundation_series_temp == 2) != 0 or np.sum(inundation_series_temp == 3) != 0:
+                                len2 = 0
+                                while len2 < len(date_temp):
+                                    if inundation_series_temp[len2] == 2 or inundation_series_temp[len2] == 3:
+                                        if np.isnan(recession_level_min):
+                                            recession_level_min = water_level_temp[len2]
+                                        else:
+                                            recession_level_min = min(recession_level_min, water_level_temp[len2])
+                                    len2 += 1
+
+                                len5 = 0
+                                while len5 < len(date_temp):
+                                    if inundation_series_temp[len5] == 4 or inundation_series_temp[len5] == 5:
+                                        len6 = 0
+                                        while len6 < len(date_temp):
+                                            if inundation_series_temp[len6] == 2 and abs(recession_temp[len6]) == abs(
+                                                    recession_temp[len5]):
+                                                water_level_min = min(water_level_min, water_level_temp[len5])
+                                                break
+                                            len6 += 1
+                                    len5 += 1
+
+                                if np.isnan(water_level_min):
+                                    water_level_min = water_level_epoch[np.argwhere(water_level_epoch == date_temp[
+                                        max(water_level_temp.index(recession_level_min) - 3, 0)])[0][0], 1]
+                                    if water_level_min < recession_level_min:
+                                        water_level_min = recession_level_min
+
+                                annual_inundation_status[y_temp, x_temp] = 1
+                                if np.isnan(water_level_min):
+                                    print('WATER_LEVEL_1_ERROR!')
+                                    sys.exit(-1)
+                                elif np.isnan(recession_level_min):
+                                    annual_inundation_epoch[y_temp, x_temp] = np.sum(
+                                        water_level_epoch[:, 1] >= water_level_min)
+                                    date_min = 200000000
+                                    date_max = 0
+                                    for len0 in range(water_level_epoch.shape[0]):
+                                        if water_level_epoch[len0, 1] >= water_level_min:
+                                            date_min = min(date_min, water_level_epoch[len0, 0])
+                                            date_max = max(date_max, water_level_epoch[len0, 0])
+                                    annual_inundation_beg[y_temp, x_temp] = date_min
+                                    annual_inundation_end[y_temp, x_temp] = date_max
+                                else:
+                                    len0 = 0
+                                    annual_inundation_epoch = 0
+                                    inundation_recession = []
+                                    date_min = 200000000
+                                    date_max = 0
+                                    while len0 < water_level_epoch.shape[0]:
+                                        if water_level_epoch[len0, 2] >= 0:
+                                            if water_level_epoch[len0, 1] >= water_level_min:
+                                                annual_inundation_epoch += 1
+                                                inundation_recession.append(water_level_epoch[len0, 2])
+                                                date_min = min(date_min, water_level_epoch[len0, 0])
+                                                date_max = max(date_max, water_level_epoch[len0, 0])
+                                        elif water_level_epoch[len0, 2] < 0 and abs(
+                                                water_level_epoch[len0, 2]) in inundation_recession:
+                                            if water_level_epoch[len0, 1] >= recession_level_min:
+                                                annual_inundation_epoch += 1
+                                                date_min = min(date_min, water_level_epoch[len0, 0])
+                                                date_max = max(date_max, water_level_epoch[len0, 0])
+                                        len0 += 1
+                                    annual_inundation_beg[y_temp, x_temp] = date_min
+                                    annual_inundation_end[y_temp, x_temp] = date_max
+
+                            elif np.sum(inundation_series_temp == 4) != 0 or np.sum(inundation_series_temp == 5) != 0:
+                                len2 = 0
+                                while len2 < len(date_temp):
+                                    if inundation_series_temp[len2] == 4 or inundation_series_temp[len2] == 5:
+                                        if np.isnan(water_level_min):
+                                            water_level_min = water_level_temp[len2]
+                                        else:
+                                            water_level_min = min(water_level_min, water_level_temp[len2])
+                                    len2 += 1
+
+                                annual_inundation_status[y_temp, x_temp] = 1
+                                if np.isnan(water_level_min):
+                                    print('WATER_LEVEL_1_ERROR!')
+                                    sys.exit(-1)
+                                elif np.isnan(recession_level_min):
+                                    annual_inundation_epoch[y_temp, x_temp] = np.sum(
+                                        water_level_epoch[:, 1] >= water_level_min)
+                                    date_min = 200000000
+                                    date_max = 0
+                                    for len0 in range(water_level_epoch.shape[0]):
+                                        if water_level_epoch[len0, 1] >= water_level_min:
+                                            date_min = min(date_min, water_level_epoch[len0, 0])
+                                            date_max = max(date_max, water_level_epoch[len0, 0])
+                                    annual_inundation_beg[y_temp, x_temp] = date_min
+                                    annual_inundation_end[y_temp, x_temp] = date_max
+                bf.write_raster(ds_temp, annual_inundation_status, annual_inundation_folder,
+                             'annual_' + str(year) + '.tif', raster_datatype=gdal.GDT_Int32)
+                bf.write_raster(ds_temp, annual_inundation_epoch, annual_inundation_epoch_folder,
+                             'epoch_' + str(year) + '.tif', raster_datatype=gdal.GDT_Int32)
+                bf.write_raster(ds_temp, annual_inundation_beg, annual_inundation_beg_folder, 'beg_' + str(year) + '.tif',
+                             raster_datatype=gdal.GDT_Int32)
+                bf.write_raster(ds_temp, annual_inundation_end, annual_inundation_end_folder, 'end_' + str(year) + '.tif',
+                             raster_datatype=gdal.GDT_Int32)
+
+

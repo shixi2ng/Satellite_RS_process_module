@@ -491,7 +491,7 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
     xres_min = float(xres / factor)
     yres_min = float(yres / factor)
 
-    if (uly - lry) / yres != ysize or (lrx - ulx)/ xres != xsize:
+    if (uly - lry) / yres != ysize or (lrx - ulx) / xres != xsize:
         raise ValueError('The raster and proj is not compatible!')
 
     # Define the combined raster size
@@ -526,12 +526,13 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
         raster_temp = raster[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].astype(np.float64)
 
     rasterize_Xsize, rasterize_Ysize = int((out_xmax - out_xmin) / xres_min), int((out_ymax - out_ymin) / yres_min)
-    raster_temp = np.broadcast_to(raster_temp[:, None, :, None], (raster_temp.shape[0], factor, raster_temp.shape[1], factor)).reshape(np.int64(factor * raster_temp.shape[0]), np.int64(factor * raster_temp.shape[1]))
+    raster_temp = np.broadcast_to(raster_temp[:, None, :, None], (raster_temp.shape[0], factor, raster_temp.shape[1], factor)).reshape(np.int64(factor * raster_temp.shape[0]), np.int64(factor * raster_temp.shape[1])).copy()
 
     if [raster_temp == nodatavalue][0].all():
         return np.nan
     elif ~np.isnan(nodatavalue):
-        raster_temp[raster_temp == nodatavalue] = np.nan
+
+            raster_temp[raster_temp == nodatavalue] = np.nan
 
     if raster_temp.shape[0] != rasterize_Ysize or raster_temp.shape[1] != rasterize_Xsize:
         raise ValueError('The output raster and rasterise raster are not consistent!')
@@ -648,7 +649,7 @@ def link_GEDI_accdenvinform(dc, gedi_list, doy_list, raster_gt, furname, denv_na
     return gedi_list
 
 
-def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GEDI_link_S2_retrieval_method, size_control_factor, search_window: int = 40):
+def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GEDI_link_S2_retrieval_method, search_window: int = 40):
 
     df_size = gedi_list.shape[0]
     furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'

@@ -1140,6 +1140,7 @@ def fig11_new_func():
     plt.savefig('G:\\Landsat\\Figure_11.png', dpi=300)
     plt.close()
 
+
 def fig10_func():
     plt.rc('axes', axisbelow=True)
     plt.rc('axes', linewidth=3)

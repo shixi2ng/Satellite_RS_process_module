@@ -451,7 +451,397 @@ class GEDI_list(object):
             self.GEDI_df = self.GEDI_df.reset_index()
 
 
+class GEDI_L4_ds(object):
+    """
+    The GEDI Level4 Dataset
+    """
+    def __init__(self, ori_folder, work_env=None):
+
+        ori_folder = bf.Path(ori_folder).path_name
+        self.ori_folder = ori_folder
+
+        if work_env is None:
+            self.work_env = ''
+            for i in self.ori_folder.split('\\'):
+                if i != self.ori_folder.split('\\')[-2] and i != '':
+                    self.work_env += i + '\\'
+        else:
+            if os.path.isdir(work_env):
+                self.work_env = bf.Path(work_env).path_name
+            else:
+                print(f'The {work_env} is not a valid path! The default work env will be used!')
+                for i in self.ori_folder.split('\\'):
+                    if i != self.ori_folder.split('\\')[-2] and i != '':
+                        self.work_env += i + '\\'
+
+        self.filelist = bf.file_filter(self.ori_folder, ['.hdf'])
+        self._file_num = len(self.filelist)
+
+        # Var for metadata
+        self.metadata_pd = None
+
+        # Var for GEDI extraction
+        self.GEDI_inform_DF = None
+        self._shp_name = None
+        self._shpfile_gp = None
+        self._quality_flag = True
+        self._lat_min, self._lat_max, self._lon_min, self._lon_max = None, None, None, None
+
+    def generate_metadata(self):
+        """
+        Construction of the metadata
+        """
+        print('--------------Start generate the metadata of GEDI L4 datasets--------------')
+        str_time = time.time()
+        metadata_temp = []
+        for filepath in self.filelist:
+            if 'GEDI04' in filepath:
+                filename_list = filepath.split('\\')[-1].split('_')
+                meta_temp = [filepath, 'GEDI_L4']
+                meta_temp.append(filename_list[2][0:7])
+                meta_temp.extend([filename_list[3], filename_list[6], filename_list[5], filename_list[9].split('.')[0]])
+            else:
+                raise ValueError(f'File {filepath} is not under GEDI L2 file type!')
+            metadata_temp.append(meta_temp)
+        self.metadata_pd = pd.DataFrame(metadata_temp, columns=['Absolute dir', 'Level', 'Sensed DOY', 'Orbit Number', 'PPDS', 'Track Number', 'Product Version'])
+        self.metadata_pd.to_excel(self.work_env + 'Metadata.xlsx')
+        self._file_num = len(self.filelist)
+        print(f'--------------Finished in {round(time.time()-str_time)} seconds!--------------')
+
+    def _process_footprint_extraction_indicator(self, *args, **kwargs):
+        # process indicator
+        for temp in kwargs.keys():
+            if temp not in ['shp_file', 'quality_flag', 'work_env']:
+                raise KeyError(f'{temp} is not valid args for shot extraction!')
+
+        # shp_file
+        if 'shp_file' not in kwargs.keys() or kwargs['shp_file'] is None:
+            print('Please mention that the GEDI dataset is extremely large! It takes times extracting all the shots information!')
+            while True:
+                continue_flag = str(input("Continue?(y/n):")).lower()
+                if continue_flag == 'y':
+                    self._shp_name = 'entire'
+                    self._shpfile_gp = None
+                    break
+                elif continue_flag == 'n':
+                    raise Exception('Please input a valid ROI')
+                else:
+                    print('Invalid input!')
+        else:
+            if os.path.exists(kwargs['shp_file']) and kwargs['shp_file'].endswith('.shp'):
+                try:
+                    self._shpfile_gp = gp.read_file(kwargs['shp_file'])
+                    self._shp_name = kwargs['shp_file'].split('\\')[-1].split('.')[0]
+                except:
+                    raise Exception('Something error during the shpfile input!')
+
+                if self._shpfile_gp.crs != 'EPSG:4326':
+                    self._shpfile_gp = self._shpfile_gp.to_crs(4326)
+            else:
+                raise TypeError('Please input a valid shp file path!')
+
+        # quality_flag
+        if 'quality_flag' not in kwargs.keys():
+            self._quality_flag = None
+        else:
+            if kwargs['quality_flag'] is None:
+                self._quality_flag = None
+            elif type(kwargs['quality_flag']) is not bool:
+                raise TypeError('The quality flag should under bool type!')
+            else:
+                self._quality_flag = kwargs['quality_flag']
+
+        # work_env
+        if 'work_env' in kwargs.keys():
+            if os.path.isdir(kwargs['work_env']):
+                self.work_env = bf.Path(kwargs['work_env']).path_name
+            else:
+                work_env_temp = kwargs['work_env']
+                print(f'The input {work_env_temp} is not a valid filepath!')
+
+    def extract_footprint_data(self, file_itr):
+        if self.metadata_pd is None:
+            raise Exception('Run the metadata generation before extract information')
+        else:
+            filepath = self.metadata_pd['Absolute dir'][file_itr]
+        date, shotNum, zLat, zLon, AGBD, AGBD_se, AGBD_func, AGBD_quality, beamI, L2_quality, pft_class, tree_cover = ([] for _ in range(12))
+        file_name = filepath.split('\\')[-1]
+        try:
+            beam_itr = 0
+            beam_lat_lon_time = 0
+            detection_time = 0
+            append_time = 0
+            GEDI_l4a_temp = h5py.File(filepath, 'r')
+            GEDI_l4a_objs = []
+            GEDI_l4a_temp.visit(GEDI_l4a_objs.append)
+            gediSDS = [o for o in GEDI_l4a_objs if isinstance(GEDI_l4a_temp[o], h5py.Dataset)]
+            beamNames = [g for g in GEDI_l4a_temp.keys() if g.startswith('BEAM')]
+            date_temp = self.metadata_pd['Sensed DOY'][file_itr]
+            for beam_temp in beamNames:
+                # Open the SDS:
+                # print(f'Start process {beam_temp} of {file_name} ({file_itr} of {self._file_num}))')
+                start_time = time.time()
+                beam_itr += 1
+                time_sta = time.time()
+                lat_array = np.array(GEDI_l4a_temp[f'{beam_temp}/lat_lowestmode'])
+                lon_array = np.array(GEDI_l4a_temp[f'{beam_temp}/lon_lowestmode'])
+                lat = [q for q in lat_array]
+                lon = [q for q in lon_array]
+                ll = np.array([lon, lat]).transpose().tolist()
+                ll = [tuple(q) for q in ll]
+                ll = LineString(ll)
+                beam_lat_lon_time += time.time()-time_sta
+                # print(f'beam lat lon generation consumes ca. {str(beam_lat_lon_time)} seconds.')
+                if self._shpfile_gp.intersects(ll)[0]:
+                    time_sta = time.time()
+                    shot_number = np.array(GEDI_l4a_temp[f'{beam_temp}/shot_number'])
+                    agbd = np.array(GEDI_l4a_temp[f'{beam_temp}/agbd'])
+                    agbd_se = np.array(GEDI_l4a_temp[f'{beam_temp}/agbd_se'])
+                    alg_run_flag = np.array(GEDI_l4a_temp[f'{beam_temp}/algorithm_run_flag'])
+                    quality_flag = np.array(GEDI_l4a_temp[f'{beam_temp}/l4_quality_flag'])
+                    tree_cover_comb = np.array(GEDI_l4a_temp[f'{beam_temp}/land_cover_data/landsat_treecover'])
+                    pft_class_comb = np.array(GEDI_l4a_temp[f'{beam_temp}/land_cover_data/pft_class'])
+                    l2_quality_flag = np.array(GEDI_l4a_temp[f'{beam_temp}/l2_quality_flag'])
+                    for h in range(shot_number.shape[0]):
+                        if self._lat_min < lat_array[h] < self._lat_max:
+                            if self._shpfile_gp.contains(Point(lon_array[h], lat_array[h]))[0]:
+                                time_sta_2 = time.time()
+                                date.append(date_temp)
+                                zLat.append(lat_array[h])
+                                zLon.append(lon_array[h])
+                                shotNum.append(shot_number[h])
+                                AGBD.append(agbd[h])
+                                AGBD_se.append(agbd_se[h])
+                                AGBD_func.append(alg_run_flag[h])
+                                AGBD_quality.append(quality_flag[h])
+                                L2_quality.append(l2_quality_flag[h])
+                                pft_class.append(pft_class_comb[h])
+                                tree_cover.append(tree_cover_comb[h])
+                                beamI.append(beam_temp)
+                                append_time += time.time() - time_sta_2
+                                # print(f'append consumes ca. {str(append_time)} seconds.')
+                    detection_time += time.time() - time_sta
+                print(f'Finished in {str(time.time()-start_time)} seconds {beam_temp} of {file_name} ({file_itr + 1} of {self._file_num})).')
+        except:
+            print(traceback.format_exc())
+            date, shotNum, zLat, zLon, AGBD, AGBD_se, AGBD_func, AGBD_quality, beamI, L2_quality, pft_class, tree_cover = ([] for _ in range(12))
+            print(f'The {file_name} has some issues \n')
+            return date, shotNum, zLat, zLon, AGBD, AGBD_se, AGBD_func, AGBD_quality, beamI, L2_quality, pft_class, tree_cover
+            # raise Exception(f'{traceback.format_exc()} \n The {file_name} has some issues \n')
+
+        # Output the extracted information
+        if len(zLat) == len(AGBD_quality):
+            return date, shotNum, zLat, zLon, AGBD, AGBD_se, AGBD_func, AGBD_quality, beamI, L2_quality, pft_class, tree_cover
+        else:
+            date, shotNum, zLat, zLon, AGBD, AGBD_se, AGBD_func, AGBD_quality, beamI, L2_quality, pft_class, tree_cover = ([] for _ in range(12))
+            raise Exception('The output list consistency is invalid!')
+
+    def seq_extract_footprint_AGBD_infor(self, output_df_factor=True, *args, **kwargs):
+        # Process all the args
+        self._process_footprint_extraction_indicator(*args, **kwargs)
+
+        # Generate the initial boundary
+        if self._shpfile_gp is None:
+            self._lat_min, self._lat_max, self._lon_min, self._lon_max = -360, 360, -360, 360
+        elif self._shpfile_gp is not None:
+            self._lat_min, self._lat_max, self._lon_min, self._lon_max = self._shpfile_gp.bounds['miny'][0], self._shpfile_gp.bounds['maxy'][0], self._shpfile_gp.bounds['minx'][0], self._shpfile_gp.bounds['maxx'][0]
+
+        # Define inform list
+        date_all, shotNum_all, zLat_all, zLon_all, AGBD_all, AGBD_se_all, AGBD_func_all, AGBD_quality_all, BEAM_all, L2_quality_all, pft_class_all, tree_cover_all = ([] for _ in range(12))
+        file_itr = range(0, self._file_num)
+        for i in file_itr:
+            date, shotNum, zLat, zLon, AGBD, AGBD_se, AGBD_func, AGBD_quality, beamI, L2_quality, pft_class, tree_cover = self.extract_footprint_data(i)
+            date_all.extend(date)
+            shotNum_all.extend(shotNum)
+            zLat_all.extend(zLat)
+            zLon_all.extend(zLon)
+            AGBD_all.extend(AGBD)
+            AGBD_se_all.extend(AGBD_se)
+            AGBD_func_all.extend(AGBD_func)
+            AGBD_quality_all.extend(AGBD_quality)
+            BEAM_all.extend(beamI)
+            L2_quality_all.extend(L2_quality)
+            pft_class_all.extend(pft_class)
+            tree_cover_all.extend(tree_cover)
+
+        self.GEDI_inform_DF = pd.DataFrame(
+            {'Date': date_all, 'Shot Number': shotNum_all, 'Beam': BEAM_all, 'Latitude': zLat_all, 'Longitude': zLon_all,
+             'AGBD': AGBD_all, 'AGBD SE': AGBD_se_all, 'AGBD func': AGBD_func_all, 'AGBD quality': AGBD_quality_all,
+             'L2 quality': L2_quality_all, 'PFT name': tree_cover_all, 'PFT class': pft_class_all})
+
+        bf.create_folder(f'{self.work_env}Result\\')
+        if output_df_factor:
+            self.GEDI_inform_DF.to_excel(f'{self.work_env}Result\\{self._shp_name}_all.xlsx')
+
+            # Remove poor quality returns
+            self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['AGBD quality'].ne(0))
+            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Degrade Flag'] < 1)
+            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Sensitivity'] > 0.95)
+            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna()
+            self.GEDI_inform_DF.to_excel(f'{self.work_env}Result\\{self._shp_name}_high_quality.xlsx')
+
+    def mp_extract_footprint_AGBD_infor(self, output_df_factor=True, *args, **kwargs):
+
+        # Process all the args
+        self._process_footprint_extraction_indicator(*args, **kwargs)
+
+        # Generate the initial boundary
+        if self._shpfile_gp is None:
+            self._lat_min, self._lat_max, self._lon_min, self._lon_max = -360, 360, -360, 360
+        elif self._shpfile_gp is not None:
+            self._lat_min, self._lat_max, self._lon_min, self._lon_max = self._shpfile_gp.bounds['miny'][0], self._shpfile_gp.bounds['maxy'][0], self._shpfile_gp.bounds['minx'][0], self._shpfile_gp.bounds['maxx'][0]
+
+        # Define inform list
+        date_all, shotNum_all, zLat_all, zLon_all, AGBD_all, AGBD_se_all, AGBD_func_all, AGBD_quality_all, BEAM_all, L2_quality_all, pft_class_all, tree_cover_all = ([] for _ in range(12))
+        file_itr = range(0, self._file_num)
+
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            result = executor.map(self.extract_footprint_data, file_itr)
+
+        result = list(result)
+        for result_temp in result:
+            date_all.extend(result_temp[0])
+            shotNum_all.extend(result_temp[1])
+            zLat_all.extend(result_temp[2])
+            zLon_all.extend(result_temp[3])
+            AGBD_all.extend(result_temp[4])
+            AGBD_se_all.extend(result_temp[5])
+            AGBD_func_all.extend(result_temp[6])
+            AGBD_quality_all.extend(result_temp[7])
+            BEAM_all.extend(result_temp[8])
+            L2_quality_all.extend(result_temp[9])
+            pft_class_all.extend(result_temp[10])
+            tree_cover_all.extend(result_temp[11])
+
+        self.GEDI_inform_DF = pd.DataFrame(
+            {'Date': date_all, 'Shot Number': shotNum_all, 'Beam': BEAM_all, 'Latitude': zLat_all, 'Longitude': zLon_all,
+             'AGBD': AGBD_all, 'AGBD SE': AGBD_se_all, 'AGBD func': AGBD_func_all, 'AGBD quality': AGBD_quality_all,
+             'L2 quality': L2_quality_all, 'PFT name': tree_cover_all, 'PFT class': pft_class_all})
+
+        bf.create_folder(f'{self.work_env}Result\\')
+        if output_df_factor:
+            self.GEDI_inform_DF.to_excel(f'{self.work_env}Result\\{self._shp_name}_all.xlsx')
+
+            # Remove poor quality returns
+            self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['AGBD quality'].ne(0))
+            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Degrade Flag'] < 1)
+            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Sensitivity'] > 0.95)
+            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna()
+            self.GEDI_inform_DF.to_excel(f'{self.work_env}Result\\{self._shp_name}_high_quality.xlsx')
+
+    def GEDI_inform2shpfile(self):
+        # Take the lat/lon dataframe and convert each lat/lon to a shapely point
+        self.GEDI_inform_DF['geometry'] = self.GEDI_inform_DF.apply(lambda row: Point(row.Longitude, row.Latitude), axis=1)
+
+        # Convert to GeoDataframe
+        self.GEDI_inform_DF = gp.GeoDataFrame(self.GEDI_inform_DF)
+        self.GEDI_inform_DF = self.GEDI_inform_DF.drop(columns=['Latitude', 'Longitude'])
+        self.GEDI_inform_DF['Shot Number'] = self.GEDI_inform_DF['Shot Number'].astype(str)  # Convert shot number to string
+
+        outName = self._shp_name + '.shp'
+        self.GEDI_inform_DF.to_file(f'{self.work_env}Result\\{outName}', driver='ESRI Shapefile')
+
+    # def visualise_shots(self):
+    #     vdims = []
+    #     for f in self.GEDI_inform_DF:
+    #         if f not in ['geometry']:
+    #             vdims.append(f)
+    #
+    #     visual = pointVisual(self.GEDI_inform_DF, vdims=vdims)
+    #     # Plot the basemap and geoviews Points, defining the color as the Canopy Height for each shot
+    #     (gvts.EsriImagery * gv.Points(self.GEDI_inform_DF, vdims=vdims).options(color='Canopy Height (rh100)', cmap='plasma', size=3,
+    #                                                               tools=['hover'],
+    #                                                               clim=(0, 102), colorbar=True, clabel='Meters',
+    #                                                               title='GEDI Canopy Height over Redwood National Park: June 19, 2019',
+    #                                                               fontsize={'xticks': 10, 'yticks': 10, 'xlabel': 16,
+    #                                                                         'clabel': 12,
+    #                                                                         'cticks': 10, 'title': 16,
+    #                                                                         'ylabel': 16})).options(height=500,
+    #                                                                                                 width=900)
+    #     (gvts.EsriImagery * gv.Points(self.GEDI_inform_DF, vdims=vdims).options(color='Elevation (m)', cmap='terrain', size=3,
+    #                                                               tools=['hover'],
+    #                                                               clim=(min(self.GEDI_inform_DF['Elevation (m)']),
+    #                                                                     max(self.GEDI_inform_DF['Elevation (m)'])),
+    #                                                               colorbar=True, clabel='Meters',
+    #                                                               title='GEDI Elevation over Redwood National Park: June 19, 2019',
+    #                                                               fontsize={'xticks': 10, 'yticks': 10, 'xlabel': 16,
+    #                                                                         'clabel': 12,
+    #                                                                         'cticks': 10, 'title': 16,
+    #                                                                         'ylabel': 16})).options(height=500,
+    #                                                                                                 width=900)
+
+    def temp(self):
+        pass
+
+
+class GEDI_list(object):
+    def __init__(self, *args):
+
+        self.GEDI_df = None
+        self._GEDI_fund_att = ['Shot Number', 'Beam', 'Latitude', 'Longitude']
+        for GEDI_inform_xlsx in args:
+            if not os.path.exists(GEDI_inform_xlsx):
+                raise Exception(f'The {GEDI_inform_xlsx} is not a valid file name')
+            elif GEDI_inform_xlsx.endswith('.xlsx'):
+                GEDI_df = pd.read_excel(GEDI_inform_xlsx)
+            elif GEDI_inform_xlsx.endswith('.csv'):
+                GEDI_df = pd.read_csv(GEDI_inform_xlsx)
+            else:
+                raise Exception(f'The {GEDI_inform_xlsx} is not a valid xlsx file')
+
+            if False in [q in GEDI_df.keys() for q in self._GEDI_fund_att]:
+                raise Exception(f'The {GEDI_inform_xlsx} does not contain all the required inform!')
+
+            elif self.GEDI_df is None:
+                self.GEDI_df = GEDI_df
+
+            else:
+                key_temp = list(GEDI_df.keys())
+
+                _ = 0
+                while _ < len(key_temp):
+                    if key_temp[_] not in self.GEDI_df.keys() or 'Unnamed' in key_temp[_] or 'index' in key_temp[_]:
+                        key_temp.remove(key_temp[_])
+                        _ -= 1
+                    _ += 1
+                self.GEDI_df = pd.merge(GEDI_df, self.GEDI_df, on=key_temp, how='outer')
+
+        # Obtain the size of gedi
+        self.df_size = self.GEDI_df.shape[0]
+
+    def save(self, output_filename: str):
+        if output_filename.endswith('.csv'):
+            self.GEDI_df.to_csv(output_filename)
+        elif output_filename.endswith('.xlsx') or output_filename.endswith('.xls'):
+            self.GEDI_df.to_excel(output_filename)
+
+    def generate_boundary(self, ):
+        pass
+
+    def reprojection(self, proj: str, xycolumn_start: str = 'new'):
+
+        if not isinstance(xycolumn_start, str):
+            raise TypeError(f'{xycolumn_start} is not a str')
+
+        if xycolumn_start + '_lat' not in self.GEDI_df.keys() or xycolumn_start + '_lon' not in self.GEDI_df.keys():
+            point_temp = gp.points_from_xy(list(self.GEDI_df.Longitude), list(self.GEDI_df.Latitude), crs='epsg:4326')
+            point_temp = point_temp.to_crs(crs=proj)
+            lon = point_temp.x
+            lat = point_temp.y
+
+            for data_temp, name_temp in zip([lat, lon], [xycolumn_start + '_' + temp for temp in ['lat', 'lon']]):
+                self.GEDI_df.insert(len(self.GEDI_df.columns), name_temp, data_temp)
+
+            # Sort it according to lat and lon
+            self.GEDI_df = self.GEDI_df.sort_values([f'{xycolumn_start}_lon', f'{xycolumn_start}_lat'], ascending=[True, False])
+            self.GEDI_df = self.GEDI_df.reset_index()
+
+
 if __name__ == '__main__':
+
+    sample_YTR = GEDI_L4_ds('G:\A_Landsat_veg\GEDI_L4A\Ori\\')
+    sample_YTR.generate_metadata()
+    sample_YTR.mp_extract_footprint_AGBD_infor(shp_file='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
 
     sample_YTR = GEDI_L2_ds('G:\\GEDI_MYR\\temp\\orifile\\')
     sample_YTR.generate_metadata()
