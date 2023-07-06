@@ -1,4 +1,6 @@
 # coding=utf-8
+import os
+
 from basic_function import Path
 import concurrent.futures
 from itertools import repeat
@@ -934,7 +936,7 @@ class RS_dcs(object):
         self._flood_mapping_accuracy_evaluation_factor = False
         self._sample_rs_link_list = None
         self._sample_data_path = None
-        self._flood_mapping_method = ['Unet', 'MNDWI_thr', 'DSWE', 'DT', 'AWEI', 'rs_dem']
+        self._flood_mapping_method = ['Unet', 'static_wi_thr', 'DSWE', 'DT', 'AWEI', 'rs_dem']
 
         # Define var for the phenological analysis
         self._curve_fitting_algorithm = None
@@ -1224,32 +1226,46 @@ class RS_dcs(object):
             raise ValueError(f'The inundation detection method {str(inundation_mapping_method)} is not supported')
 
         # Method 1 static threshold
-        if inundation_mapping_method == 'static_thr':
+        if inundation_mapping_method == 'static_wi_thr':
 
             # Flood mapping by static threshold
             if 'Inundation_static_wi_thr' not in self._index_list or self._inundation_overwritten_para:
 
                 # Define static thr output
-                static_output = output_path + 'Inundation_static_wi_thr_datacube\\'
+                static_output = output_path + 'inundation_static_wi_thr_datacube\\'
                 bf.create_folder(static_output)
 
                 if not os.path.exists(static_output + 'metadata.json'):
 
-                    inundation_dc = copy.deepcopy(self._dcs_backup_[dc_num])
+                    inundation_dc = copy.deepcopy(self.dcs[dc_num])
                     if self._sparse_matrix_list[dc_num]:
-                        namelist = self.dcs[dc_num].SM_namelist
                         inundation_sm = NDSparseMatrix()
-                        for z_temp in range(self.S2dc_ZSize):
-                            inundation_array = self.dcs[dc_num].SM_group[namelist[z_temp]]
-                            dtype_temp = type(inundation_array)
-                            inundation_array = invert_data(inundation_array, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
-                            inundation_array[inundation_array < self._static_wi_threshold] = 1
-                            inundation_array[inundation_array >= self._static_wi_threshold] = 2
-                            inundation_array[np.isnan(inundation_array)] = 0
-                            inundation_array = inundation_array.astype(np.byte)
-                            inundation_sm.append(dtype_temp(inundation_array), name=namelist[z_temp])
 
+                        # Separate into several stacks
+                        inundation_dc_list = []
+                        worker = int(os.cpu_count() / 4)
+                        range_ = int(np.floor(inundation_dc.shape[2] / worker))
+                        for _ in range(worker):
+                            if (_ + 1) * range_ >= inundation_dc.shape[2]:
+                                inundation_dc_list.append(inundation_dc.extract_matrix((['all'], ['all'], [_ * range_, inundation_dc.shape[2]])))
+                            else:
+                                inundation_dc_list.append(inundation_dc.extract_matrix((['all'], ['all'], [_ * range_, (_ + 1) * range_])))
+                        inundation_dc = None
+                        sz = self._size_control_factor_list[dc_num]
+                        zoff = self._Zoffset_list[dc_num]
+                        nd = self._Nodata_value_list[dc_num]
+                        thr = self._static_wi_threshold
+                        with concurrent.futures.ProcessPoolExecutor(max_workers=worker) as executor:
+                            res = executor.map(mp_static_wi_detection, inundation_dc_list, repeat(sz), repeat(zoff), repeat(nd), repeat(thr))
+
+                        res = list(res)
+                        for _ in res:
+                            for __ in range(len(_[0])):
+                                inundation_sm.append(_[0][__], name=_[1][__])
+
+                        inundation_dc = copy.deepcopy(self.dcs[dc_num])
                         inundation_dc.dc = inundation_sm
+
                     else:
                         inundation_array = copy.deepcopy(self.dcs[dc_num])
                         inundation_array = invert_data(inundation_array, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
@@ -1257,9 +1273,8 @@ class RS_dcs(object):
                         inundation_array = inundation_array + 1
                         inundation_array[np.isnan(inundation_array)] = 0
                         inundation_array = inundation_array.astype(np.byte)
-                        inundation_dc.dc = inundation_array
 
-                    inundation_dc.index = 'Inundation_' + inundation_mapping_method
+                    inundation_dc.index = 'inundation_' + inundation_mapping_method
                     inundation_dc.Datatype = str(np.byte)
                     inundation_dc.sdc_doylist = doy_list
                     inundation_dc.Zoffset = None
@@ -2818,37 +2833,55 @@ class RS_dcs(object):
             plt.setp(box['boxes'], color=(89 / 256, 117 / 256, 164 / 256), edgecolor=(60 / 256, 60 / 256, 60 / 256), alpha=0.4)
             plt.savefig(f'{output_path}{phemetric_}_var\\fig.png', dpi=300)
 
-    def est_inunduration(self, inundated_dc: str, output_path: str, water_level_data,
-                         nan_value=-2, inundated_value=1, generate_inundation_status_factor=True, process_extent=[],
-                         generate_max_water_level_factor=False, example_date=None):
+    def est_inunduration(self, inundated_index: str, output_path: str, water_level_data,
+                         nan_value=0, inundated_value=1, generate_inundation_status_factor=True, process_extent=None,
+                         generate_max_water_level_factor=False):
 
         # Check the var
         output_path = Path(output_path).path_name
         if not os.path.exists(f'{output_path}'):
             bf.create_folder(f'{output_path}')
 
-        if generate_inundation_status_factor and (example_date is None):
-            print('Please input the required para')
-            sys.exit(-1)
-        else:
-            example_date = str(bf.doy2date(example_date))
-
         if not isinstance(water_level_data, np.ndarray):
             try:
                 water_level_data = np.array(water_level_data)
             except:
-                print('Please input the water level data in a right format!')
-                pass
+                raise TypeError('Please input the water level data in a right format!')
 
         if water_level_data.shape[1] != 2:
             print('Please input the water level data as a 2d array with shape under n*2!')
             sys.exit(-1)
 
-        water_level_data[:, 0] = water_level_data[:, 0].astype(np.int)
+        # Process the inundated dc
+        if inundated_index not in self._index_list:
+            raise ValueError(f'Inundated dc {str(inundated_index)} is not input!')
+        else:
+            inundated_dc = copy.copy(self.dcs[self._index_list.index(inundated_index)])
+            roi_ds = gdal.Open(self.ROI_tif)
+            roi_arr = roi_ds.GetRasterBand(1).ReadAsArray()
+            if not self._sparse_matrix_list[self._index_list.index(inundated_index)]:
+                if process_extent is not None and isinstance(process_extent, (list, tuple)) and len(process_extent) == 4:
+                    y_min, y_max, x_min, x_max = process_extent
+                    inundated_dc = inundated_dc[y_min: y_max, x_min: x_max, :]
+                    roi_arr = roi_arr[y_min: y_max, x_min: x_max]
+                elif process_extent is None:
+                    inundated_dc = inundated_dc[:, :, :]
+            else:
+                if process_extent is not None and isinstance(process_extent, (list, tuple)) and len(process_extent) == 4:
+                    y_min, y_max, x_min, x_max = process_extent
+                    inundated_dc = inundated_dc.extract_matrix(([y_min, y_max], [x_min, x_max], ['all']))
+                    roi_arr = roi_arr[y_min: y_max, x_min: x_max]
+                elif process_extent is None:
+                    inundated_dc = inundated_dc.extract_matrix((['all'], ['all'], ['all']))
+            doy_list = self._doys_backup_[self._index_list.index(inundated_index)]
+
+        water_level_data[:, 0] = water_level_data[:, 0].astype(np.int32)
         date_range = [np.min(water_level_data[:, 0]), np.max(water_level_data[:, 0])]
-        if not os.path.exists(output_path + '\\recession.xlsx'):
-            recession_list = []
-            year_list = np.unique(water_level_data[:, 0] // 10000).astype(np.int)
+
+        # Create water level trend list
+        if not os.path.exists(output_path + '\\water_level_trend.csv'):
+            wl_trend_list = []
+            year_list = np.unique(water_level_data[:, 0] // 10000).astype(np.int32)
             for year in year_list:
                 recession_turn = 0
                 for data_size in range(1, water_level_data.shape[0]):
@@ -2857,575 +2890,482 @@ class RS_dcs(object):
                             if (water_level_data[data_size, 1] > water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]) \
                                     or (water_level_data[data_size, 1] < water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]) \
                                     or (water_level_data[data_size - 1, 1] == water_level_data[data_size, 1] == water_level_data[data_size + 1, 1]):
-                                recession_list.append([water_level_data[data_size, 0], 0])
-                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <=water_level_data[data_size + 1, 1]) \
+                                wl_trend_list.append([water_level_data[data_size, 0], 0])
+                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <= water_level_data[data_size + 1, 1]) \
                                     or (water_level_data[data_size - 1, 1] <= water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]):
-                                recession_list.append([water_level_data[data_size, 0], 1])
+                                wl_trend_list.append([water_level_data[data_size, 0], 1])
                                 recession_turn = 1
                             elif (water_level_data[data_size - 1, 1] > water_level_data[data_size, 1] >= water_level_data[data_size + 1, 1])\
                                     or (water_level_data[data_size - 1, 1] >= water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]):
-                                recession_list.append([water_level_data[data_size, 0], -1])
+                                wl_trend_list.append([water_level_data[data_size, 0], -1])
                                 recession_turn = -1
                             else:
                                 print('error occurred recession!')
                                 sys.exit(-1)
 
                         elif recession_turn != 0:
-                            if (water_level_data[data_size, 1] > water_level_data[data_size - 1, 1] and
-                                water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]) or (
-                                    water_level_data[data_size, 1] < water_level_data[data_size - 1, 1] and
-                                    water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]) or (
-                                    water_level_data[data_size - 1, 1] == water_level_data[data_size, 1] ==
-                                    water_level_data[data_size + 1, 1]):
-                                recession_list.append([water_level_data[data_size, 0], 0])
-                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <=
-                                  water_level_data[data_size + 1, 1]) or (
-                                    water_level_data[data_size - 1, 1] <= water_level_data[data_size, 1] <
-                                    water_level_data[data_size + 1, 1]):
+                            if (water_level_data[data_size, 1] > water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size, 1] < water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] == water_level_data[data_size, 1] == water_level_data[data_size + 1, 1]):
+                                wl_trend_list.append([water_level_data[data_size, 0], 0])
+                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <= water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] <= water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]):
                                 if recession_turn > 0:
-                                    recession_list.append([water_level_data[data_size, 0], recession_turn])
+                                    wl_trend_list.append([water_level_data[data_size, 0], recession_turn])
                                 else:
                                     recession_turn = -recession_turn + 1
-                                    recession_list.append([water_level_data[data_size, 0], recession_turn])
-                            elif (water_level_data[data_size - 1, 1] > water_level_data[data_size, 1] >=
-                                  water_level_data[data_size + 1, 1]) or (
-                                    water_level_data[data_size - 1, 1] >= water_level_data[data_size, 1] >
-                                    water_level_data[data_size + 1, 1]):
+                                    wl_trend_list.append([water_level_data[data_size, 0], recession_turn])
+                            elif (water_level_data[data_size - 1, 1] > water_level_data[data_size, 1] >= water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] >= water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]):
                                 if recession_turn < 0:
-                                    recession_list.append([water_level_data[data_size, 0], recession_turn])
+                                    wl_trend_list.append([water_level_data[data_size, 0], recession_turn])
                                 else:
                                     recession_turn = -recession_turn
-                                    recession_list.append([water_level_data[data_size, 0], recession_turn])
+                                    wl_trend_list.append([water_level_data[data_size, 0], recession_turn])
                             else:
-                                print('error occrrued recession!')
+                                print('error occurred recession!')
                                 sys.exit(-1)
-            recession_list = np.array(recession_list)
-            recession_list = pd.DataFrame(recession_list)
-            recession_list.to_excel(output_path + '\\recession.xlsx')
+            wl_trend_list = np.array(wl_trend_list)
+            wl_trend_list = pd.DataFrame(wl_trend_list)
+            wl_trend_list.to_csv(output_path + '\\water_level_trend.csv')
         else:
-            recession_list = pandas.read_excel(output_path + '\\recession.xlsx')
-            recession_list = np.array(recession_list).astype(np.object)[:, 1:]
-            recession_list[:, 0] = recession_list[:, 0].astype(np.int)
+            wl_trend_list = pandas.read_csv(output_path + '\\water_level_trend.csv')
+            wl_trend_list = np.array(wl_trend_list)
+            wl_trend_list = wl_trend_list[:, 1:]
 
-        # water_level_data[:, 0] = doy2date(water_level_data[:, 0])
-        tif_file = []
-        for folder in file_folder:
-            if os.path.exists(folder):
-                tif_file_temp = bf.file_filter(folder, ['.tif', '.TIF'], and_or_factor='or', exclude_word_list=['.xml', '.aux', '.cpg', '.dbf', '.lock'])
-                tif_file.extend(tif_file_temp)
-            else:
-                pass
-        if len(tif_file) == 0:
-            print('None file meet the requirement')
-            sys.exit(-1)
-
+        # Retrieve the max water level
         if generate_max_water_level_factor:
-            date_list = []
-            priority_list = []
+            doy_valid_list = []
             water_level_list = []
-            for file_path in tif_file:
-                ds_temp = gdal.Open(file_path)
-                raster_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                true_false_array = raster_temp == nan_value
-                if not true_false_array.all():
-                    for length in range(len(file_path)):
-                        try:
-                            date_temp = int(file_path[length: length + 8])
-                            break
-                        except:
-                            pass
 
-                        try:
-                            date_temp = int(file_path[length: length + 7])
-                            date_temp = bf.doy2date(date_temp)
-                            break
-                        except:
-                            pass
-                    if date_range[0] < date_temp < date_range[1]:
-                        date_list.append(date_temp)
-                        date_num = np.argwhere(water_level_data == date_temp)[0, 0]
-                        water_level_list.append(water_level_data[date_num, 1])
-                        for folder_num in range(len(file_folder)):
-                            if file_folder[folder_num] in file_path:
-                                priority_list.append(file_priority[folder_num])
+            for _ in range(len(doy_list)):
+                if date_range[0] < doy_list[_] < date_range[1]:
+                    doy_valid_list.append(doy_list[_])
+                    date_num = np.argwhere(water_level_data == doy_list[_])[0, 0]
+                    water_level_list.append(water_level_data[date_num, 1])
 
-            if len(date_list) == len(priority_list) and len(priority_list) == len(water_level_list) and len(
-                    date_list) != 0:
-                information_array = np.ones([3, len(date_list)])
-                information_array[0, :] = np.array(date_list)
-                information_array[1, :] = np.array(priority_list)
-                information_array[2, :] = np.array(water_level_list)
+            if len(doy_valid_list) == len(water_level_list) and len(doy_valid_list) != 0:
+                information_array = np.ones([2, len(doy_valid_list)])
+                information_array[0, :] = np.array(doy_valid_list)
+                information_array[1, :] = np.array(water_level_list)
                 year_array = np.unique(np.fix(information_array[0, :] // 10000))
-                unique_level_array = np.unique(information_array[1, :])
-                annual_max_water_level = np.ones([year_array.shape[0], unique_level_array.shape[0]])
                 annual_max = []
                 for year in range(year_array.shape[0]):
                     water_level_max = 0
                     for date_temp in range(water_level_data.shape[0]):
                         if water_level_data[date_temp, 0] // 10000 == year_array[year]:
                             water_level_max = max(water_level_max, water_level_data[date_temp, 1])
-                    annual_max.append(water_level_max)
-                    for unique_level in range(unique_level_array.shape[0]):
-                        max_temp = 0
-                        for i in range(information_array.shape[1]):
-                            if np.fix(information_array[0, i] // 10000) == year_array[year] and information_array[1, i] == unique_level_array[unique_level]:
-                                max_temp = max(max_temp, information_array[2, i])
-                        annual_max_water_level[year, unique_level] = max_temp
+
                 annual_max = np.array(annual_max)
-                annual_max_water_level_dic = np.zeros([year_array.shape[0] + 1, unique_level_array.shape[0] + 2])
-                annual_max_water_level_dic[1:, 2:] = annual_max_water_level
-                annual_max_water_level_dic[1:, 0] = year_array.transpose()
-                annual_max_water_level_dic[1:, 1] = annual_max.transpose()
-                annual_max_water_level_dic[0, 2:] = unique_level_array
-                dic_temp = pd.DataFrame(annual_max_water_level_dic)
+                dic_temp = pd.DataFrame(np.transpose(np.stack([year_array, annual_max], axis=1)), columns=['Year', 'Annual max water level'])
                 dic_temp.to_excel(output_path + self.ROI_name + '.xlsx')
 
         if generate_inundation_status_factor:
-            combined_file_path = output_path + 'Original_Inundation_File\\'
-            bf.create_folder(combined_file_path)
 
-            for file_path in tif_file:
-                ds_temp = gdal.Open(file_path)
-                raster_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                if self.sa_map.shape[0] != raster_temp.shape[0] or self.sa_map.shape[1] != raster_temp.shape[1]:
-                    print('Consistency error sa map')
-                    sys.exit(-1)
-                true_false_array = raster_temp == nan_value
-                if not true_false_array.all():
-                    for length in range(len(file_path)):
-                        try:
-                            date_temp = int(file_path[length: length + 8])
-                            break
-                        except:
-                            pass
-
-                        try:
-                            date_temp = int(file_path[length: length + 7])
-                            date_temp = bf.doy2date(date_temp)
-                            break
-                        except:
-                            pass
-                    if date_range[0] < date_temp < date_range[1]:
-                        if 6 <= np.mod(date_temp, 10000) // 100 <= 10:
-                            if not os.path.exists(combined_file_path + 'inundation_' + str(date_temp) + '.tif'):
-                                for folder_num in range(len(file_folder)):
-                                    if file_folder[folder_num] in file_path:
-                                        priority_temp = file_priority[folder_num]
-                                if priority_temp == 0:
-                                    shutil.copyfile(file_path,
-                                                    combined_file_path + 'inundation_' + str(date_temp) + '.tif')
-                                else:
-                                    ds_temp_temp = gdal.Open(file_path)
-                                    raster_temp_temp = ds_temp_temp.GetRasterBand(1).ReadAsArray()
-                                    raster_temp_temp[raster_temp_temp != inundated_value] = nan_value
-                                    bf.write_raster(ds_temp_temp, raster_temp_temp, combined_file_path,
-                                                 'inundation_' + str(date_temp) + '.tif',
-                                                 raster_datatype=gdal.GDT_Int16)
-
-            inundation_file = bf.file_filter(combined_file_path, containing_word_list=['.tif'])
-            sole_file_path = output_path + 'Sole_Inundation_File\\'
+            sole_file_path = output_path + 'inundation_\\'
             bf.create_folder(sole_file_path)
 
-            date_dc = []
-            inundation_dc = []
-            sole_area_dc = []
-            river_sample = []
-            recession_dc = []
-            num_temp = 0
-
-            if not os.path.exists(output_path + 'example.tif'):
-                for file in inundation_file:
-                    if example_date in file:
-                        example_ds = gdal.Open(file)
-                        example_raster = example_ds.GetRasterBand(1).ReadAsArray()
-                        example_sole = identify_all_inundated_area(example_raster,
-                                                                   inundated_pixel_indicator=inundated_value,
-                                                                   nanvalue_pixel_indicator=nan_value)
-                        unique_sole = np.unique(example_sole.flatten())
-                        unique_sole = np.delete(unique_sole, np.argwhere(unique_sole == 0))
-                        amount_sole = [np.sum(example_sole == value) for value in unique_sole]
-                        example_sole[example_sole != unique_sole[np.argmax(amount_sole)]] = -10
-                        example_sole[example_sole == unique_sole[np.argmax(amount_sole)]] = 1
-                        example_sole = example_sole.astype(np.float)
-                        example_sole[example_sole == -10] = np.nan
-                        river_sample = example_sole
-                        bf.write_raster(example_ds, river_sample, output_path, 'example.tif',
-                                     raster_datatype=gdal.GDT_Float32)
-                        break
-            else:
-                example_ds = gdal.Open(output_path + 'example.tif')
-                river_sample = example_ds.GetRasterBand(1).ReadAsArray()
-
-            if river_sample == []:
-                print('Error in river sample creation.')
-                sys.exit(-1)
-
-            if not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(
-                    output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy'):
-                for file in inundation_file:
-                    ds_temp3 = gdal.Open(file)
-                    raster_temp3 = ds_temp3.GetRasterBand(1).ReadAsArray()
-                    for length in range(len(file)):
-                        try:
-                            date_temp = int(file[length: length + 8])
-                            break
-                        except:
-                            pass
-                    date_dc.append(date_temp)
-
-                    if inundation_dc == []:
-                        inundation_dc = np.zeros([raster_temp3.shape[0], raster_temp3.shape[1], len(inundation_file)])
-                        inundation_dc[:, :, 0] = raster_temp3
-                    else:
-                        inundation_dc[:, :, num_temp] = raster_temp3
-
-                    if not os.path.exists(sole_file_path + str(date_temp) + '_individual_area.tif'):
-                        sole_floodplain_temp = identify_all_inundated_area(raster_temp3,
-                                                                           inundated_pixel_indicator=inundated_value,
-                                                                           nanvalue_pixel_indicator=nan_value)
-                        sole_result = np.zeros_like(sole_floodplain_temp)
-                        unique_value = np.unique(sole_floodplain_temp.flatten())
-                        unique_value = np.delete(unique_value, np.argwhere(unique_value == 0))
-                        for u_value in unique_value:
-                            if np.logical_and(sole_floodplain_temp == u_value, river_sample == 1).any():
-                                sole_result[sole_floodplain_temp == u_value] = 1
-                        sole_result[river_sample == 1] = 0
-                        bf.write_raster(ds_temp3, sole_result, sole_file_path, str(date_temp) + '_individual_area.tif',
-                                     raster_datatype=gdal.GDT_Int32)
-                    else:
-                        sole_floodplain_ds_temp = gdal.Open(sole_file_path + str(date_temp) + '_individual_area.tif')
-                        sole_floodplain_temp = sole_floodplain_ds_temp.GetRasterBand(1).ReadAsArray()
-
-                    if sole_area_dc == []:
-                        sole_area_dc = np.zeros([raster_temp3.shape[0], raster_temp3.shape[1], len(inundation_file)])
-                        sole_area_dc[:, :, 0] = sole_floodplain_temp
-                    else:
-                        sole_area_dc[:, :, num_temp] = sole_floodplain_temp
-                    num_temp += 1
-                date_dc = np.array(date_dc).transpose()
-
-                if date_dc.shape[0] == sole_area_dc.shape[2] == inundation_dc.shape[2]:
-                    np.save(output_path + 'date_dc.npy', date_dc)
-                    np.save(output_path + 'sole_area_dc.npy', sole_area_dc)
-                    np.save(output_path + 'inundation_dc.npy', inundation_dc)
+            # Create river stretch based on inundation frequency
+            if not os.path.exists(output_path + 'permanent_water.tif'):
+                if isinstance(inundated_dc, np.ndarray):
+                    inundated_frequency = np.nansum(inundated_dc == inundated_value, axis=2) / np.nansum(inundated_dc != nan_value, axis=2)
+                    inundated_frequency[inundated_frequency > 0.7] = 1
+                    inundated_frequency[inundated_frequency <= 0.7] = 0
+                    inundated_frequency[roi_arr == -32768] = -2
+                    inundated_frequency = inundated_frequency.astype(np.int16)
+                elif isinstance(inundated_dc, NDSparseMatrix):
+                    inundated_all = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                    valid_all = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                    for _ in inundated_dc.SM_namelist:
+                        arr_temp = inundated_dc.SM_group[_].toarray()
+                        valid_all = valid_all + (arr_temp != nan_value).astype(np.int32)
+                        inundated_all = inundated_all + (arr_temp == inundated_value).astype(np.int32)
+                    inundated_frequency = inundated_all / valid_all
+                    inundated_frequency[inundated_frequency > 0.7] = 1
+                    inundated_frequency[inundated_frequency <= 0.7] = 0
+                    inundated_frequency[roi_arr == -32768] = -2
+                    inundated_frequency = inundated_frequency.astype(np.int16)
                 else:
-                    print('Consistency error during outout!')
-                    sys.exit(-1)
-            else:
-                inundation_dc = np.load(output_path + 'inundation_dc.npy')
-                sole_area_dc = np.load(output_path + 'sole_area_dc.npy')
-                date_dc = np.load(output_path + 'date_dc.npy')
+                    raise TypeError('Type error when generate inundated frequency!')
 
-            date_list = []
-            for file_path in inundation_file:
-                for length in range(len(file_path)):
-                    try:
-                        date_temp = int(file_path[length: length + 8])
-                        break
-                    except:
-                        pass
-                    date_list.append(date_temp)
+                bf.write_raster(roi_ds, inundated_frequency, output_path, 'permanent_water.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
+                inundated_frequency = None
 
-            year_list = np.unique(np.fix(date_dc // 10000).astype(np.int))
-            annual_inundation_folder = output_path + 'annual_inundation_status\\'
-            annual_inundation_epoch_folder = output_path + 'annual_inundation_epoch\\'
-            annual_inundation_beg_folder = output_path + 'annual_inundation_beg\\'
-            annual_inundation_end_folder = output_path + 'annual_inundation_end\\'
-            bf.create_folder(annual_inundation_folder)
-            bf.create_folder(annual_inundation_epoch_folder)
-            bf.create_folder(annual_inundation_beg_folder)
-            bf.create_folder(annual_inundation_end_folder)
+            pw_ds = gdal.Open(output_path + 'permanent_water.tif')
+            permanent_water_arr = pw_ds.GetRasterBand(1).ReadAsArray()
 
-            for year in year_list:
-                inundation_temp = []
-                sole_area_temp = []
-                date_temp = []
-                recession_temp = []
-                water_level_temp = []
-                annual_inundation_epoch = np.zeros_like(self.sa_map).astype(np.float)
-                annual_inundation_status = np.zeros_like(self.sa_map).astype(np.float)
-                annual_inundation_beg = np.zeros_like(self.sa_map).astype(np.float)
-                annual_inundation_end = np.zeros_like(self.sa_map).astype(np.float)
-                annual_inundation_status[np.isnan(self.sa_map)] = np.nan
-                annual_inundation_epoch[np.isnan(self.sa_map)] = np.nan
-                annual_inundation_beg[np.isnan(self.sa_map)] = np.nan
-                annual_inundation_end[np.isnan(self.sa_map)] = np.nan
-                water_level_epoch = []
-                len1 = 0
-                while len1 < date_dc.shape[0]:
-                    if date_dc[len1] // 10000 == year:
-                        date_temp.append(date_dc[len1])
-                        recession_temp.append(recession_list[np.argwhere(recession_list == date_dc[len1])[0, 0], 1])
-                        water_level_temp.append(
-                            water_level_data[np.argwhere(water_level_data == date_dc[len1])[0, 0], 1])
-                        if inundation_temp == [] or sole_area_temp == []:
-                            inundation_temp = inundation_dc[:, :, len1].reshape(
-                                [inundation_dc.shape[0], inundation_dc.shape[1], 1])
-                            sole_area_temp = sole_area_dc[:, :, len1].reshape(
-                                [sole_area_dc.shape[0], sole_area_dc.shape[1], 1])
-                        else:
-                            inundation_temp = np.concatenate((inundation_temp, inundation_dc[:, :, len1].reshape(
-                                [inundation_dc.shape[0], inundation_dc.shape[1], 1])), axis=2)
-                            sole_area_temp = np.concatenate((sole_area_temp, sole_area_dc[:, :, len1].reshape(
-                                [sole_area_dc.shape[0], sole_area_dc.shape[1], 1])), axis=2)
-                    len1 += 1
+            if not os.path.exists(output_path + 'permanent_water.shp'):
+                gdal.Polygonize(pw_ds.GetRasterBand(1), None, output_path + 'permanent_water.shp', -1, [])
 
-                len1 = 0
-                while len1 < water_level_data.shape[0]:
-                    if water_level_data[len1, 0] // 10000 == year:
-                        if 6 <= np.mod(water_level_data[len1, 0], 10000) // 100 <= 10:
-                            recession_temp2 = recession_list[np.argwhere(water_level_data[len1, 0])[0][0], 1]
-                            water_level_epoch.append(
-                                [water_level_data[len1, 0], water_level_data[len1, 1], recession_temp2])
-                    len1 += 1
-                water_level_epoch = np.array(water_level_epoch)
+            if permanent_water_arr == []:
+                raise ValueError('Error in permanent water creation!')
 
-                for y_temp in range(annual_inundation_status.shape[0]):
-                    for x_temp in range(annual_inundation_status.shape[1]):
-                        if self.sa_map[y_temp, x_temp] != -32768:
-                            inundation_series_temp = inundation_temp[y_temp, x_temp, :].reshape(
-                                [inundation_temp.shape[2]])
-                            sole_series_temp = sole_area_temp[y_temp, x_temp, :].reshape([sole_area_temp.shape[2]])
-                            water_level_min = np.nan
-                            recession_level_min = np.nan
-
-                            inundation_status = False
-                            len2 = 0
-                            while len2 < len(date_temp):
-                                if inundation_series_temp[len2] == 1:
-                                    if sole_series_temp[len2] != 1:
-                                        if recession_temp[len2] < 0:
-                                            sole_local = sole_area_temp[
-                                                         max(0, y_temp - 8): min(annual_inundation_status.shape[0],
-                                                                                 y_temp + 8),
-                                                         max(0, x_temp - 8): min(annual_inundation_status.shape[1],
-                                                                                 x_temp + 8), len2]
-                                            if np.sum(sole_local == 1) == 0:
-                                                inundation_series_temp[len2] == 3
-                                            else:
-                                                inundation_series_temp[len2] == 2
-                                        else:
-                                            inundation_local = inundation_temp[max(0, y_temp - 8): min(
-                                                annual_inundation_status.shape[0], y_temp + 8), max(0, x_temp - 8): min(
-                                                annual_inundation_status.shape[1], x_temp + 8), len2]
-                                            sole_local = sole_area_temp[
-                                                         max(0, y_temp - 5): min(annual_inundation_status.shape[0],
-                                                                                 y_temp + 5),
-                                                         max(0, x_temp - 5): min(annual_inundation_status.shape[1],
-                                                                                 x_temp + 5), len2]
-
-                                            if np.sum(inundation_local == -2) == 0:
-                                                if np.sum(inundation_local == 1) == 1:
-                                                    inundation_series_temp[len2] == 6
-                                                else:
-                                                    if np.sum(sole_local == 1) != 0:
-                                                        inundation_series_temp[len2] == 4
-                                                    else:
-                                                        inundation_series_temp[len2] == 5
-                                            else:
-                                                if np.sum(inundation_local == 1) == 1:
-                                                    inundation_series_temp[len2] == 6
-                                                else:
-                                                    if np.sum(sole_local == 1) != 0:
-                                                        np.sum(sole_local == 1) != 0
-                                                        inundation_series_temp[len2] == 4
-                                                    else:
-                                                        inundation_series_temp[len2] == 5
-                                len2 += 1
-                            if np.sum(inundation_series_temp == 1) + np.sum(inundation_series_temp == 2) + np.sum(
-                                    inundation_series_temp == 3) == 0:
-                                annual_inundation_status[y_temp, x_temp] = 0
-                                annual_inundation_epoch[y_temp, x_temp] = 0
-                                annual_inundation_beg[y_temp, x_temp] = 0
-                                annual_inundation_end[y_temp, x_temp] = 0
-                            elif np.sum(inundation_series_temp >= 2) / np.sum(inundation_series_temp >= 1) > 0.8:
-                                annual_inundation_status[y_temp, x_temp] = 0
-                                annual_inundation_epoch[y_temp, x_temp] = 0
-                                annual_inundation_beg[y_temp, x_temp] = 0
-                                annual_inundation_end[y_temp, x_temp] = 0
-                            elif np.sum(inundation_series_temp == 1) != 0:
-                                len2 = 0
-                                while len2 < len(date_temp):
-                                    if inundation_series_temp[len2] == 1:
-                                        if np.isnan(water_level_min):
-                                            water_level_min = water_level_temp[len2]
-                                        else:
-                                            water_level_min = min(water_level_temp[len2], water_level_min)
-                                    elif inundation_series_temp[len2] == 2:
-                                        if np.isnan(recession_level_min):
-                                            recession_level_min = water_level_temp[len2]
-                                        else:
-                                            recession_level_min = min(recession_level_min, water_level_temp[len2])
-                                    len2 += 1
-
-                                len3 = 0
-                                while len3 < len(date_temp):
-                                    if inundation_series_temp[len3] == 3 and (
-                                            recession_level_min > water_level_temp[len3] or np.isnan(
-                                            recession_level_min)):
-                                        len4 = 0
-                                        while len4 < len(date_temp):
-                                            if inundation_series_temp[len4] == 1 and abs(recession_temp[len4]) == abs(
-                                                    recession_temp[len3]):
-                                                if np.isnan(recession_level_min):
-                                                    recession_level_min = water_level_temp[len3]
-                                                else:
-                                                    recession_level_min = min(recession_level_min,
-                                                                              water_level_temp[len3])
-                                                    inundation_series_temp[len3] = 2
-                                                break
-                                            len4 += 1
-                                    len3 += 1
-
-                                len5 = 0
-                                while len5 < len(date_temp):
-                                    if (inundation_series_temp[len5] == 4 or inundation_series_temp[len5] == 5) and \
-                                            water_level_temp[len5] < water_level_min:
-                                        len6 = 0
-                                        while len6 < len(date_temp):
-                                            if inundation_series_temp[len6] == 2 and abs(recession_temp[len6]) == abs(
-                                                    recession_temp[len5]):
-                                                water_level_min = min(water_level_min, water_level_temp[len5])
-                                                break
-                                            len6 += 1
-                                    len5 += 1
-
-                                annual_inundation_status[y_temp, x_temp] = 1
-                                if np.isnan(water_level_min):
-                                    print('WATER_LEVEL_1_ERROR!')
-                                    sys.exit(-1)
-                                elif np.isnan(recession_level_min):
-                                    annual_inundation_epoch[y_temp, x_temp] = np.sum(
-                                        water_level_epoch[:, 1] >= water_level_min)
-                                    date_min = 200000000
-                                    date_max = 0
-                                    for len0 in range(water_level_epoch.shape[0]):
-                                        if water_level_epoch[len0, 1] >= water_level_min:
-                                            date_min = min(date_min, water_level_epoch[len0, 0])
-                                            date_max = max(date_max, water_level_epoch[len0, 0])
-                                    annual_inundation_beg[y_temp, x_temp] = date_min
-                                    annual_inundation_end[y_temp, x_temp] = date_max
-                                else:
-                                    len0 = 0
-                                    annual_inundation_epoch = 0
-                                    inundation_recession = []
-                                    date_min = 200000000
-                                    date_max = 0
-                                    while len0 < water_level_epoch.shape[0]:
-                                        if water_level_epoch[len0, 2] >= 0:
-                                            if water_level_epoch[len0, 1] >= water_level_min:
-                                                annual_inundation_epoch += 1
-                                                inundation_recession.append(water_level_epoch[len0, 2])
-                                                date_min = min(date_min, water_level_epoch[len0, 0])
-                                                date_max = max(date_max, water_level_epoch[len0, 0])
-                                        elif water_level_epoch[len0, 2] < 0 and abs(
-                                                water_level_epoch[len0, 2]) in inundation_recession:
-                                            if water_level_epoch[len0, 1] >= recession_level_min:
-                                                annual_inundation_epoch += 1
-                                                date_min = min(date_min, water_level_epoch[len0, 0])
-                                                date_max = max(date_max, water_level_epoch[len0, 0])
-                                        len0 += 1
-                                    annual_inundation_beg[y_temp, x_temp] = date_min
-                                    annual_inundation_end[y_temp, x_temp] = date_max
-
-                            elif np.sum(inundation_series_temp == 2) != 0 or np.sum(inundation_series_temp == 3) != 0:
-                                len2 = 0
-                                while len2 < len(date_temp):
-                                    if inundation_series_temp[len2] == 2 or inundation_series_temp[len2] == 3:
-                                        if np.isnan(recession_level_min):
-                                            recession_level_min = water_level_temp[len2]
-                                        else:
-                                            recession_level_min = min(recession_level_min, water_level_temp[len2])
-                                    len2 += 1
-
-                                len5 = 0
-                                while len5 < len(date_temp):
-                                    if inundation_series_temp[len5] == 4 or inundation_series_temp[len5] == 5:
-                                        len6 = 0
-                                        while len6 < len(date_temp):
-                                            if inundation_series_temp[len6] == 2 and abs(recession_temp[len6]) == abs(
-                                                    recession_temp[len5]):
-                                                water_level_min = min(water_level_min, water_level_temp[len5])
-                                                break
-                                            len6 += 1
-                                    len5 += 1
-
-                                if np.isnan(water_level_min):
-                                    water_level_min = water_level_epoch[np.argwhere(water_level_epoch == date_temp[
-                                        max(water_level_temp.index(recession_level_min) - 3, 0)])[0][0], 1]
-                                    if water_level_min < recession_level_min:
-                                        water_level_min = recession_level_min
-
-                                annual_inundation_status[y_temp, x_temp] = 1
-                                if np.isnan(water_level_min):
-                                    print('WATER_LEVEL_1_ERROR!')
-                                    sys.exit(-1)
-                                elif np.isnan(recession_level_min):
-                                    annual_inundation_epoch[y_temp, x_temp] = np.sum(
-                                        water_level_epoch[:, 1] >= water_level_min)
-                                    date_min = 200000000
-                                    date_max = 0
-                                    for len0 in range(water_level_epoch.shape[0]):
-                                        if water_level_epoch[len0, 1] >= water_level_min:
-                                            date_min = min(date_min, water_level_epoch[len0, 0])
-                                            date_max = max(date_max, water_level_epoch[len0, 0])
-                                    annual_inundation_beg[y_temp, x_temp] = date_min
-                                    annual_inundation_end[y_temp, x_temp] = date_max
-                                else:
-                                    len0 = 0
-                                    annual_inundation_epoch = 0
-                                    inundation_recession = []
-                                    date_min = 200000000
-                                    date_max = 0
-                                    while len0 < water_level_epoch.shape[0]:
-                                        if water_level_epoch[len0, 2] >= 0:
-                                            if water_level_epoch[len0, 1] >= water_level_min:
-                                                annual_inundation_epoch += 1
-                                                inundation_recession.append(water_level_epoch[len0, 2])
-                                                date_min = min(date_min, water_level_epoch[len0, 0])
-                                                date_max = max(date_max, water_level_epoch[len0, 0])
-                                        elif water_level_epoch[len0, 2] < 0 and abs(
-                                                water_level_epoch[len0, 2]) in inundation_recession:
-                                            if water_level_epoch[len0, 1] >= recession_level_min:
-                                                annual_inundation_epoch += 1
-                                                date_min = min(date_min, water_level_epoch[len0, 0])
-                                                date_max = max(date_max, water_level_epoch[len0, 0])
-                                        len0 += 1
-                                    annual_inundation_beg[y_temp, x_temp] = date_min
-                                    annual_inundation_end[y_temp, x_temp] = date_max
-
-                            elif np.sum(inundation_series_temp == 4) != 0 or np.sum(inundation_series_temp == 5) != 0:
-                                len2 = 0
-                                while len2 < len(date_temp):
-                                    if inundation_series_temp[len2] == 4 or inundation_series_temp[len2] == 5:
-                                        if np.isnan(water_level_min):
-                                            water_level_min = water_level_temp[len2]
-                                        else:
-                                            water_level_min = min(water_level_min, water_level_temp[len2])
-                                    len2 += 1
-
-                                annual_inundation_status[y_temp, x_temp] = 1
-                                if np.isnan(water_level_min):
-                                    print('WATER_LEVEL_1_ERROR!')
-                                    sys.exit(-1)
-                                elif np.isnan(recession_level_min):
-                                    annual_inundation_epoch[y_temp, x_temp] = np.sum(
-                                        water_level_epoch[:, 1] >= water_level_min)
-                                    date_min = 200000000
-                                    date_max = 0
-                                    for len0 in range(water_level_epoch.shape[0]):
-                                        if water_level_epoch[len0, 1] >= water_level_min:
-                                            date_min = min(date_min, water_level_epoch[len0, 0])
-                                            date_max = max(date_max, water_level_epoch[len0, 0])
-                                    annual_inundation_beg[y_temp, x_temp] = date_min
-                                    annual_inundation_end[y_temp, x_temp] = date_max
-                bf.write_raster(ds_temp, annual_inundation_status, annual_inundation_folder,
-                             'annual_' + str(year) + '.tif', raster_datatype=gdal.GDT_Int32)
-                bf.write_raster(ds_temp, annual_inundation_epoch, annual_inundation_epoch_folder,
-                             'epoch_' + str(year) + '.tif', raster_datatype=gdal.GDT_Int32)
-                bf.write_raster(ds_temp, annual_inundation_beg, annual_inundation_beg_folder, 'beg_' + str(year) + '.tif',
-                             raster_datatype=gdal.GDT_Int32)
-                bf.write_raster(ds_temp, annual_inundation_end, annual_inundation_end_folder, 'end_' + str(year) + '.tif',
-                             raster_datatype=gdal.GDT_Int32)
-
-
+            # for
+            # if not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy'):
+            #     for file in inundation_file:
+            #         ds_temp3 = gdal.Open(file)
+            #         raster_temp3 = ds_temp3.GetRasterBand(1).ReadAsArray()
+            #         for length in range(len(file)):
+            #             try:
+            #                 date_temp = int(file[length: length + 8])
+            #                 break
+            #             except:
+            #                 pass
+            #         date_dc.append(date_temp)
+            #
+            #         if inundation_dc == []:
+            #             inundation_dc = np.zeros([raster_temp3.shape[0], raster_temp3.shape[1], len(inundation_file)])
+            #             inundation_dc[:, :, 0] = raster_temp3
+            #         else:
+            #             inundation_dc[:, :, num_temp] = raster_temp3
+            #
+            #         if not os.path.exists(sole_file_path + str(date_temp) + '_individual_area.tif'):
+            #             sole_floodplain_temp = identify_all_inundated_area(raster_temp3,
+            #                                                                inundated_pixel_indicator=inundated_value,
+            #                                                                nanvalue_pixel_indicator=nan_value)
+            #             sole_result = np.zeros_like(sole_floodplain_temp)
+            #             unique_value = np.unique(sole_floodplain_temp.flatten())
+            #             unique_value = np.delete(unique_value, np.argwhere(unique_value == 0))
+            #             for u_value in unique_value:
+            #                 if np.logical_and(sole_floodplain_temp == u_value, permanent_water_arr == 1).any():
+            #                     sole_result[sole_floodplain_temp == u_value] = 1
+            #             sole_result[permanent_water_arr == 1] = 0
+            #             bf.write_raster(ds_temp3, sole_result, sole_file_path, str(date_temp) + '_individual_area.tif',
+            #                          raster_datatype=gdal.GDT_Int32)
+            #         else:
+            #             sole_floodplain_ds_temp = gdal.Open(sole_file_path + str(date_temp) + '_individual_area.tif')
+            #             sole_floodplain_temp = sole_floodplain_ds_temp.GetRasterBand(1).ReadAsArray()
+            #
+            #         if sole_area_dc == []:
+            #             sole_area_dc = np.zeros([raster_temp3.shape[0], raster_temp3.shape[1], len(inundation_file)])
+            #             sole_area_dc[:, :, 0] = sole_floodplain_temp
+            #         else:
+            #             sole_area_dc[:, :, num_temp] = sole_floodplain_temp
+            #         num_temp += 1
+            #     date_dc = np.array(date_dc).transpose()
+            #
+            #     if date_dc.shape[0] == sole_area_dc.shape[2] == inundation_dc.shape[2]:
+            #         np.save(output_path + 'date_dc.npy', date_dc)
+            #         np.save(output_path + 'sole_area_dc.npy', sole_area_dc)
+            #         np.save(output_path + 'inundation_dc.npy', inundation_dc)
+            #     else:
+            #         print('Consistency error during outout!')
+            #         sys.exit(-1)
+            # else:
+            #     inundation_dc = np.load(output_path + 'inundation_dc.npy')
+            #     sole_area_dc = np.load(output_path + 'sole_area_dc.npy')
+            #     date_dc = np.load(output_path + 'date_dc.npy')
+            #
+            # doy_valid_list = []
+            # for file_path in inundation_file:
+            #     for length in range(len(file_path)):
+            #         try:
+            #             date_temp = int(file_path[length: length + 8])
+            #             break
+            #         except:
+            #             pass
+            #         doy_valid_list.append(date_temp)
+            #
+            # year_list = np.unique(np.fix(date_dc // 10000).astype(np.int))
+            # annual_inundation_folder = output_path + 'annual_inundation_status\\'
+            # annual_inundation_epoch_folder = output_path + 'annual_inundation_epoch\\'
+            # annual_inundation_beg_folder = output_path + 'annual_inundation_beg\\'
+            # annual_inundation_end_folder = output_path + 'annual_inundation_end\\'
+            # bf.create_folder(annual_inundation_folder)
+            # bf.create_folder(annual_inundation_epoch_folder)
+            # bf.create_folder(annual_inundation_beg_folder)
+            # bf.create_folder(annual_inundation_end_folder)
+            #
+            # for year in year_list:
+            #     inundation_temp = []
+            #     sole_area_temp = []
+            #     date_temp = []
+            #     recession_temp = []
+            #     water_level_temp = []
+            #     annual_inundation_epoch = np.zeros_like(self.sa_map).astype(np.float)
+            #     annual_inundation_status = np.zeros_like(self.sa_map).astype(np.float)
+            #     annual_inundation_beg = np.zeros_like(self.sa_map).astype(np.float)
+            #     annual_inundation_end = np.zeros_like(self.sa_map).astype(np.float)
+            #     annual_inundation_status[np.isnan(self.sa_map)] = np.nan
+            #     annual_inundation_epoch[np.isnan(self.sa_map)] = np.nan
+            #     annual_inundation_beg[np.isnan(self.sa_map)] = np.nan
+            #     annual_inundation_end[np.isnan(self.sa_map)] = np.nan
+            #     water_level_epoch = []
+            #     len1 = 0
+            #     while len1 < date_dc.shape[0]:
+            #         if date_dc[len1] // 10000 == year:
+            #             date_temp.append(date_dc[len1])
+            #             recession_temp.append(wl_trend_list[np.argwhere(wl_trend_list == date_dc[len1])[0, 0], 1])
+            #             water_level_temp.append(
+            #                 water_level_data[np.argwhere(water_level_data == date_dc[len1])[0, 0], 1])
+            #             if inundation_temp == [] or sole_area_temp == []:
+            #                 inundation_temp = inundation_dc[:, :, len1].reshape(
+            #                     [inundation_dc.shape[0], inundation_dc.shape[1], 1])
+            #                 sole_area_temp = sole_area_dc[:, :, len1].reshape(
+            #                     [sole_area_dc.shape[0], sole_area_dc.shape[1], 1])
+            #             else:
+            #                 inundation_temp = np.concatenate((inundation_temp, inundation_dc[:, :, len1].reshape(
+            #                     [inundation_dc.shape[0], inundation_dc.shape[1], 1])), axis=2)
+            #                 sole_area_temp = np.concatenate((sole_area_temp, sole_area_dc[:, :, len1].reshape(
+            #                     [sole_area_dc.shape[0], sole_area_dc.shape[1], 1])), axis=2)
+            #         len1 += 1
+            #
+            #     len1 = 0
+            #     while len1 < water_level_data.shape[0]:
+            #         if water_level_data[len1, 0] // 10000 == year:
+            #             if 6 <= np.mod(water_level_data[len1, 0], 10000) // 100 <= 10:
+            #                 recession_temp2 = wl_trend_list[np.argwhere(water_level_data[len1, 0])[0][0], 1]
+            #                 water_level_epoch.append(
+            #                     [water_level_data[len1, 0], water_level_data[len1, 1], recession_temp2])
+            #         len1 += 1
+            #     water_level_epoch = np.array(water_level_epoch)
+            #
+            #     for y_temp in range(annual_inundation_status.shape[0]):
+            #         for x_temp in range(annual_inundation_status.shape[1]):
+            #             if self.sa_map[y_temp, x_temp] != -32768:
+            #                 inundation_series_temp = inundation_temp[y_temp, x_temp, :].reshape(
+            #                     [inundation_temp.shape[2]])
+            #                 sole_series_temp = sole_area_temp[y_temp, x_temp, :].reshape([sole_area_temp.shape[2]])
+            #                 water_level_min = np.nan
+            #                 recession_level_min = np.nan
+            #
+            #                 inundation_status = False
+            #                 len2 = 0
+            #                 while len2 < len(date_temp):
+            #                     if inundation_series_temp[len2] == 1:
+            #                         if sole_series_temp[len2] != 1:
+            #                             if recession_temp[len2] < 0:
+            #                                 sole_local = sole_area_temp[
+            #                                              max(0, y_temp - 8): min(annual_inundation_status.shape[0],
+            #                                                                      y_temp + 8),
+            #                                              max(0, x_temp - 8): min(annual_inundation_status.shape[1],
+            #                                                                      x_temp + 8), len2]
+            #                                 if np.sum(sole_local == 1) == 0:
+            #                                     inundation_series_temp[len2] == 3
+            #                                 else:
+            #                                     inundation_series_temp[len2] == 2
+            #                             else:
+            #                                 inundation_local = inundation_temp[max(0, y_temp - 8): min(
+            #                                     annual_inundation_status.shape[0], y_temp + 8), max(0, x_temp - 8): min(
+            #                                     annual_inundation_status.shape[1], x_temp + 8), len2]
+            #                                 sole_local = sole_area_temp[
+            #                                              max(0, y_temp - 5): min(annual_inundation_status.shape[0],
+            #                                                                      y_temp + 5),
+            #                                              max(0, x_temp - 5): min(annual_inundation_status.shape[1],
+            #                                                                      x_temp + 5), len2]
+            #
+            #                                 if np.sum(inundation_local == -2) == 0:
+            #                                     if np.sum(inundation_local == 1) == 1:
+            #                                         inundation_series_temp[len2] == 6
+            #                                     else:
+            #                                         if np.sum(sole_local == 1) != 0:
+            #                                             inundation_series_temp[len2] == 4
+            #                                         else:
+            #                                             inundation_series_temp[len2] == 5
+            #                                 else:
+            #                                     if np.sum(inundation_local == 1) == 1:
+            #                                         inundation_series_temp[len2] == 6
+            #                                     else:
+            #                                         if np.sum(sole_local == 1) != 0:
+            #                                             np.sum(sole_local == 1) != 0
+            #                                             inundation_series_temp[len2] == 4
+            #                                         else:
+            #                                             inundation_series_temp[len2] == 5
+            #                     len2 += 1
+            #                 if np.sum(inundation_series_temp == 1) + np.sum(inundation_series_temp == 2) + np.sum(
+            #                         inundation_series_temp == 3) == 0:
+            #                     annual_inundation_status[y_temp, x_temp] = 0
+            #                     annual_inundation_epoch[y_temp, x_temp] = 0
+            #                     annual_inundation_beg[y_temp, x_temp] = 0
+            #                     annual_inundation_end[y_temp, x_temp] = 0
+            #                 elif np.sum(inundation_series_temp >= 2) / np.sum(inundation_series_temp >= 1) > 0.8:
+            #                     annual_inundation_status[y_temp, x_temp] = 0
+            #                     annual_inundation_epoch[y_temp, x_temp] = 0
+            #                     annual_inundation_beg[y_temp, x_temp] = 0
+            #                     annual_inundation_end[y_temp, x_temp] = 0
+            #                 elif np.sum(inundation_series_temp == 1) != 0:
+            #                     len2 = 0
+            #                     while len2 < len(date_temp):
+            #                         if inundation_series_temp[len2] == 1:
+            #                             if np.isnan(water_level_min):
+            #                                 water_level_min = water_level_temp[len2]
+            #                             else:
+            #                                 water_level_min = min(water_level_temp[len2], water_level_min)
+            #                         elif inundation_series_temp[len2] == 2:
+            #                             if np.isnan(recession_level_min):
+            #                                 recession_level_min = water_level_temp[len2]
+            #                             else:
+            #                                 recession_level_min = min(recession_level_min, water_level_temp[len2])
+            #                         len2 += 1
+            #
+            #                     len3 = 0
+            #                     while len3 < len(date_temp):
+            #                         if inundation_series_temp[len3] == 3 and (
+            #                                 recession_level_min > water_level_temp[len3] or np.isnan(
+            #                                 recession_level_min)):
+            #                             len4 = 0
+            #                             while len4 < len(date_temp):
+            #                                 if inundation_series_temp[len4] == 1 and abs(recession_temp[len4]) == abs(
+            #                                         recession_temp[len3]):
+            #                                     if np.isnan(recession_level_min):
+            #                                         recession_level_min = water_level_temp[len3]
+            #                                     else:
+            #                                         recession_level_min = min(recession_level_min,
+            #                                                                   water_level_temp[len3])
+            #                                         inundation_series_temp[len3] = 2
+            #                                     break
+            #                                 len4 += 1
+            #                         len3 += 1
+            #
+            #                     len5 = 0
+            #                     while len5 < len(date_temp):
+            #                         if (inundation_series_temp[len5] == 4 or inundation_series_temp[len5] == 5) and \
+            #                                 water_level_temp[len5] < water_level_min:
+            #                             len6 = 0
+            #                             while len6 < len(date_temp):
+            #                                 if inundation_series_temp[len6] == 2 and abs(recession_temp[len6]) == abs(
+            #                                         recession_temp[len5]):
+            #                                     water_level_min = min(water_level_min, water_level_temp[len5])
+            #                                     break
+            #                                 len6 += 1
+            #                         len5 += 1
+            #
+            #                     annual_inundation_status[y_temp, x_temp] = 1
+            #                     if np.isnan(water_level_min):
+            #                         print('WATER_LEVEL_1_ERROR!')
+            #                         sys.exit(-1)
+            #                     elif np.isnan(recession_level_min):
+            #                         annual_inundation_epoch[y_temp, x_temp] = np.sum(
+            #                             water_level_epoch[:, 1] >= water_level_min)
+            #                         date_min = 200000000
+            #                         date_max = 0
+            #                         for len0 in range(water_level_epoch.shape[0]):
+            #                             if water_level_epoch[len0, 1] >= water_level_min:
+            #                                 date_min = min(date_min, water_level_epoch[len0, 0])
+            #                                 date_max = max(date_max, water_level_epoch[len0, 0])
+            #                         annual_inundation_beg[y_temp, x_temp] = date_min
+            #                         annual_inundation_end[y_temp, x_temp] = date_max
+            #                     else:
+            #                         len0 = 0
+            #                         annual_inundation_epoch = 0
+            #                         inundation_recession = []
+            #                         date_min = 200000000
+            #                         date_max = 0
+            #                         while len0 < water_level_epoch.shape[0]:
+            #                             if water_level_epoch[len0, 2] >= 0:
+            #                                 if water_level_epoch[len0, 1] >= water_level_min:
+            #                                     annual_inundation_epoch += 1
+            #                                     inundation_recession.append(water_level_epoch[len0, 2])
+            #                                     date_min = min(date_min, water_level_epoch[len0, 0])
+            #                                     date_max = max(date_max, water_level_epoch[len0, 0])
+            #                             elif water_level_epoch[len0, 2] < 0 and abs(
+            #                                     water_level_epoch[len0, 2]) in inundation_recession:
+            #                                 if water_level_epoch[len0, 1] >= recession_level_min:
+            #                                     annual_inundation_epoch += 1
+            #                                     date_min = min(date_min, water_level_epoch[len0, 0])
+            #                                     date_max = max(date_max, water_level_epoch[len0, 0])
+            #                             len0 += 1
+            #                         annual_inundation_beg[y_temp, x_temp] = date_min
+            #                         annual_inundation_end[y_temp, x_temp] = date_max
+            #
+            #                 elif np.sum(inundation_series_temp == 2) != 0 or np.sum(inundation_series_temp == 3) != 0:
+            #                     len2 = 0
+            #                     while len2 < len(date_temp):
+            #                         if inundation_series_temp[len2] == 2 or inundation_series_temp[len2] == 3:
+            #                             if np.isnan(recession_level_min):
+            #                                 recession_level_min = water_level_temp[len2]
+            #                             else:
+            #                                 recession_level_min = min(recession_level_min, water_level_temp[len2])
+            #                         len2 += 1
+            #
+            #                     len5 = 0
+            #                     while len5 < len(date_temp):
+            #                         if inundation_series_temp[len5] == 4 or inundation_series_temp[len5] == 5:
+            #                             len6 = 0
+            #                             while len6 < len(date_temp):
+            #                                 if inundation_series_temp[len6] == 2 and abs(recession_temp[len6]) == abs(
+            #                                         recession_temp[len5]):
+            #                                     water_level_min = min(water_level_min, water_level_temp[len5])
+            #                                     break
+            #                                 len6 += 1
+            #                         len5 += 1
+            #
+            #                     if np.isnan(water_level_min):
+            #                         water_level_min = water_level_epoch[np.argwhere(water_level_epoch == date_temp[
+            #                             max(water_level_temp.index(recession_level_min) - 3, 0)])[0][0], 1]
+            #                         if water_level_min < recession_level_min:
+            #                             water_level_min = recession_level_min
+            #
+            #                     annual_inundation_status[y_temp, x_temp] = 1
+            #                     if np.isnan(water_level_min):
+            #                         print('WATER_LEVEL_1_ERROR!')
+            #                         sys.exit(-1)
+            #                     elif np.isnan(recession_level_min):
+            #                         annual_inundation_epoch[y_temp, x_temp] = np.sum(
+            #                             water_level_epoch[:, 1] >= water_level_min)
+            #                         date_min = 200000000
+            #                         date_max = 0
+            #                         for len0 in range(water_level_epoch.shape[0]):
+            #                             if water_level_epoch[len0, 1] >= water_level_min:
+            #                                 date_min = min(date_min, water_level_epoch[len0, 0])
+            #                                 date_max = max(date_max, water_level_epoch[len0, 0])
+            #                         annual_inundation_beg[y_temp, x_temp] = date_min
+            #                         annual_inundation_end[y_temp, x_temp] = date_max
+            #                     else:
+            #                         len0 = 0
+            #                         annual_inundation_epoch = 0
+            #                         inundation_recession = []
+            #                         date_min = 200000000
+            #                         date_max = 0
+            #                         while len0 < water_level_epoch.shape[0]:
+            #                             if water_level_epoch[len0, 2] >= 0:
+            #                                 if water_level_epoch[len0, 1] >= water_level_min:
+            #                                     annual_inundation_epoch += 1
+            #                                     inundation_recession.append(water_level_epoch[len0, 2])
+            #                                     date_min = min(date_min, water_level_epoch[len0, 0])
+            #                                     date_max = max(date_max, water_level_epoch[len0, 0])
+            #                             elif water_level_epoch[len0, 2] < 0 and abs(
+            #                                     water_level_epoch[len0, 2]) in inundation_recession:
+            #                                 if water_level_epoch[len0, 1] >= recession_level_min:
+            #                                     annual_inundation_epoch += 1
+            #                                     date_min = min(date_min, water_level_epoch[len0, 0])
+            #                                     date_max = max(date_max, water_level_epoch[len0, 0])
+            #                             len0 += 1
+            #                         annual_inundation_beg[y_temp, x_temp] = date_min
+            #                         annual_inundation_end[y_temp, x_temp] = date_max
+            #
+            #                 elif np.sum(inundation_series_temp == 4) != 0 or np.sum(inundation_series_temp == 5) != 0:
+            #                     len2 = 0
+            #                     while len2 < len(date_temp):
+            #                         if inundation_series_temp[len2] == 4 or inundation_series_temp[len2] == 5:
+            #                             if np.isnan(water_level_min):
+            #                                 water_level_min = water_level_temp[len2]
+            #                             else:
+            #                                 water_level_min = min(water_level_min, water_level_temp[len2])
+            #                         len2 += 1
+            #
+            #                     annual_inundation_status[y_temp, x_temp] = 1
+            #                     if np.isnan(water_level_min):
+            #                         print('WATER_LEVEL_1_ERROR!')
+            #                         sys.exit(-1)
+            #                     elif np.isnan(recession_level_min):
+            #                         annual_inundation_epoch[y_temp, x_temp] = np.sum(
+            #                             water_level_epoch[:, 1] >= water_level_min)
+            #                         date_min = 200000000
+            #                         date_max = 0
+            #                         for len0 in range(water_level_epoch.shape[0]):
+            #                             if water_level_epoch[len0, 1] >= water_level_min:
+            #                                 date_min = min(date_min, water_level_epoch[len0, 0])
+            #                                 date_max = max(date_max, water_level_epoch[len0, 0])
+            #                         annual_inundation_beg[y_temp, x_temp] = date_min
+            #                         annual_inundation_end[y_temp, x_temp] = date_max
+            #     bf.write_raster(ds_temp, annual_inundation_status, annual_inundation_folder,
+            #                  'annual_' + str(year) + '.tif', raster_datatype=gdal.GDT_Int32)
+            #     bf.write_raster(ds_temp, annual_inundation_epoch, annual_inundation_epoch_folder,
+            #                  'epoch_' + str(year) + '.tif', raster_datatype=gdal.GDT_Int32)
+            #     bf.write_raster(ds_temp, annual_inundation_beg, annual_inundation_beg_folder, 'beg_' + str(year) + '.tif',
+            #                  raster_datatype=gdal.GDT_Int32)
+            #     bf.write_raster(ds_temp, annual_inundation_end, annual_inundation_end_folder, 'end_' + str(year) + '.tif',
+            #                  raster_datatype=gdal.GDT_Int32)
+            #
+            #

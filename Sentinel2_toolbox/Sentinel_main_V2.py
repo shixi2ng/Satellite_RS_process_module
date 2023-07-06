@@ -1725,7 +1725,7 @@ class Sentinel2_dc(object):
         # Define the basic var name
         self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'sdc_factor',
                              'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
-                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles')
+                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles', 'Zoffset', 'Nodata_value')
 
         # Read the metadata file
         metadata_file = bf.file_filter(self.dc_filepath, ['metadata.json'])

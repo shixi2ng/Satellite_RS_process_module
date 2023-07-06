@@ -418,3 +418,39 @@ def progressBar(count_value, total, suffix=''):
     bar = '=' * filled_up_Length + '-' * (bar_length - filled_up_Length)
     sys.stdout.write('[%s] %s%s ...%s\r' %(bar, percentage, '%', suffix))
     sys.stdout.flush()
+
+
+def arr2tif(output_folder: str, output_name: str, arr: np.ndarray, transform: tuple, projection: int, raster_datatype=gdal.GDT_Float32, nodata_value=0) -> None:
+
+    # Process the input
+    if not os.path.exists(output_folder):
+        create_folder(output_folder)
+    output_folder = Path(output_folder).path_name
+
+    if not output_name.endswith('.TIF') or not not output_name.endswith('.tif'):
+        raise ValueError('Please enter the output tif file with correct extension!')
+
+    if len(transform) != 6:
+        raise TypeError('Please input the transform as a 6-size tuple!')
+
+    outRasterSRS = osr.SpatialReference()
+    outRasterSRS.ImportFromEPSG(projection)
+
+    # Create the Driver
+    driver = gdal.GetDriverByName('GTiff')
+    z_size = 1 if len(arr.shape) == 2 else arr.shape[2]
+    outRaster = driver.Create(output_folder + output_name, arr.shape[1], arr.shape[0], z_size, gdal.GDT_Byte, eType=raster_datatype, options=['COMPRESS=LZW', 'PREDICTOR=2'])
+    outRaster.SetGeoTransform(tuple)
+    outRasterSRS = osr.SpatialReference()
+    outRasterSRS.ImportFromEPSG(4326)
+    outRaster.SetProjection(outRasterSRS.ExportToWkt())
+
+    for _ in range(z_size):
+        outband = outRaster.GetRasterBand(_ + 1)
+        outband.WriteArray(arr[:, :, _].reshape[arr.shape[0], arr.shape[1]])
+        outband.SetNoDataValue(nodata_value)
+        outband.FlushCache()
+
+    outband = None
+    outRaster = None
+
