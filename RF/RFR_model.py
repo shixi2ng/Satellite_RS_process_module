@@ -67,7 +67,7 @@ for n_est in range(500, 1000):
         # phe_list = ['S2phemetric_DR', 'S2phemetric_DR2', 'S2phemetric_EOS', 'S2phemetric_GR', 'S2phemetric_peak_doy', 'S2phemetric_peak_vi', 'S2phemetric_SOS', 'S2phemetric_trough_vi']
         phe_list = ['S2phemetric_EOS', 'S2phemetric_peak_doy', 'S2phemetric_peak_vi', 'S2phemetric_SOS', 'S2phemetric_trough_vi', 'S2phemetric_static_TEMP', 'S2phemetric_static_DPAR']
         at_list = ['S2_accumulated_TEMP_relative', 'S2_accumulated_DPAR_relative', 'S2phemetric_peak_TEMP', 'S2phemetric_peak_DPAR', ]
-        gedi_df = gedi_df.loc[gedi_df['Canopy Height (rh100)'] < 5]
+        gedi_df = gedi_df.loc[gedi_df['Canopy Height (rh100)'] < 6]
 
         res_dic = {}
         for model in range(6):

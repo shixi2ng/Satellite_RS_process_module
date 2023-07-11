@@ -19,10 +19,6 @@ import traceback
 import os
 import pandas as pd
 from tqdm.auto import tqdm
-
-os.environ['PROJ_LIB'] = 'C:\\Users\\sx199\\Anaconda3\\envs\\py38\\Library\\share\\proj'
-os.environ['GDAL_DATA'] = 'C:\\Users\\sx199\\Anaconda3\\envs\\py38\\Library\\share\\gdal'
-
 from osgeo import osr, gdal
 from rasterio import features
 

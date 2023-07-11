@@ -1321,7 +1321,7 @@ class Landsat_dc(object):
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
 
-        print( f'Finish loading the Sentinel2 dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+        print(f'Finish loading the Sentinel2 dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()

@@ -22,8 +22,8 @@ def mp_static_wi_detection(dc: NDSparseMatrix, sz_f, zoffset, nodata, thr):
         dtype_temp = type(inundation_array)
 
         inundation_array = invert_data(inundation_array, sz_f, zoffset, nodata)
-        inundation_array[inundation_array < thr] = 1
         inundation_array[inundation_array >= thr] = 2
+        inundation_array[inundation_array < thr] = 1
         inundation_array[np.isnan(inundation_array)] = 0
         inundation_array = inundation_array.astype(np.byte)
         inundation_arr_list.append(dtype_temp(inundation_array))

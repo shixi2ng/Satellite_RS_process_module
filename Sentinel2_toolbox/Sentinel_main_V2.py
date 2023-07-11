@@ -1714,6 +1714,7 @@ class Sentinel2_dc(object):
         self.index, self.Datatype, self.coordinate_system = None, None, None
         self.dc_group_list, self.tiles = None, None
         self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
+        self.Zoffset, self.Nodata_value = None, None
 
         # Check work env
         if work_env is not None:
@@ -1788,9 +1789,18 @@ class Sentinel2_dc(object):
         except:
             raise Exception('Something went wrong when reading the datacube!')
 
-        # autotrans sparse matrix
+        # Autotrans sparse matrix
         if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
             self._autotrans_sparse_matrix()
+
+        # Size check
+        if len(self.sdc_doylist) != self.dc.shape[2]:
+            if self.sparse_matrix:
+                self.sdc_doylist = self.dc.SM_namelist
+                self.save(self.dc_filepath)
+                self.__init__(self.dc_filepath)
+            else:
+                raise ValueError('The dc and doy is not consistent!')
 
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
@@ -1821,9 +1831,10 @@ class Sentinel2_dc(object):
         output_path = bf.Path(output_path).path_name
 
         metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI, 'ROI_array': self.ROI_array,
-                      'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor, 'coordinate_system': self.coordinate_system,
-                      'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix, 'size_control_factor': self.size_control_factor,
-                      'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles}
+                        'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor, 'coordinate_system': self.coordinate_system,
+                        'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix, 'size_control_factor': self.size_control_factor,
+                        'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles,
+                        'Zoffset': self.Zoffset, 'Nodata_value': self.Nodata_value}
 
         doy = self.sdc_doylist
         np.save(f'{output_path}doy.npy', doy)

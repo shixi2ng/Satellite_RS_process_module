@@ -15,6 +15,7 @@ import json
 from tqdm.auto import tqdm
 from tqdm import tqdm as tq
 from .utils import *
+from shapely import wkt
 import seaborn as sns
 
 
@@ -1239,7 +1240,7 @@ class RS_dcs(object):
 
                     inundation_dc = copy.deepcopy(self.dcs[dc_num])
                     if self._sparse_matrix_list[dc_num]:
-                        inundation_sm = NDSparseMatrix()
+                        inundation_array = NDSparseMatrix()
 
                         # Separate into several stacks
                         inundation_dc_list = []
@@ -1250,21 +1251,16 @@ class RS_dcs(object):
                                 inundation_dc_list.append(inundation_dc.extract_matrix((['all'], ['all'], [_ * range_, inundation_dc.shape[2]])))
                             else:
                                 inundation_dc_list.append(inundation_dc.extract_matrix((['all'], ['all'], [_ * range_, (_ + 1) * range_])))
+
                         inundation_dc = None
-                        sz = self._size_control_factor_list[dc_num]
-                        zoff = self._Zoffset_list[dc_num]
-                        nd = self._Nodata_value_list[dc_num]
-                        thr = self._static_wi_threshold
+                        sz, zoff, nd, thr = self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num], self._static_wi_threshold
                         with concurrent.futures.ProcessPoolExecutor(max_workers=worker) as executor:
                             res = executor.map(mp_static_wi_detection, inundation_dc_list, repeat(sz), repeat(zoff), repeat(nd), repeat(thr))
 
                         res = list(res)
                         for _ in res:
                             for __ in range(len(_[0])):
-                                inundation_sm.append(_[0][__], name=_[1][__])
-
-                        inundation_dc = copy.deepcopy(self.dcs[dc_num])
-                        inundation_dc.dc = inundation_sm
+                                inundation_array.append(_[0][__], name=_[1][__])
 
                     else:
                         inundation_array = copy.deepcopy(self.dcs[dc_num])
@@ -1274,6 +1270,8 @@ class RS_dcs(object):
                         inundation_array[np.isnan(inundation_array)] = 0
                         inundation_array = inundation_array.astype(np.byte)
 
+                    inundation_dc = copy.deepcopy(self._dcs_backup_[dc_num])
+                    inundation_dc.dc = inundation_array
                     inundation_dc.index = 'inundation_' + inundation_mapping_method
                     inundation_dc.Datatype = str(np.byte)
                     inundation_dc.sdc_doylist = doy_list
@@ -2834,8 +2832,9 @@ class RS_dcs(object):
             plt.savefig(f'{output_path}{phemetric_}_var\\fig.png', dpi=300)
 
     def est_inunduration(self, inundated_index: str, output_path: str, water_level_data,
-                         nan_value=0, inundated_value=1, generate_inundation_status_factor=True, process_extent=None,
-                         generate_max_water_level_factor=False):
+                         nan_value=0, inundated_value=2, generate_inundation_status_factor=True, process_extent=None,
+                         generate_max_water_level_factor=False, generate_inundation_beg_wl=True, generate_recession_period=True,
+                         manual_remove_date=[]):
 
         # Check the var
         output_path = Path(output_path).path_name
@@ -2858,21 +2857,31 @@ class RS_dcs(object):
         else:
             inundated_dc = copy.copy(self.dcs[self._index_list.index(inundated_index)])
             roi_ds = gdal.Open(self.ROI_tif)
+            transform = roi_ds.GetGeoTransform()
+            proj = roi_ds.GetProjection()
             roi_arr = roi_ds.GetRasterBand(1).ReadAsArray()
             if not self._sparse_matrix_list[self._index_list.index(inundated_index)]:
                 if process_extent is not None and isinstance(process_extent, (list, tuple)) and len(process_extent) == 4:
                     y_min, y_max, x_min, x_max = process_extent
                     inundated_dc = inundated_dc[y_min: y_max, x_min: x_max, :]
                     roi_arr = roi_arr[y_min: y_max, x_min: x_max]
+                    new_trans = (transform[0] + x_min * transform[1], transform[1], transform[2], transform[3] + y_min * transform[5], transform[4], transform[5])
                 elif process_extent is None:
                     inundated_dc = inundated_dc[:, :, :]
+                    new_trans = transform
+                else:
+                    raise TypeError('Process extent is not properly input!')
             else:
                 if process_extent is not None and isinstance(process_extent, (list, tuple)) and len(process_extent) == 4:
                     y_min, y_max, x_min, x_max = process_extent
                     inundated_dc = inundated_dc.extract_matrix(([y_min, y_max], [x_min, x_max], ['all']))
                     roi_arr = roi_arr[y_min: y_max, x_min: x_max]
+                    new_trans = (transform[0] + x_min * transform[1], transform[1], transform[2], transform[3] + y_min * transform[5], transform[4], transform[5])
                 elif process_extent is None:
                     inundated_dc = inundated_dc.extract_matrix((['all'], ['all'], ['all']))
+                    new_trans = transform
+                else:
+                    raise TypeError('Process extent is not properly input!')
             doy_list = self._doys_backup_[self._index_list.index(inundated_index)]
 
         water_level_data[:, 0] = water_level_data[:, 0].astype(np.int32)
@@ -2962,45 +2971,404 @@ class RS_dcs(object):
 
         if generate_inundation_status_factor:
 
-            sole_file_path = output_path + 'inundation_\\'
-            bf.create_folder(sole_file_path)
+            perwater_ras_path = output_path + 'perwater_ras\\'
+            bf.create_folder(perwater_ras_path)
 
             # Create river stretch based on inundation frequency
-            if not os.path.exists(output_path + 'permanent_water.tif'):
-                if isinstance(inundated_dc, np.ndarray):
-                    inundated_frequency = np.nansum(inundated_dc == inundated_value, axis=2) / np.nansum(inundated_dc != nan_value, axis=2)
-                    inundated_frequency[inundated_frequency > 0.7] = 1
-                    inundated_frequency[inundated_frequency <= 0.7] = 0
-                    inundated_frequency[roi_arr == -32768] = -2
-                    inundated_frequency = inundated_frequency.astype(np.int16)
-                elif isinstance(inundated_dc, NDSparseMatrix):
-                    inundated_all = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
-                    valid_all = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+            with tqdm(total=1, desc=f'Create river stretch based on inundation frequency', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                if not os.path.exists(perwater_ras_path + 'permanent_water.tif'):
+                    if isinstance(inundated_dc, np.ndarray):
+                        inundated_frequency = np.nansum(inundated_dc == inundated_value, axis=2) / np.nansum(inundated_dc != nan_value, axis=2)
+                        inundated_frequency[inundated_frequency > 0.7] = 1
+                        inundated_frequency[inundated_frequency <= 0.7] = 0
+                        inundated_frequency[roi_arr == -32768] = -2
+                        inundated_frequency = inundated_frequency.astype(np.int16)
+                    elif isinstance(inundated_dc, NDSparseMatrix):
+                        inundated_all = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                        valid_all = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                        for _ in inundated_dc.SM_namelist:
+                            arr_temp = inundated_dc.SM_group[_].toarray()
+                            valid_all = valid_all + (arr_temp != nan_value).astype(np.int32)
+                            inundated_all = inundated_all + (arr_temp == inundated_value).astype(np.int32)
+                        inundated_frequency = inundated_all / valid_all
+                        inundated_frequency[inundated_frequency > 0.5] = 1
+                        inundated_frequency[inundated_frequency <= 0.5] = 0
+                        inundated_frequency[roi_arr == -32768] = -2
+                        inundated_frequency = inundated_frequency.astype(np.int16)
+                    else:
+                        raise TypeError('Type error when generate inundated frequency!')
+
+                    driver = gdal.GetDriverByName('GTiff')
+                    driver.Register()
+                    if os.path.exists(perwater_ras_path + 'permanent_water.tif'):
+                        os.remove(perwater_ras_path + 'permanent_water.tif')
+                    outds = driver.Create(perwater_ras_path + 'permanent_water.tif', xsize=inundated_frequency.shape[1], ysize=inundated_frequency.shape[0],
+                                          bands=1, eType=gdal.GDT_Int16, options=['COMPRESS=LZW', 'PREDICTOR=2'])
+                    outds.SetGeoTransform(new_trans)
+                    outds.SetProjection(proj)
+                    outband = outds.GetRasterBand(1)
+                    outband.WriteArray(inundated_frequency)
+                    outband.SetNoDataValue(-2)
+                    outband.FlushCache()
+                    outband = None
+                    outds = None
+
+                pbar.update()
+
+            # Refine the river stretch
+            with tqdm(total=1, desc=f'Refine river stretch', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                if not os.path.exists(perwater_ras_path + 'permanent_water_fixed.tif'):
+                    pw_ds = gdal.Open(perwater_ras_path + 'permanent_water.tif')
+                    permanent_water_arr = pw_ds.GetRasterBand(1).ReadAsArray()
+
+                    # Create shp driver
+                    dst_layername = "permanent_water"
+                    drv = ogr.GetDriverByName("ESRI Shapefile")
+                    shp_output_path = output_path + 'perwater_shpfile\\'
+                    bf.create_folder(shp_output_path)
+                    if os.path.exists(shp_output_path + dst_layername + ".shp"):
+                        drv.DeleteDataSource(shp_output_path + dst_layername + ".shp")
+
+                    # polygonize the raster
+                    proj = osr.SpatialReference(wkt=pw_ds.GetProjection())
+                    target = osr.SpatialReference()
+                    target.ImportFromEPSG(int(proj.GetAttrValue('AUTHORITY', 1)))
+
+                    dst_ds = drv.CreateDataSource(shp_output_path + dst_layername + ".shp")
+                    dst_layer = dst_ds.CreateLayer(dst_layername, srs=target)
+
+                    fld = ogr.FieldDefn("inundation", ogr.OFTInteger)
+                    dst_layer.CreateField(fld)
+                    dst_field = dst_layer.GetLayerDefn().GetFieldIndex("inundation")
+                    gdal.Polygonize(pw_ds.GetRasterBand(1), None, dst_layer, dst_field, [])
+
+                    layer = dst_ds.GetLayer()
+                    new_field = ogr.FieldDefn("area", ogr.OFTReal)
+                    new_field.SetWidth(32)
+                    layer.CreateField(new_field)
+
+                    # Fix the sole pixel
+                    for feature in layer:
+                        geom = feature.GetGeometryRef()
+                        area = geom.GetArea()
+                        if area < 5000 and feature.GetField('inundation') == 1:
+                            feature.SetField("inundation", 0)
+                        elif area < 5000 and feature.GetField('inundation') == 0:
+                            feature.SetField("inundation", 1)
+                        feature.SetField("area", area)
+                        layer.SetFeature(feature)
+
+                    # Re-rasterlize the shpfile
+                    if os.path.exists(perwater_ras_path + 'permanent_water_fixed.tif'):
+                        os.remove(perwater_ras_path + 'permanent_water_fixed.tif')
+                    target_ds = gdal.GetDriverByName('GTiff').Create(perwater_ras_path + 'permanent_water_fixed.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 1, gdal.GDT_Int16)
+                    target_ds.SetGeoTransform(pw_ds.GetGeoTransform())
+                    target_ds.SetProjection(target.ExportToWkt())
+                    band = target_ds.GetRasterBand(1)
+                    band.SetNoDataValue(pw_ds.GetRasterBand(1).GetNoDataValue())
+
+                    gdal.RasterizeLayer(target_ds, [1], layer, options=["ATTRIBUTE=inundation"])
+                    del target_ds
+                    del dst_ds
+
+                    # Create shp driver
+                    dst_layername = "permanent_water_fixed"
+                    drv = ogr.GetDriverByName("ESRI Shapefile")
+                    if os.path.exists(shp_output_path + dst_layername + ".shp"):
+                        drv.DeleteDataSource(shp_output_path + dst_layername + ".shp")
+
+                    # polygonize the raster
+                    proj = osr.SpatialReference(wkt=pw_ds.GetProjection())
+                    target = osr.SpatialReference()
+                    target.ImportFromEPSG(int(proj.GetAttrValue('AUTHORITY', 1)))
+
+                    dst_ds = drv.CreateDataSource(shp_output_path + dst_layername + ".shp")
+                    dst_layer = dst_ds.CreateLayer(dst_layername, srs=target)
+
+                    fld = ogr.FieldDefn("inundation", ogr.OFTInteger)
+                    dst_layer.CreateField(fld)
+                    dst_field = dst_layer.GetLayerDefn().GetFieldIndex("inundation")
+                    gdal.Polygonize(pw_ds.GetRasterBand(1), None, dst_layer, dst_field, [])
+                    del dst_ds
+                    del pw_ds
+                pbar.update()
+
+            # Generate sole inundation area rs
+            pw_ds = gdal.Open(perwater_ras_path + 'permanent_water_fixed.tif')
+            permanent_water_arr = pw_ds.GetRasterBand(1).ReadAsArray()
+            sole_file_path = output_path + 'sole_inunarea_ras\\'
+            bf.create_folder(sole_file_path)
+            if isinstance(inundated_dc, NDSparseMatrix):
+                with tqdm(total=len(inundated_dc.SM_namelist), desc=f'Generate sole inundation area raster', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                     for _ in inundated_dc.SM_namelist:
-                        arr_temp = inundated_dc.SM_group[_].toarray()
-                        valid_all = valid_all + (arr_temp != nan_value).astype(np.int32)
-                        inundated_all = inundated_all + (arr_temp == inundated_value).astype(np.int32)
-                    inundated_frequency = inundated_all / valid_all
-                    inundated_frequency[inundated_frequency > 0.7] = 1
-                    inundated_frequency[inundated_frequency <= 0.7] = 0
-                    inundated_frequency[roi_arr == -32768] = -2
-                    inundated_frequency = inundated_frequency.astype(np.int16)
-                else:
-                    raise TypeError('Type error when generate inundated frequency!')
+                        if not os.path.exists(sole_file_path + f'{str(_)}.tif'):
+                            i_arr = inundated_dc.SM_group[_].toarray()
+                            i_arr = i_arr - 1
+                            i_arr[i_arr < 0] = -2
+                            i_arr[permanent_water_arr == 1] = -1
+                            i_arr = i_arr.astype(np.int16)
+                            bf.write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif',  raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
+                        pbar.update()
+            elif isinstance(inundated_dc, np.ndarray):
+                with tqdm(total=inundated_dc.shape[2], desc=f'Generate sole inundation area raster', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                    for _ in range(inundated_dc.shape[2]):
+                        if not os.path.exists(sole_file_path + f'{str(_)}.tif'):
+                            i_arr = inundated_dc[:, :, _].reshape(inundated_dc.shape[0], inundated_dc.shape[1])
+                            i_arr = i_arr - 1
+                            i_arr[i_arr < 0] = -2
+                            i_arr[permanent_water_arr == 1] = -1
+                            i_arr = i_arr.astype(np.int16)
+                            bf.write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
+                        pbar.update()
 
-                bf.write_raster(roi_ds, inundated_frequency, output_path, 'permanent_water.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
-                inundated_frequency = None
+            # Generate sole inundation area shp
+            sole_shpfile_path = output_path + 'sole_inunarea_shpfile\\'
+            bf.create_folder(sole_shpfile_path)
+            ras_files = bf.file_filter(sole_file_path, ['.tif'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
+            with tqdm(total=len(ras_files), desc=f'Generate sole inundation area shpfile', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for _ in ras_files:
+                    try:
+                        dst_layername = _.split('\\')[-1].split('.tif')[0]
+                        drv = ogr.GetDriverByName("ESRI Shapefile")
+                        if os.path.exists(sole_shpfile_path + dst_layername + ".shp"):
+                            pass
+                        else:
+                            # polygonize the raster
+                            ras_ds = gdal.Open(_)
+                            proj = osr.SpatialReference(wkt=ras_ds.GetProjection())
+                            target = osr.SpatialReference()
+                            target.ImportFromEPSG(int(proj.GetAttrValue('AUTHORITY', 1)))
 
-            pw_ds = gdal.Open(output_path + 'permanent_water.tif')
+                            dst_ds = drv.CreateDataSource(sole_shpfile_path + dst_layername + ".shp")
+                            dst_layer = dst_ds.CreateLayer(dst_layername, srs=target)
+
+                            fld = ogr.FieldDefn("inundation", ogr.OFTInteger)
+                            dst_layer.CreateField(fld)
+                            dst_field = dst_layer.GetLayerDefn().GetFieldIndex("inundation")
+                            gdal.Polygonize(ras_ds.GetRasterBand(1), None, dst_layer, dst_field, [])
+
+                            new_field = ogr.FieldDefn("link2river", ogr.OFTReal)
+                            new_field.SetWidth(32)
+                            dst_layer.CreateField(new_field)
+
+                            new_field2 = ogr.FieldDefn("inun_date", ogr.OFTReal)
+                            new_field2.SetWidth(32)
+                            dst_layer.CreateField(new_field2)
+
+                            new_field3 = ogr.FieldDefn("ninun_date", ogr.OFTReal)
+                            new_field3.SetWidth(32)
+                            dst_layer.CreateField(new_field3)
+
+                            new_field4 = ogr.FieldDefn("area", ogr.OFTReal)
+                            new_field4.SetWidth(32)
+                            dst_layer.CreateField(new_field4)
+
+                            # Generate the filed attribute
+                            shp_list = []
+                            for feature in dst_layer:
+                                if feature.GetField('inundation') == -1:
+                                    shp_list.append(wkt.loads(feature.GetGeometryRef().ExportToWkt()))
+
+                            for feature in dst_layer:
+                                link2river_st = 0
+                                if feature.GetField('inundation') == 1:
+                                    shp_temp = wkt.loads(feature.GetGeometryRef().ExportToWkt())
+                                    for shp_pw in shp_list:
+                                        if shp_pw.intersects(shp_temp):
+                                            link2river_st = 1
+                                            break
+                                feature.SetField('link2river', link2river_st)
+                                dst_layer.SetFeature(feature)
+                                feature = None
+
+                            for feature in dst_layer:
+                                geom = feature.GetGeometryRef()
+                                area = geom.GetArea()
+                                feature.SetField('area', area)
+                                dst_layer.SetFeature(feature)
+                                feature = None
+
+                            for feature in dst_layer:
+                                if feature.GetField('inundation') == 1:
+                                    feature.SetField('inun_date', int(dst_layername))
+                                    feature.SetField('ninun_date', -1)
+                                elif feature.GetField('inundation') == 0:
+                                    feature.SetField('inun_date', -1)
+                                    feature.SetField('ninun_date', int(dst_layername))
+                                dst_layer.SetFeature(feature)
+                                feature = None
+
+                            dst_layer = None
+                            dst_ds = None
+                            ras_ds = None
+
+                    except:
+                        print(traceback.format_exc())
+                    pbar.update()
+
+        if generate_inundation_beg_wl:
+            # Generate annual inundation pattern
+            annual_inun_folder = output_path + 'annual_inun_ras\\'
+            bf.create_folder(annual_inun_folder)
+
+            pw_ds = gdal.Open(output_path + 'perwater_ras\\permanent_water_fixed.tif')
             permanent_water_arr = pw_ds.GetRasterBand(1).ReadAsArray()
 
-            if not os.path.exists(output_path + 'permanent_water.shp'):
-                gdal.Polygonize(pw_ds.GetRasterBand(1), None, output_path + 'permanent_water.shp', -1, [])
+            year_list = np.unique(np.floor(np.array(doy_list) / 10000)).astype(np.int32)
+            year_list = year_list.tolist()
+            with tqdm(total=len(year_list), desc=f'Generate annual inundation area raster', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for _ in year_list:
+                    if not os.path.exists(annual_inun_folder + str(int(_)) + '.tif'):
+                        annual_inun_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 2
+                        annual_ninun_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 2
+                        for __ in doy_list:
+                            if np.floor(__ / 10000) == _:
+                                if isinstance(inundated_dc, NDSparseMatrix):
+                                    arr_temp = inundated_dc.SM_group[__].toarray()
+                                else:
+                                    arr_temp = inundated_dc[:, :, doy_list.index(__)].reshape[[inundated_dc.shape[0], inundated_dc.shape[1]]]
+                                annual_inun_arr[arr_temp == 2] = 1
+                                annual_ninun_arr[arr_temp == 1] = 0
+                        annual_ninun_arr[annual_inun_arr == 1] = 1
+                        annual_ninun_arr[permanent_water_arr == 1] = -1
+                        bf.write_raster(pw_ds, annual_ninun_arr, annual_inun_folder, str(int(_)) + '.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
+                    pbar.update()
 
-            if permanent_water_arr == []:
-                raise ValueError('Error in permanent water creation!')
+            # Generate annual inundation shpfile
+            annual_inunshp_folder = output_path + 'annual_inun_shpfile\\'
+            bf.create_folder(annual_inunshp_folder)
+            with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for _ in year_list:
 
-            # for
+                    files = bf.file_filter(annual_inun_folder, [f'{str(_)}.tif'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
+                    if len(files) == 1:
+                        ras_ds = gdal.Open(files[0])
+                        drv = ogr.GetDriverByName("ESRI Shapefile")
+                        if not os.path.exists(annual_inunshp_folder + str(_) + ".shp"):
+                            # polygonize the raster
+                            proj = osr.SpatialReference(wkt=ras_ds.GetProjection())
+                            target = osr.SpatialReference()
+                            target.ImportFromEPSG(int(proj.GetAttrValue('AUTHORITY', 1)))
+
+                            dst_ds = drv.CreateDataSource(annual_inunshp_folder + str(_) + ".shp")
+                            dst_layer = dst_ds.CreateLayer(str(_), srs=target)
+
+                            fld = ogr.FieldDefn("inundation", ogr.OFTInteger)
+                            dst_layer.CreateField(fld)
+                            dst_field = dst_layer.GetLayerDefn().GetFieldIndex("inundation")
+                            gdal.Polygonize(ras_ds.GetRasterBand(1), None, dst_layer, dst_field, [])
+
+                            new_field4 = ogr.FieldDefn("area", ogr.OFTReal)
+                            new_field4.SetWidth(32)
+                            dst_layer.CreateField(new_field4)
+
+                            new_field1 = ogr.FieldDefn("inun_id", ogr.OFTReal)
+                            new_field1.SetWidth(32)
+                            dst_layer.CreateField(new_field1)
+
+                            inund_id = 1
+                            for feature in dst_layer:
+                                geom = feature.GetGeometryRef()
+                                area = geom.GetArea()
+                                feature.SetField('area', area)
+
+                                if feature.GetField('inundation') == 1:
+                                    feature.SetField('inun_id', inund_id)
+                                    inund_id += 1
+                                else:
+                                    feature.SetField('inun_id', 0)
+                                dst_layer.SetFeature(feature)
+                                feature = None
+                            dst_ds, ras_ds = None, None
+                    else:
+                        raise ValueError('Too many annual inundation ras files!')
+                    pbar.update()
+
+            # Recreate annual inundation pattern with object information
+            # And retrieve the annual low inundation wl
+            with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                object_inuninform_folder = output_path + 'object_inuninform\\'
+                bf.create_folder(object_inuninform_folder)
+                bf.create_folder(object_inuninform_folder + 'separate\\')
+                for _ in year_list:
+                    # Open the ds
+                    dst_ds = ogr.Open(output_path + 'annual_inun_shpfile\\' + str(_) + ".shp")
+                    layer = dst_ds.GetLayer()
+
+                    target_ds = gdal.GetDriverByName('GTiff').Create(object_inuninform_folder + f'{str(_)}.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 6, gdal.GDT_Int32)
+                    target_ds.SetGeoTransform(pw_ds.GetGeoTransform())
+                    target_ds.SetProjection(pw_ds.GetProjection())
+
+                    for __ in range(1, 7):
+                        band = target_ds.GetRasterBand(__)
+                        band.SetNoDataValue(-2)
+
+                    gdal.RasterizeLayer(target_ds, [1], layer, options=["ATTRIBUTE=inundation"])
+                    gdal.RasterizeLayer(target_ds, [2], layer, options=["ATTRIBUTE=area"])
+                    gdal.RasterizeLayer(target_ds, [3], layer, options=["ATTRIBUTE=inun_id"])
+
+                    max_noninun_wl_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
+                    min_inun_wl_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 100
+                    trend_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+
+                    for __ in doy_list:
+                        if int(np.floor(__ // 10000)) == _ and __ not in manual_remove_date:
+                            if __ in water_level_data:
+                                wl_temp = water_level_data[np.argwhere(water_level_data == __)[0, 0], 1]
+                                max_noninun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
+                                min_inun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 100
+                                if isinstance(inundated_dc, NDSparseMatrix):
+                                    inundated_arr = inundated_dc.SM_group[__].toarray()
+                                else:
+                                    inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape([inundated_dc.shape[0], inundated_dc.shape[1]])
+
+                                max_noninun_wl_arr_temp[inundated_arr == 1] = wl_temp
+                                min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
+
+                                max_noninun_wl_arr = np.nanmax([max_noninun_wl_arr, max_noninun_wl_arr_temp], axis=0)
+                                min_inun_wl_arr = np.nanmin([min_inun_wl_arr, min_inun_wl_arr_temp], axis=0)
+
+                            if __ in wl_trend_list:
+                                trend_temp = wl_trend_list[np.argwhere(wl_trend_list == __)[0, 0], 1]
+                                trend_arr[min_inun_wl_arr == wl_temp] = trend_temp
+
+                    max_noninun_wl_arr[roi_arr == -32768] = np.nan
+                    min_inun_wl_arr[roi_arr == -32768] = np.nan
+                    min_inun_wl_arr[min_inun_wl_arr == 100] = np.nan
+                    max_noninun_wl_arr[max_noninun_wl_arr == -1] = np.nan
+
+                    bf.write_raster(pw_ds, max_noninun_wl_arr, object_inuninform_folder, f'separate\\max_noninun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    bf.write_raster(pw_ds, min_inun_wl_arr, object_inuninform_folder, f'separate\\min_inun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    bf.write_raster(pw_ds, trend_arr, object_inuninform_folder, f'separate\\trend_{str(_)}.tif', raster_datatype=gdal.GDT_UInt32, nodatavalue=0)
+
+                    target_ds.GetRasterBand(4).WriteArray(max_noninun_wl_arr)
+                    target_ds.GetRasterBand(5).WriteArray(min_inun_wl_arr)
+                    target_ds.GetRasterBand(6).WriteArray(trend_arr)
+                    target_ds = None
+
+                    # Refine the lowinundation
+                    #     if
+                    #         if isinstance(inundated_dc, NDSparseMatrix):
+                    #             inundated_dc.SM_group[__]
+                    #
+                    # inun_sta_arr = target_ds.GetRasterBand(1).ReadAsArray()
+                    # inun_id_arr = target_ds.GetRasterBand(3).ReadAsArray()
+                    # inun_id_list = np.unique(inun_id_arr.flatten())
+                    #
+                    # for y_ in range(inun_sta_arr.shape[0]):
+                    #     for x_ in range(inun_sta_arr.shape[1]):
+                    #         if inun_sta_arr[y_, x_] == 1:
+                    #
+                    #
+                    # for id_ in inun_id_list:
+                    #     if id_ != 0:
+                    #         inun_pos = np.argwhere(inun_id_arr == id_)
+                    #         for pos in inun_pos:
+                    pbar.update()
+
+        if generate_recession_period:
+            pass
+
             # if not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy'):
             #     for file in inundation_file:
             #         ds_temp3 = gdal.Open(file)
@@ -3049,7 +3417,7 @@ class RS_dcs(object):
             #         np.save(output_path + 'sole_area_dc.npy', sole_area_dc)
             #         np.save(output_path + 'inundation_dc.npy', inundation_dc)
             #     else:
-            #         print('Consistency error during outout!')
+            #         print('Consistency error during output!')
             #         sys.exit(-1)
             # else:
             #     inundation_dc = np.load(output_path + 'inundation_dc.npy')
@@ -3096,8 +3464,7 @@ class RS_dcs(object):
             #         if date_dc[len1] // 10000 == year:
             #             date_temp.append(date_dc[len1])
             #             recession_temp.append(wl_trend_list[np.argwhere(wl_trend_list == date_dc[len1])[0, 0], 1])
-            #             water_level_temp.append(
-            #                 water_level_data[np.argwhere(water_level_data == date_dc[len1])[0, 0], 1])
+            #             water_level_temp.append(water_level_data[np.argwhere(water_level_data == date_dc[len1])[0, 0], 1])
             #             if inundation_temp == [] or sole_area_temp == []:
             #                 inundation_temp = inundation_dc[:, :, len1].reshape(
             #                     [inundation_dc.shape[0], inundation_dc.shape[1], 1])
