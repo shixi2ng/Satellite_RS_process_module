@@ -19,7 +19,7 @@ cur_dic[f'train1_rmse'] = []
 cur_dic[f'train2_rmse'] = []
 cur_dic[f'train_rmse'] = []
 for max_d in range(5, 50):
-    _ = bf.file_filter('G:\\A_veg\\S2_all\\GEDI_v3\\RFR\\', ['_nes501_', f'_maxd{str(max_d)}_'], and_or_factor='and')
+    _ = bf.file_filter('G:\A_veg\S2_all\XGB_vhm\GEDI_ds_V3\RFR\\', ['_nes500_', f'_maxd{str(max_d)}_'], and_or_factor='and')
     if len(_) == 0:
         cur_dic[f'test3_rmse'].append(np.nan)
         cur_dic[f'test2_rmse'].append(np.nan)
@@ -55,7 +55,7 @@ plt.show()
 
 for n_est in range(500, 1000):
     for max_d in range(20, 200):
-        gedi_ds = GEDI_list('G:\\A_veg\\S2_all\\GEDI_v3\\floodplain_2020_high_quality_merged.csv')
+        gedi_ds = GEDI_list('G:\\A_veg\\S2_all\\XGB_vhm\\GEDI_ds_V3\\floodplain_2020_high_quality_merged.csv')
         gedi_df = gedi_ds.GEDI_df
         gedi_df = gedi_df.dropna()
         index_list = ['S2_OSAVI_20m_noninun_linear_interpolation',
@@ -67,7 +67,7 @@ for n_est in range(500, 1000):
         # phe_list = ['S2phemetric_DR', 'S2phemetric_DR2', 'S2phemetric_EOS', 'S2phemetric_GR', 'S2phemetric_peak_doy', 'S2phemetric_peak_vi', 'S2phemetric_SOS', 'S2phemetric_trough_vi']
         phe_list = ['S2phemetric_EOS', 'S2phemetric_peak_doy', 'S2phemetric_peak_vi', 'S2phemetric_SOS', 'S2phemetric_trough_vi', 'S2phemetric_static_TEMP', 'S2phemetric_static_DPAR']
         at_list = ['S2_accumulated_TEMP_relative', 'S2_accumulated_DPAR_relative', 'S2phemetric_peak_TEMP', 'S2phemetric_peak_DPAR', ]
-        gedi_df = gedi_df.loc[gedi_df['Canopy Height (rh100)'] < 6]
+        gedi_df = gedi_df.loc[gedi_df['Canopy Height (rh100)'] < 5]
 
         res_dic = {}
         for model in range(6):

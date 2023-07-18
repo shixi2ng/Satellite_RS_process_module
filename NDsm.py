@@ -76,12 +76,15 @@ class NDSparseMatrix:
             raise TypeError('ND matrix was under at least three dimension')
 
         arr_list = []
-        for _ in range(self.shape[2])[z_r]:
-            if isinstance(x_r, (int, np.int8, np.int16, np.int32, np.int64)) and isinstance(y_r, (int, np.int8, np.int16, np.int32, np.int64)):
-                arr_list.append(np.array([[self.SM_group[self.SM_namelist[_]][y_r, x_r]]]))
-            else:
-                arr_list.append(self.SM_group[self.SM_namelist[_]][y_r, x_r].toarray())
-        return np.stack(arr_list, axis=2)
+        if isinstance(z_r, (int, np.int8, np.int16, np.int32, np.int64)):
+            return self.SM_group[self.SM_namelist[z_r]][y_r, x_r].toarray()
+        else:
+            for _ in range(self.shape[2])[z_r]:
+                if isinstance(x_r, (int, np.int8, np.int16, np.int32, np.int64)) and isinstance(y_r, (int, np.int8, np.int16, np.int32, np.int64)):
+                    arr_list.append(np.array([[self.SM_group[self.SM_namelist[_]][y_r, x_r]]]))
+                else:
+                    arr_list.append(self.SM_group[self.SM_namelist[_]][y_r, x_r].toarray())
+            return np.stack(arr_list, axis=2)
 
     def _update_size_para(self):
         for ele in self.SM_group.values():

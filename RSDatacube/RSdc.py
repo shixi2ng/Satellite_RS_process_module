@@ -3089,8 +3089,22 @@ class RS_dcs(object):
                     dst_layer.CreateField(fld)
                     dst_field = dst_layer.GetLayerDefn().GetFieldIndex("inundation")
                     gdal.Polygonize(pw_ds.GetRasterBand(1), None, dst_layer, dst_field, [])
-                    del dst_ds
-                    del pw_ds
+
+                    layer = dst_ds.GetLayer()
+                    new_field = ogr.FieldDefn("area", ogr.OFTReal)
+                    new_field.SetWidth(32)
+                    layer.CreateField(new_field)
+
+                    # Fix the sole pixel
+                    for feature in layer:
+                        geom = feature.GetGeometryRef()
+                        area = geom.GetArea()
+                        feature.SetField("area", area)
+                        layer.SetFeature(feature)
+
+                    dst_ds = None
+                    pw_ds = None
+
                 pbar.update()
 
             # Generate sole inundation area rs
@@ -3207,6 +3221,7 @@ class RS_dcs(object):
                     pbar.update()
 
         if generate_inundation_beg_wl:
+
             # Generate annual inundation pattern
             annual_inun_folder = output_path + 'annual_inun_ras\\'
             bf.create_folder(annual_inun_folder)
@@ -3216,35 +3231,70 @@ class RS_dcs(object):
 
             year_list = np.unique(np.floor(np.array(doy_list) / 10000)).astype(np.int32)
             year_list = year_list.tolist()
-            with tqdm(total=len(year_list), desc=f'Generate annual inundation area raster', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+
+            annual_inform_folder = output_path + 'annual_inun_wl_ras\\'
+            bf.create_folder(annual_inform_folder)
+
+            # Retrieve the annual min inundated water level and annual max noninundated water level
+            with tqdm(total=len(year_list), desc=f'Pre-Generate annual min inundated water level and annual max noninundated water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+
                 for _ in year_list:
-                    if not os.path.exists(annual_inun_folder + str(int(_)) + '.tif'):
-                        annual_inun_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 2
-                        annual_ninun_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 2
+                    if not os.path.exists(annual_inform_folder + f'{str(_)}\\max_noninun_wl_{str(_)}.tif') or not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}.tif') \
+                            or not os.path.exists(annual_inform_folder + f'{str(_)}\\trend_{str(_)}.tif') or not os.path.exists(annual_inform_folder + f'{str(_)}\\annual_inunarea_{str(_)}.tif'):
+                        max_noninun_wl_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
+                        min_inun_wl_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 1000
+                        trend_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+
                         for __ in doy_list:
-                            if np.floor(__ / 10000) == _:
-                                if isinstance(inundated_dc, NDSparseMatrix):
-                                    arr_temp = inundated_dc.SM_group[__].toarray()
-                                else:
-                                    arr_temp = inundated_dc[:, :, doy_list.index(__)].reshape[[inundated_dc.shape[0], inundated_dc.shape[1]]]
-                                annual_inun_arr[arr_temp == 2] = 1
-                                annual_ninun_arr[arr_temp == 1] = 0
-                        annual_ninun_arr[annual_inun_arr == 1] = 1
-                        annual_ninun_arr[permanent_water_arr == 1] = -1
-                        bf.write_raster(pw_ds, annual_ninun_arr, annual_inun_folder, str(int(_)) + '.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
+                            if int(np.floor(__ // 10000)) == _ and __ not in manual_remove_date:
+                                if __ in water_level_data:
+                                    wl_temp = water_level_data[np.argwhere(water_level_data == __)[0, 0], 1]
+                                    max_noninun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
+                                    min_inun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 100
+                                    if isinstance(inundated_dc, NDSparseMatrix):
+                                        inundated_arr = inundated_dc.SM_group[__].toarray()
+                                    else:
+                                        inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape([inundated_dc.shape[0], inundated_dc.shape[1]])
+
+                                    max_noninun_wl_arr_temp[inundated_arr == 1] = wl_temp
+                                    min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
+
+                                    max_noninun_wl_arr = np.nanmax([max_noninun_wl_arr, max_noninun_wl_arr_temp], axis=0)
+                                    min_inun_wl_arr = np.nanmin([min_inun_wl_arr, min_inun_wl_arr_temp], axis=0)
+
+                                if __ in wl_trend_list:
+                                    trend_temp = wl_trend_list[np.argwhere(wl_trend_list == __)[0, 0], 1]
+                                    trend_arr[min_inun_wl_arr == wl_temp] = trend_temp
+
+                        max_noninun_wl_arr[roi_arr == -32768] = np.nan
+                        min_inun_wl_arr[roi_arr == -32768] = np.nan
+                        min_inun_wl_arr[min_inun_wl_arr == 100] = np.nan
+                        max_noninun_wl_arr[max_noninun_wl_arr == -1] = np.nan
+
+                        bf.write_raster(pw_ds, max_noninun_wl_arr, annual_inform_folder, f'{str(_)}\\max_noninun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                        bf.write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder, f'{str(_)}\\min_inun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                        bf.write_raster(pw_ds, trend_arr, annual_inform_folder, f'{str(_)}\\trend_{str(_)}.tif', raster_datatype=gdal.GDT_Int32, nodatavalue=0)
+
+                        min_inun_wl_arr[~np.isnan(min_inun_wl_arr)] = 1
+                        min_inun_wl_arr[permanent_water_arr == 1] = -1
+                        min_inun_wl_arr[permanent_water_arr == -2] = -2
+                        min_inun_wl_arr[np.isnan(min_inun_wl_arr)] = 0
+                        bf.write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder, f'{str(_)}\\annual_inunarea_{str(_)}.tif', raster_datatype=gdal.GDT_Int32, nodatavalue=-2)
                     pbar.update()
 
             # Generate annual inundation shpfile
             annual_inunshp_folder = output_path + 'annual_inun_shpfile\\'
             bf.create_folder(annual_inunshp_folder)
-            with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile',  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in year_list:
 
-                    files = bf.file_filter(annual_inun_folder, [f'{str(_)}.tif'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
+                    # Generate the shpfile of continuous inundation area
+                    files = bf.file_filter(annual_inform_folder + str(_) + '\\', [f'annual_inunarea_{str(_)}.tif'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'], and_or_factor='and')
                     if len(files) == 1:
                         ras_ds = gdal.Open(files[0])
                         drv = ogr.GetDriverByName("ESRI Shapefile")
                         if not os.path.exists(annual_inunshp_folder + str(_) + ".shp"):
+
                             # polygonize the raster
                             proj = osr.SpatialReference(wkt=ras_ds.GetProjection())
                             target = osr.SpatialReference()
@@ -3258,113 +3308,503 @@ class RS_dcs(object):
                             dst_field = dst_layer.GetLayerDefn().GetFieldIndex("inundation")
                             gdal.Polygonize(ras_ds.GetRasterBand(1), None, dst_layer, dst_field, [])
 
-                            new_field4 = ogr.FieldDefn("area", ogr.OFTReal)
-                            new_field4.SetWidth(32)
-                            dst_layer.CreateField(new_field4)
-
-                            new_field1 = ogr.FieldDefn("inun_id", ogr.OFTReal)
+                            new_field1 = ogr.FieldDefn("area", ogr.OFTReal)
                             new_field1.SetWidth(32)
                             dst_layer.CreateField(new_field1)
 
-                            inund_id = 1
+                            new_field2 = ogr.FieldDefn("link2chan", ogr.OFTReal)
+                            new_field2.SetWidth(32)
+                            dst_layer.CreateField(new_field2)
+
+                            new_field3 = ogr.FieldDefn("inun_id", ogr.OFTReal)
+                            new_field3.SetWidth(32)
+                            dst_layer.CreateField(new_field3)
+
                             for feature in dst_layer:
                                 geom = feature.GetGeometryRef()
                                 area = geom.GetArea()
                                 feature.SetField('area', area)
+                                dst_layer.SetFeature(feature)
+                                feature = None
 
+                            shp_list = []
+                            for feature in dst_layer:
+                                if feature.GetField('inundation') == -1 and feature.GetField('area') >= 1000000:
+                                    shp_list.append(wkt.loads(feature.GetGeometryRef().ExportToWkt()))
+
+                            inund_id = 1
+                            for feature in dst_layer:
+                                link2channel_ = 0
                                 if feature.GetField('inundation') == 1:
+                                    shp_temp = wkt.loads(feature.GetGeometryRef().ExportToWkt())
+                                    for shp_pw in shp_list:
+                                        if shp_pw.intersects(shp_temp):
+                                            link2channel_ = 1
+                                            inund_id += 1
+                                            break
+
+                                if link2channel_ == 1:
+                                    feature.SetField('link2chan', link2channel_)
                                     feature.SetField('inun_id', inund_id)
-                                    inund_id += 1
                                 else:
+                                    feature.SetField('link2chan', link2channel_)
                                     feature.SetField('inun_id', 0)
                                 dst_layer.SetFeature(feature)
                                 feature = None
+
+                            dst_ds, ras_ds = None, None
+                    else:
+                        raise ValueError('Too many annual inundation ras files!')
+
+                    # Generate the shpfile of continuous water level area
+                    files = bf.file_filter(annual_inform_folder + str(_) + '\\', [f'min_inun_wl_{str(_)}.tif'],
+                                           exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'],
+                                           and_or_factor='and')
+                    if len(files) == 1:
+
+                        drv = ogr.GetDriverByName("ESRI Shapefile")
+                        ras_ds = gdal.Open(files[0])
+                        ras_arr = ras_ds.GetRasterBand(1).ReadAsArray()
+                        ras_arr = ras_arr * 100
+                        ras_arr[np.isnan(ras_arr)] = -2
+
+                        bf.write_raster(ras_ds, ras_arr, annual_inform_folder + str(_) + '\\', f'min_inun_wl_{str(_)}4poly.tif')
+                        ras_ds = gdal.Open(annual_inform_folder + str(_) + '\\' + f'min_inun_wl_{str(_)}4poly.tif')
+                        if not os.path.exists(annual_inunshp_folder + 'wl_' + str(_) + ".shp"):
+
+                            # polygonize the raster
+                            proj = osr.SpatialReference(wkt=ras_ds.GetProjection())
+                            target = osr.SpatialReference()
+                            target.ImportFromEPSG(int(proj.GetAttrValue('AUTHORITY', 1)))
+
+                            dst_ds = drv.CreateDataSource(annual_inunshp_folder + 'wl_' + str(_) + ".shp")
+                            dst_layer = dst_ds.CreateLayer(str(_), srs=target)
+
+                            fld = ogr.FieldDefn("water_l", ogr.OFTReal)
+                            dst_layer.CreateField(fld)
+                            dst_field = dst_layer.GetLayerDefn().GetFieldIndex("water_l")
+                            gdal.Polygonize(ras_ds.GetRasterBand(1), None, dst_layer, dst_field, [])
+
+                            new_field1 = ogr.FieldDefn("wl_id", ogr.OFTReal)
+                            new_field1.SetWidth(32)
+                            dst_layer.CreateField(new_field1)
+
+                            wl_id = 1
+                            for feature in dst_layer:
+                                feature.SetField("wl_id", wl_id)
+                                dst_layer.SetFeature(feature)
+                                feature = None
+                                wl_id += 1
+
                             dst_ds, ras_ds = None, None
                     else:
                         raise ValueError('Too many annual inundation ras files!')
                     pbar.update()
 
-            # Recreate annual inundation pattern with object information
-            # And retrieve the annual low inundation wl
-            with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                object_inuninform_folder = output_path + 'object_inuninform\\'
-                bf.create_folder(object_inuninform_folder)
-                bf.create_folder(object_inuninform_folder + 'separate\\')
+            # Refine the inun wl
+            with tqdm(total=len(year_list), desc=f'Refine inundation water level array', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in year_list:
-                    # Open the ds
-                    dst_ds = ogr.Open(output_path + 'annual_inun_shpfile\\' + str(_) + ".shp")
-                    layer = dst_ds.GetLayer()
+                    if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_fixed.tif'):
+                        # Open the annual inundation shpfile and annual min inundation water level ras
+                        dst_ds = ogr.Open(output_path + 'annual_inun_shpfile\\' + str(_) + ".shp")
+                        layer = dst_ds.GetLayer()
 
-                    target_ds = gdal.GetDriverByName('GTiff').Create(object_inuninform_folder + f'{str(_)}.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 6, gdal.GDT_Int32)
-                    target_ds.SetGeoTransform(pw_ds.GetGeoTransform())
-                    target_ds.SetProjection(pw_ds.GetProjection())
+                        dst_ds2 = ogr.Open(output_path + 'annual_inun_shpfile\\' + 'wl_' + str(_) + ".shp")
+                        layer2 = dst_ds2.GetLayer()
 
-                    for __ in range(1, 7):
-                        band = target_ds.GetRasterBand(__)
-                        band.SetNoDataValue(-2)
+                        pw_ds = gdal.Open(output_path + 'perwater_ras\\permanent_water_fixed.tif')
+                        permanent_water_arr = pw_ds.GetRasterBand(1).ReadAsArray()
 
-                    gdal.RasterizeLayer(target_ds, [1], layer, options=["ATTRIBUTE=inundation"])
-                    gdal.RasterizeLayer(target_ds, [2], layer, options=["ATTRIBUTE=area"])
-                    gdal.RasterizeLayer(target_ds, [3], layer, options=["ATTRIBUTE=inun_id"])
+                        min_wl_ds = gdal.Open(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}.tif')
+                        min_inun_wl_arr = min_wl_ds.GetRasterBand(1).ReadAsArray()
+                        min_inun_wl_arr[permanent_water_arr == 1] = -1
+                        min_wl_arr_refined = copy.deepcopy(min_inun_wl_arr)
+                        min_wl_arr_refined[:, :] = 0
 
-                    max_noninun_wl_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
-                    min_inun_wl_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 100
-                    trend_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                        # Create the ras
+                        target_ds = gdal.GetDriverByName('GTiff').Create(annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}_v1.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 3, gdal.GDT_Int32)
+                        target_ds.SetGeoTransform(pw_ds.GetGeoTransform())
+                        target_ds.SetProjection(pw_ds.GetProjection())
 
-                    for __ in doy_list:
-                        if int(np.floor(__ // 10000)) == _ and __ not in manual_remove_date:
-                            if __ in water_level_data:
-                                wl_temp = water_level_data[np.argwhere(water_level_data == __)[0, 0], 1]
-                                max_noninun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
-                                min_inun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 100
-                                if isinstance(inundated_dc, NDSparseMatrix):
-                                    inundated_arr = inundated_dc.SM_group[__].toarray()
+                        gdal.RasterizeLayer(target_ds, [1], layer, options=["ATTRIBUTE=inundation"])
+                        gdal.RasterizeLayer(target_ds, [2], layer, options=["ATTRIBUTE=area"])
+                        gdal.RasterizeLayer(target_ds, [3], layer, options=["ATTRIBUTE=inun_id"])
+
+                        target_ds2 = gdal.GetDriverByName('GTiff').Create(annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}_v3.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 1, gdal.GDT_Int32)
+                        target_ds2.SetGeoTransform(pw_ds.GetGeoTransform())
+                        target_ds2.SetProjection(pw_ds.GetProjection())
+
+                        gdal.RasterizeLayer(target_ds2, [1], layer2, options=["ATTRIBUTE=wl_id"])
+
+                        wl_id_arr = target_ds2.GetRasterBand(1).ReadAsArray()
+                        inun_id_arr = target_ds.GetRasterBand(3).ReadAsArray()
+                        inun_id_list = np.unique(inun_id_arr.flatten())
+                        issue_wl, issue_wl_id = {}, {}
+
+                        with tqdm(total=len(inun_id_list), desc=f'Get issued water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
+                            for inun_id_ in inun_id_list:
+                                if inun_id_ != 0:
+
+                                    # Create the dic and extract inun ras by using inun id
+                                    min_wl_arr_t = copy.deepcopy(min_inun_wl_arr)
+                                    min_wl_arr_t[inun_id_arr != inun_id_] = np.nan
+                                    min_wl_arr_t[permanent_water_arr == 1] = -1
+
+                                    # Get all the wl within this inun id
+                                    offset_all, bound_all = np.min(np.argwhere(inun_id_arr == inun_id_), axis=0), np.max(np.argwhere(inun_id_arr == inun_id_), axis=0)
+                                    min_wl_arr_t = min_wl_arr_t[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2]
+                                    wl_id_arr_t = wl_id_arr[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2]
+                                    min_wl_arr_list = np.unique(min_wl_arr_t.flatten())
+                                    min_wl_arr_list = np.sort(np.delete(min_wl_arr_list, np.argwhere(np.logical_or(np.isnan(min_wl_arr_list), min_wl_arr_list == -1))))
+
+                                    # Get all issued wl
+                                    for wl_arr in min_wl_arr_list:
+                                        wl_id_arr_tt = copy.copy(wl_id_arr_t)
+                                        wl_id_arr_tt[min_wl_arr_t != wl_arr] = np.nan
+                                        wl_id_list = np.remove(np.unique(wl_id_arr_tt.flatten()), np.nan)
+                                        for wl_id_temp in wl_id_list:
+                                            wl_pos = np.argwhere(np.logical_and(min_wl_arr_t == wl_arr, wl_id_arr_tt == wl_id_temp))
+                                            bound_wl = np.array([])
+                                            for pos_temp in wl_pos:
+                                                arr_temp = min_wl_arr_t[pos_temp[0] - 1: pos_temp[0] + 2, pos_temp[1] - 1: pos_temp[1] + 2]
+                                                bound_wl = np.unique(np.concatenate((bound_wl, np.unique(arr_temp.flatten()))))
+
+                                            # bound append
+                                            if (bound_wl < wl_arr).any():
+                                                pass
+                                            else:
+                                                if inun_id_ not in issue_wl.keys():
+                                                    issue_wl[inun_id_] = [wl_arr]
+                                                else:
+                                                    if wl_arr not in issue_wl[inun_id_]:
+                                                        issue_wl[inun_id_].append(wl_arr)
+
+                                                if inun_id_ + '_' + wl_arr not in issue_wl_id.keys():
+                                                    issue_wl_id[str(inun_id_) + '_' + str(wl_arr)] = [wl_id_temp]
+                                                else:
+                                                    issue_wl_id[str(inun_id_) + '_' + str(wl_arr)].append(wl_id_temp)
+                                pbar1.update()
+
+                        with tqdm(total=len(issue_wl.keys()), desc=f'Process inundation water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
+                            for iss_ in issue_wl.keys():
+
+                                # Generate the mask
+                                mask_temp = []
+                                for wl__ in issue_wl[iss_]:
+                                    if len(issue_wl_id[str(iss_) + '_' + str(wl__)]) == 1:
+                                        mask_temp_ = wl_id_arr == issue_wl_id[str(iss_) + '_' + str(wl__)][0]
+                                    else:
+                                        mask_temp_ = np.logical_or(*[wl_id_arr == __ for __ in issue_wl_id[str(iss_) + '_' + str(wl__)]])
+                                    mask_temp.append(np.logical_and(mask_temp_, min_inun_wl_arr == wl__))
+
+                                if len(mask_temp) == 1:
+                                    mask_temp = np.logical_and(inun_id_arr == iss_, mask_temp[0])
                                 else:
-                                    inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape([inundated_dc.shape[0], inundated_dc.shape[1]])
+                                    mask_temp = np.logical_and(inun_id_arr == iss_, np.logical_or(*mask_temp))
 
-                                max_noninun_wl_arr_temp[inundated_arr == 1] = wl_temp
-                                min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
+                                offset_all, bound_all = np.min(np.argwhere(mask_temp == 1), axis=0), np.max(np.argwhere(mask_temp == 1), axis=0)
+                                min_inun_wl_arr__ = np.zeros([bound_all[0] + 1 - offset_all[0], bound_all[1] + 1 - offset_all[1]]) + 1000
+                                min_all = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                                issue_wl_temp = issue_wl[iss_]
+                                issue_wl_temp = [float(str(_)) for _ in issue_wl_temp]
 
-                                max_noninun_wl_arr = np.nanmax([max_noninun_wl_arr, max_noninun_wl_arr_temp], axis=0)
-                                min_inun_wl_arr = np.nanmin([min_inun_wl_arr, min_inun_wl_arr_temp], axis=0)
+                                for __ in doy_list:
+                                    if int(np.floor(__ // 10000)) == _ and __ not in manual_remove_date:
+                                        if __ in water_level_data:
+                                            wl_temp = water_level_data[np.argwhere(water_level_data == __)[0, 0], 1]
+                                            if wl_temp not in issue_wl_temp:
+                                                min_inun_wl_arr_temp = np.zeros([bound_all[0] + 1 - offset_all[0], bound_all[1] + 1 - offset_all[1]]) + 1000
+                                                if isinstance(inundated_dc, NDSparseMatrix):
+                                                    inundated_arr = inundated_dc[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1, inundated_dc.SM_namelist.index(__)]
+                                                else:
+                                                    inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape([inundated_dc.shape[0], inundated_dc.shape[1]])
 
-                            if __ in wl_trend_list:
-                                trend_temp = wl_trend_list[np.argwhere(wl_trend_list == __)[0, 0], 1]
-                                trend_arr[min_inun_wl_arr == wl_temp] = trend_temp
+                                                min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
+                                                min_inun_wl_arr__ = np.nanmin([min_inun_wl_arr__, min_inun_wl_arr_temp], axis=0)
+                                            else:
+                                                pass
 
-                    max_noninun_wl_arr[roi_arr == -32768] = np.nan
-                    min_inun_wl_arr[roi_arr == -32768] = np.nan
-                    min_inun_wl_arr[min_inun_wl_arr == 100] = np.nan
-                    max_noninun_wl_arr[max_noninun_wl_arr == -1] = np.nan
+                                min_all[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1] = min_inun_wl_arr__
+                                min_inun_wl_arr[mask_temp] = min_all[mask_temp]
+                                pbar1.update()
 
-                    bf.write_raster(pw_ds, max_noninun_wl_arr, object_inuninform_folder, f'separate\\max_noninun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
-                    bf.write_raster(pw_ds, min_inun_wl_arr, object_inuninform_folder, f'separate\\min_inun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
-                    bf.write_raster(pw_ds, trend_arr, object_inuninform_folder, f'separate\\trend_{str(_)}.tif', raster_datatype=gdal.GDT_UInt32, nodatavalue=0)
-
-                    target_ds.GetRasterBand(4).WriteArray(max_noninun_wl_arr)
-                    target_ds.GetRasterBand(5).WriteArray(min_inun_wl_arr)
-                    target_ds.GetRasterBand(6).WriteArray(trend_arr)
-                    target_ds = None
-
-                    # Refine the lowinundation
-                    #     if
-                    #         if isinstance(inundated_dc, NDSparseMatrix):
-                    #             inundated_dc.SM_group[__]
-                    #
-                    # inun_sta_arr = target_ds.GetRasterBand(1).ReadAsArray()
-                    # inun_id_arr = target_ds.GetRasterBand(3).ReadAsArray()
-                    # inun_id_list = np.unique(inun_id_arr.flatten())
-                    #
-                    # for y_ in range(inun_sta_arr.shape[0]):
-                    #     for x_ in range(inun_sta_arr.shape[1]):
-                    #         if inun_sta_arr[y_, x_] == 1:
-                    #
-                    #
-                    # for id_ in inun_id_list:
-                    #     if id_ != 0:
-                    #         inun_pos = np.argwhere(inun_id_arr == id_)
-                    #         for pos in inun_pos:
+                        bf.write_raster(min_wl_ds, min_inun_wl_arr, annual_inform_folder, f'{str(_)}\\min_inun_wl_{str(_)}_fixed.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+                        target_ds = None
                     pbar.update()
+
+            # Interpolate the minimum inundation wl
+            annual_inunshp_folder = output_path + 'annual_inun_shpfile\\'
+            bf.create_folder(annual_inunshp_folder)
+
+            annual_inform_folder = output_path + 'annual_inun_wl_ras\\'
+            bf.create_folder(annual_inform_folder)
+
+            with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for _ in year_list:
+                    if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif'):
+                        # Open the annual inundation shpfile and annual min inundation water level ras
+                        dst_ds = ogr.Open(output_path + 'annual_inun_shpfile\\' + str(_) + ".shp")
+                        layer = dst_ds.GetLayer()
+
+                        pw_ds = gdal.Open(output_path + 'perwater_ras\\permanent_water_fixed.tif')
+                        permanent_water_arr = pw_ds.GetRasterBand(1).ReadAsArray()
+
+                        min_wl_ds = gdal.Open(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_fixed.tif')
+                        min_inun_wl_arr = min_wl_ds.GetRasterBand(1).ReadAsArray()
+                        min_inun_wl_arr[permanent_water_arr == 1] = -1
+                        min_wl_arr_refined = copy.deepcopy(min_inun_wl_arr)
+                        min_wl_arr_refined[:, :] = 0
+
+                        max_noninun_wl_ds = gdal.Open(annual_inform_folder + f'{str(_)}\\max_noninun_wl_{str(_)}.tif')
+                        max_noninun_wl_arr = max_noninun_wl_ds.GetRasterBand(1).ReadAsArray()
+
+                        # Create the ras
+                        target_ds = gdal.GetDriverByName('GTiff').Create(annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 3, gdal.GDT_Int32)
+                        target_ds.SetGeoTransform(pw_ds.GetGeoTransform())
+                        target_ds.SetProjection(pw_ds.GetProjection())
+
+                        for __ in range(1, 7):
+                            band = target_ds.GetRasterBand(__)
+                            band.SetNoDataValue(-2)
+
+                        gdal.RasterizeLayer(target_ds, [1], layer, options=["ATTRIBUTE=inundation"])
+                        gdal.RasterizeLayer(target_ds, [2], layer, options=["ATTRIBUTE=area"])
+                        gdal.RasterizeLayer(target_ds, [3], layer, options=["ATTRIBUTE=inun_id"])
+
+                        inun_id_arr = target_ds.GetRasterBand(3).ReadAsArray()
+                        inun_id_list = np.unique(inun_id_arr.flatten())
+                        with tqdm(total=len(inun_id_list), desc=f'Refine the inundation water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
+                            for inun_id_ in inun_id_list:
+                                if inun_id_ != 0:
+
+                                    # Create the dic and extract inun ras by using inun id
+                                    time1, time2, time3, time4 = 0, 0, 0, 0
+
+                                    s_t = time.time()
+                                    inun_inform = []
+                                    min_wl_arr_t = copy.deepcopy(min_inun_wl_arr)
+                                    min_wl_arr_t[inun_id_arr != inun_id_] = np.nan
+                                    min_wl_arr_t[permanent_water_arr == 1] = -1
+
+                                    max_wl_arr_t = copy.deepcopy(max_noninun_wl_arr)
+                                    max_wl_arr_t[inun_id_arr != inun_id_] = np.nan
+                                    max_wl_arr_t[permanent_water_arr == 1] = -1
+
+                                    # Get all the wl within this inun id
+                                    offset_all, bound_all = np.min(np.argwhere(inun_id_arr == inun_id_), axis=0), np.max(np.argwhere(inun_id_arr == inun_id_), axis=0)
+                                    min_wl_arr_t = min_wl_arr_t[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2]
+                                    max_wl_arr_t = max_wl_arr_t[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2]
+                                    min_wl_arr_list = np.unique(min_wl_arr_t.flatten())
+                                    min_wl_arr_list = np.sort(np.delete(min_wl_arr_list, np.argwhere(np.logical_or(np.isnan(min_wl_arr_list), min_wl_arr_list==-1))))
+                                    time1 = time.time() - s_t
+                                    s_t = time.time()
+
+                                    # mp got inun status
+                                    # with concurrent.futures.ProcessPoolExecutor() as exe:
+                                    #     res = exe.map(assign_wl_status, repeat(min_wl_arr_t), min_wl_arr_list)
+                                    #
+                                    # res = list(res)
+                                    # for res_ in res:
+                                    #     inun_inform.extend(res_)
+
+                                    # Got inun status
+                                    for wl in min_wl_arr_list:
+                                        inun_inform_list = []
+                                        pos_all = np.argwhere(min_wl_arr_t == wl)
+                                        for pos_temp in pos_all:
+                                            arr_temp = min_wl_arr_t[pos_temp[0] - 1: pos_temp[0] + 2, pos_temp[1] - 1: pos_temp[1] + 2]
+                                            inun_inform__ = [wl]
+                                            inun_inform__.extend([pos_temp[0], pos_temp[1]])
+                                            if (arr_temp == wl).all():
+                                                inun_inform__.append(0)
+                                            elif (arr_temp > wl).any():
+                                                inun_inform__.append(1)
+                                            elif np.isnan(arr_temp).any() == 1:
+                                                inun_inform__.append(1)
+                                            elif (arr_temp == -1).any():
+                                                inun_inform__.append(-1)
+                                            elif (arr_temp < wl).any():
+                                                inun_inform__.append(0)
+                                            else:
+                                                raise Exception(str(arr_temp))
+                                            inun_inform_list.append(inun_inform__)
+                                        inun_inform.extend(inun_inform_list)
+                                    time2 = time.time() - s_t
+                                    s_t = time.time()
+
+                                    # Pre-assign the wl for bound pixel
+                                    # with concurrent.futures.ProcessPoolExecutor() as exe:
+                                    #     res = exe.map(pre_assign_wl, inun_inform, repeat(min_wl_arr_t), repeat(max_wl_arr_t), repeat(water_level_data), repeat(doy_list))
+                                    #
+                                    # inun_inform = []
+                                    # min_wl_arr_refined_t = np.zeros_like(min_wl_arr_t) * np.nan
+                                    # res = list(res)
+                                    # for res_ in res:
+                                    #     inun_inform.append(res_)
+                                    #
+                                    # i_len = 0
+                                    # while i_len < len(inun_inform):
+                                    #     min_wl_, pos_y, pos_x, status, wl_refined = inun_inform[i_len]
+                                    #     if ~np.isnan(wl_refined):
+                                    #         min_wl_arr_refined_t[pos_y, pos_x] = wl_refined
+                                    #         inun_inform.remove(inun_inform[i_len])
+                                    #     else:
+                                    #         i_len += 1
+
+                                    # Pre-assign the wl for bound pixel
+                                    min_wl_arr_refined_t = np.zeros_like(min_wl_arr_t) * np.nan
+                                    i_len = 0
+                                    while i_len < len(inun_inform):
+
+                                        min_wl_, pos_y, pos_x, status = inun_inform[i_len]
+                                        if status == 1:
+                                            min_wl_arr_refined_t[pos_y, pos_x] = min_wl_arr_t[pos_y, pos_x]
+                                            inun_inform.remove(inun_inform[i_len])
+                                        elif status == -1:
+                                            if max_wl_arr_t[pos_y, pos_x] > min_wl_arr_t[pos_y, pos_x]:
+                                                wl_temp = min_wl_arr_t[pos_y, pos_x]
+                                                wl_pos = np.argwhere(water_level_data == float(str(wl_temp)))
+                                                date, date_pos = [], []
+                                                for wl_pos_temp in wl_pos:
+                                                    if water_level_data[wl_pos_temp[0], 0] in doy_list:
+                                                        date.append(water_level_data[wl_pos_temp[0]])
+                                                        date_pos.append(wl_pos_temp[0])
+
+                                                if len(date) == 1:
+                                                    wl_temp_2 = water_level_data[int(date_pos[0]) - 5, 1]
+                                                else:
+                                                    date_pos = min(date_pos)
+                                                    wl_temp_2 = water_level_data[int(date_pos) - 5, 1]
+
+                                                if wl_temp_2 <= wl_temp and wl_temp - wl_temp_2 < 3:
+                                                    min_wl_arr_refined_t[pos_y, pos_x] = (wl_temp_2 + wl_temp) / 2
+                                                    inun_inform.remove(inun_inform[i_len])
+                                                else:
+                                                    min_wl_arr_refined_t[pos_y, pos_x] = wl_temp - 1
+                                                    inun_inform.remove(inun_inform[i_len])
+
+                                            else:
+                                                min_wl_arr_refined_t[pos_y, pos_x] = (min_wl_arr_t[pos_y, pos_x] + max_wl_arr_t[pos_y, pos_x]) / 2
+                                                inun_inform.remove(inun_inform[i_len])
+
+                                        elif status == 0:
+                                            inun_inform[i_len].append(np.nan)
+                                            i_len += 1
+
+                                    for min_wl_ in min_wl_arr_list:
+                                        if not (min_wl_arr_refined_t == min_wl_).any():
+                                            pos_x_em_list,  pos_y_em_list = [], []
+                                            for inun_ in inun_inform:
+                                                if inun_[0] == min_wl_:
+                                                    pos_x_em_list.append(inun_[2])
+                                                    pos_y_em_list.append(inun_[1])
+
+                                            if len(pos_x_em_list) != 0:
+                                                pos_x_em_list, pos_y_em_list = np.array(pos_x_em_list), np.array(pos_y_em_list)
+                                                pos_x_mid = int(np.median(pos_x_em_list))
+                                                pos_y_mid = int(np.median(pos_y_em_list[pos_x_em_list == pos_x_mid]))
+                                                min_wl_arr_refined_t[pos_y_mid, pos_x_mid] = min_wl_
+
+                                    time3 = time.time() - s_t
+                                    s_t = time.time()
+
+                                    # Get wl
+                                    if len(inun_inform) > 5000000:
+                                        # MP get wl
+                                        with concurrent.futures.ProcessPoolExecutor() as exe:
+                                            res = exe.map(assign_wl, inun_inform, repeat(min_wl_arr_refined_t))
+
+                                        inun_inform = []
+                                        res = list(res)
+                                        for res_ in res:
+                                            inun_inform.append(res_)
+
+                                        for inun_ in inun_inform:
+                                            min_wl_, pos_y, pos_x, status, wl_refined = inun_
+                                            if ~np.isnan(wl_refined):
+                                                min_wl_arr_refined_t[pos_y, pos_x] = wl_refined
+                                            else:
+                                                print(f'inun_id:{str(inun_id_)}, pos{str(pos_y)}_{str(pos_x)}, wl{str(wl_refined)}')
+                                                raise Exception('Error during mp get wl')
+
+                                    else:
+                                        # Seq get wl
+                                        for inun__ in inun_inform:
+                                            min_wl_, pos_y, pos_x, status, wl_refined = inun__
+                                            if status == 0 and np.isnan(wl_refined):
+                                                wl_centre = min_wl_
+                                                upper_wl_dis, lower_wl_dis, lower_wl = np.nan, np.nan, np.nan
+
+                                                for r in range(1, 100):
+                                                    pos_y_lower = 0 if pos_y - r < 0 else pos_y - r
+                                                    pos_x_lower = 0 if pos_x - r < 0 else pos_x - r
+                                                    pos_y_upper = min_wl_arr_refined_t.shape[0] if pos_y + r + 1 > min_wl_arr_refined_t.shape[0] else pos_y + r + 1
+                                                    pos_x_upper = min_wl_arr_refined_t.shape[1] if pos_x + r + 1 > min_wl_arr_refined_t.shape[1] else pos_x + r + 1
+
+                                                    arr_tt = min_wl_arr_refined_t[pos_y_lower: pos_y_upper, pos_x_lower: pos_x_upper]
+                                                    if np.isnan(upper_wl_dis):
+                                                        upper_wl_dis_list = []
+                                                        if (arr_tt == wl_centre).any():
+                                                            for pos_ttt in np.argwhere(arr_tt == wl_centre):
+                                                                upper_wl_dis_list.append(
+                                                                    np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2))
+                                                            upper_wl_dis = min(upper_wl_dis_list)
+
+                                                    if np.isnan(lower_wl_dis):
+                                                        lower_wl_dis_list = []
+                                                        lower_wl_dat_list = []
+                                                        lower_wl_dis_list2 = []
+                                                        arr_tt[arr_tt < 0] = 100000
+                                                        if (arr_tt < wl_centre).any():
+                                                            for pos_ttt in np.argwhere(arr_tt <= wl_centre):
+                                                                lower_wl_dis_list.append(
+                                                                    np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2))
+                                                                lower_wl_dat_list.append(arr_tt[pos_ttt[0], pos_ttt[1]])
+
+                                                            lower_wl = set(lower_wl_dat_list)
+                                                            lower_wl = min(lower_wl)
+                                                            for ___ in range(len(lower_wl_dat_list)):
+                                                                if lower_wl_dat_list[___] == lower_wl:
+                                                                    lower_wl_dis_list2.append(lower_wl_dis_list[___])
+                                                            lower_wl_dis = min(lower_wl_dis_list2)
+
+                                                    if ~np.isnan(upper_wl_dis) and ~np.isnan(lower_wl_dis) and ~np.isnan(lower_wl):
+                                                        break
+
+                                                min_wl_arr_refined_t[pos_y, pos_x] = ((lower_wl * ((1 / lower_wl_dis) ** 1.5)) + (wl_centre * ((1 / upper_wl_dis) ** 1.5))) / (((1 / lower_wl_dis) ** 1.5) + ((1 / upper_wl_dis) ** 1.5))
+
+                                    min_wl_arr_refined_t[np.isnan(min_wl_arr_refined_t)] = 0
+                                    min_wl_arr_refined[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] = min_wl_arr_refined[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] + min_wl_arr_refined_t
+                                    time4 = time.time() - s_t
+
+                                    # print(f'P1: {str(time1)[0:6]}s, P2: {str(time2)[0:6]}s, P3: {str(time3)[0:6]}s, P4: {str(time4)[0:6]}s')
+                                pbar1.update()
+
+                        min_wl_arr_refined[permanent_water_arr == 1] = -1
+                        min_wl_arr_refined[permanent_water_arr == -2] = -2
+                        bf.write_raster(min_wl_ds, min_wl_arr_refined, annual_inform_folder, f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+                pbar.update()
+
+            # target_ds = None
+
+            # Refine the lowinundation
+            #     if
+            #         if isinstance(inundated_dc, NDSparseMatrix):
+            #             inundated_dc.SM_group[__]
+            #
+            # inun_sta_arr = target_ds.GetRasterBand(1).ReadAsArray()
+            # inun_id_arr = target_ds.GetRasterBand(3).ReadAsArray()
+            # inun_id_list = np.unique(inun_id_arr.flatten())
+            #
+            # for y_ in range(inun_sta_arr.shape[0]):
+            #     for x_ in range(inun_sta_arr.shape[1]):
+            #         if inun_sta_arr[y_, x_] == 1:
+            #
+            #
+            # for id_ in inun_id_list:
+            #     if id_ != 0:
+            #         inun_pos = np.argwhere(inun_id_arr == id_)
+            #         for pos in inun_pos:
 
         if generate_recession_period:
             pass

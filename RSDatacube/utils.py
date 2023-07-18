@@ -10,7 +10,120 @@ import basic_function as bf
 from Landsat_toolbox.utils import *
 from scipy.optimize import curve_fit
 import psutil
+import numpy as np
 import json
+
+
+def assign_wl(inun_inform: list, wl_arr: np.ndarray):
+
+    min_wl_, pos_y, pos_x, status, wl_refined = inun_inform
+    if status == 0 and np.isnan(wl_refined):
+        wl_centre = min_wl_
+        upper_wl_dis, lower_wl_dis, lower_wl = np.nan, np.nan, np.nan
+        for r in range(1, 100):
+
+            pos_y_lower = 0 if pos_y - r < 0 else pos_y - r
+            pos_x_lower = 0 if pos_x - r < 0 else pos_x - r
+            pos_y_upper = wl_arr.shape[0] if pos_y + r + 1 > wl_arr.shape[0] else pos_y + r + 1
+            pos_x_upper = wl_arr.shape[1] if pos_x + r + 1 > wl_arr.shape[1] else pos_x + r + 1
+
+            arr_tt = wl_arr[pos_y_lower: pos_y_upper, pos_x_lower: pos_x_upper]
+            if np.isnan(upper_wl_dis):
+                upper_wl_dis_list = []
+                if (arr_tt == wl_centre).any():
+                    for pos_ttt in np.argwhere(arr_tt == wl_centre):
+                        upper_wl_dis_list.append(np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2))
+                    upper_wl_dis = min(upper_wl_dis_list)
+
+            if np.isnan(lower_wl_dis):
+                lower_wl_dis_list = []
+                lower_wl_dat_list = []
+                lower_wl_dis_list2 = []
+                arr_tt[arr_tt < 0] = 100000
+                if (arr_tt < wl_centre).any():
+                    for pos_ttt in np.argwhere(arr_tt <= wl_centre):
+                        lower_wl_dis_list.append(np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2))
+                        lower_wl_dat_list.append(arr_tt[pos_ttt[0], pos_ttt[1]])
+
+                    lower_wl = set(lower_wl_dat_list)
+                    lower_wl = min(lower_wl)
+                    for ___ in range(len(lower_wl_dat_list)):
+                        if lower_wl_dat_list[___] == lower_wl:
+                            lower_wl_dis_list2.append(lower_wl_dis_list[___])
+                    lower_wl_dis = min(lower_wl_dis_list2)
+
+            if ~np.isnan(upper_wl_dis) and ~np.isnan(lower_wl_dis) and ~np.isnan(lower_wl):
+                break
+
+        wl_refined = lower_wl + (wl_centre - lower_wl) * lower_wl_dis / (lower_wl_dis + upper_wl_dis)
+
+    elif status == 0:
+        print('code error during assignment')
+        raise Exception('code error during assignment')
+
+    if np.isnan(wl_refined):
+        return [min_wl_, pos_y, pos_x, status, min_wl_]
+    else:
+        return [min_wl_, pos_y, pos_x, status, wl_refined]
+
+
+def pre_assign_wl(inun_inform: list, min_inun_wl_arr: np.ndarray, max_noninun_wl_arr: np.ndarray, water_level_data, doy_list):
+
+    min_wl_, pos_y, pos_x, status = inun_inform
+    if status == 1:
+        inun_inform.append(min_inun_wl_arr[pos_y, pos_x])
+    elif status == -1:
+        if max_noninun_wl_arr[pos_y, pos_x] > min_inun_wl_arr[pos_y, pos_x]:
+            wl_temp = min_inun_wl_arr[pos_y, pos_x]
+            wl_pos = np.argwhere(water_level_data == float(str(wl_temp)))
+            date, date_pos = [], []
+            for wl_pos_temp in wl_pos:
+                if water_level_data[wl_pos_temp[0], 0] in doy_list:
+                    date.append(water_level_data[wl_pos_temp[0]])
+                    date_pos.append(wl_pos_temp[0])
+
+            if len(date) == 1:
+                wl_temp_2 = water_level_data[int(date_pos[0]) - 5, 1]
+            else:
+                date_pos = min(date_pos)
+                wl_temp_2 = water_level_data[int(date_pos) - 5, 1]
+
+            if wl_temp_2 <= wl_temp:
+                inun_inform.append((wl_temp_2 + wl_temp) / 2)
+            else:
+                inun_inform.append(wl_temp - 1)
+
+        else:
+            inun_inform.append((min_inun_wl_arr[pos_y, pos_x] + max_noninun_wl_arr[pos_y, pos_x]) / 2)
+    elif status == 0:
+        inun_inform.append(np.nan)
+    return inun_inform
+
+
+def assign_wl_status(wl_arr: np.ndarray,  wl: float):
+
+    inun_inform_list = []
+    pos_all = np.argwhere(wl_arr == wl)
+
+    for pos_temp in pos_all:
+        arr_temp = wl_arr[pos_temp[0] - 1: pos_temp[0] + 2, pos_temp[1] - 1: pos_temp[1] + 2]
+        inun_inform = [wl]
+        inun_inform.extend([pos_temp[0], pos_temp[1]])
+        if (arr_temp == wl).all():
+            inun_inform.append(0)
+        elif (arr_temp > wl).any():
+            inun_inform.append(1)
+        elif np.isnan(arr_temp).any() == 1:
+            inun_inform.append(1)
+        elif (arr_temp == -1).any():
+            inun_inform.append(-1)
+        elif (arr_temp < wl).any():
+            inun_inform.append(0)
+        else:
+            raise Exception(str(arr_temp))
+        inun_inform_list.append(inun_inform)
+
+    return inun_inform_list
 
 
 def mp_static_wi_detection(dc: NDSparseMatrix, sz_f, zoffset, nodata, thr):
