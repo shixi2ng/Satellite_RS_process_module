@@ -4,6 +4,7 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import scipy.stats
 import seaborn
 from matplotlib import rcParams
 from scipy.optimize import curve_fit
@@ -12,6 +13,7 @@ from scipy.spatial import ConvexHull, convex_hull_plot_2d
 import matplotlib.gridspec as gridspec
 import matplotlib.colors as mcolors
 from osgeo import gdal, ogr
+from sklearn import linear_model
 import copy
 from matplotlib.colors import LogNorm
 import sys
@@ -20,6 +22,39 @@ import basic_function as bf
 import seaborn as sns
 import math
 import random
+from scipy.stats import *
+from scipy.optimize import *
+from Landsat_toolbox.Landsat_main_v2 import *
+from RSDatacube.RSdc import *
+
+
+def xpoly(x, a, b):
+    return - a ** x + b
+
+
+def ln_x3(x, a, b, c):
+    return a * np.log(b * (-x + 2.5)) + c
+
+
+def ln_x5(x, a, b, c):
+    return a * np.log(b * (-x + 5)) + c
+
+
+def ln_minus(x, a, b, c):
+    return - a * np.log(b * x) + c
+
+
+def exp_minus(x, a, b, c):
+    return - a * np.exp(b * x + c)
+
+
+def exp_minus2(x, a, b, c):
+    return - a * np.exp(b * x - c) + a * np.exp(b - c)
+
+
+def poly3(x, a, b, c, d):
+    return a * x ** 3 + b * x ** 2 + c * x + d
+
 
 def poly2(x, a, b, c):
     return a * x ** 2 + b * x + c
@@ -28,8 +63,13 @@ def poly2(x, a, b, c):
 def exp_temp(x, a, b, d, c):
     return a * np.exp(b * x - c) + d
 
+
 def ln_temp(x, a, b, c, d):
     return a * np.log(x ** b + c) + d
+
+
+def log_func(x, a, b, c, d):
+    return a / (1. + np.exp(-c * (x - d))) + b
 
 
 def fig1_func():
@@ -426,7 +466,11 @@ def fig10_func():
 def fig11_func():
     pd1 = pd.read_csv('G:\\A_veg\\Paper\\Figure\\Fig9\\date220706_chl8_mod0.csv')
     pd2 = pd.read_csv('G:\\A_veg\\Paper\\Figure\\Fig9\\date220706_chl8_mod1.csv')
+    pd3 = pd.read_csv('G:\\A_veg\\Paper\\Figure\\Fig9\\date220706_chl8_mod0_ref.csv')
+
     pd1 = pd.merge(pd1, pd2, on=['Unnamed: 0'], how='left')
+    pd1 = pd.merge(pd1, pd3, on=['Unnamed: 0'], how='left')
+
     chl = 8
     plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
     plt.rc('font', size=14)
@@ -466,7 +510,52 @@ def fig11_func():
     ax2.text(1.3, 6 - 1, f'RMSE={str(RMSE_NDVI)[0: 4]}m', c=(0, 0, 0), fontsize=18)
     ax2.set_ylim(1, 6)
     ax2.set_xlim(1, 6)
-    plt.savefig(f'G:\A_veg\Paper\Figure\Fig9\\fig92.png', dpi=300)
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=14)
+    fig3, ax3 = plt.subplots(figsize=(5, 5), constrained_layout=True)
+    # ax.scatter(combine_arr[1, :], combine_arr[0, :], s=12 ** 2, edgecolor=(0.1, 0.1, 0.1), facecolor=(47/256,85/256,151/256), alpha=0.8, linewidth=1.2, marker='^', zorder=5)
+    s, n = 0, 0
+    for _ in range(pd1.shape[0]):
+        if pd1['gedi_ch_x'][_] <= pd1['uav_ch_x'][_] + 0.93 and pd1['gedi_ch_x'][_] >= pd1['uav_ch_x'][_] - 0.93:
+            s += 1
+        if ~np.isnan(pd1['gedi_ch_x'][_]):
+            n += 1
+    print(str(s/n))
+
+    s, n = 0, 0
+    for _ in range(pd1.shape[0]):
+        if pd1['gedi_ch_y'][_] <= pd1['uav_ch_y'][_] + 0.93 and pd1['gedi_ch_y'][_] >= pd1['uav_ch_y'][_] - 0.93:
+            s += 1
+        if ~np.isnan(pd1['gedi_ch_y'][_]):
+            n += 1
+    print(str(s/n))
+
+    s, n = 0, 0
+    for _ in range(pd1.shape[0]):
+        if pd1['gedi_ch'][_] <= pd1['uav_ch'][_] + 0.93 and pd1['gedi_ch'][_] >= pd1['uav_ch'][_] - 0.93:
+            s += 1
+        if ~np.isnan(pd1['gedi_ch'][_]):
+            n += 1
+    print(str(s/n))
+
+    qq = ax3.hist2d(pd1['gedi_ch'], pd1['uav_ch'], bins=80, range=[[1, 6], [1, 6]], cmap=plt.cm.BuPu)
+    ax3.plot(np.linspace(0, chl, chl), np.linspace(0, chl, chl), c=(0, 0, 0), lw=1.5, zorder=3, ls='--')
+    ax3.plot(np.linspace(0, chl, chl), np.linspace(0.93, chl + 0.93, chl), c=(0.3, 0.3, 0.3), lw=0.5, zorder=3, ls='--')
+    ax3.plot(np.linspace(0, chl, chl), np.linspace(-0.93, chl - 0.93, chl), c=(0.3, 0.3, 0.3), lw=0.5, zorder=3,
+             ls='--')
+    ax3.fill_between(np.linspace(0, chl, chl), np.linspace(-0.93, chl - 0.93, chl), np.linspace(+0.93, chl + 0.93, chl),
+                     color=(0.3, 0.3, 0.3), alpha=0.1)
+    ax3.set_xlabel('外推植被高度/m', fontname='Times New Roman', fontsize=20, fontweight='bold')
+    ax3.set_ylabel('UAV航测高度/m', fontname='Times New Roman', fontsize=20, fontweight='bold')
+    RMSE_NDVI = np.sqrt(np.nanmean((pd1['gedi_ch'] - pd1['uav_ch']) ** 2))
+    MAE_NDVI = np.nanmean(np.absolute(pd1['gedi_ch'] - pd1['uav_ch']))
+    ax3.text(1.3, 6 - 0.5, f'MAE={str(MAE_NDVI)[0: 4]}m', c=(0, 0, 0), fontsize=18)
+    ax3.text(1.3, 6 - 1, f'RMSE={str(RMSE_NDVI)[0: 4]}m', c=(0, 0, 0), fontsize=18)
+    ax3.set_ylim(1, 6)
+    ax3.set_xlim(1, 6)
+
+    plt.savefig(f'G:\A_veg\Paper\Figure\Fig9\\fig93.png', dpi=300)
 
 
 def fig12_func():
@@ -557,7 +646,7 @@ def fig12_func():
     plt.savefig(f'G:\A_veg\Paper\Figure\Fig10\\fig10_x.png', dpi=300)
 
 
-def fig12_func():
+def fig121_func():
 
     plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
     plt.rc('font', size=12)
@@ -656,13 +745,12 @@ def fig14_func():
         shpfile = f'G:\\A_veg\\Paper\\Figure\\Fig11\\{section}.shp'
         for year in ['2019', '2020', '2021', '2022']:
             if not os.path.exists(f'G:\\A_veg\\Paper\\Figure\\Fig11\\tif\\{section}_{year}.tif'):
-                tif_file = f'G:\\A_veg\\S2_all\\Feature_table4heightmap\\peak_{year}\\predicted_feature_tif\\ch_out_mod0_heil8.tif'
+                tif_file = f'G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_{year}\\predicted_feature_tif\\ch_out_mod0_heil8.tif'
                 gdal.Warp(f'G:\\A_veg\\Paper\\Figure\\Fig11\\tif\\{section}_{year}.tif', tif_file, cutlineDSName=shpfile, cropToCutline=True, xRes=10, yRes=10, outputType=gdal.GDT_Float32,dstNodata=np.nan)
             ds = gdal.Open(f'G:\\A_veg\\Paper\\Figure\\Fig11\\tif\\{section}_{year}.tif')
             res_dic[f'{section}_{year}'] = ds.GetRasterBand(1).ReadAsArray()
 
-    a = [np.nanmean(res_dic[f'{section}_{2020}'] - res_dic[f'{section}_{str(int(2020) - 1)}']) for section in
-         ['ch', 'jj', 'hh', 'yz']]
+    a = [np.nanmean(res_dic[f'{section}_{2020}'] - res_dic[f'{section}_{str(int(2020) - 1)}']) for section in ['ch', 'jj', 'hh', 'yz']]
 
     # Comparable
     for section in ['ch', 'jj', 'hh', 'yz']:
@@ -683,6 +771,7 @@ def fig14_func():
             _ = _.flatten()
             _ = np.delete(_, np.argwhere(np.isnan(_)))
             _.sort()
+            _ = _[int(_.shape[0] * 0.005): int(_.shape[0] * 0.995)]
 
             q = np.ones_like(_) * (int(year) - 2019)
 
@@ -690,8 +779,8 @@ def fig14_func():
                 data_mean = np.stack([q, _], axis=0)
             else:
                 data_mean = np.concatenate((data_mean, np.stack([q, _], axis=0)), axis=1)
-            data_max.append(_[int(len(_) * 0.025)])
-            data_min.append(_[int(len(_) * 0.975)])
+            data_max.append(_[int(len(_) * 0.05)])
+            data_min.append(_[int(len(_) * 0.95)])
             res_dic[f'{section}_{year}_v'] = _
 
         data_mean = pd.DataFrame(data_mean.transpose(), columns=['x', 'y'])
@@ -714,8 +803,10 @@ def fig14_func():
         ax.plot(np.linspace(-0.5, 4.5, 100), poly2(np.linspace(-0.5, 4.5, 100), paras1[0], paras1[1], paras1[2]), c=(0.1, 0.1, 0.1), lw=2, ls='--', zorder=1)
         ax.plot(np.linspace(-0.5, 4.5, 100), poly2(np.linspace(-0.5, 4.5, 100), paras2[0], paras2[1], paras2[2]), c=(0.1, 0.1, 0.1), lw=2, ls='--', zorder=1)
 
+        ax.set_xticks([0, 1, 2, 3])
+        ax.set_xticklabels(['2019', '2020', '2021', '2022'], fontname='Times New Roman', fontsize=20)
         ax.set_xlim([-0.5, 3.5])
-        ax.set_ylim([2, 7])
+        ax.set_ylim([2, 6])
         plt.savefig(f'G:\\A_veg\\Paper\\Figure\\Fig11\\fig\\{section}.png', dpi=300)
         fig, ax = None, None
 
@@ -849,7 +940,599 @@ def ep_fig3_func():
     plt.savefig(f'G:\\A_Landsat_veg\\Paper\\Fig5\\Fig5.png', dpi=300)
 
 
-ep_fig3_func()
+def fig15_func():
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=18)
+    plt.rc('axes', linewidth=2)
+
+    for sec, content in zip(['all', 'yz', 'jj', 'ch', 'hh', ], [ None, (0, 14482, 0, 2810), (0, 14482, 2810, 18320), (0, 14482, 18320, 30633), (0, 14482, 30633, 49071)]):
+        if not os.path.exists(f'G:\\A_veg\\Paper\\Figure\\Fig12\\{sec}.csv'):
+            if sec != 'all':
+                height_2020_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2020\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                height_2019_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2019\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                height_2021_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2021\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                height_2022_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2022\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                inundur_2020_ds = gdal.Open(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_inunduration\\{str(sec)}_section\\annual_inun_duration\\inun_duration_2020.tif')
+                inunhei_2020_ds = gdal.Open(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_inunduration\\{str(sec)}_section\\annual_inun_duration\\inun_height_2020.tif')
+
+                arr_2022 = height_2022_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_2020 = height_2020_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_2019 = height_2019_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_2021 = height_2021_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_inundur = inundur_2020_ds.GetRasterBand(1).ReadAsArray()
+                arr_inunhei = inunhei_2020_ds.GetRasterBand(1).ReadAsArray()
+
+                if arr_2020.shape[0] != arr_inunhei.shape[0] or arr_2020.shape[1] != arr_inunhei.shape[1]:
+                    raise Exception('Error')
+
+                dic_temp = {'h_2020': [], 'h_2019': [], 'h_2021': [], 'h_2022': [], 'inun_d': [], 'inun_h': []}
+                for y in range(arr_2020.shape[0]):
+                    for x in range(arr_2020.shape[1]):
+                        if ~np.isnan(arr_2020[y, x]):
+                            dic_temp['h_2019'].append(arr_2019[y, x])
+                            dic_temp['h_2020'].append(arr_2020[y, x])
+                            dic_temp['h_2021'].append(arr_2021[y, x])
+                            dic_temp['h_2022'].append(arr_2022[y, x])
+                            dic_temp['inun_d'].append(arr_inundur[y, x])
+                            dic_temp['inun_h'].append(arr_inunhei[y, x])
+                pd_temp = pd.DataFrame(dic_temp)
+                pd_temp.to_csv(f'G:\\A_veg\\Paper\\Figure\\Fig12\\{sec}.csv')
+            else:
+                for _ in ['yz', 'jj', 'ch', 'hh']:
+                    pd_temp_ = pd.read_csv(f'G:\\A_veg\\Paper\\Figure\\Fig12\\{_}.csv')
+                    if _ != 'yz':
+                        pd_all = pd.concat((pd_all, pd_temp_))
+                    else:
+                        pd_all = copy.deepcopy(pd_temp_)
+                pd_all.to_csv(f'G:\\A_veg\\Paper\\Figure\\Fig12\\{sec}.csv')
+
+        pd_temp = pd.read_csv(f'G:\\A_veg\\Paper\\Figure\\Fig12\\{sec}.csv')
+        pd_temp['20_21_diff'] = pd_temp['h_2020'] - pd_temp['h_2021']
+        pd_temp['20_21_perc'] = (pd_temp['h_2020'] - pd_temp['h_2021']) / pd_temp['h_2020']
+        pd_temp['20_22_diff'] = pd_temp['h_2020'] - pd_temp['h_2022']
+        pd_temp['20_22_perc'] = (pd_temp['h_2020'] - pd_temp['h_2022']) / pd_temp['h_2020']
+        pd_temp['19_20_diff'] = pd_temp['h_2020'] - pd_temp['h_2019']
+        pd_temp['19_20_perc'] = (pd_temp['h_2020'] - pd_temp['h_2019']) / pd_temp['h_2019']
+
+        for dic_name in ['20_21_diff', '20_21_perc', '19_20_diff', '19_20_perc', '20_22_diff', '20_22_perc']:
+            fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+            pd_temp_ = pd_temp[[dic_name, 'inun_d', 'inun_h']]
+            pd_temp_ = pd_temp_.dropna()
+            pd_temp__ = pd_temp_[pd_temp_['inun_d'] < 90]
+            box_list, mid_list = [], []
+            max_ = 0.
+            for q in range(90):
+                box_temp = pd_temp__[pd_temp__['inun_d'] == q][dic_name]
+                box_list.append(box_temp.sort_values()[int(box_temp.shape[0] * 0.05): int(box_temp.shape[0] * 0.95)])
+                mid_list.append(np.nanmean(box_temp))
+                max_ = np.nanmax((max_, np.max(np.absolute(box_list[-1][int(box_list[-1].shape[0] * 0.15): int(box_list[-1].shape[0] * 0.85)]))))
+            # box_temp = pd_temp__[pd_temp__['inun_d'] == 0][dic_name]
+            # box_temp = box_temp.sort_values()[int(box_temp.shape[0] * 0.1): int(box_temp.shape[0] * 0.9)]
+            box_temp = ax.boxplot(box_list, vert=True,  notch=False, widths=0.98, patch_artist=True, whis=(15, 85), showfliers=False, zorder=4, )
+
+            for patch in box_temp['boxes']:
+                patch.set_facecolor((72/256,127/256,166/256))
+                patch.set_alpha(0.5)
+                patch.set_linewidth(0.2)
+
+            for median in box_temp['medians']:
+                median.set_lw(0.8)
+                # median.set_marker('^')
+                median.set_color((255/256, 128/256, 64/256))
+
+            ax.plot(np.linspace(0, 90, 100), np.linspace(0, 0, 100), lw=2.5, c=(0, 0, 0), ls='-', zorder=5)
+            ax.scatter(np.linspace(1, 90, 90), mid_list, marker='^', s=10 ** 2, facecolor=(0.8, 0, 0), zorder=7, edgecolor=(0.0, 0.0, 0.0), linewidth=0.2)
+            # ax.scatter(pd_temp__['inun_d'], pd_temp__[dic_name], s=2 ** 2, edgecolor=(1, 1, 1), facecolor=(47/256,85/256,151/256), alpha=0.1, linewidth=0, marker='^', zorder=5)
+            # s = linregress(np.array(pd_temp_[pd_temp_['inun_d'] > 0]['inun_d'].tolist()),
+            #               np.array(pd_temp_[pd_temp_['inun_d'] > 0][dic_name].tolist()))
+
+            # popt, pcov = curve_fit(poly3, pd_temp__['inun_d'], pd_temp__[dic_name], maxfev=50000, method="trf")
+            # ax.plot(np.linspace(1, 90, 90), poly3(np.linspace(1, 90, 90), *popt), lw=2, ls='--', c=(0.8, 0, 0))
+
+            ax.plot(np.linspace(36, 90, 90), np.linspace(np.mean(mid_list[36:]), np.mean(mid_list[36:]), 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+            z = np.polyfit(np.linspace(1, 90, 90), mid_list, 15)
+            p = np.poly1d(z)
+            ax.plot(np.linspace(1, 13, 100), p(np.linspace(1, 13, 100)), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(13, 36, 90), np.linspace(p(13), p(13), 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+            print(str(dic_name))
+            print(str(p(13)))
+            print(str(np.mean(mid_list[36:])))
+            ax.set_ylim(-0.2, 0.2)
+            ax.set_yticks([-0.2,-0.1,0,0.1,0.2])
+            ax.set_yticklabels(['-20%','-10%','0%','10%','20%'])
+            ax.set_xticks([1,11,21,31,41,51,61])
+            ax.set_xticklabels(['0','10','20','30','40','50','60'])
+            # ax.set_ylim([- float(int(max_ * 20) + 1) / 20, float(int(max_ * 20) + 1) / 20])
+            ax.set_xlim([0.5, 61.5])
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig12\\{dic_name}_{sec}.png', dpi=300)
+
+
+def fig16_func():
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=18)
+    plt.rc('axes', linewidth=2)
+
+    for sec, content in zip(['all', 'yz', 'jj', 'ch', 'hh', ], [None, (0, 14482, 0, 2810), (0, 14482, 2810, 18320), (0, 14482, 18320, 30633), (0, 14482, 30633, 49071)]):
+        if not os.path.exists(f'G:\\A_veg\\Paper\\Figure\\Fig13\\{sec}.csv'):
+            if sec != 'all':
+                height_2020_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2020\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                height_2019_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2019\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                height_2021_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2021\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                height_2022_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2022\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                inunhdur_2020_ds = gdal.Open(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_inunduration\\{str(sec)}_section\\annual_inun_duration\\mean_inun_height_2020.tif')
+                inunhei_2020_ds = gdal.Open(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_inunduration\\{str(sec)}_section\\annual_inun_duration\\inun_height_2020.tif')
+
+                arr_2022 = height_2022_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_2020 = height_2020_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_2019 = height_2019_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_2021 = height_2021_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_mean_inunhei = inunhdur_2020_ds.GetRasterBand(1).ReadAsArray()
+                arr_inunhei = inunhei_2020_ds.GetRasterBand(1).ReadAsArray()
+
+                if arr_2020.shape[0] != arr_inunhei.shape[0] or arr_2020.shape[1] != arr_inunhei.shape[1]:
+                    raise Exception('Error')
+
+                dic_temp = {'h_2020': [], 'h_2019': [], 'h_2021': [], 'h_2022': [], 'mean_inun_h': [], 'inun_h': []}
+                for y in range(arr_2020.shape[0]):
+                    for x in range(arr_2020.shape[1]):
+                        if ~np.isnan(arr_2020[y, x]):
+                            dic_temp['h_2019'].append(arr_2019[y, x])
+                            dic_temp['h_2020'].append(arr_2020[y, x])
+                            dic_temp['h_2021'].append(arr_2021[y, x])
+                            dic_temp['h_2022'].append(arr_2022[y, x])
+                            dic_temp['mean_inun_h'].append(arr_mean_inunhei[y, x])
+                            dic_temp['inun_h'].append(arr_inunhei[y, x])
+                pd_temp = pd.DataFrame(dic_temp)
+                pd_temp.to_csv(f'G:\\A_veg\\Paper\\Figure\\Fig13\\{sec}.csv')
+            else:
+                for _ in ['yz', 'jj', 'ch', 'hh']:
+                    pd_temp_ = pd.read_csv(f'G:\\A_veg\\Paper\\Figure\\Fig13\\{_}.csv')
+                    if _ != 'yz':
+                        pd_all = pd.concat((pd_all, pd_temp_))
+                    else:
+                        pd_all = copy.deepcopy(pd_temp_)
+                pd_all.to_csv(f'G:\\A_veg\\Paper\\Figure\\Fig13\\{sec}.csv')
+
+        pd_temp = pd.read_csv(f'G:\\A_veg\\Paper\\Figure\\Fig13\\{sec}.csv')
+        pd_temp['20_21_diff'] = pd_temp['h_2020'] - pd_temp['h_2021']
+        pd_temp['20_21_perc'] = (pd_temp['h_2020'] - pd_temp['h_2021']) / pd_temp['h_2020']
+        pd_temp['19_20_diff'] = pd_temp['h_2020'] - pd_temp['h_2019']
+        pd_temp['19_20_perc'] = (pd_temp['h_2020'] - pd_temp['h_2019']) / pd_temp['h_2019']
+        pd_temp['mean_inun_h_per'] = pd_temp['mean_inun_h'] / pd_temp['h_2020']
+        pd_temp['max_inun_h_per'] = pd_temp['inun_h'] / pd_temp['h_2020']
+
+        for dic_name in ['20_21_diff', '20_21_perc', '19_20_diff', '19_20_perc']:
+
+            pd_temp_ = pd_temp[[dic_name, 'mean_inun_h_per', 'max_inun_h_per', 'mean_inun_h', 'inun_h', 'h_2020']]
+            pd_temp_ = pd_temp_.dropna()
+            pd_temp__ = pd_temp_[(pd_temp_['h_2020'] <= 7) & (pd_temp_['h_2020'] > 2)]
+            pd_temp__ = pd_temp__[pd_temp__['max_inun_h_per'] < 5]
+            pd_temp__ = pd_temp__[pd_temp__['max_inun_h_per'] > 0]
+            max_inun_h_list = []
+            mean_inun_h_list = []
+            abs_max_inun_h_list = []
+            abs_mean_inun_h_list = []
+            q_list, q2_list = [], []
+            q3_list, q4_list = [], []
+            for q in range(200):
+                q_list.append((q+0.5) / 40)
+                max_inun_h_list.append(np.nanmean(pd_temp__[(pd_temp__['max_inun_h_per'] >= q / 40) & (pd_temp__['max_inun_h_per'] < (q + 1) / 40)][dic_name]))
+                q2_list.append((q+0.5) / 80)
+                mean_inun_h_list.append(np.nanmean(pd_temp__[(pd_temp__['mean_inun_h_per'] >= q / 80) & (pd_temp__['mean_inun_h_per'] < (q + 1) / 80)][dic_name]))
+                q3_list.append((q+0.5) / 20)
+                abs_mean_inun_h_list.append(np.nanmean(pd_temp__[(pd_temp__['mean_inun_h'] >= q / 20) & (pd_temp__['mean_inun_h'] < (q + 1) / 20)][dic_name]))
+                q4_list.append((q+0.5) / 20)
+                abs_max_inun_h_list.append(np.nanmean(pd_temp__[(pd_temp__['inun_h'] >= q / 20) & (pd_temp__['inun_h'] < (q + 1) / 20)][dic_name]))
+
+            fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+            # ax.scatter(pd_temp__['max_inun_h_per'], pd_temp__[dic_name], zorder=1)
+            # popts, peff = curve_fit(ln_x5, pd_temp__['max_inun_h_per'], pd_temp__[dic_name], maxfev=50000)
+            # ax.plot(np.linspace(0, 5, 100), ln_x5(np.linspace(0, 5, 100), *popts), zorder=3, c=(1,0,0))
+            ax.scatter(q_list, max_inun_h_list)
+            # sns.histplot(data=pd_temp__, x="max_inun_h_per", y=dic_name, bins=50)
+            # sns.kdeplot(data=pd_temp__, x="max_inun_h_per", y=dic_name, fill=True, thresh=0, levels=10, cmap="mako",)
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig13\\max_inun_per_{dic_name}_{sec}.png', dpi=300)
+            plt.close()
+
+            fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+            # ax.scatter(pd_temp__['mean_inun_h_per'], pd_temp__[dic_name], zorder=1)
+            # popts, peff = curve_fit(ln_x3, pd_temp__['mean_inun_h_per'], pd_temp__[dic_name], maxfev=50000)
+            # ax.plot(np.linspace(0, 3, 100), ln_x3(np.linspace(0, 3, 100), *popts), zorder=3, c=(1,0,0))
+            ax.scatter(q2_list, mean_inun_h_list)
+            # sns.histplot(data=pd_temp__, x="mean_inun_h_per", y=dic_name, bins=50)
+            # sns.kdeplot(data=pd_temp__, x="mean_inun_h_per", y=dic_name, fill=True, thresh=0, levels=100, cmap="mako", )
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig13\\mean_inun_per_{dic_name}_{sec}.png', dpi=300)
+            plt.close()
+
+            fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+            # ax.scatter(pd_temp__['max_inun_h_per'], pd_temp__[dic_name], zorder=1)
+            # popts, peff = curve_fit(ln_x5, pd_temp__['max_inun_h_per'], pd_temp__[dic_name], maxfev=50000)
+            # ax.plot(np.linspace(0, 5, 100), ln_x5(np.linspace(0, 5, 100), *popts), zorder=3, c=(1,0,0))
+            ax.scatter(q3_list, abs_mean_inun_h_list)
+            # sns.histplot(data=pd_temp__, x="max_inun_h_per", y=dic_name, bins=50)
+            # sns.kdeplot(data=pd_temp__, x="max_inun_h_per", y=dic_name, fill=True, thresh=0, levels=10, cmap="mako",)
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig13\\max_inun_{dic_name}_{sec}.png', dpi=300)
+            plt.close()
+
+            fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+            # ax.scatter(pd_temp__['mean_inun_h_per'], pd_temp__[dic_name], zorder=1)
+            # popts, peff = curve_fit(ln_x3, pd_temp__['mean_inun_h_per'], pd_temp__[dic_name], maxfev=50000)
+            # ax.plot(np.linspace(0, 3, 100), ln_x3(np.linspace(0, 3, 100), *popts), zorder=3, c=(1,0,0))
+            ax.scatter(q4_list, abs_max_inun_h_list)
+            # sns.histplot(data=pd_temp__, x="mean_inun_h_per", y=dic_name, bins=50)
+            # sns.kdeplot(data=pd_temp__, x="mean_inun_h_per", y=dic_name, fill=True, thresh=0, levels=100, cmap="mako", )
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig13\\mean_inun_{dic_name}_{sec}.png', dpi=300)
+            plt.close()
+
+
+            # box_list, mid_list = [], []
+            # max_ = 0.
+            # for q in range(90):
+            #     box_temp = pd_temp__[pd_temp__['inun_d'] == q][dic_name]
+            #     box_list.append(box_temp.sort_values()[int(box_temp.shape[0] * 0.05): int(box_temp.shape[0] * 0.95)])
+            #     mid_list.append(np.nanmean(box_temp))
+            #     max_ = np.nanmax((max_, np.max(np.absolute(box_list[-1][int(box_list[-1].shape[0] * 0.15): int(box_list[-1].shape[0] * 0.85)]))))
+            # # box_temp = pd_temp__[pd_temp__['inun_d'] == 0][dic_name]
+            # # box_temp = box_temp.sort_values()[int(box_temp.shape[0] * 0.1): int(box_temp.shape[0] * 0.9)]
+            # box_temp = ax.boxplot(box_list, vert=True,  notch=False, widths=0.98, patch_artist=True, whis=(15, 85), showfliers=False, zorder=4, )
+            #
+            # for patch in box_temp['boxes']:
+            #     patch.set_facecolor((72/256,127/256,166/256))
+            #     patch.set_alpha(0.5)
+            #     patch.set_linewidth(0.2)
+            #
+            # for median in box_temp['medians']:
+            #     median.set_lw(0.8)
+            #     # median.set_marker('^')
+            #     median.set_color((255/256, 128/256, 64/256))
+            #
+            # ax.plot(np.linspace(0, 90, 100), np.linspace(0,0,100), lw=2.5, c=(0,0,0), ls='-', zorder=5)
+            # ax.scatter(np.linspace(1, 90, 90), mid_list, marker='^', s=10 ** 2, facecolor=(0.8, 0, 0), zorder=7, edgecolor=(0.0, 0.0, 0.0), linewidth=0.2)
+            # # ax.scatter(pd_temp__['inun_d'], pd_temp__[dic_name], s=2 ** 2, edgecolor=(1, 1, 1), facecolor=(47/256,85/256,151/256), alpha=0.1, linewidth=0, marker='^', zorder=5)
+            # # s = linregress(np.array(pd_temp_[pd_temp_['inun_d'] > 0]['inun_d'].tolist()),
+            # #               np.array(pd_temp_[pd_temp_['inun_d'] > 0][dic_name].tolist()))
+            #
+            # # popt, pcov = curve_fit(poly3, pd_temp__['inun_d'], pd_temp__[dic_name], maxfev=50000, method="trf")
+            # # ax.plot(np.linspace(1, 90, 90), poly3(np.linspace(1, 90, 90), *popt), lw=2, ls='--', c=(0.8, 0, 0))
+            #
+            # ax.plot(np.linspace(36, 90, 90), np.linspace(np.mean(mid_list[36:]), np.mean(mid_list[36:]), 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+            # z = np.polyfit(np.linspace(1, 90, 90), mid_list, 15)
+            # p = np.poly1d(z)
+            # ax.plot(np.linspace(1, 13, 100), p(np.linspace(1, 13, 100)), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+            # ax.plot(np.linspace(13, 36, 90), np.linspace(p(13), p(13), 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+            # print(str(dic_name))
+            # print(str(p(13)))
+            # print(str(np.mean(mid_list[36:])))
+            # ax.set_ylim(-0.2, 0.2)
+            # ax.set_yticks([-0.2,-0.1,0,0.1,0.2])
+            # ax.set_yticklabels(['-20%','-10%','0%','10%','20%'])
+            # ax.set_xticks([1,11,21,31,41,51,61])
+            # ax.set_xticklabels(['0','10','20','30','40','50','60'])
+            # # ax.set_ylim([- float(int(max_ * 20) + 1) / 20, float(int(max_ * 20) + 1) / 20])
+            # ax.set_xlim([0.5, 61.5])
+
+
+def fig17_func():
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=18)
+    plt.rc('axes', linewidth=2)
+
+    for sec, content in zip(['all'], [None]):
+        if not os.path.exists(f'G:\\A_veg\\Paper\\Figure\\Fig13\\{sec}.csv'):
+            raise Exception('error')
+
+        pd_temp = pd.read_csv(f'G:\\A_veg\\Paper\\Figure\\Fig13\\{sec}.csv')
+        pd_temp['20_21_diff'] = pd_temp['h_2020'] - pd_temp['h_2021']
+        pd_temp['20_21_perc'] = (pd_temp['h_2020'] - pd_temp['h_2021']) / pd_temp['h_2020']
+        pd_temp['19_20_diff'] = pd_temp['h_2020'] - pd_temp['h_2019']
+        pd_temp['19_20_perc'] = (pd_temp['h_2020'] - pd_temp['h_2019']) / pd_temp['h_2019']
+        pd_temp['mean_inun_h_per'] = pd_temp['mean_inun_h'] / pd_temp['h_2020']
+        pd_temp['max_inun_h_per'] = pd_temp['inun_h'] / pd_temp['h_2020']
+
+        for dic_name in ['20_21_perc']:
+
+            pd_temp_ = pd_temp[[dic_name, 'mean_inun_h_per', 'max_inun_h_per', 'mean_inun_h', 'inun_h', 'h_2020']]
+            pd_temp_ = pd_temp_.dropna()
+            pd_temp__ = pd_temp_[(pd_temp_['h_2020'] <= 5) & (pd_temp_['h_2020'] > 2)]
+            pd_temp__ = pd_temp__[pd_temp__['max_inun_h_per'] < 5]
+            pd_temp__ = pd_temp__[pd_temp__['max_inun_h_per'] > 0]
+            max_inun_h_list, max_inun_h_list_upper, max_inun_h_list_lower = [], [], []
+            mean_inun_h_list, mean_inun_h_list_upper, mean_inun_h_list_lower = [], [], []
+            abs_max_inun_h_list, abs_max_inun_h_list_upper,  abs_max_inun_h_list_lower = [], [], []
+            abs_mean_inun_h_list, abs_mean_inun_h_list_upper, abs_mean_inun_h_list_lower = [], [], []
+            pd_temp___ = pd_temp__[(pd_temp__['inun_h'] >= 2) & (pd_temp__['inun_h'] < 8)]
+            q_list, q2_list = [], []
+            q3_list, q4_list = [], []
+            for q in range(200):
+                q1 = pd_temp__[(pd_temp__['max_inun_h_per'] >= q / 40) & (pd_temp__['max_inun_h_per'] < (q + 1) / 40)]
+                q2 = pd_temp___[(pd_temp___['mean_inun_h_per'] >= q / 40) & (pd_temp___['mean_inun_h_per'] < (q + 1) / 40)]
+                q3 = pd_temp__[(pd_temp__['mean_inun_h'] >= q / 20) & (pd_temp__['mean_inun_h'] < (q + 1) / 20)]
+                q4 = pd_temp__[(pd_temp__['inun_h'] >= q / 20) & (pd_temp__['inun_h'] < (q + 1) / 20)]
+                if q1.shape[0] != 0:
+                    q_list.append((q + 0.5) / 40)
+                    max_inun_h_list.append(np.nanmean(q1[dic_name]))
+                    max_inun_h_list_upper.append(q1[dic_name].sort_values().iloc[int(q1.shape[0] * 0.7)])
+                    max_inun_h_list_lower.append(q1[dic_name].sort_values().iloc[int(q1.shape[0] * 0.3)])
+                if q2.shape[0] != 0:
+                    q2_list.append((q + 0.5) / 40)
+                    mean_inun_h_list.append(np.nanmean(q2[dic_name]))
+                    mean_inun_h_list_upper.append(q2[dic_name].sort_values().iloc[int(q2.shape[0] * 0.7)])
+                    mean_inun_h_list_lower.append(q2[dic_name].sort_values().iloc[int(q2.shape[0] * 0.3)])
+                if q3.shape[0] != 0:
+                    q3_list.append((q + 0.5) / 20)
+                    abs_mean_inun_h_list.append(np.nanmean(q3[dic_name]))
+                    abs_mean_inun_h_list_upper.append(q3[dic_name].sort_values().iloc[int(q3.shape[0] * 0.7)])
+                    abs_mean_inun_h_list_lower.append(q3[dic_name].sort_values().iloc[int(q3.shape[0] * 0.3)])
+                if q4.shape[0] != 0:
+                    q4_list.append((q + 0.5) / 20)
+                    abs_max_inun_h_list.append(np.nanmean(q4[dic_name]))
+                    abs_max_inun_h_list_upper.append(q4[dic_name].sort_values().iloc[int(q4.shape[0] * 0.7)])
+                    abs_max_inun_h_list_lower.append(q4[dic_name].sort_values().iloc[int(q4.shape[0] * 0.3)])
+
+            fig, ax = plt.subplots(figsize=(10, 8), constrained_layout=True)
+            # ax.scatter(pd_temp__['max_inun_h_per'], pd_temp__[dic_name], zorder=1)
+            # popts, peff = curve_fit(ln_x5, pd_temp__['max_inun_h_per'], pd_temp__[dic_name], maxfev=50000)
+            # ax.plot(np.linspace(0, 5, 100), ln_x5(np.linspace(0, 5, 100), *popts), zorder=3, c=(1,0,0))
+            ax.scatter(q_list[0: 120], max_inun_h_list[0: 120], zorder=4, s=10 ** 2, marker='o',  edgecolors=(0.1, 0.1, 0.1), facecolor=(1, 1, 1), alpha=1, linewidths=1)
+            ax.plot(q_list[0: 120], max_inun_h_list[0: 120], zorder=3, c=(0.1, 0.1, 0.1), lw=2.8, ls='-')
+            ax.scatter(q_list[120:], max_inun_h_list[120:], zorder=4, s=10 ** 2, marker='s', edgecolors=(0.8, 0, 0), facecolor=(1, 1, 1), alpha=1, linewidths=1)
+            ax.plot(np.linspace(3, 3, 100), np.linspace(-1, 1, 100), lw=3.5, c=(0.8, 0, 0), ls='--', zorder=9)
+            potp, pcoef = curve_fit(exp_minus, q_list[120: 180], max_inun_h_list[120: 180], maxfev=50000000, )
+            ax.plot(np.linspace(3, 4.5, 10000), exp_minus(np.linspace(3, 4.5, 10000), *potp), lw=3, ls='-',  c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(4.5, 5, 10000), np.linspace(exp_minus(4.5, *potp), exp_minus(4.5, *potp), 10000), lw=3, ls='-', c=(0.8, 0, 0), zorder=8)
+            print(str(potp))
+
+            ax.plot(np.linspace(0, 10, 100), np.linspace(0, 0, 100), lw=2, c=(0, 0, 0))
+            ax.fill_between(q_list, max_inun_h_list_upper, max_inun_h_list_lower, zorder=1, linewidth=0.8, ls='-.', ec=(0, 0, 0), fc=(0.8, 0.8, 0.8), alpha=0.5)
+            # sns.histplot(data=pd_temp__, x="max_inun_h_per", y=dic_name, bins=50)
+            # sns.kdeplot(data=pd_temp__, x="max_inun_h_per", y=dic_name, fill=True, thresh=0, levels=10, cmap="mako",)
+            ax.set_ylim([-0.15, 0.1])
+            ax.set_xlim([0, 5])
+            ax.set_yticks([-0.15, -0.1, -0.05, 0, 0.05, 0.1])
+            ax.set_yticklabels(['-15%', '-10%', '-5%', '0%', '5%', '10%'])
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig13\\req\\max_inun_per_{dic_name}_{sec}.png', dpi=300)
+            plt.close()
+
+            fig, ax = plt.subplots(figsize=(10, 8), constrained_layout=True)
+            # ax.scatter(pd_temp__['mean_inun_h_per'], pd_temp__[dic_name], zorder=1)
+            # popts, peff = curve_fit(ln_x3, pd_temp__['mean_inun_h_per'], pd_temp__[dic_name], maxfev=50000)
+            # ax.plot(np.linspace(0, 3, 100), ln_x3(np.linspace(0, 3, 100), *popts), zorder=3, c=(1,0,0))
+            ax.scatter(q2_list[0: 38], mean_inun_h_list[0: 38], zorder=4, s=10 ** 2, marker='o',  edgecolors=(0.1, 0.1, 0.1), facecolor=(1, 1, 1), alpha=1, linewidths=1)
+            ax.plot(q2_list[0: 38], mean_inun_h_list[0: 38], zorder=3, c=(0.1, 0.1, 0.1), lw=2.8, ls='-')
+            ax.scatter(q2_list[38: ], mean_inun_h_list[38:], zorder=4, s=10**2, marker='s', edgecolors=(0.8, 0, 0), facecolor=(1, 1, 1), alpha=1, linewidths=1)
+            ax.plot(np.linspace(0, 10, 100), np.linspace(0, 0, 100), lw=2, c=(0, 0, 0))
+            ax.fill_between(q2_list, mean_inun_h_list_upper, mean_inun_h_list_lower, zorder=1, linewidth=0.8, ls='-.', ec=(0, 0, 0), fc=(0.8, 0.8, 0.8), alpha=0.5)
+            # sns.histplot(data=pd_temp__, x="mean_inun_h_per", y=dic_name, bins=50)
+            # sns.kdeplot(data=pd_temp__, x="mean_inun_h_per", y=dic_name, fill=True, thresh=0, levels=100, cmap="mako", )
+            ax.set_ylim([-0.15, 0.1])
+
+            ax.set_yticks([-0.15, -0.1, -0.05, 0, 0.05, 0.1])
+            ax.set_yticklabels(['-15%', '-10%', '-5%', '0%', '5%', '10%'])
+            ax.set_xticks([0, 0.52, 1.04, 1.56, 1.976])
+            ax.set_xticklabels(['0', '0.5', '1.0', '1.5', '1.9'])
+            ax.set_xlim([0, 1.976])
+            ax.plot(np.linspace(0.988, 0.988, 100), np.linspace(-1, 1, 100), lw=3.5, c=(0.8, 0, 0), ls='--', zorder=9)
+
+            potp, pcoef = curve_fit(exp_minus2, q2_list[38: 78], mean_inun_h_list[38: 78], maxfev=50000000, )
+            ax.plot(np.linspace(1.0, 2, 10000), exp_minus(np.linspace(1.0, 2, 10000), *potp), lw=3, ls='-',c=(0.8, 0, 0), zorder=8)
+            print(str(potp))
+            # ax.plot(np.linspace(1.94, 3, 100), np.linspace(exp_minus(1.94, *potp), exp_minus(1.94, *potp), 100), lw=3, ls='-', c=(0, 0, 0.8), zorder=8)
+
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig13\\req\\mean_inun_per_{dic_name}_{sec}.png', dpi=300)
+            plt.close()
+
+            fig, ax = plt.subplots(figsize=(10, 8), constrained_layout=True)
+            # ax.scatter(pd_temp__['max_inun_h_per'], pd_temp__[dic_name], zorder=1)
+            # popts, peff = curve_fit(ln_x5, pd_temp__['max_inun_h_per'], pd_temp__[dic_name], maxfev=50000)
+            # ax.plot(np.linspace(0, 5, 100), ln_x5(np.linspace(0, 5, 100), *popts), zorder=3, c=(1,0,0))
+            ax.scatter(q3_list, abs_mean_inun_h_list, zorder=4, s=10**2, marker='o', edgecolors=(0/256, 0/256, 0.7), facecolor=(1, 1, 1), alpha=1, linewidths=1)
+            ax.fill_between(q3_list, abs_mean_inun_h_list_upper, abs_mean_inun_h_list_lower, zorder=1, linewidth=0.8, ls='-.', ec=(0, 0, 0), fc=(0.8, 0.8, 0.8), alpha=0.5)
+            ax.plot(np.linspace(0,10,100), np.linspace(0,0,100), lw=2, c=(0,0,0))
+            ax.set_ylim([-0.15, 0.1])
+            ax.set_xlim([0, 6])
+            ax.set_yticks([-0.15, -0.1, -0.05, 0, 0.05, 0.1])
+            ax.set_yticklabels(['-15%', '-10%', '-5%', '0%', '5%', '10%'])
+
+            potp, pcoef = curve_fit(ln_minus, q3_list[0: 20], abs_mean_inun_h_list[0: 20], maxfev=50000000, bounds=([0, 0, -0.2], [0.2, 10, 0.2]),p0=[0.05, 3, 0])
+            ax.plot(np.linspace(0, 10, 10000), ln_minus(np.linspace(0, 10, 10000), *potp), lw=2, ls='--', c=(0, 0, 0.8), zorder=8)
+            potp, pcoef = curve_fit(exp_minus, q3_list[18: 120], abs_mean_inun_h_list[18: 120], maxfev=50000000,)
+            ax.plot(np.linspace(0, 10, 10000), exp_minus(np.linspace(0, 10, 10000), *potp), lw=2, ls='--', c=(0, 0, 0.8), zorder=8)
+            # z = np.polyfit(q3_list, abs_mean_inun_h_list, 5)
+            # p = np.poly1d(z)
+            # ax.plot(np.linspace(0,10,100), p(np.linspace(0,10,100)), lw=2, ls='--', c=(0, 0, 0.8), zorder=8)
+            # sns.histplot(data=pd_temp__, x="max_inun_h_per", y=dic_name, bins=50)
+            # sns.kdeplot(data=pd_temp__, x="max_inun_h_per", y=dic_name, fill=True, thresh=0, levels=10, cmap="mako",)
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig13\\req\\mean_inun_{dic_name}_{sec}.png', dpi=300)
+            plt.close()
+
+            fig, ax = plt.subplots(figsize=(10, 8), constrained_layout=True)
+            # ax.scatter(pd_temp__['mean_inun_h_per'], pd_temp__[dic_name], zorder=1)
+            # popts, peff = curve_fit(ln_x3, pd_temp__['mean_inun_h_per'], pd_temp__[dic_name], maxfev=50000)
+            # ax.plot(np.linspace(0, 3, 100), ln_x3(np.linspace(0, 3, 100), *popts), zorder=3, c=(1,0,0))
+            ax.scatter(q4_list[0: 30], abs_max_inun_h_list[0: 30], zorder=4, s=10**2, marker='o', edgecolors=(0, 0, 0.7), facecolor=(1, 1, 1), alpha=1, linewidths=1)
+            ax.scatter(q4_list[30: 60], abs_max_inun_h_list[30: 60], zorder=4, s=10 ** 2, marker='o', edgecolors=(0.1, 0.1, 0.1), facecolor=(1, 1, 1), alpha=1, linewidths=1)
+            ax.scatter(q4_list[60: ], abs_max_inun_h_list[60: ], zorder=4, s=10 ** 2, marker='o',  edgecolors=(0.7, 0, 0), facecolor=(1, 1, 1), alpha=1, linewidths=1)
+            ax.fill_between(q4_list, abs_max_inun_h_list_upper, abs_max_inun_h_list_lower, zorder=1, linewidth=0.8, ls='-.', ec=(0, 0, 0), fc=(0.8, 0.8, 0.8), alpha=0.5)
+            ax.set_ylim([-0.15, 0.1])
+            ax.set_xlim([0, 10])
+            ax.set_yticks([])
+            ax.set_yticks([-0.15, -0.1, -0.05, 0, 0.05, 0.1])
+            ax.set_yticklabels(['-15%', '-10%', '-5%', '0%', '5%', '10%'])
+            ax.plot(np.linspace(0, 10, 100), np.linspace(0, 0, 100), lw=2, c=(0,0,0))
+
+            potp, pcoef = curve_fit(ln_minus, q4_list[0: 60], abs_max_inun_h_list[0: 60], maxfev=50000000, bounds=([0, 0, -0.2], [0.2, 10, 0.2]), p0=[0.05, 3, 0])
+            ax.plot(np.linspace(0, 2.28, 10000), ln_minus(np.linspace(0, 2.28, 10000), *potp), lw=3, ls='-', c=(0, 0, 0.8), zorder=8)
+            ax.plot(np.linspace(2.28, 10, 10000), ln_minus(np.linspace(2.28, 10, 10000), *potp), lw=3, ls=':', c=(0, 0, 0.8), zorder=8)
+            print(str(potp))
+
+            potp, pcoef = curve_fit(exp_minus, q4_list[30: 200], abs_max_inun_h_list[30: 200], maxfev=50000000)
+            ax.plot(np.linspace(2.28, 10, 10000), exp_minus(np.linspace(2.28, 10, 10000), *potp), lw=3, ls='-', c=(0.8, 0, 0.0), zorder=8)
+            ax.plot(np.linspace(0, 2.28, 10000), exp_minus(np.linspace(0, 2.28, 10000), *potp), lw=3, ls=':', c=(0.8, 0, 0), zorder=8)
+            print(str(potp))
+
+            ax.plot(np.linspace(1.5, 1.5, 100), np.linspace(-1, 1, 100), lw=2, c=(0, 0, 0), ls='--', zorder=9)
+            ax.plot(np.linspace(3, 3, 100), np.linspace(-1, 1, 100), lw=2, c=(0, 0, 0), ls='--', zorder=9)
+            # z = np.polyfit(q4_list, abs_max_inun_h_list, 5)
+            # p = np.poly1d(z)
+            # ax.plot(np.linspace(0,10,100), p(np.linspace(0,10,100)), lw=2, ls='--', c=(0, 0, 0.8), zorder=8)
+            # sns.histplot(data=pd_temp__, x="mean_inun_h_per", y=dic_name, bins=50)
+            # sns.kdeplot(data=pd_temp__, x="mean_inun_h_per", y=dic_name, fill=True, thresh=0, levels=100, cmap="mako", )
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig13\\req\\max_inun_{dic_name}_{sec}.png', dpi=300)
+            plt.close()
+
+
+def fig18_func():
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=18)
+    plt.rc('axes', linewidth=2)
+
+    veg_inun_itr = 20
+    itr_v = 100 / veg_inun_itr
+
+    for sec, content in zip([ 'yz', 'jj', 'ch', 'hh', 'all',], [(0, 14482, 0, 2810), (0, 14482, 2810, 18320), (0, 14482, 18320, 30633), (0, 14482, 30633, 49071),None, ]):
+        bf.create_folder(f'G:\\A_veg\\Paper\\Figure\\Fig14\\{sec}\\')
+        if not os.path.exists(f'G:\\A_veg\\Paper\\Figure\\Fig14\\{sec}.csv'):
+            if sec != 'all':
+                height_2020_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2020\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                height_2019_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2019\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                height_2021_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2021\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+                height_2022_ds = gdal.Open('G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_2022\predicted_feature_tif\\ch_out_mod0_heil8.tif')
+
+                inund_dic = {}
+                for thr in range(veg_inun_itr):
+                    __ = gdal.Open(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_inunduration\\{str(sec)}_section\\annual_inun_duration\\gt_thr\\{str(int(itr_v + itr_v * thr))}thr_inund_{str(2020)}.tif')
+                    inund_dic[f'{str(int(itr_v + itr_v * thr))}_thr'] = __.GetRasterBand(1).ReadAsArray()
+
+                arr_2022 = height_2022_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_2020 = height_2020_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_2019 = height_2019_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+                arr_2021 = height_2021_ds.GetRasterBand(1).ReadAsArray()[content[0]: content[1], content[2]: content[3]]
+
+                dic_temp = {'h_2020': [], 'h_2019': [], 'h_2021': [], 'h_2022': []}
+                for thr in range(veg_inun_itr):
+                    dic_temp[f'{str(int(itr_v + itr_v * thr))}_thr'] = []
+
+                for y in range(arr_2020.shape[0]):
+                    for x in range(arr_2020.shape[1]):
+                        if ~np.isnan(arr_2020[y, x]):
+                            dic_temp['h_2019'].append(arr_2019[y, x])
+                            dic_temp['h_2020'].append(arr_2020[y, x])
+                            dic_temp['h_2021'].append(arr_2021[y, x])
+                            dic_temp['h_2022'].append(arr_2022[y, x])
+                            for thr in range(veg_inun_itr):
+                                dic_temp[f'{str(int(itr_v + itr_v * thr))}_thr'].append(inund_dic[f'{str(int(itr_v + itr_v * thr))}_thr'][y, x])
+
+                pd_temp = pd.DataFrame(dic_temp)
+                pd_temp.to_csv(f'G:\\A_veg\\Paper\\Figure\\Fig14\\{sec}.csv')
+            else:
+                for _ in ['yz', 'jj', 'ch', 'hh']:
+                    pd_temp_ = pd.read_csv(f'G:\\A_veg\\Paper\\Figure\\Fig14\\{_}.csv')
+                    if _ != 'yz':
+                        pd_all = pd.concat((pd_all, pd_temp_))
+                    else:
+                        pd_all = copy.deepcopy(pd_temp_)
+                pd_all.to_csv(f'G:\\A_veg\\Paper\\Figure\\Fig14\\{sec}.csv')
+
+        pd_temp = pd.read_csv(f'G:\\A_veg\\Paper\\Figure\\Fig14\\{sec}.csv')
+        pd_temp['20_21_diff'] = pd_temp['h_2020'] - pd_temp['h_2021']
+        pd_temp['20_21_perc'] = (pd_temp['h_2020'] - pd_temp['h_2021']) / pd_temp['h_2020']
+        pd_temp['20_22_diff'] = pd_temp['h_2020'] - pd_temp['h_2022']
+        pd_temp['20_22_perc'] = (pd_temp['h_2020'] - pd_temp['h_2022']) / pd_temp['h_2020']
+        pd_temp['19_20_diff'] = pd_temp['h_2020'] - pd_temp['h_2019']
+        pd_temp['19_20_perc'] = (pd_temp['h_2020'] - pd_temp['h_2019']) / pd_temp['h_2019']
+
+        pd_temp = pd_temp[pd_temp['5_thr'] < 90]
+        pd_temp = pd_temp[pd_temp['5_thr'] >= 0]
+        non_inun_t = 0
+        for dic_name in [f'{str(int(itr_v + itr_v * thr))}_thr' for thr in range(veg_inun_itr)]:
+            fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+            if dic_name != f'{str(int(itr_v))}_thr':
+                pd_temp_ = pd_temp[[dic_name, '20_21_perc', f'{str(int(itr_v))}_thr']]
+            else:
+                pd_temp_ = pd_temp[[dic_name, '20_21_perc']]
+            pd_temp__ = pd_temp_.dropna()
+
+            box_list, mid_list = [], []
+            max_ = 0.
+            for q in range(90):
+                if q == 0:
+                    box_temp = pd_temp__[pd_temp__[f'{str(int(itr_v))}_thr'] == q]['20_21_perc']
+                else:
+                    box_temp = pd_temp__[pd_temp__[dic_name] == q]['20_21_perc']
+                box_list.append(box_temp.sort_values()[int(box_temp.shape[0] * 0.05): int(box_temp.shape[0] * 0.95)])
+                mid_list.append(np.nanmean(box_temp))
+                max_ = np.nanmax((max_, np.max(np.absolute(box_list[-1][int(box_list[-1].shape[0] * 0.15): int(box_list[-1].shape[0] * 0.85)]))))
+
+            if dic_name == f'{str(int(itr_v + itr_v * 0))}_thr':
+                non_inun_t = mid_list[0]
+            # box_temp = pd_temp__[pd_temp__['inun_d'] == 0][dic_name]
+            # box_temp = box_temp.sort_values()[int(box_temp.shape[0] * 0.1): int(box_temp.shape[0] * 0.9)]
+            box_temp = ax.boxplot(box_list, vert=True, notch=False, widths=0.98, patch_artist=True, whis=(15, 85),
+                                  showfliers=False, zorder=4, )
+
+            for patch in box_temp['boxes']:
+                patch.set_facecolor((72 / 256, 127 / 256, 166 / 256))
+                patch.set_alpha(0.5)
+                patch.set_linewidth(0.2)
+
+            for median in box_temp['medians']:
+                median.set_lw(0.8)
+                # median.set_marker('^')
+                median.set_color((255 / 256, 128 / 256, 64 / 256))
+
+            ax.plot(np.linspace(0, 90, 100), np.linspace(0, 0, 100), lw=2.5, c=(0, 0, 0), ls='-', zorder=5)
+            ax.scatter(np.linspace(1, 90, 90), mid_list, marker='^', s=10 ** 2, facecolor=(0.8, 0, 0), zorder=7, edgecolor=(0.0, 0.0, 0.0), linewidth=0.2)
+            # ax.scatter(pd_temp__['inun_d'], pd_temp__[dic_name], s=2 ** 2, edgecolor=(1, 1, 1), facecolor=(47/256,85/256,151/256), alpha=0.1, linewidth=0, marker='^', zorder=5)
+            # s = linregress(np.array(pd_temp_[pd_temp_['inun_d'] > 0]['inun_d'].tolist()),
+            #               np.array(pd_temp_[pd_temp_['inun_d'] > 0][dic_name].tolist()))
+
+            # popt, pcov = curve_fit(poly3, pd_temp__['inun_d'], pd_temp__[dic_name], maxfev=50000, method="trf")
+            # ax.plot(np.linspace(1, 90, 90), poly3(np.linspace(1, 90, 90), *popt), lw=2, ls='--', c=(0.8, 0, 0))
+            ax.plot(np.linspace(0, 90, 90), np.linspace(non_inun_t, non_inun_t, 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+
+            # ax.plot(np.linspace(36, 90, 90), np.linspace(np.mean(mid_list[36:]), np.mean(mid_list[36:]), 90), lw=2,
+            #         ls='--', c=(0.8, 0, 0), zorder=8)
+            # z = np.polyfit(np.linspace(1, 90, 90), mid_list, 15)
+            # p = np.poly1d(z)
+            # ax.plot(np.linspace(1, 13, 100), p(np.linspace(1, 13, 100)), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+            # ax.plot(np.linspace(13, 36, 90), np.linspace(p(13), p(13), 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+            # print(str(dic_name))
+            # print(str(p(13)))
+            print(str(np.mean(mid_list[36:])))
+            ax.set_ylim(-0.2, 0.2)
+            ax.set_yticks([-0.2, -0.1, 0, 0.1, 0.2])
+            ax.set_yticklabels(['-20%', '-10%', '0%', '10%', '20%'])
+            ax.set_xticks([1, 11, 21, 31, 41, 51, 61])
+            ax.set_xticklabels(['0', '10', '20', '30', '40', '50', '60'])
+            # ax.set_ylim([- float(int(max_ * 20) + 1) / 20, float(int(max_ * 20) + 1) / 20])
+            ax.set_xlim([0.5, 61.5])
+            plt.savefig(f'G:\A_veg\Paper\Figure\Fig14\\{sec}\\{dic_name}_{sec}.png', dpi=300)
+
+
+def gif_func():
+    inundated_dc = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_datacube\\')
+    rs_dc = RS_dcs(inundated_dc)
+    year_list = list(set([int(np.floor(_ // 10000)) for _ in rs_dc.Landsatdc_doy_list]))
+    ds = gdal.Open('G:\\A_Landsat_veg\\ROI_map\\floodplain_2020_map.TIF')
+    for year in year_list:
+        list__ = []
+        for _ in rs_dc.Landsatdc_doy_list:
+            if int(np.floor(_ // 10000)) == year:
+                list__.append(rs_dc.Landsatdc_doy_list.index(_))
+        arr_temp = rs_dc.dcs[0][:, :, min(list__): max(list__) + 1]
+        arr_temp = arr_temp.astype(np.float32)
+        arr_temp[arr_temp == 0] = np.nan
+        arr_temp = np.nanmean(arr_temp, axis=2)
+        bf.write_raster(ds, arr_temp, 'G:\\A_Landsat_veg\\Annual_ndvi\\', f'{str(year)}.TIF')
+
+
+    a = 1
+
+
+fig18_func()
 
 
 

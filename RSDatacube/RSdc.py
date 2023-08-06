@@ -1,6 +1,7 @@
 # coding=utf-8
 import os
-
+import pandas as pd
+import basic_function
 from basic_function import Path
 import concurrent.futures
 from itertools import repeat
@@ -2373,11 +2374,9 @@ class RS_dcs(object):
                             pass
 
                     if isinstance(self.dcs[self._pheyear_list.index(year_temp)], NDSparseMatrix):
-                        pheme_array = self.dcs[self._pheyear_list.index(year_temp)].SM_group[
-                            f'{str(year_temp)}_peak_doy'].toarray()
+                        pheme_array = self.dcs[self._pheyear_list.index(year_temp)].SM_group[f'{str(year_temp)}_peak_doy'].toarray()
                     else:
-                        pheme_array = self.dcs[self._pheyear_list.index(year_temp)][:, :,
-                                      self._doys_backup_[self._pheyear_list.index(year_temp)].index(
+                        pheme_array = self.dcs[self._pheyear_list.index(year_temp)][:, :, self._doys_backup_[self._pheyear_list.index(year_temp)].index(
                                           f'{str(year_temp)}_peak_doy')]
 
                     pheme_array[pheme_array == 0] = np.nan
@@ -2494,13 +2493,10 @@ class RS_dcs(object):
                                     self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_{_}'],
                                     SM_namelist=[f'{str(self._pheyear_list[phepos])}_{_}'])
                             else:
-                                phedc_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index(
-                                    [f'{str(self._pheyear_list[phepos])}_{_}'])]]
+                                phedc_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_{_}'])]]
                         else:
                             if isinstance(self.dcs[phepos], NDSparseMatrix):
-                                phedc_reconstructed = phedc_reconstructed.append(
-                                    self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_{_}'],
-                                    name=[f'{str(self._pheyear_list[phepos])}_{_}'])
+                                phedc_reconstructed = phedc_reconstructed.append(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_{_}'], name=[f'{str(self._pheyear_list[phepos])}_{_}'])
                             else:
                                 phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_{_}'])]]),
                                                                      axis=2)
@@ -2794,7 +2790,7 @@ class RS_dcs(object):
                 nodata_value = self._Nodata_value_list[self._pheyear_list.index(year_)]
 
                 if self._sparse_matrix_list[self._pheyear_list.index(year_)]:
-                    arr_base = dc_base.SM_group[f'{str(year_)}_{phemetric_}'].toarray()
+                    arr_base = dc_base.SM_group[f'{str(year_)}_{phemetric_}'][:, 10200:16537].toarray()
                     arr_base = arr_base.flatten()
                     if np.isnan(nodata_value):
                         arr_base = np.delete(arr_base, np.isnan(arr_base))
@@ -2809,6 +2805,10 @@ class RS_dcs(object):
             plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
             plt.rc('font', size=18)
             plt.rc('axes', linewidth=2)
+
+            print(str(np.nanmean(np.array(pheme_mean[2:9]))))
+            print(str(np.nanmean(np.array(pheme_mean[9:19]))))
+            print(str(np.nanmean(np.array(pheme_mean[19:38]))))
 
             fig, ax = plt.subplots(figsize=(23, 3.5), constrained_layout=True)
             box = ax.boxplot(pheme_all, vert = True, labels=[str(_) for _ in year_range],  notch=True, widths=0.5, patch_artist=True, whis=(10, 90), showfliers=False, zorder=4)
@@ -2831,15 +2831,23 @@ class RS_dcs(object):
             plt.setp(box['boxes'], color=(89 / 256, 117 / 256, 164 / 256), edgecolor=(60 / 256, 60 / 256, 60 / 256), alpha=0.4)
             plt.savefig(f'{output_path}{phemetric_}_var\\fig.png', dpi=300)
 
+    def indi_timelapse_gif(self, timeunit):
+        pass
+
     def est_inunduration(self, inundated_index: str, output_path: str, water_level_data,
-                         nan_value=0, inundated_value=2, generate_inundation_status_factor=True, process_extent=None,
-                         generate_max_water_level_factor=False, generate_inundation_beg_wl=True, generate_recession_period=True,
-                         manual_remove_date=[]):
+                         nan_value=0, inundated_value=2, generate_inundation_status_factor:bool=True, process_extent=None,
+                         generate_max_water_level_factor:bool=False, generate_min_inun_wl:bool=True, generate_inun_duration:bool=True,
+                         manual_remove_date:list=[], roi_name=None, veg_height_dic:dict={}, veg_inun_itr:int=20,
+                         generate_optimised_gt_thr:bool=True):
 
         # Check the var
         output_path = Path(output_path).path_name
         if not os.path.exists(f'{output_path}'):
             bf.create_folder(f'{output_path}')
+
+        if roi_name is not None:
+            output_path = output_path + f'{str(roi_name)}\\'
+            bf.create_folder(output_path)
 
         if not isinstance(water_level_data, np.ndarray):
             try:
@@ -2886,11 +2894,11 @@ class RS_dcs(object):
 
         water_level_data[:, 0] = water_level_data[:, 0].astype(np.int32)
         date_range = [np.min(water_level_data[:, 0]), np.max(water_level_data[:, 0])]
+        year_list = np.unique(water_level_data[:, 0] // 10000).astype(np.int32)
 
         # Create water level trend list
         if not os.path.exists(output_path + '\\water_level_trend.csv'):
             wl_trend_list = []
-            year_list = np.unique(water_level_data[:, 0] // 10000).astype(np.int32)
             for year in year_list:
                 recession_turn = 0
                 for data_size in range(1, water_level_data.shape[0]):
@@ -3010,8 +3018,7 @@ class RS_dcs(object):
                     outband.WriteArray(inundated_frequency)
                     outband.SetNoDataValue(-2)
                     outband.FlushCache()
-                    outband = None
-                    outds = None
+                    outband, outds = None, None
 
                 pbar.update()
 
@@ -3101,9 +3108,7 @@ class RS_dcs(object):
                         area = geom.GetArea()
                         feature.SetField("area", area)
                         layer.SetFeature(feature)
-
-                    dst_ds = None
-                    pw_ds = None
+                    dst_ds, pw_ds = None, None
 
                 pbar.update()
 
@@ -3220,12 +3225,9 @@ class RS_dcs(object):
                         print(traceback.format_exc())
                     pbar.update()
 
-        if generate_inundation_beg_wl:
+        if generate_min_inun_wl:
 
             # Generate annual inundation pattern
-            annual_inun_folder = output_path + 'annual_inun_ras\\'
-            bf.create_folder(annual_inun_folder)
-
             pw_ds = gdal.Open(output_path + 'perwater_ras\\permanent_water_fixed.tif')
             permanent_water_arr = pw_ds.GetRasterBand(1).ReadAsArray()
 
@@ -3239,18 +3241,27 @@ class RS_dcs(object):
             with tqdm(total=len(year_list), desc=f'Pre-Generate annual min inundated water level and annual max noninundated water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
 
                 for _ in year_list:
+
+                    # Create folder
+                    bf.create_folder(annual_inform_folder + f'{str(_)}\\')
                     if not os.path.exists(annual_inform_folder + f'{str(_)}\\max_noninun_wl_{str(_)}.tif') or not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}.tif') \
-                            or not os.path.exists(annual_inform_folder + f'{str(_)}\\trend_{str(_)}.tif') or not os.path.exists(annual_inform_folder + f'{str(_)}\\annual_inunarea_{str(_)}.tif'):
+                            or not os.path.exists(annual_inform_folder + f'{str(_)}\\trend_{str(_)}.tif') or not os.path.exists(annual_inform_folder + f'{str(_)}\\annual_inunarea_{str(_)}.tif')\
+                            or not os.path.exists(annual_inform_folder + f'{str(_)}\\max_noninun_date_{str(_)}.tif') or not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_date_{str(_)}.tif'):
+
+                        # Define arr
                         max_noninun_wl_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
                         min_inun_wl_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 1000
                         trend_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                        max_noninun_date_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
+                        min_inun_date_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
 
+                        # Generate min inundation wl and max noninundation wl
                         for __ in doy_list:
                             if int(np.floor(__ // 10000)) == _ and __ not in manual_remove_date:
                                 if __ in water_level_data:
                                     wl_temp = water_level_data[np.argwhere(water_level_data == __)[0, 0], 1]
                                     max_noninun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
-                                    min_inun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 100
+                                    min_inun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 1000
                                     if isinstance(inundated_dc, NDSparseMatrix):
                                         inundated_arr = inundated_dc.SM_group[__].toarray()
                                     else:
@@ -3262,17 +3273,22 @@ class RS_dcs(object):
                                     max_noninun_wl_arr = np.nanmax([max_noninun_wl_arr, max_noninun_wl_arr_temp], axis=0)
                                     min_inun_wl_arr = np.nanmin([min_inun_wl_arr, min_inun_wl_arr_temp], axis=0)
 
+                                    max_noninun_date_arr[max_noninun_wl_arr == wl_temp] = __
+                                    min_inun_date_arr[min_inun_wl_arr == wl_temp] = __
+
                                 if __ in wl_trend_list:
                                     trend_temp = wl_trend_list[np.argwhere(wl_trend_list == __)[0, 0], 1]
                                     trend_arr[min_inun_wl_arr == wl_temp] = trend_temp
 
                         max_noninun_wl_arr[roi_arr == -32768] = np.nan
                         min_inun_wl_arr[roi_arr == -32768] = np.nan
-                        min_inun_wl_arr[min_inun_wl_arr == 100] = np.nan
+                        min_inun_wl_arr[min_inun_wl_arr == 1000] = np.nan
                         max_noninun_wl_arr[max_noninun_wl_arr == -1] = np.nan
 
                         bf.write_raster(pw_ds, max_noninun_wl_arr, annual_inform_folder, f'{str(_)}\\max_noninun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
                         bf.write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder, f'{str(_)}\\min_inun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                        bf.write_raster(pw_ds, min_inun_date_arr, annual_inform_folder, f'{str(_)}\\min_inun_date_{str(_)}.tif', raster_datatype=gdal.GDT_Int32, nodatavalue=0)
+                        bf.write_raster(pw_ds, max_noninun_date_arr, annual_inform_folder, f'{str(_)}\\max_noninun_date_{str(_)}.tif', raster_datatype=gdal.GDT_Int32, nodatavalue=0)
                         bf.write_raster(pw_ds, trend_arr, annual_inform_folder, f'{str(_)}\\trend_{str(_)}.tif', raster_datatype=gdal.GDT_Int32, nodatavalue=0)
 
                         min_inun_wl_arr[~np.isnan(min_inun_wl_arr)] = 1
@@ -3363,12 +3379,15 @@ class RS_dcs(object):
                     if len(files) == 1:
 
                         drv = ogr.GetDriverByName("ESRI Shapefile")
-                        ras_ds = gdal.Open(files[0])
-                        ras_arr = ras_ds.GetRasterBand(1).ReadAsArray()
-                        ras_arr = ras_arr * 100
-                        ras_arr[np.isnan(ras_arr)] = -2
+                        if os.path.exists(annual_inform_folder + str(_) + '\\' + f'min_inun_wl_{str(_)}4poly.tif'):
+                            pass
+                        else:
+                            ras_ds = gdal.Open(files[0])
+                            ras_arr = ras_ds.GetRasterBand(1).ReadAsArray()
+                            ras_arr = ras_arr * 100
+                            ras_arr[np.isnan(ras_arr)] = -2
+                            bf.write_raster(ras_ds, ras_arr, annual_inform_folder + str(_) + '\\', f'min_inun_wl_{str(_)}4poly.tif')
 
-                        bf.write_raster(ras_ds, ras_arr, annual_inform_folder + str(_) + '\\', f'min_inun_wl_{str(_)}4poly.tif')
                         ras_ds = gdal.Open(annual_inform_folder + str(_) + '\\' + f'min_inun_wl_{str(_)}4poly.tif')
                         if not os.path.exists(annual_inunshp_folder + 'wl_' + str(_) + ".shp"):
 
@@ -3393,8 +3412,8 @@ class RS_dcs(object):
                             for feature in dst_layer:
                                 feature.SetField("wl_id", wl_id)
                                 dst_layer.SetFeature(feature)
-                                feature = None
                                 wl_id += 1
+                                feature = None
 
                             dst_ds, ras_ds = None, None
                     else:
@@ -3437,9 +3456,10 @@ class RS_dcs(object):
                         gdal.RasterizeLayer(target_ds2, [1], layer2, options=["ATTRIBUTE=wl_id"])
 
                         wl_id_arr = target_ds2.GetRasterBand(1).ReadAsArray()
+                        wl_id_arr_acc = np.zeros_like(wl_id_arr)
                         inun_id_arr = target_ds.GetRasterBand(3).ReadAsArray()
                         inun_id_list = np.unique(inun_id_arr.flatten())
-                        issue_wl, issue_wl_id = {}, {}
+                        issue_wl = {}
 
                         with tqdm(total=len(inun_id_list), desc=f'Get issued water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
                             for inun_id_ in inun_id_list:
@@ -3456,12 +3476,14 @@ class RS_dcs(object):
                                     wl_id_arr_t = wl_id_arr[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2]
                                     min_wl_arr_list = np.unique(min_wl_arr_t.flatten())
                                     min_wl_arr_list = np.sort(np.delete(min_wl_arr_list, np.argwhere(np.logical_or(np.isnan(min_wl_arr_list), min_wl_arr_list == -1))))
+                                    wl_id_arr_acc_t = np.zeros_like(wl_id_arr_t)
 
                                     # Get all issued wl
                                     for wl_arr in min_wl_arr_list:
                                         wl_id_arr_tt = copy.copy(wl_id_arr_t)
-                                        wl_id_arr_tt[min_wl_arr_t != wl_arr] = np.nan
-                                        wl_id_list = np.remove(np.unique(wl_id_arr_tt.flatten()), np.nan)
+                                        wl_id_arr_tt[min_wl_arr_t != wl_arr] = 0
+                                        wl_id_list = np.delete(np.unique(wl_id_arr_tt.flatten()), 0)
+
                                         for wl_id_temp in wl_id_list:
                                             wl_pos = np.argwhere(np.logical_and(min_wl_arr_t == wl_arr, wl_id_arr_tt == wl_id_temp))
                                             bound_wl = np.array([])
@@ -3478,29 +3500,20 @@ class RS_dcs(object):
                                                 else:
                                                     if wl_arr not in issue_wl[inun_id_]:
                                                         issue_wl[inun_id_].append(wl_arr)
-
-                                                if inun_id_ + '_' + wl_arr not in issue_wl_id.keys():
-                                                    issue_wl_id[str(inun_id_) + '_' + str(wl_arr)] = [wl_id_temp]
-                                                else:
-                                                    issue_wl_id[str(inun_id_) + '_' + str(wl_arr)].append(wl_id_temp)
+                                                wl_id_arr_acc_t[np.logical_and(min_wl_arr_t == wl_arr, wl_id_arr_tt == wl_id_temp)] = 1
+                                    wl_id_arr_acc[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] = wl_id_arr_acc[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] + wl_id_arr_acc_t
                                 pbar1.update()
+                            bf.write_raster(min_wl_ds, wl_id_arr_acc, annual_inform_folder, f'{str(_)}\\annual_issued_area.tif', raster_datatype=gdal.GDT_Int16)
 
                         with tqdm(total=len(issue_wl.keys()), desc=f'Process inundation water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
                             for iss_ in issue_wl.keys():
 
                                 # Generate the mask
-                                mask_temp = []
-                                for wl__ in issue_wl[iss_]:
-                                    if len(issue_wl_id[str(iss_) + '_' + str(wl__)]) == 1:
-                                        mask_temp_ = wl_id_arr == issue_wl_id[str(iss_) + '_' + str(wl__)][0]
-                                    else:
-                                        mask_temp_ = np.logical_or(*[wl_id_arr == __ for __ in issue_wl_id[str(iss_) + '_' + str(wl__)]])
-                                    mask_temp.append(np.logical_and(mask_temp_, min_inun_wl_arr == wl__))
-
-                                if len(mask_temp) == 1:
-                                    mask_temp = np.logical_and(inun_id_arr == iss_, mask_temp[0])
+                                if len(issue_wl[iss_]) == 1:
+                                    mask_temp = min_inun_wl_arr == issue_wl[iss_][0]
                                 else:
-                                    mask_temp = np.logical_and(inun_id_arr == iss_, np.logical_or(*mask_temp))
+                                    mask_temp = np.sum(np.stack([min_inun_wl_arr == wl__ for wl__ in issue_wl[iss_]], axis=2), axis=2)
+                                mask_temp = (inun_id_arr == iss_) * (mask_temp >= 1) * (wl_id_arr_acc > 0)
 
                                 offset_all, bound_all = np.min(np.argwhere(mask_temp == 1), axis=0), np.max(np.argwhere(mask_temp == 1), axis=0)
                                 min_inun_wl_arr__ = np.zeros([bound_all[0] + 1 - offset_all[0], bound_all[1] + 1 - offset_all[1]]) + 1000
@@ -3512,18 +3525,25 @@ class RS_dcs(object):
                                     if int(np.floor(__ // 10000)) == _ and __ not in manual_remove_date:
                                         if __ in water_level_data:
                                             wl_temp = water_level_data[np.argwhere(water_level_data == __)[0, 0], 1]
-                                            if wl_temp not in issue_wl_temp:
-                                                min_inun_wl_arr_temp = np.zeros([bound_all[0] + 1 - offset_all[0], bound_all[1] + 1 - offset_all[1]]) + 1000
-                                                if isinstance(inundated_dc, NDSparseMatrix):
-                                                    inundated_arr = inundated_dc[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1, inundated_dc.SM_namelist.index(__)]
-                                                else:
-                                                    inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape([inundated_dc.shape[0], inundated_dc.shape[1]])
+                                            min_inun_wl_arr_temp = np.zeros([bound_all[0] + 1 - offset_all[0], bound_all[1] + 1 - offset_all[1]]) + 1000
+                                            min_inun_wl_arr_t = min_inun_wl_arr[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1]
+                                            mask_temp_t = mask_temp[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1]
 
-                                                min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
-                                                min_inun_wl_arr__ = np.nanmin([min_inun_wl_arr__, min_inun_wl_arr_temp], axis=0)
+                                            if isinstance(inundated_dc, NDSparseMatrix):
+                                                inundated_arr = inundated_dc[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1, inundated_dc.SM_namelist.index(__)]
                                             else:
-                                                pass
+                                                inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape([inundated_dc.shape[0], inundated_dc.shape[1]])
 
+                                            if wl_temp not in issue_wl_temp:
+                                                min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
+
+                                            elif wl_temp in issue_wl_temp:
+                                                min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
+                                                min_inun_wl_arr_temp[np.logical_and(mask_temp_t == 1, min_inun_wl_arr_t == wl_temp)] = 1000
+
+                                            min_inun_wl_arr__ = np.nanmin([min_inun_wl_arr__, min_inun_wl_arr_temp], axis=0)
+
+                                min_inun_wl_arr__[min_inun_wl_arr__ == 1000] = np.nan
                                 min_all[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1] = min_inun_wl_arr__
                                 min_inun_wl_arr[mask_temp] = min_all[mask_temp]
                                 pbar1.update()
@@ -3539,7 +3559,7 @@ class RS_dcs(object):
             annual_inform_folder = output_path + 'annual_inun_wl_ras\\'
             bf.create_folder(annual_inform_folder)
 
-            with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            with tqdm(total=len(year_list), desc=f'Interpolate the minimum inundation water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in year_list:
                     if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif'):
                         # Open the annual inundation shpfile and annual min inundation water level ras
@@ -3559,11 +3579,11 @@ class RS_dcs(object):
                         max_noninun_wl_arr = max_noninun_wl_ds.GetRasterBand(1).ReadAsArray()
 
                         # Create the ras
-                        target_ds = gdal.GetDriverByName('GTiff').Create(annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 3, gdal.GDT_Int32)
+                        target_ds = gdal.GetDriverByName('GTiff').Create(annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}_v4.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 3, gdal.GDT_Int32)
                         target_ds.SetGeoTransform(pw_ds.GetGeoTransform())
                         target_ds.SetProjection(pw_ds.GetProjection())
 
-                        for __ in range(1, 7):
+                        for __ in range(1, 3):
                             band = target_ds.GetRasterBand(__)
                             band.SetNoDataValue(-2)
 
@@ -3573,7 +3593,8 @@ class RS_dcs(object):
 
                         inun_id_arr = target_ds.GetRasterBand(3).ReadAsArray()
                         inun_id_list = np.unique(inun_id_arr.flatten())
-                        with tqdm(total=len(inun_id_list), desc=f'Refine the inundation water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
+
+                        with tqdm(total=len(inun_id_list), desc=f'Refine the inundation water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar3:
                             for inun_id_ in inun_id_list:
                                 if inun_id_ != 0:
 
@@ -3701,15 +3722,18 @@ class RS_dcs(object):
 
                                             if len(pos_x_em_list) != 0:
                                                 pos_x_em_list, pos_y_em_list = np.array(pos_x_em_list), np.array(pos_y_em_list)
-                                                pos_x_mid = int(np.median(pos_x_em_list))
-                                                pos_y_mid = int(np.median(pos_y_em_list[pos_x_em_list == pos_x_mid]))
-                                                min_wl_arr_refined_t[pos_y_mid, pos_x_mid] = min_wl_
+                                                pos_x_mid = int(np.nanmedian(pos_x_em_list))
+                                                if pos_x_mid in pos_x_em_list:
+                                                    pos_y_mid = int(np.nanmedian(pos_y_em_list[pos_x_em_list == pos_x_mid]))
+                                                    min_wl_arr_refined_t[pos_y_mid, pos_x_mid] = min_wl_
+                                                else:
+                                                    min_wl_arr_refined_t[pos_y_em_list[int(pos_y_em_list.shape[0]/2)], pos_x_em_list[int(pos_x_em_list.shape[0]/2)]] = min_wl_
 
                                     time3 = time.time() - s_t
                                     s_t = time.time()
 
                                     # Get wl
-                                    if len(inun_inform) > 5000000:
+                                    if len(inun_inform) > 5000000000:
                                         # MP get wl
                                         with concurrent.futures.ProcessPoolExecutor() as exe:
                                             res = exe.map(assign_wl, inun_inform, repeat(min_wl_arr_refined_t))
@@ -3733,8 +3757,9 @@ class RS_dcs(object):
                                             min_wl_, pos_y, pos_x, status, wl_refined = inun__
                                             if status == 0 and np.isnan(wl_refined):
                                                 wl_centre = min_wl_
-                                                upper_wl_dis, lower_wl_dis, lower_wl = np.nan, np.nan, np.nan
+                                                upper_wl_dis, lower_wl_dis, lower_wl = [], [], []
 
+                                                # Find 10 nearest points
                                                 for r in range(1, 100):
                                                     pos_y_lower = 0 if pos_y - r < 0 else pos_y - r
                                                     pos_x_lower = 0 if pos_x - r < 0 else pos_x - r
@@ -3742,72 +3767,259 @@ class RS_dcs(object):
                                                     pos_x_upper = min_wl_arr_refined_t.shape[1] if pos_x + r + 1 > min_wl_arr_refined_t.shape[1] else pos_x + r + 1
 
                                                     arr_tt = min_wl_arr_refined_t[pos_y_lower: pos_y_upper, pos_x_lower: pos_x_upper]
-                                                    if np.isnan(upper_wl_dis):
+                                                    arr_tt[pos_y_lower - 1: pos_y_upper - 1, pos_x_lower - 1: pos_x_upper - 1] = np.nan
+                                                    if len(upper_wl_dis) < 10:
                                                         upper_wl_dis_list = []
                                                         if (arr_tt == wl_centre).any():
                                                             for pos_ttt in np.argwhere(arr_tt == wl_centre):
-                                                                upper_wl_dis_list.append(
-                                                                    np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2))
-                                                            upper_wl_dis = min(upper_wl_dis_list)
+                                                                upper_wl_dis_list.append(np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2))
+                                                            upper_wl_dis_list.sort()
+                                                            if len(upper_wl_dis_list) > 10 - len(upper_wl_dis):
+                                                                upper_wl_dis.extend(upper_wl_dis_list[:10 - len(upper_wl_dis)])
+                                                            else:
+                                                                upper_wl_dis.extend(upper_wl_dis_list)
 
-                                                    if np.isnan(lower_wl_dis):
-                                                        lower_wl_dis_list = []
+                                                    if len(lower_wl_dis) < 10:
                                                         lower_wl_dat_list = []
-                                                        lower_wl_dis_list2 = []
                                                         arr_tt[arr_tt < 0] = 100000
                                                         if (arr_tt < wl_centre).any():
                                                             for pos_ttt in np.argwhere(arr_tt <= wl_centre):
-                                                                lower_wl_dis_list.append(
-                                                                    np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2))
-                                                                lower_wl_dat_list.append(arr_tt[pos_ttt[0], pos_ttt[1]])
+                                                                lower_wl_dat_list.append([arr_tt[pos_ttt[0], pos_ttt[1]], np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2)])
+                                                            lower_wl_dat_list.sort()
+                                                            if len(lower_wl_dat_list) > 10 - len(lower_wl_dis):
+                                                                lower_wl_dis.extend([lower_wl_dat_list[_][1] for _ in range(10 - len(lower_wl_dis))])
+                                                                lower_wl.extend([lower_wl_dat_list[_][0] for _ in range(10 - len(lower_wl))])
+                                                            else:
+                                                                lower_wl_dis.extend([lower_wl_dat_list[_][1] for _ in range(len(lower_wl_dat_list))])
+                                                                lower_wl.extend([lower_wl_dat_list[_][0] for _ in range(len(lower_wl_dat_list))])
 
-                                                            lower_wl = set(lower_wl_dat_list)
-                                                            lower_wl = min(lower_wl)
-                                                            for ___ in range(len(lower_wl_dat_list)):
-                                                                if lower_wl_dat_list[___] == lower_wl:
-                                                                    lower_wl_dis_list2.append(lower_wl_dis_list[___])
-                                                            lower_wl_dis = min(lower_wl_dis_list2)
-
-                                                    if ~np.isnan(upper_wl_dis) and ~np.isnan(lower_wl_dis) and ~np.isnan(lower_wl):
+                                                    if len(upper_wl_dis) == 10 and len(lower_wl_dis) == 10 and len(lower_wl) == 10:
                                                         break
+                                                if len(upper_wl_dis) == 0:
+                                                    upper_wl_dis = [0.00001]
+                                                elif len(lower_wl_dis) == 0:
+                                                    lower_wl_dis = [0.00001]
+                                                    lower_wl = [wl_centre]
+                                                elif len(upper_wl_dis) != len(lower_wl_dis):
+                                                    size_ = min(len(upper_wl_dis), len(lower_wl_dis))
+                                                    upper_wl_dis = upper_wl_dis[: size_]
+                                                    lower_wl_dis = lower_wl_dis[: size_]
+                                                    lower_wl = lower_wl[: size_]
 
-                                                min_wl_arr_refined_t[pos_y, pos_x] = ((lower_wl * ((1 / lower_wl_dis) ** 1.5)) + (wl_centre * ((1 / upper_wl_dis) ** 1.5))) / (((1 / lower_wl_dis) ** 1.5) + ((1 / upper_wl_dis) ** 1.5))
+                                                upper_wl_dis = [(1 / _) ** 2 for _ in upper_wl_dis]
+                                                lower_wl_dis = [(1 / _) ** 2 for _ in lower_wl_dis]
+                                                upper_wl = [wl_centre * upper_wl_dis[_] for _ in range(len(upper_wl_dis))]
+                                                lower_wl = [lower_wl[_] * lower_wl_dis[_] for _ in range(len(lower_wl_dis))]
+
+                                                min_wl_arr_refined_t[pos_y, pos_x] = sum([sum(upper_wl), sum(lower_wl)]) / sum([sum(upper_wl_dis), sum(lower_wl_dis)])
 
                                     min_wl_arr_refined_t[np.isnan(min_wl_arr_refined_t)] = 0
                                     min_wl_arr_refined[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] = min_wl_arr_refined[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] + min_wl_arr_refined_t
                                     time4 = time.time() - s_t
 
                                     # print(f'P1: {str(time1)[0:6]}s, P2: {str(time2)[0:6]}s, P3: {str(time3)[0:6]}s, P4: {str(time4)[0:6]}s')
-                                pbar1.update()
+                                pbar3.update()
 
-                        min_wl_arr_refined[permanent_water_arr == 1] = -1
-                        min_wl_arr_refined[permanent_water_arr == -2] = -2
-                        bf.write_raster(min_wl_ds, min_wl_arr_refined, annual_inform_folder, f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
-                pbar.update()
+                            min_wl_arr_refined[permanent_water_arr == 1] = -1
+                            min_wl_arr_refined[permanent_water_arr == -2] = -2
+                            bf.write_raster(min_wl_ds, min_wl_arr_refined, annual_inform_folder, f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+                    pbar.update()
 
-            # target_ds = None
+        if generate_inun_duration:
+            annual_inform_folder = output_path + 'annual_inun_wl_ras\\'
+            annual_inunduration_folder = output_path + 'annual_inun_duration\\'
+            annual_inunthr_folder = output_path + 'annual_inun_duration\\gt_thr\\'
+            annual_inunfig_folder = output_path + 'annual_inun_duration\\gt_thr_fig\\'
+            with tqdm(total=len(year_list), desc=f'Calculate inundation duration and height', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for _ in year_list:
+                    if not os.path.exists(annual_inunduration_folder + f'inun_duration_{str(_)}.tif') or not os.path.exists(annual_inunduration_folder + f'inun_height_{str(_)}.tif') or not os.path.exists(annual_inunduration_folder + f'mean_inun_height_{str(_)}.tif'):
+                        bf.create_folder(annual_inunduration_folder)
+                        if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif'):
+                            raise Exception('Please refine the inundation water level!')
+                        else:
+                            min_inun_ds = gdal.Open(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif')
+                            min_inun_arr_ori = min_inun_ds.GetRasterBand(1).ReadAsArray()
+                            min_inun_arr = copy.deepcopy(min_inun_arr_ori)
+                            min_inun_arr[min_inun_arr == 0] = np.nan
+                            min_inun_arr[min_inun_arr == -2] = np.nan
+                            min_inun_arr[min_inun_arr == -1] = np.nan
+                            inun_duration = np.zeros_like(min_inun_arr)
+                            inun_height = np.zeros_like(min_inun_arr)
+                            max_wl = 0
+                            acc_wl = np.zeros_like(min_inun_arr)
+                            for __ in range(water_level_data.shape[0]):
+                                if int(water_level_data[__, 0] // 10000) == _:
+                                    inun_duration = inun_duration + (water_level_data[__, 1] > min_inun_arr).astype(np.float32)
+                                    max_wl = np.max([max_wl, water_level_data[__, 1]])
+                                    wl_arr_temp = (water_level_data[__, 1] - min_inun_arr)
+                                    wl_arr_temp[wl_arr_temp < 0] = 0
+                                    acc_wl = acc_wl + (water_level_data[__, 1] > min_inun_arr).astype(np.float32) * wl_arr_temp
 
-            # Refine the lowinundation
-            #     if
-            #         if isinstance(inundated_dc, NDSparseMatrix):
-            #             inundated_dc.SM_group[__]
-            #
-            # inun_sta_arr = target_ds.GetRasterBand(1).ReadAsArray()
-            # inun_id_arr = target_ds.GetRasterBand(3).ReadAsArray()
-            # inun_id_list = np.unique(inun_id_arr.flatten())
-            #
-            # for y_ in range(inun_sta_arr.shape[0]):
-            #     for x_ in range(inun_sta_arr.shape[1]):
-            #         if inun_sta_arr[y_, x_] == 1:
-            #
-            #
-            # for id_ in inun_id_list:
-            #     if id_ != 0:
-            #         inun_pos = np.argwhere(inun_id_arr == id_)
-            #         for pos in inun_pos:
+                            acc_wl = acc_wl / inun_duration
 
-        if generate_recession_period:
-            pass
+                            inun_height = max_wl - min_inun_arr
+                            inun_height[inun_height < 0] = 0
+                            inun_duration[min_inun_arr_ori == 0] = 0
+                            inun_duration[min_inun_arr_ori == -1] = -1
+                            inun_duration[min_inun_arr_ori == -2] = -2
+
+                            inun_height[min_inun_arr_ori == 0] = 0
+                            inun_height[min_inun_arr_ori == -1] = -1
+                            inun_height[min_inun_arr_ori == -2] = -2
+
+                            acc_wl[np.isnan(acc_wl)] = 0
+                            acc_wl[min_inun_arr_ori == 0] = 0
+                            acc_wl[min_inun_arr_ori == -1] = -1
+                            acc_wl[min_inun_arr_ori == -2] = -2
+
+                            bf.write_raster(min_inun_ds, inun_duration, annual_inunduration_folder, f'inun_duration_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+                            bf.write_raster(min_inun_ds, inun_height, annual_inunduration_folder, f'inun_height_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+                            bf.write_raster(min_inun_ds, acc_wl, annual_inunduration_folder, f'mean_inun_height_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+
+                    itr_v = 100 / veg_inun_itr
+                    if _ in veg_height_dic.keys() and len(bf.file_filter(annual_inunthr_folder, [f'{str(_)}.tif'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])) != veg_inun_itr:
+                        bf.create_folder(annual_inunthr_folder)
+                        if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif'):
+                            raise Exception('Please refine the inundation water level!')
+                        else:
+                            for _temp in bf.file_filter(annual_inunthr_folder, [f'{str(_)}.tif']):
+                                os.remove(_temp)
+                            min_inun_ds = gdal.Open(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif')
+                            min_inun_arr_ori = min_inun_ds.GetRasterBand(1).ReadAsArray()
+                            min_inun_arr = copy.deepcopy(min_inun_arr_ori)
+                            min_inun_arr[min_inun_arr == 0] = np.nan
+                            min_inun_arr[min_inun_arr == -2] = np.nan
+                            min_inun_arr[min_inun_arr == -1] = np.nan
+                            veg_h_arr = veg_height_dic[_]
+                            inun_thr_dic = {}
+
+                            for thr in range(veg_inun_itr):
+                                inun_thr_dic[itr_v + thr * itr_v] = np.zeros_like(min_inun_arr)
+
+                            water_level_ = []
+                            itr_list = [___ for ___ in range(veg_inun_itr)]
+                            for __ in range(water_level_data.shape[0]):
+                                if int(water_level_data[__, 0] // 10000) == _:
+                                    water_level_.append(water_level_data[__, 1])
+
+                            c_amount = os.cpu_count()
+                            min_inun_arr_list = []
+                            veg_h_arr_list = []
+                            offset_list = []
+                            xy_factor = min_inun_arr.shape[0] > min_inun_arr.shape[1]
+                            if xy_factor:
+                                itr_y = int(np.ceil(min_inun_arr.shape[0] / c_amount))
+                            else:
+                                itr_x = int(np.ceil(min_inun_arr.shape[1] / c_amount))
+
+                            for i in range(c_amount):
+                                if i == c_amount - 1:
+                                    if xy_factor:
+                                        min_inun_arr_list.append(min_inun_arr[i * itr_y:, :])
+                                        veg_h_arr_list.append(veg_h_arr[i * itr_y:, :])
+                                        offset_list.append([i * itr_y, 0])
+                                    else:
+                                        min_inun_arr_list.append(min_inun_arr[:, i * itr_x:])
+                                        veg_h_arr_list.append(veg_h_arr[:, i * itr_x:])
+                                        offset_list.append([0, i * itr_x])
+                                else:
+                                    if xy_factor:
+                                        min_inun_arr_list.append(min_inun_arr[i * itr_y: (i + 1) * itr_y, :])
+                                        veg_h_arr_list.append(veg_h_arr[i * itr_y: (i + 1) * itr_y, :])
+                                        offset_list.append([i * itr_y, 0])
+                                    else:
+                                        min_inun_arr_list.append(min_inun_arr[:, i * itr_x: (i + 1) * itr_x])
+                                        veg_h_arr_list.append(veg_h_arr[:, i * itr_x: (i + 1) * itr_x])
+                                        offset_list.append([0, i * itr_x])
+
+                            with concurrent.futures.ProcessPoolExecutor(max_workers=c_amount) as exe:
+                                res = exe.map(process_itr_wl, repeat(water_level_), min_inun_arr_list, veg_h_arr_list, repeat(itr_list))
+                            res = list(res)
+
+                            for thr in range(veg_inun_itr):
+                                inund_thr_temp = np.zeros_like(min_inun_arr)
+                                for i in range(c_amount):
+                                    inund_thr_temp[offset_list[i][0]: offset_list[i][0] + res[i][thr].shape[0], offset_list[i][1]: offset_list[i][1] + res[i][thr].shape[1]] = res[i][thr]
+
+                                inund_thr_temp[min_inun_arr_ori == 0] = 0
+                                inund_thr_temp[min_inun_arr_ori == -1] = -1
+                                inund_thr_temp[min_inun_arr_ori == -2] = -2
+                                bf.write_raster(min_inun_ds, inund_thr_temp, annual_inunthr_folder,
+                                                f'{str(int(itr_v + itr_v * thr))}thr_inund_{str(_)}.tif',
+                                                raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+
+                    # if generate_optimised_gt_thr and _ in veg_height_dic.keys() and _ + 1 in veg_height_dic.keys():
+                    #     bf.create_folder(annual_inunfig_folder)
+                    #     veg_var = veg_height_dic[_ + 1] / veg_height_dic[_] - 1
+                    #     for thr in range(veg_inun_itr):
+                    #         thr_ds = gdal.Open(annual_inunthr_folder + f'{str(int(itr_v + itr_v * thr))}thr_inund_{str(_)}.tif')
+                    #         thr_arr = thr_ds.GetRasterBand(1).ReadAsArray()
+                    #
+                    #         dic_temp = {'thr_inund': [], 'veg_list': []}
+                    #         for y_ in range(thr_arr.shape[0]):
+                    #             for x_ in range(thr_arr.shape[1]):
+                    #                 dic_temp['thr_inund'].append(thr_arr[y_, x_])
+                    #                 dic_temp['veg_list'].append(veg_var[y_, x_])
+                    #
+                    #         fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+                    #         pd_temp_ = pd.DataFrame(dic_temp)
+                    #         pd_temp_ = pd_temp_.dropna()
+                    #         pd_temp__ = pd_temp_[pd_temp_['thr_inund'] < 90]
+                    #         box_list, mid_list = [], []
+                    #         max_ = 0.
+                    #
+                    #         for q in range(90):
+                    #             box_temp = pd_temp__[pd_temp__['thr_inund'] == q]['veg_list']
+                    #             box_list.append(box_temp.sort_values()[int(box_temp.shape[0] * 0.05): int(box_temp.shape[0] * 0.95)])
+                    #             mid_list.append(np.nanmean(box_temp))
+                    #             max_ = np.nanmax((max_, np.max(np.absolute(box_list[-1][int(box_list[-1].shape[0] * 0.15):
+                    #                                                                     int(box_list[-1].shape[0] * 0.85)]))))
+                    #         # box_temp = pd_temp__[pd_temp__['inun_d'] == 0][dic_name]
+                    #         # box_temp = box_temp.sort_values()[int(box_temp.shape[0] * 0.1): int(box_temp.shape[0] * 0.9)]
+                    #         box_temp = ax.boxplot(box_list, vert=True, notch=False, widths=0.98, patch_artist=True,
+                    #                               whis=(15, 85), showfliers=False, zorder=4, )
+                    #
+                    #         for patch in box_temp['boxes']:
+                    #             patch.set_facecolor((72 / 256, 127 / 256, 166 / 256))
+                    #             patch.set_alpha(0.5)
+                    #             patch.set_linewidth(0.2)
+                    #
+                    #         for median in box_temp['medians']:
+                    #             median.set_lw(0.8)
+                    #             # median.set_marker('^')
+                    #             median.set_color((255 / 256, 128 / 256, 64 / 256))
+                    #
+                    #         ax.plot(np.linspace(0, 90, 100), np.linspace(0, 0, 100), lw=2.5, c=(0, 0, 0), ls='-', zorder=5)
+                    #         ax.scatter(np.linspace(1, 90, 90), mid_list, marker='^', s=10 ** 2, facecolor=(0.8, 0, 0), zorder=7, edgecolor=(0.0, 0.0, 0.0), linewidth=0.2)
+                    #         # ax.scatter(pd_temp__['inun_d'], pd_temp__[dic_name], s=2 ** 2, edgecolor=(1, 1, 1), facecolor=(47/256,85/256,151/256), alpha=0.1, linewidth=0, marker='^', zorder=5)
+                    #         # s = linregress(np.array(pd_temp_[pd_temp_['inun_d'] > 0]['inun_d'].tolist()),
+                    #         #               np.array(pd_temp_[pd_temp_['inun_d'] > 0][dic_name].tolist()))
+                    #
+                    #         # popt, pcov = curve_fit(poly3, pd_temp__['inun_d'], pd_temp__[dic_name], maxfev=50000, method="trf")
+                    #         # ax.plot(np.linspace(1, 90, 90), poly3(np.linspace(1, 90, 90), *popt), lw=2, ls='--', c=(0.8, 0, 0))
+                    #
+                    #         ax.plot(np.linspace(36, 90, 90), np.linspace(np.mean(mid_list[36:]), np.mean(mid_list[36:]), 90), lw=2, ls='--',
+                    #                 c=(0.8, 0, 0), zorder=8)
+                    #         # z = np.polyfit(np.linspace(1, 90, 90), mid_list, 15)
+                    #         # p = np.poly1d(z)
+                    #         # ax.plot(np.linspace(1, 13, 100), p(np.linspace(1, 13, 100)), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+                    #         # ax.plot(np.linspace(13, 36, 90), np.linspace(p(13), p(13), 90), lw=2, ls='--',
+                    #         #         c=(0.8, 0, 0), zorder=8)
+                    #         # print(str(dic_name))
+                    #         # print(str(p(13)))
+                    #         # print(str(np.mean(mid_list[36:])))
+                    #         ax.set_ylim(-0.2, 0.2)
+                    #         ax.set_yticks([-0.2, -0.1, 0, 0.1, 0.2])
+                    #         ax.set_yticklabels(['-20%', '-10%', '0%', '10%', '20%'])
+                    #         ax.set_xticks([1, 11, 21, 31, 41, 51, 61])
+                    #         ax.set_xticklabels(['0', '10', '20', '30', '40', '50', '60'])
+                    #         # ax.set_ylim([- float(int(max_ * 20) + 1) / 20, float(int(max_ * 20) + 1) / 20])
+                    #         ax.set_xlim([0.5, 61.5])
+                    #         plt.savefig(f'{annual_inunfig_folder}{str(thr)}.png', dpi=300)
+                    #         plt.close()
+                    #
+                    #     pass
+                    pbar.update()
 
             # if not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy'):
             #     for file in inundation_file:

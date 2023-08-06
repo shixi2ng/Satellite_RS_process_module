@@ -1321,7 +1321,7 @@ class Landsat_dc(object):
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
 
-        print(f'Finish loading the Sentinel2 dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+        print(f'Finish loading the Landsat dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()
@@ -1341,7 +1341,7 @@ class Landsat_dc(object):
 
     def save(self, output_path: str):
         start_time = time.time()
-        print(f'Start saving the Sentinel2 dc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+        print(f'Start saving the Landsat dc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
 
         if not os.path.exists(output_path):
             bf.create_folder(output_path)
@@ -1368,7 +1368,7 @@ class Landsat_dc(object):
         with open(f'{output_path}metadata.json', 'w') as js_temp:
             json.dump(metadata_dic, js_temp)
 
-        print(f'Finish saving the Sentinel2 dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+        print(f'Finish saving the Landsat dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
 
 class Landsat_dcs(object):
