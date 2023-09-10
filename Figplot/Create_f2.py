@@ -1,31 +1,7 @@
 import os.path
-
-import matplotlib
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import scipy.stats
-import seaborn
-from matplotlib import rcParams
-from scipy.optimize import curve_fit
-import scipy.stats as stats
-from scipy.spatial import ConvexHull, convex_hull_plot_2d
-import matplotlib.gridspec as gridspec
-import matplotlib.colors as mcolors
-from osgeo import gdal, ogr
-from sklearn import linear_model
-import copy
-from matplotlib.colors import LogNorm
-import sys
-from matplotlib.colors import LinearSegmentedColormap
-import basic_function as bf
-import seaborn as sns
-import math
-import random
-from scipy.stats import *
-from scipy.optimize import *
-from Landsat_toolbox.Landsat_main_v2 import *
 from RSDatacube.RSdc import *
+from skimage import io, feature
+from sklearn.metrics import r2_score
 
 
 def xpoly(x, a, b):
@@ -97,6 +73,9 @@ def fig1_func():
     ax1.set_yticks([0, 3, 6, 9, 12, 15])
     ax1.set_yticklabels(['0', '3', '6', '9', '12', '15'], fontname='Times New Roman', fontsize=12)
 
+    print(str(r2_score(x_2022, y_2022)))
+    print(str(r2_score(pd_temp['Canopy_Hei'], pd_temp['MEAN'])))
+
     # ax1.set_xlabel('Date', fontname='Times New Roman', fontsize=40, fontweight='bold')
     # ax1.set_ylabel('OSAVI', fontname='Times New Roman', fontsize=40, fontweight='bold')
 
@@ -123,6 +102,7 @@ def fig2_func():
     ax1.set_xticklabels(['0', '1', '2', '3', '4', '5'], fontname='Times New Roman', fontsize=12)
     ax1.set_yticks([0, 1, 2, 3, 4, 5])
     ax1.set_yticklabels(['0', '1', '2', '3', '4', '5'], fontname='Times New Roman', fontsize=12)
+    print(str(r2_score(x[:10], y[:10])))
 
     # ax1.set_xlabel('Date', fontname='Times New Roman', fontsize=40, fontweight='bold')
     # ax1.set_ylabel('OSAVI', fontname='Times New Roman', fontsize=40, fontweight='bold')
@@ -491,6 +471,7 @@ def fig11_func():
     ax.text(1.3, 6 - 1, f'RMSE={str(RMSE_NDVI)[0: 4]}m', c=(0, 0, 0), fontsize=18)
     ax.set_ylim(1, 6)
     ax.set_xlim(1, 6)
+    print(str(r2_score(pd1['gedi_ch_x'].dropna(), pd1['uav_ch_x'].dropna())))
     plt.savefig(f'G:\A_veg\Paper\Figure\Fig9\\fig91.png', dpi=300)
 
     plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
@@ -554,7 +535,7 @@ def fig11_func():
     ax3.text(1.3, 6 - 1, f'RMSE={str(RMSE_NDVI)[0: 4]}m', c=(0, 0, 0), fontsize=18)
     ax3.set_ylim(1, 6)
     ax3.set_xlim(1, 6)
-
+    print(str(r2_score(pd1['gedi_ch'].dropna(), pd1['uav_ch'].dropna())))
     plt.savefig(f'G:\A_veg\Paper\Figure\Fig9\\fig93.png', dpi=300)
 
 
@@ -1389,10 +1370,10 @@ def fig18_func():
     plt.rc('font', size=18)
     plt.rc('axes', linewidth=2)
 
-    veg_inun_itr = 20
+    veg_inun_itr = 100
     itr_v = 100 / veg_inun_itr
 
-    for sec, content in zip([ 'yz', 'jj', 'ch', 'hh', 'all',], [(0, 14482, 0, 2810), (0, 14482, 2810, 18320), (0, 14482, 18320, 30633), (0, 14482, 30633, 49071),None, ]):
+    for sec, content in zip([ 'all', 'yz', 'jj', 'ch', 'hh', ], [None, (0, 14482, 0, 2810), (0, 14482, 2810, 18320), (0, 14482, 18320, 30633), (0, 14482, 30633, 49071), ]):
         bf.create_folder(f'G:\\A_veg\\Paper\\Figure\\Fig14\\{sec}\\')
         if not os.path.exists(f'G:\\A_veg\\Paper\\Figure\\Fig14\\{sec}.csv'):
             if sec != 'all':
@@ -1447,69 +1428,85 @@ def fig18_func():
         pd_temp = pd_temp[pd_temp['5_thr'] < 90]
         pd_temp = pd_temp[pd_temp['5_thr'] >= 0]
         non_inun_t = 0
+        inunthr_list = []
+        veg_thr_list = [thr for thr in range(veg_inun_itr)]
         for dic_name in [f'{str(int(itr_v + itr_v * thr))}_thr' for thr in range(veg_inun_itr)]:
-            fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
-            if dic_name != f'{str(int(itr_v))}_thr':
-                pd_temp_ = pd_temp[[dic_name, '20_21_perc', f'{str(int(itr_v))}_thr']]
-            else:
-                pd_temp_ = pd_temp[[dic_name, '20_21_perc']]
-            pd_temp__ = pd_temp_.dropna()
-
-            box_list, mid_list = [], []
-            max_ = 0.
-            for q in range(90):
-                if q == 0:
-                    box_temp = pd_temp__[pd_temp__[f'{str(int(itr_v))}_thr'] == q]['20_21_perc']
+            if not os.path.exists(f'G:\A_veg\Paper\Figure\Fig14\\{sec}\\{dic_name}_{sec}.png'):
+                fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
+                if dic_name != f'{str(int(itr_v))}_thr':
+                    pd_temp_ = pd_temp[[dic_name, '20_21_perc', f'{str(int(itr_v))}_thr']]
                 else:
-                    box_temp = pd_temp__[pd_temp__[dic_name] == q]['20_21_perc']
-                box_list.append(box_temp.sort_values()[int(box_temp.shape[0] * 0.05): int(box_temp.shape[0] * 0.95)])
-                mid_list.append(np.nanmean(box_temp))
-                max_ = np.nanmax((max_, np.max(np.absolute(box_list[-1][int(box_list[-1].shape[0] * 0.15): int(box_list[-1].shape[0] * 0.85)]))))
+                    pd_temp_ = pd_temp[[dic_name, '20_21_perc']]
+                pd_temp__ = pd_temp_.dropna()
 
-            if dic_name == f'{str(int(itr_v + itr_v * 0))}_thr':
-                non_inun_t = mid_list[0]
-            # box_temp = pd_temp__[pd_temp__['inun_d'] == 0][dic_name]
-            # box_temp = box_temp.sort_values()[int(box_temp.shape[0] * 0.1): int(box_temp.shape[0] * 0.9)]
-            box_temp = ax.boxplot(box_list, vert=True, notch=False, widths=0.98, patch_artist=True, whis=(15, 85),
-                                  showfliers=False, zorder=4, )
+                box_list, mid_list = [], []
+                max_ = 0.
+                for q in range(90):
+                    if q == 0:
+                        box_temp = pd_temp__[pd_temp__[f'{str(int(itr_v))}_thr'] == q]['20_21_perc']
+                    else:
+                        box_temp = pd_temp__[pd_temp__[dic_name] == q]['20_21_perc']
+                    box_list.append(box_temp.sort_values()[int(box_temp.shape[0] * 0.05): int(box_temp.shape[0] * 0.95)])
+                    mid_list.append(np.nanmean(box_temp))
+                    max_ = np.nanmax((max_, np.max(np.absolute(box_list[-1][int(box_list[-1].shape[0] * 0.15): int(box_list[-1].shape[0] * 0.85)]))))
 
-            for patch in box_temp['boxes']:
-                patch.set_facecolor((72 / 256, 127 / 256, 166 / 256))
-                patch.set_alpha(0.5)
-                patch.set_linewidth(0.2)
+                if dic_name == f'{str(int(itr_v + itr_v * 0))}_thr':
+                    non_inun_t = mid_list[0]
 
-            for median in box_temp['medians']:
-                median.set_lw(0.8)
-                # median.set_marker('^')
-                median.set_color((255 / 256, 128 / 256, 64 / 256))
+                for q in range(75):
+                    q_max = np.nanmin([q + 16, 91])
+                    if False not in [mid_list[_] < non_inun_t for _ in range(q, q_max)]:
+                        inunthr_list.append(q)
+                        break
+                    if q == 81:
+                        inunthr_list.append(np.nan)
 
-            ax.plot(np.linspace(0, 90, 100), np.linspace(0, 0, 100), lw=2.5, c=(0, 0, 0), ls='-', zorder=5)
-            ax.scatter(np.linspace(1, 90, 90), mid_list, marker='^', s=10 ** 2, facecolor=(0.8, 0, 0), zorder=7, edgecolor=(0.0, 0.0, 0.0), linewidth=0.2)
-            # ax.scatter(pd_temp__['inun_d'], pd_temp__[dic_name], s=2 ** 2, edgecolor=(1, 1, 1), facecolor=(47/256,85/256,151/256), alpha=0.1, linewidth=0, marker='^', zorder=5)
-            # s = linregress(np.array(pd_temp_[pd_temp_['inun_d'] > 0]['inun_d'].tolist()),
-            #               np.array(pd_temp_[pd_temp_['inun_d'] > 0][dic_name].tolist()))
+                # box_temp = pd_temp__[pd_temp__['inun_d'] == 0][dic_name]
+                # box_temp = box_temp.sort_values()[int(box_temp.shape[0] * 0.1): int(box_temp.shape[0] * 0.9)]
+                box_temp = ax.boxplot(box_list, vert=True, notch=False, widths=0.98, patch_artist=True, whis=(15, 85),
+                                      showfliers=False, zorder=4, )
 
-            # popt, pcov = curve_fit(poly3, pd_temp__['inun_d'], pd_temp__[dic_name], maxfev=50000, method="trf")
-            # ax.plot(np.linspace(1, 90, 90), poly3(np.linspace(1, 90, 90), *popt), lw=2, ls='--', c=(0.8, 0, 0))
-            ax.plot(np.linspace(0, 90, 90), np.linspace(non_inun_t, non_inun_t, 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+                for patch in box_temp['boxes']:
+                    patch.set_facecolor((72 / 256, 127 / 256, 166 / 256))
+                    patch.set_alpha(0.5)
+                    patch.set_linewidth(0.2)
 
-            # ax.plot(np.linspace(36, 90, 90), np.linspace(np.mean(mid_list[36:]), np.mean(mid_list[36:]), 90), lw=2,
-            #         ls='--', c=(0.8, 0, 0), zorder=8)
-            # z = np.polyfit(np.linspace(1, 90, 90), mid_list, 15)
-            # p = np.poly1d(z)
-            # ax.plot(np.linspace(1, 13, 100), p(np.linspace(1, 13, 100)), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
-            # ax.plot(np.linspace(13, 36, 90), np.linspace(p(13), p(13), 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
-            # print(str(dic_name))
-            # print(str(p(13)))
-            print(str(np.mean(mid_list[36:])))
-            ax.set_ylim(-0.2, 0.2)
-            ax.set_yticks([-0.2, -0.1, 0, 0.1, 0.2])
-            ax.set_yticklabels(['-20%', '-10%', '0%', '10%', '20%'])
-            ax.set_xticks([1, 11, 21, 31, 41, 51, 61])
-            ax.set_xticklabels(['0', '10', '20', '30', '40', '50', '60'])
-            # ax.set_ylim([- float(int(max_ * 20) + 1) / 20, float(int(max_ * 20) + 1) / 20])
-            ax.set_xlim([0.5, 61.5])
-            plt.savefig(f'G:\A_veg\Paper\Figure\Fig14\\{sec}\\{dic_name}_{sec}.png', dpi=300)
+                for median in box_temp['medians']:
+                    median.set_lw(0.8)
+                    # median.set_marker('^')
+                    median.set_color((255 / 256, 128 / 256, 64 / 256))
+
+                ax.plot(np.linspace(0, 90, 100), np.linspace(0, 0, 100), lw=2.5, c=(0, 0, 0), ls='-', zorder=5)
+                ax.scatter(np.linspace(1, 90, 90), mid_list, marker='^', s=10 ** 2, facecolor=(0.8, 0, 0), zorder=7, edgecolor=(0.0, 0.0, 0.0), linewidth=0.2)
+                # ax.scatter(pd_temp__['inun_d'], pd_temp__[dic_name], s=2 ** 2, edgecolor=(1, 1, 1), facecolor=(47/256,85/256,151/256), alpha=0.1, linewidth=0, marker='^', zorder=5)
+                # s = linregress(np.array(pd_temp_[pd_temp_['inun_d'] > 0]['inun_d'].tolist()),
+                #               np.array(pd_temp_[pd_temp_['inun_d'] > 0][dic_name].tolist()))
+
+                # popt, pcov = curve_fit(poly3, pd_temp__['inun_d'], pd_temp__[dic_name], maxfev=50000, method="trf")
+                # ax.plot(np.linspace(1, 90, 90), poly3(np.linspace(1, 90, 90), *popt), lw=2, ls='--', c=(0.8, 0, 0))
+                ax.plot(np.linspace(0, 90, 90), np.linspace(non_inun_t, non_inun_t, 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+
+                # ax.plot(np.linspace(36, 90, 90), np.linspace(np.mean(mid_list[36:]), np.mean(mid_list[36:]), 90), lw=2,
+                #         ls='--', c=(0.8, 0, 0), zorder=8)
+                # z = np.polyfit(np.linspace(1, 90, 90), mid_list, 15)
+                # p = np.poly1d(z)
+                # ax.plot(np.linspace(1, 13, 100), p(np.linspace(1, 13, 100)), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+                # ax.plot(np.linspace(13, 36, 90), np.linspace(p(13), p(13), 90), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
+                # print(str(dic_name))
+                # print(str(p(13)))
+                print(str(np.mean(mid_list[36:])))
+                ax.set_ylim(-0.2, 0.2)
+                ax.set_yticks([-0.2, -0.1, 0, 0.1, 0.2])
+                ax.set_yticklabels(['-20%', '-10%', '0%', '10%', '20%'])
+                ax.set_xticks([1, 11, 21, 31, 41, 51, 61])
+                ax.set_xticklabels(['0', '10', '20', '30', '40', '50', '60'])
+                # ax.set_ylim([- float(int(max_ * 20) + 1) / 20, float(int(max_ * 20) + 1) / 20])
+                ax.set_xlim([0.5, 61.5])
+                plt.savefig(f'G:\A_veg\Paper\Figure\Fig14\\{sec}\\{dic_name}_{sec}.png', dpi=300)
+
+        dic_temp = {'inun_thr': inunthr_list}
+        pd_temp = pd.DataFrame(dic_temp)
+        pd_temp.to_csv(f'G:\A_veg\Paper\Figure\Fig14\\{sec}\\{sec}_thr.csv')
 
 
 def gif_func():
@@ -1532,7 +1529,56 @@ def gif_func():
     a = 1
 
 
-fig18_func()
+def fig152_func():
+    df = pd.read_excel('G:\\A_veg\\Paper\\Figure\\Fig15\\thr.xlsx')
+    veg_thr = np.array(df['inun_thr'])
+    duration_ = np.array(df['duration'])
+    duration_min_ = np.array(df['min_d'])
+    duration_[duration_ == 'Nan'] = np.nan
+    duration = [_ for _ in duration_]
+
+    duration_min_[duration_min_ == 'Nan'] = np.nan
+    duration_min_ = [_ for _ in duration_min_]
+    duration_min = np.array(duration_min_)
+    duration = np.array(duration)
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=18)
+    plt.rc('axes', linewidth=2)
+    fig, ax = plt.subplots(figsize=(10, 10), constrained_layout=True)
+    ax.scatter(duration, veg_thr, zorder=4, s=10**2, marker='s', edgecolors=(0/256, 0/256, 256/256), facecolor=(1, 1, 1), alpha=1, linewidths=2)
+    # ax.fill_between(duration, veg_thr, np.linspace(100, 100, 100), zorder=1, facecolor=(1, 1, 1), alpha=0.8, linewidths=2)
+    ax.plot(duration, veg_thr, lw=4, color =(0/256, 0/256, 256/256))
+    ax.scatter(duration_min, veg_thr, zorder=4, s=10 ** 2, marker='o', edgecolors=(256 / 256, 0 / 256, 0/ 256), facecolor=(1, 1, 1), alpha=1, linewidths=2)
+    ax.plot(duration_min, veg_thr, lw=4, color=(256 / 256, 0 / 256, 0/ 256))
+    duration_min[np.isnan(duration_min)] = 0
+    duration[np.isnan(duration)] = 100
+    # ax.fill_between(duration, veg_thr, np.linspace(100, 100, 100), zorder=1, fc=(0/256, 0/256, 256/256), alpha=0.1, linewidths=2)
+    ax.fill_between(duration, veg_thr, np.linspace(100, 100, 100), zorder=2, fc=(153 / 256, 153 / 256, 256 / 256), alpha=1, linewidths=2)
+    ax.fill_between(duration_min, np.linspace(0, 0, 100), veg_thr, zorder=2, fc=(256 / 256, 153 / 256, 153 / 256), alpha=1, linewidths=2)
+    ax.fill_between(np.linspace(0, 100, 100), np.linspace(0, 0, 100), np.linspace(100, 100, 100), zorder=1, fc=(0.98,0.98,0.98), hatch='/', linewidths=2)
+
+    ax.set_xlim([0, 40])
+    ax.set_ylim([10, 100])
+    ax.set_yticks([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+    ax.set_yticklabels(['10%', '20%', '30%', '40%', '50%', '60%', '70%', '80%', '90%', '100%'])
+    ax.set_ylabel('Inundated water level/vegetation height', fontsize=26)
+    ax.set_xlabel('Inundation duration/d',  fontsize=26)
+    plt.savefig(f'G:\A_veg\Paper\Figure\Fig15\\v1.png', dpi=300)
+
+
+def canny_edge():
+    ds = gdal.Open('G:\Landsat\Sample122_124039\Landsat_constructed_index\MNDWI\\20140506_124039_MNDWI.TIF')
+    arr = ds.GetRasterBand(1).ReadAsArray()
+    arr = arr.astype(np.float32)
+    arr[arr == -32768] = np.nan
+    arr = (arr + 10000) / 20000
+
+    res = feature.canny(arr, sigma=0.9, high_threshold=0.7)
+    bf.write_raster(ds, res, 'E:\\A_Vegetation_Identification\\Paper\\Major_rev\\', 'tenmp2.tif')
+
+
+fig15_func()
 
 
 

@@ -17,9 +17,9 @@ class built_in_index(object):
     def __init__(self, *args):
         self.NDVI = 'NDVI = (NIR - RED) / (NIR + RED)'
         self.OSAVI = 'OSAVI = 1.16 * (NIR - RED) / (NIR + RED + 0.16)'
-        self.AWEI = 'AWEI = 4 * (GREEN - MIR) - (0.25 * NIR + 2.75 * MIR2)'
-        self.AWEInsh = 'AWEInsh = BLUE + 2.5 * GREEN - 0.25 * MIR2 - 1.5 * (NIR + MIR1)'
-        self.MNDWI = 'MNDWI = (GREEN - MIR) / (MIR + GREEN)'
+        self.AWEI = 'AWEI = 4 * (GREEN - SWIR) - (0.25 * NIR + 2.75 * SWIR2)'
+        self.AWEInsh = 'AWEInsh = BLUE + 2.5 * GREEN - 0.25 * SWIR2 - 1.5 * (NIR + SWIR1)'
+        self.MNDWI = 'MNDWI = (GREEN - SWIR) / (SWIR + GREEN)'
         self.EVI = 'EVI = 2.5 * (NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1)'
         self.EVI2 = 'EVI2 = 2.5 * (NIR - RED) / (NIR + 2.4 * RED + 1)'
 
@@ -45,4 +45,16 @@ class built_in_index(object):
             if i != 'index_dic':
                 var, func = convert_index_func(self.__dict__[i].split('=')[-1])
                 self.index_dic[i] = [var, func]
+
+
+class OLI2ETM(object):
+
+    def __init__(self):
+        self.BLUE_band_OLS = (0.8850, 0.0183)
+        self.GREEN_band_OLS = (0.9317, 0.0123)
+        self.RED_band_OLS = (0.9372,  0.0123)
+        self.NIR_band_OLS = (0.8339, 0.0448)
+        self.SWIR_band_OLS = (0.8639, 0.0306)
+        self.SWIR2_band_OLS = (0.9165, 0.0116)
+
 

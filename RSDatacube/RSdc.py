@@ -3829,7 +3829,6 @@ class RS_dcs(object):
             annual_inform_folder = output_path + 'annual_inun_wl_ras\\'
             annual_inunduration_folder = output_path + 'annual_inun_duration\\'
             annual_inunthr_folder = output_path + 'annual_inun_duration\\gt_thr\\'
-            annual_inunfig_folder = output_path + 'annual_inun_duration\\gt_thr_fig\\'
             with tqdm(total=len(year_list), desc=f'Calculate inundation duration and height', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in year_list:
                     if not os.path.exists(annual_inunduration_folder + f'inun_duration_{str(_)}.tif') or not os.path.exists(annual_inunduration_folder + f'inun_height_{str(_)}.tif') or not os.path.exists(annual_inunduration_folder + f'mean_inun_height_{str(_)}.tif'):
@@ -3844,7 +3843,7 @@ class RS_dcs(object):
                             min_inun_arr[min_inun_arr == -2] = np.nan
                             min_inun_arr[min_inun_arr == -1] = np.nan
                             inun_duration = np.zeros_like(min_inun_arr)
-                            inun_height = np.zeros_like(min_inun_arr)
+
                             max_wl = 0
                             acc_wl = np.zeros_like(min_inun_arr)
                             for __ in range(water_level_data.shape[0]):
@@ -3854,7 +3853,6 @@ class RS_dcs(object):
                                     wl_arr_temp = (water_level_data[__, 1] - min_inun_arr)
                                     wl_arr_temp[wl_arr_temp < 0] = 0
                                     acc_wl = acc_wl + (water_level_data[__, 1] > min_inun_arr).astype(np.float32) * wl_arr_temp
-
                             acc_wl = acc_wl / inun_duration
 
                             inun_height = max_wl - min_inun_arr
@@ -3891,10 +3889,6 @@ class RS_dcs(object):
                             min_inun_arr[min_inun_arr == -2] = np.nan
                             min_inun_arr[min_inun_arr == -1] = np.nan
                             veg_h_arr = veg_height_dic[_]
-                            inun_thr_dic = {}
-
-                            for thr in range(veg_inun_itr):
-                                inun_thr_dic[itr_v + thr * itr_v] = np.zeros_like(min_inun_arr)
 
                             water_level_ = []
                             itr_list = [___ for ___ in range(veg_inun_itr)]
@@ -3902,123 +3896,19 @@ class RS_dcs(object):
                                 if int(water_level_data[__, 0] // 10000) == _:
                                     water_level_.append(water_level_data[__, 1])
 
-                            c_amount = os.cpu_count()
-                            min_inun_arr_list = []
-                            veg_h_arr_list = []
-                            offset_list = []
-                            xy_factor = min_inun_arr.shape[0] > min_inun_arr.shape[1]
-                            if xy_factor:
-                                itr_y = int(np.ceil(min_inun_arr.shape[0] / c_amount))
-                            else:
-                                itr_x = int(np.ceil(min_inun_arr.shape[1] / c_amount))
+                            veg_arr_list = [veg_h_arr * (itr_v + itr_v * thr_) / 100 + min_inun_arr for thr_ in itr_list]
+                            output_npyfile = [annual_inunthr_folder + f'{str(int(itr_v + itr_v * thr_))}thr_inund_{str(_)}.npy' for thr_ in itr_list]
 
-                            for i in range(c_amount):
-                                if i == c_amount - 1:
-                                    if xy_factor:
-                                        min_inun_arr_list.append(min_inun_arr[i * itr_y:, :])
-                                        veg_h_arr_list.append(veg_h_arr[i * itr_y:, :])
-                                        offset_list.append([i * itr_y, 0])
-                                    else:
-                                        min_inun_arr_list.append(min_inun_arr[:, i * itr_x:])
-                                        veg_h_arr_list.append(veg_h_arr[:, i * itr_x:])
-                                        offset_list.append([0, i * itr_x])
-                                else:
-                                    if xy_factor:
-                                        min_inun_arr_list.append(min_inun_arr[i * itr_y: (i + 1) * itr_y, :])
-                                        veg_h_arr_list.append(veg_h_arr[i * itr_y: (i + 1) * itr_y, :])
-                                        offset_list.append([i * itr_y, 0])
-                                    else:
-                                        min_inun_arr_list.append(min_inun_arr[:, i * itr_x: (i + 1) * itr_x])
-                                        veg_h_arr_list.append(veg_h_arr[:, i * itr_x: (i + 1) * itr_x])
-                                        offset_list.append([0, i * itr_x])
+                            with concurrent.futures.ProcessPoolExecutor(max_workers=20) as exe:
+                                exe.map(process_itr_wl, repeat(water_level_), veg_arr_list, output_npyfile)
 
-                            with concurrent.futures.ProcessPoolExecutor(max_workers=c_amount) as exe:
-                                res = exe.map(process_itr_wl, repeat(water_level_), min_inun_arr_list, veg_h_arr_list, repeat(itr_list))
-                            res = list(res)
-
-                            for thr in range(veg_inun_itr):
-                                inund_thr_temp = np.zeros_like(min_inun_arr)
-                                for i in range(c_amount):
-                                    inund_thr_temp[offset_list[i][0]: offset_list[i][0] + res[i][thr].shape[0], offset_list[i][1]: offset_list[i][1] + res[i][thr].shape[1]] = res[i][thr]
-
-                                inund_thr_temp[min_inun_arr_ori == 0] = 0
-                                inund_thr_temp[min_inun_arr_ori == -1] = -1
-                                inund_thr_temp[min_inun_arr_ori == -2] = -2
-                                bf.write_raster(min_inun_ds, inund_thr_temp, annual_inunthr_folder,
-                                                f'{str(int(itr_v + itr_v * thr))}thr_inund_{str(_)}.tif',
-                                                raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
-
-                    # if generate_optimised_gt_thr and _ in veg_height_dic.keys() and _ + 1 in veg_height_dic.keys():
-                    #     bf.create_folder(annual_inunfig_folder)
-                    #     veg_var = veg_height_dic[_ + 1] / veg_height_dic[_] - 1
-                    #     for thr in range(veg_inun_itr):
-                    #         thr_ds = gdal.Open(annual_inunthr_folder + f'{str(int(itr_v + itr_v * thr))}thr_inund_{str(_)}.tif')
-                    #         thr_arr = thr_ds.GetRasterBand(1).ReadAsArray()
-                    #
-                    #         dic_temp = {'thr_inund': [], 'veg_list': []}
-                    #         for y_ in range(thr_arr.shape[0]):
-                    #             for x_ in range(thr_arr.shape[1]):
-                    #                 dic_temp['thr_inund'].append(thr_arr[y_, x_])
-                    #                 dic_temp['veg_list'].append(veg_var[y_, x_])
-                    #
-                    #         fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
-                    #         pd_temp_ = pd.DataFrame(dic_temp)
-                    #         pd_temp_ = pd_temp_.dropna()
-                    #         pd_temp__ = pd_temp_[pd_temp_['thr_inund'] < 90]
-                    #         box_list, mid_list = [], []
-                    #         max_ = 0.
-                    #
-                    #         for q in range(90):
-                    #             box_temp = pd_temp__[pd_temp__['thr_inund'] == q]['veg_list']
-                    #             box_list.append(box_temp.sort_values()[int(box_temp.shape[0] * 0.05): int(box_temp.shape[0] * 0.95)])
-                    #             mid_list.append(np.nanmean(box_temp))
-                    #             max_ = np.nanmax((max_, np.max(np.absolute(box_list[-1][int(box_list[-1].shape[0] * 0.15):
-                    #                                                                     int(box_list[-1].shape[0] * 0.85)]))))
-                    #         # box_temp = pd_temp__[pd_temp__['inun_d'] == 0][dic_name]
-                    #         # box_temp = box_temp.sort_values()[int(box_temp.shape[0] * 0.1): int(box_temp.shape[0] * 0.9)]
-                    #         box_temp = ax.boxplot(box_list, vert=True, notch=False, widths=0.98, patch_artist=True,
-                    #                               whis=(15, 85), showfliers=False, zorder=4, )
-                    #
-                    #         for patch in box_temp['boxes']:
-                    #             patch.set_facecolor((72 / 256, 127 / 256, 166 / 256))
-                    #             patch.set_alpha(0.5)
-                    #             patch.set_linewidth(0.2)
-                    #
-                    #         for median in box_temp['medians']:
-                    #             median.set_lw(0.8)
-                    #             # median.set_marker('^')
-                    #             median.set_color((255 / 256, 128 / 256, 64 / 256))
-                    #
-                    #         ax.plot(np.linspace(0, 90, 100), np.linspace(0, 0, 100), lw=2.5, c=(0, 0, 0), ls='-', zorder=5)
-                    #         ax.scatter(np.linspace(1, 90, 90), mid_list, marker='^', s=10 ** 2, facecolor=(0.8, 0, 0), zorder=7, edgecolor=(0.0, 0.0, 0.0), linewidth=0.2)
-                    #         # ax.scatter(pd_temp__['inun_d'], pd_temp__[dic_name], s=2 ** 2, edgecolor=(1, 1, 1), facecolor=(47/256,85/256,151/256), alpha=0.1, linewidth=0, marker='^', zorder=5)
-                    #         # s = linregress(np.array(pd_temp_[pd_temp_['inun_d'] > 0]['inun_d'].tolist()),
-                    #         #               np.array(pd_temp_[pd_temp_['inun_d'] > 0][dic_name].tolist()))
-                    #
-                    #         # popt, pcov = curve_fit(poly3, pd_temp__['inun_d'], pd_temp__[dic_name], maxfev=50000, method="trf")
-                    #         # ax.plot(np.linspace(1, 90, 90), poly3(np.linspace(1, 90, 90), *popt), lw=2, ls='--', c=(0.8, 0, 0))
-                    #
-                    #         ax.plot(np.linspace(36, 90, 90), np.linspace(np.mean(mid_list[36:]), np.mean(mid_list[36:]), 90), lw=2, ls='--',
-                    #                 c=(0.8, 0, 0), zorder=8)
-                    #         # z = np.polyfit(np.linspace(1, 90, 90), mid_list, 15)
-                    #         # p = np.poly1d(z)
-                    #         # ax.plot(np.linspace(1, 13, 100), p(np.linspace(1, 13, 100)), lw=2, ls='--', c=(0.8, 0, 0), zorder=8)
-                    #         # ax.plot(np.linspace(13, 36, 90), np.linspace(p(13), p(13), 90), lw=2, ls='--',
-                    #         #         c=(0.8, 0, 0), zorder=8)
-                    #         # print(str(dic_name))
-                    #         # print(str(p(13)))
-                    #         # print(str(np.mean(mid_list[36:])))
-                    #         ax.set_ylim(-0.2, 0.2)
-                    #         ax.set_yticks([-0.2, -0.1, 0, 0.1, 0.2])
-                    #         ax.set_yticklabels(['-20%', '-10%', '0%', '10%', '20%'])
-                    #         ax.set_xticks([1, 11, 21, 31, 41, 51, 61])
-                    #         ax.set_xticklabels(['0', '10', '20', '30', '40', '50', '60'])
-                    #         # ax.set_ylim([- float(int(max_ * 20) + 1) / 20, float(int(max_ * 20) + 1) / 20])
-                    #         ax.set_xlim([0.5, 61.5])
-                    #         plt.savefig(f'{annual_inunfig_folder}{str(thr)}.png', dpi=300)
-                    #         plt.close()
-                    #
-                    #     pass
+                            for output_npyfile_, thr_ in zip(output_npyfile, itr_list):
+                                inund_arr = np.load(output_npyfile_)
+                                inund_arr[min_inun_arr_ori == 0] = 0
+                                inund_arr[min_inun_arr_ori == -1] = -1
+                                inund_arr[min_inun_arr_ori == -2] = -2
+                                bf.write_raster(min_inun_ds, inund_arr, annual_inunthr_folder, f'{str(int(itr_v + itr_v * thr_))}thr_inund_{str(_)}.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
+                            veg_arr_list, output_npyfile = None, None
                     pbar.update()
 
             # if not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy') or not os.path.exists(output_path + 'date_dc.npy'):

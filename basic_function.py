@@ -4,7 +4,7 @@ import sys
 import numpy as np
 import datetime
 import h5py
-from osgeo import gdal, gdal_array, osr
+from osgeo import gdal, osr
 import shutil
 import geopandas as gp
 from types import ModuleType, FunctionType

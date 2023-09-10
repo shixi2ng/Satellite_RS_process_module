@@ -720,18 +720,12 @@ def cf2phemetric_dc(input_path, output_path, year, index, metadata_dic):
     print(f"Finish constructing the {str(year)} {index} Phemetric datacube of {metadata_dic['ROI_name']} in \033[1;31m{str(time.time() - start_time)} s\033[0m.")
 
 
-def process_itr_wl(water_level_: list, min_inun_arr: np.ndarray, veg_arr: np.ndarray, thr: list):
+def process_itr_wl(water_level_: list, veg_arr: np.ndarray, output_file: str):
 
-    itr = 100 / len(thr)
-    inund_list = [np.zeros_like(min_inun_arr).astype(np.int16) for _ in thr]
-    veg_arr_list = [veg_arr * (itr + itr * _) / 100 for _ in thr]
+    if not os.path.exists(output_file):
+        inund_arr = np.zeros_like(veg_arr, dtype=np.int16)
+        water_level_unique = list(set(water_level_))
+        for _ in water_level_unique:
+            inund_arr = inund_arr + (_ > veg_arr).astype(np.int16) * water_level_.count(_)
 
-    water_level_unique = list(set(water_level_))
-    for _ in water_level_unique:
-        wl_arr_temp = _ - min_inun_arr
-        for thr_ in thr:
-            inund_list[thr.index(thr_)] = inund_list[thr.index(thr_)] + (wl_arr_temp > veg_arr_list[thr.index(thr_)]).astype(np.int16) * water_level_.count(_)
-
-    return inund_list
-
-
+        np.save(output_file, inund_arr)

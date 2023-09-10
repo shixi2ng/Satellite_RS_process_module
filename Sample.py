@@ -33,8 +33,13 @@ if __name__ == '__main__':
         veg_ds = gdal.Open(f'G:\\A_veg\\S2_all\\XGB_vhm\\Feature_table4heightmap\\peak_{str(year)}\\predicted_feature_tif\\ch_out_mod0_heil8.tif')
         veg_dic[year] = veg_ds.GetRasterBand(1).ReadAsArray()
 
-    for sec, extent, sec2 in zip(['yizhi', 'jingjiang', 'chenghan', 'hanhu'], [(0, 14482, 0, 2810), (0, 14482, 2810, 18320), (0, 14482, 18320, 30633), (0, 14482, 30633, 49071)], ['yz_section', 'jj_section', 'ch_section', 'hh_section']):
-    # for sec, extent, sec2 in zip(['hanhu'], [(0, 14482, 30633, 49071)], ['hh_section']):
+    # for sec, extent, sec2 in zip(['yizhi', 'jingjiang', 'chenghan', 'hanhu'], [(0, 14482, 0, 2810), (0, 14482, 2810, 18320), (0, 14482, 18320, 30633), (0, 14482, 30633, 49071)], ['yz_section', 'jj_section', 'ch_section', 'hh_section']):
+    for sec, extent, sec2 in zip(['jingjiang', 'chenghan', 'hanhu'],
+                                 [(0, 14482, 2810, 18320), (0, 14482, 18320, 30633),
+                                  (0, 14482, 30633, 49071)],
+                                 ['jj_section', 'ch_section', 'hh_section']):
+
+        # for sec, extent, sec2 in zip(['hanhu'], [(0, 14482, 30633, 49071)], ['hh_section']):
 
         inundated_dc = Sentinel2_dc('G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\inundation_static_wi_thr_datacube\\')
         rs_dc = RS_dcs(inundated_dc)

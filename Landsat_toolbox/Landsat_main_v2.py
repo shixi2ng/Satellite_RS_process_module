@@ -1,6 +1,6 @@
 import concurrent.futures
 from itertools import repeat
-from .built_in_index import built_in_index
+from .built_in_index import built_in_index, OLI2ETM
 import matplotlib.pyplot as plt
 import tarfile
 from datetime import date
@@ -39,6 +39,7 @@ class Landsat_l2_ds(object):
         self.construction_issue_factor = False
         self.construction_failure_files = []
         self._index_exprs_dic = {}
+        self._oli_harmonisation = True
 
         # Define key var for VI clip
         self.clipped_vi_path_dic = {}
@@ -86,11 +87,11 @@ class Landsat_l2_ds(object):
         self._all_supported_index_list = ['RGB', 'QI', 'all_band', '4visual', 'NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI',
                                           'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'AWEI', 'AWEInsh']
         self._band_tab = {'LE07_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7'),
-                          'LE07_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'TIR', 'MIR2'),
+                          'LE07_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'TIR', 'SWIR2'),
                           'LT05_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8'),
-                          'LT05_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'TIR', 'MIR2', 'PAN'),
+                          'LT05_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'TIR', 'SWIR2', 'PAN'),
                           'LC08_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B10'),
-                          'LC08_bandname': ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'MIR2', 'PAN', 'TIR'),
+                          'LC08_bandname': ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2', 'PAN', 'TIR'),
                           }
         self._band_sup = ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'MIR2', 'PAN', 'TIR')
 
@@ -316,12 +317,21 @@ class Landsat_l2_ds(object):
         for kwarg_indicator in kwargs.keys():
             if kwarg_indicator not in ('ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_para', 'scan_line_correction',
                                        'main_coordinate_system', 'overwritten_factor', 'cloud_removal_para', 'metadata_range',
-                                       'issued_files'):
+                                       'issued_files', 'harmonising_data'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
+
+        # process harmonising data parameter
+        if 'cloud_removal_para' in kwargs.keys():
+            if isinstance(kwargs['harmonising_data'], bool):
+                self._harmonising_data = kwargs['harmonising_data']
+            else:
+                raise TypeError('Please mention the harmonising_data should be bool type!')
+        else:
+            self._harmonising_data = False
 
         # process cloud removal parameter
         if 'cloud_removal_para' in kwargs.keys():
-            if type(kwargs['cloud_removal_para']) is bool:
+            if isinstance(kwargs['cloud_removal_para'], bool):
                 self._cloud_removal_para = kwargs['cloud_removal_para']
             else:
                 raise TypeError('Please mention the cloud_removal_para should be bool type!')
@@ -550,12 +560,15 @@ class Landsat_l2_ds(object):
                     if _ in self._index_exprs_dic.keys():
                         dep_list = self._index_exprs_dic[_][0]
                         dep_list = [str(dep) for dep in dep_list]
+                        harfactor_list = None
                         if 'LE07' in fileid:
                             dep_list = [self._band_tab['LE07_bandnum'][self._band_tab['LE07_bandname'].index(dep_t)] for dep_t in dep_list]
                         elif 'LT05' in fileid or 'LT04' in fileid:
                             dep_list = [self._band_tab['LT05_bandnum'][self._band_tab['LT05_bandname'].index(dep_t)] for dep_t in dep_list]
                         elif 'LC08' in fileid or 'LC09' in fileid:
                             dep_list = [self._band_tab['LC08_bandnum'][self._band_tab['LC08_bandname'].index(dep_t)] for dep_t in dep_list]
+                            if self._harmonising_data:
+                                harfactor_list = [OLI2ETM.__dict__[f"{dep_t}_band_OLS"] for dep_t in dep_list]
                         else:
                             raise Exception('The Original Tiff files are not belonging to Landsat 5, 7, 8 OR 9')
 
@@ -570,6 +583,8 @@ class Landsat_l2_ds(object):
                                     nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
                                     if ~np.isnan(nodata_value):
                                         array_temp[array_temp == nodata_value] = np.nan
+                                    if harfactor_list is not None:
+                                        array_temp = array_temp * harfactor_list[ds_list.index(ds_temp)][0] + harfactor_list[ds_list.index(ds_temp)][1]
                                     array_list.append(array_temp)
 
                                     if bound_temp is None:
