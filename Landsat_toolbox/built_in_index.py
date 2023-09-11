@@ -47,14 +47,3 @@ class built_in_index(object):
                 self.index_dic[i] = [var, func]
 
 
-class OLI2ETM(object):
-
-    def __init__(self):
-        self.BLUE_band_OLS = (0.8850, 0.0183)
-        self.GREEN_band_OLS = (0.9317, 0.0123)
-        self.RED_band_OLS = (0.9372,  0.0123)
-        self.NIR_band_OLS = (0.8339, 0.0448)
-        self.SWIR_band_OLS = (0.8639, 0.0306)
-        self.SWIR2_band_OLS = (0.9165, 0.0116)
-
-

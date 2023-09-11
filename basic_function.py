@@ -3,7 +3,6 @@ import os
 import sys
 import numpy as np
 import datetime
-import h5py
 from osgeo import gdal, osr
 import shutil
 import geopandas as gp

@@ -1,14 +1,12 @@
 import concurrent.futures
 from itertools import repeat
-from .built_in_index import built_in_index, OLI2ETM
+from .built_in_index import built_in_index
 import matplotlib.pyplot as plt
 import tarfile
 from datetime import date
 from scipy.optimize import curve_fit
 import glob
 from lxml import etree
-import psutil
-import json
 from RSDatacube.utils import *
 
 
@@ -94,6 +92,13 @@ class Landsat_l2_ds(object):
                           'LC08_bandname': ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2', 'PAN', 'TIR'),
                           }
         self._band_sup = ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'MIR2', 'PAN', 'TIR')
+        self._OLI2ETM_harmonised_factor = {"BLUE_band_OLS": (0.8850, 0.0183),
+                                           "GREEN_band_OLS": (0.9317, 0.0123),
+                                           "RED_band_OLS": (0.9372,  0.0123),
+                                           "NIR_band_OLS": (0.8339, 0.0448),
+                                           "SWIR_band_OLS": (0.8639, 0.0306),
+                                           "SWIR2_band_OLS": (0.9165, 0.0116)
+                                           }
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):
@@ -321,7 +326,7 @@ class Landsat_l2_ds(object):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process harmonising data parameter
-        if 'cloud_removal_para' in kwargs.keys():
+        if 'harmonising_data' in kwargs.keys():
             if isinstance(kwargs['harmonising_data'], bool):
                 self._harmonising_data = kwargs['harmonising_data']
             else:
@@ -568,7 +573,7 @@ class Landsat_l2_ds(object):
                         elif 'LC08' in fileid or 'LC09' in fileid:
                             dep_list = [self._band_tab['LC08_bandnum'][self._band_tab['LC08_bandname'].index(dep_t)] for dep_t in dep_list]
                             if self._harmonising_data:
-                                harfactor_list = [OLI2ETM.__dict__[f"{dep_t}_band_OLS"] for dep_t in dep_list]
+                                harfactor_list = [self._OLI2ETM_harmonised_factor[f"{self._band_tab['LC08_bandname'][self._band_tab['LC08_bandnum'].index(dep_t)]}_band_OLS"] for dep_t in dep_list]
                         else:
                             raise Exception('The Original Tiff files are not belonging to Landsat 5, 7, 8 OR 9')
 
@@ -579,7 +584,7 @@ class Landsat_l2_ds(object):
                             try:
                                 array_list = []
                                 for ds_temp in ds_list:
-                                    array_temp = ds_temp.GetRasterBand(1).ReadAsArray().astype(np.float)
+                                    array_temp = ds_temp.GetRasterBand(1).ReadAsArray().astype(np.float32)
                                     nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
                                     if ~np.isnan(nodata_value):
                                         array_temp[array_temp == nodata_value] = np.nan
@@ -645,7 +650,7 @@ class Landsat_l2_ds(object):
                                 # qi_folder = f'{self._work_env}Landsat_constructed_index\\QI\\' if self.ROI is None else f'{self._work_env}Landsat_{str(self.ROI_name)}_index\\QI\\'
                                 # bf.create_folder(qi_folder)
                                 QI_ds = gdal.Open(QI_filelist[0])
-                                QI_arr = QI_ds.GetRasterBand(1).ReadAsArray().astype(np.float)
+                                QI_arr = QI_ds.GetRasterBand(1).ReadAsArray().astype(np.float16)
                                 QI_arr = self._process_QA_band(QI_arr, QI_filelist[0])
                                 output_array = QI_arr * output_array
                                 # bf.write_raster(ds_list[0], output_array, qi_folder, file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
@@ -742,7 +747,7 @@ class Landsat_l2_ds(object):
         if type(QI_temp_array) != np.ndarray or type(filename) != str:
             raise TypeError('The qi temp array or the file name was under a wrong format!')
 
-        QI_temp_array = QI_temp_array.astype(np.float)
+        QI_temp_array = QI_temp_array.astype(np.float16)
         QI_temp_array[QI_temp_array == 1] = np.nan
 
         if 'LC08' in filename or 'LC09' in filename:
@@ -1083,7 +1088,7 @@ class Landsat_l2_ds(object):
                             if _sparse_matrix:
                                 if np.isnan(nodata_value):
                                     output_arr[np.isnan(output_arr)] = 0
-                                    dtype_temp = np.float
+                                    dtype_temp = np.float16
                                 else:
                                     output_arr[np.isnan(output_arr)] = nodata_value
                                     output_arr = output_arr - nodata_value
@@ -1904,7 +1909,7 @@ class Landsat_dcs(object):
                 bf.create_folder(self.inun_det_method_dic['DT_' + self.ROI_name] + 'individual_tif\\')
                 inundated_dc = np.array([])
                 DT_threshold_ds = gdal.Open(self.inun_det_method_dic['DT_threshold_map_' + self.ROI_name] + 'threshold_map.TIF')
-                DT_threshold = DT_threshold_ds.GetRasterBand(1).ReadAsArray().astype(np.float)
+                DT_threshold = DT_threshold_ds.GetRasterBand(1).ReadAsArray().astype(np.float16)
                 DT_threshold[np.isnan(DT_threshold)] = 0
 
                 # Construct the MNDWI distribution figure
@@ -2014,7 +2019,7 @@ class Landsat_dcs(object):
                         sample_all_temp_raster = sample_ds.GetRasterBand(1).ReadAsArray().astype(np.int16)
                         landsat_doy = self._sample_rs_link_list[pos[0][0], 1] // 10000 * 1000 + datetime.date(self._sample_rs_link_list[pos[0][0], 1] // 10000, np.mod(self._sample_rs_link_list[pos[0][0], 1], 10000) // 100, np.mod(self._sample_rs_link_list[pos[0][0], 1], 100)).toordinal() - datetime.date(self._sample_rs_link_list[pos[0][0], 1] // 10000, 1, 1).toordinal() + 1
                         sample_all_temp_raster[sample_all_temp_raster == 3] = -2
-                        sample_all_temp_raster_1 = copy.copy(sample_all_temp_raster).astype(np.float)
+                        sample_all_temp_raster_1 = copy.copy(sample_all_temp_raster).astype(np.float16)
                         sample_all_temp_raster_1[sample_all_temp_raster_1 == -2] = np.nan
 
                         if DT_factor:
@@ -2023,7 +2028,7 @@ class Landsat_dcs(object):
                             landsat_local_temp_raster = landsat_local_temp_ds.GetRasterBand(1).ReadAsArray()
                             confusion_matrix_temp = confusion_matrix_2_raster(landsat_local_temp_raster, sample_all_temp_raster, nan_value=-2)
                             confusion_dic[self.ROI_name + '_DT_' + str(sample_date)] = confusion_matrix_temp
-                            landsat_local_temp_raster = landsat_local_temp_raster.astype(np.float)
+                            landsat_local_temp_raster = landsat_local_temp_raster.astype(np.float16)
                             landsat_local_temp_raster[landsat_local_temp_raster == -2] = np.nan
                             local_error_distribution = landsat_local_temp_raster - sample_all_temp_raster_1
                             local_error_distribution[np.isnan(local_error_distribution)] = 0
@@ -2043,7 +2048,7 @@ class Landsat_dcs(object):
                             landsat_global_temp_raster = landsat_global_temp_ds.GetRasterBand(1).ReadAsArray()
                             confusion_matrix_temp = confusion_matrix_2_raster(landsat_global_temp_raster, sample_all_temp_raster, nan_value=-2)
                             confusion_dic[self.ROI_name + '_DSWE_' + str(sample_date)] = confusion_matrix_temp
-                            landsat_global_temp_raster = landsat_global_temp_raster.astype(np.float)
+                            landsat_global_temp_raster = landsat_global_temp_raster.astype(np.float16)
                             landsat_global_temp_raster[landsat_global_temp_raster == -2] = np.nan
                             global_error_distribution = landsat_global_temp_raster - sample_all_temp_raster_1
                             global_error_distribution[np.isnan(global_error_distribution)] = 0
@@ -2062,7 +2067,7 @@ class Landsat_dcs(object):
                             landsat_AWEI_temp_raster = landsat_AWEI_temp_ds.GetRasterBand(1).ReadAsArray()
                             confusion_matrix_temp = confusion_matrix_2_raster(landsat_AWEI_temp_raster, sample_all_temp_raster, nan_value=-2)
                             confusion_dic[self.ROI_name + '_AWEI_' + str(sample_date)] = confusion_matrix_temp
-                            landsat_AWEI_temp_raster = landsat_AWEI_temp_raster.astype(np.float)
+                            landsat_AWEI_temp_raster = landsat_AWEI_temp_raster.astype(np.float16)
                             landsat_AWEI_temp_raster[landsat_AWEI_temp_raster == -2] = np.nan
                             AWEI_error_distribution = landsat_AWEI_temp_raster - sample_all_temp_raster_1
                             AWEI_error_distribution[np.isnan(AWEI_error_distribution)] = 0
@@ -2566,7 +2571,7 @@ class Landsat_dcs(object):
                         amount_sole = [np.sum(example_sole == value) for value in unique_sole]
                         example_sole[example_sole != unique_sole[np.argmax(amount_sole)]] = -10
                         example_sole[example_sole == unique_sole[np.argmax(amount_sole)]] = 1
-                        example_sole = example_sole.astype(np.float)
+                        example_sole = example_sole.astype(np.float16)
                         example_sole[example_sole == -10] = np.nan
                         river_sample = example_sole
                         bf.write_raster(example_ds, river_sample, output_folder, 'example.tif',
@@ -2662,10 +2667,10 @@ class Landsat_dcs(object):
                 date_temp = []
                 recession_temp = []
                 water_level_temp = []
-                annual_inundation_epoch = np.zeros_like(self.sa_map).astype(np.float)
-                annual_inundation_status = np.zeros_like(self.sa_map).astype(np.float)
-                annual_inundation_beg = np.zeros_like(self.sa_map).astype(np.float)
-                annual_inundation_end = np.zeros_like(self.sa_map).astype(np.float)
+                annual_inundation_epoch = np.zeros_like(self.sa_map).astype(np.float16)
+                annual_inundation_status = np.zeros_like(self.sa_map).astype(np.float16)
+                annual_inundation_beg = np.zeros_like(self.sa_map).astype(np.float16)
+                annual_inundation_end = np.zeros_like(self.sa_map).astype(np.float16)
                 annual_inundation_status[np.isnan(self.sa_map)] = np.nan
                 annual_inundation_epoch[np.isnan(self.sa_map)] = np.nan
                 annual_inundation_beg[np.isnan(self.sa_map)] = np.nan
@@ -3259,7 +3264,7 @@ class Landsat_dcs(object):
 
                     index_dc[flood_dc == 1] = np.nan
                     # initiate the cube
-                    output_metrics = np.zeros([self.sa_map.shape[0], self.sa_map.shape[1], year_range.shape[0]]).astype(np.float)
+                    output_metrics = np.zeros([self.sa_map.shape[0], self.sa_map.shape[1], year_range.shape[0]]).astype(np.float16)
                     output_obs = np.zeros([self.sa_map.shape[0], self.sa_map.shape[1], year_range.shape[0]]).astype(np.int16)
                     for y in range(self.sa_map.shape[0]):
                         for x in range(self.sa_map.shape[1]):
@@ -3317,7 +3322,7 @@ class Landsat_dcs(object):
                     year_range = np.sort(np.unique(np.floor(doy_dc/1000)).astype(int))
 
                     # initiate the cube
-                    output_metrics = np.zeros([self.sa_map.shape[0], self.sa_map.shape[1], year_range.shape[0] - 1]).astype(np.float)
+                    output_metrics = np.zeros([self.sa_map.shape[0], self.sa_map.shape[1], year_range.shape[0] - 1]).astype(np.float16)
                     output_obs = np.zeros([self.sa_map.shape[0], self.sa_map.shape[1], year_range.shape[0] - 1]).astype(np.int16)
                     for y in range(self.sa_map.shape[0]):
                         for x in range(self.sa_map.shape[1]):
@@ -3971,7 +3976,7 @@ class Landsat_dcs(object):
                                     phe_temp[y_temp_temp, x_temp_temp, 0: max_index[y_temp_temp, x_temp_temp]] = np.nan
                             phe_temp[phe_temp < 0.3] = np.nan
                             phe_metrics = np.nanmean(phe_temp, axis=2)
-                        phe_metrics = phe_metrics.astype(np.float)
+                        phe_metrics = phe_metrics.astype(np.float16)
                         phe_metrics[self.sa_map == -32768] = np.nan
                         bf.write_raster(gdal.Open(self.ds_file), phe_metrics, phenology_metrics_inform_dic[phenology_index_temp + '_' + VI + '_' + str(self._curve_fitting_dic['CFM']) + '_path'], str(year) + '_phe_metrics.TIF', raster_datatype=gdal.GDT_Float32)
             np.save(self.work_env + VI + '_phenology_metrics\\' + str(self._curve_fitting_dic['CFM']) + '_phenology_metrics.npy', phenology_metrics_inform_dic)
@@ -4787,7 +4792,7 @@ class Landsat_dcs(object):
 #         print('Please input a correct image araay with three layers (R G B)!')
 #         sys.exit(-1)
 #     else:
-#         data_array = data_array.astype(np.float)
+#         data_array = data_array.astype(np.float16)
 #         r_max = np.sort(np.unique(data_array[:, :, 0]))[-2]
 #         r_min = np.sort(np.unique(data_array[:, :, 0]))[0]
 #         g_max = np.sort(np.unique(data_array[:, :, 1]))[-2]
@@ -4805,9 +4810,3 @@ class Landsat_dcs(object):
 # def phenology_monitor(demo_path, phenology_indicator):
 #     pass
 
-
-if __name__ == '__main__':
-    landsat_temp = Landsat_l2_ds('D:\\MID_YZR\\Landsat\\Original_zip_files\\')
-    landsat_temp.construct_metadata(unzipped_para=False)
-    landsat_temp.mp_construct_index(['MNDWI', 'OSAVI'], cloud_removal_para=True, size_control_factor=True, ROI='D:\\MID_YZR\\ROI\\floodplain_2020.shp')
-    landsat_temp.mp_ds2landsatdc(['MNDWI', 'OSAVI'], inherit_from_logfile=True)
