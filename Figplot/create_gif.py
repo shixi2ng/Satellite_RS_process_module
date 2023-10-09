@@ -180,6 +180,7 @@ def plot_ndwi_image(file_path):
             writer.append_data(image)
             writer.append_data(image)
 
+
 # ndvi_file_path = 'D:\\A_Vegetation_Identification\\Wuhan_Sentinel_L2_Original\\Sentinel2_L2A_output\\NDVI_gif\\'
 # plot_ndvi_image(ndvi_file_path)
 ndwi_file_path = 'D:\\A_Vegetation_Identification\\Wuhan_Sentinel_L2_Original\\Sentinel2_L2A_output\\NDWI_gif\\'

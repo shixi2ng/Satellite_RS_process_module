@@ -129,8 +129,6 @@ def union_list(small_list, big_list):
     return union_list_temp
 
 
-
-
 def eliminating_all_non_tif_file(file_path_f):
     filter_name = ['.TIF']
     tif_file_list = bf.file_filter(file_path_f, filter_name)

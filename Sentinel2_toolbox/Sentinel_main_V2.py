@@ -297,7 +297,7 @@ class Sentinel2_ds(object):
                 Corrupted_metadata.to_excel(self._work_env + 'Corrupted_metadata.xlsx')
             else:
                 Corrupted_metadata_old_version = pd.read_excel(self._work_env + 'Corrupted_metadata.xlsx')
-                Corrupted_metadata_old_version.append(Corrupted_metadata, ignore_index=True)
+                Corrupted_metadata_old_version.append(Corrupted_metadata.to_dict(), ignore_index=True)
                 Corrupted_metadata_old_version.drop_duplicates()
                 Corrupted_metadata_old_version.to_excel(self._work_env + 'Corrupted_metadata.xlsx')
 

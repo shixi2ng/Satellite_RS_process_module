@@ -3,8 +3,6 @@ import numpy as np
 import pandas as pd
 import geopandas as gp
 from shapely.geometry import Point,LineString, Polygon, shape
-# import geoviews as gv
-# from geoviews import opts, tile_sources as gvts
 import basic_function as bf
 import requests as r
 import os

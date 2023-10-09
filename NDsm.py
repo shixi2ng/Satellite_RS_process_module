@@ -191,6 +191,15 @@ class NDSparseMatrix:
                 self.SM_namelist.remove(_)
             self.save(input_path, overwritten_para=True)
 
+        # # Remove redundant npz
+        # file_list = os.listdir(input_path)
+        # for _ in file_list:
+        #     if str(_.split('.npz')[0]) not in self.SM_namelist and _.split('.npz')[0] != 'SMsequence':
+        #         try:
+        #             os.remove(input_path + _)
+        #         except:
+        #             pass
+
         self._update_size_para()
         self._matrix_type = type(SM_arr_temp)
         return self

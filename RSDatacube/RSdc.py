@@ -1,7 +1,6 @@
 # coding=utf-8
-import os
-import pandas as pd
-import basic_function
+import copy
+
 from basic_function import Path
 import concurrent.futures
 from itertools import repeat
@@ -10,14 +9,9 @@ from Landsat_toolbox.Landsat_main_v2 import Landsat_dc
 from scipy import sparse as sm
 from Sentinel2_toolbox.utils import *
 from Sentinel2_toolbox.Sentinel_main_V2 import Sentinel2_dc, Sentinel2_ds
-from Landsat_toolbox.utils import *
-from NDsm import NDSparseMatrix
-import json
-from tqdm.auto import tqdm
 from tqdm import tqdm as tq
 from .utils import *
 from shapely import wkt
-import seaborn as sns
 
 
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
@@ -308,7 +302,7 @@ class Phemetric_dc(object):
         self.curfit_dic = {}
 
         # Init protected var
-        self._support_pheme_list = ['SOS', 'EOS', 'trough_vi', 'peak_vi', 'peak_doy', 'GR', 'DR', 'DR2', 'MAVI']
+        self._support_pheme_list = ['SOS', 'EOS', 'trough_vi', 'peak_vi', 'peak_doy', 'GR', 'DR', 'DR2', 'MAVI', 'TSVI']
 
         # Check work env
         if work_env is not None:
@@ -471,21 +465,19 @@ class Phemetric_dc(object):
                             para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
 
                     try:
-                        peak_vi_array = np.zeros([para_dic[0].shape[0], para_dic[0].shape[1], 365])
-                        for _ in range(peak_vi_array.shape[2]):
-                            peak_vi_array[:, :, _] = _ + 1
-                        peak_vi_array[para_dic[0] == 0] = np.nan
-                        peak_vi_array = np.nanmax(seven_para_logistic_function(peak_vi_array, para_dic[0][y_temp, x_temp], para_dic[1][y_temp, x_temp], para_dic[2][y_temp, x_temp], para_dic[3][y_temp, x_temp], para_dic[4][y_temp, x_temp], para_dic[5][y_temp, x_temp], para_dic[6][y_temp, x_temp]), axis=2)
-                        peak_vi_array[np.isnan(peak_vi_array)] = 0
-                    except MemoryError:
                         peak_vi_array = copy.copy(para_dic[0])
                         peak_vi_array[peak_vi_array != 0] = -1
-                        for y_temp in range(para_dic[0].shape[0]):
-                            for x_temp in range(para_dic[0].shape[1]):
+                        xy_list = np.argwhere(peak_vi_array != 0).tolist()
+                        d_temp = np.linspace(1, 365, 365)
+                        with tqdm(total=len(xy_list), desc=f'Generate the peak_vi of {str(self.pheyear)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                            for xy_temp in xy_list:
+                                y_temp, x_temp = xy_temp[0], xy_temp[1]
                                 if peak_vi_array[y_temp, x_temp] == -1:
-                                    peak_vi_array[y_temp, x_temp] = np.max(seven_para_logistic_function(np.linspace(1, 365, 365), para_dic[0][y_temp, x_temp], para_dic[1][y_temp, x_temp], para_dic[2][y_temp, x_temp], para_dic[3][y_temp, x_temp], para_dic[4][y_temp, x_temp], para_dic[5][y_temp, x_temp], para_dic[6][y_temp, x_temp]))
+                                    peak_vi_array[y_temp, x_temp] = np.max(seven_para_logistic_function(d_temp, para_dic[0][y_temp, x_temp], para_dic[1][y_temp, x_temp], para_dic[2][y_temp, x_temp], para_dic[3][y_temp, x_temp], para_dic[4][y_temp, x_temp], para_dic[5][y_temp, x_temp], para_dic[6][y_temp, x_temp]))
+                                pbar.update()
                         peak_vi_array[peak_vi_array == -1] = 0
-
+                    except:
+                        raise Exception('Unable to create peak vi!')
                     self._add_layer(peak_vi_array, 'peak_vi')
 
                 elif pheme_temp == 'peak_doy':
@@ -504,8 +496,8 @@ class Phemetric_dc(object):
                         for x_temp in range(para_dic[0].shape[1]):
                             if peak_doy_array[y_temp, x_temp] == -1:
                                 peak_doy_array[y_temp, x_temp] = np.argmax(seven_para_logistic_function(np.linspace(1, 365, 365), para_dic[0][y_temp, x_temp], para_dic[1][y_temp, x_temp], para_dic[2][y_temp, x_temp], para_dic[3][y_temp, x_temp], para_dic[4][y_temp, x_temp], para_dic[5][y_temp, x_temp], para_dic[6][y_temp, x_temp])) + 1
-                    peak_doy_array[peak_doy_array == -1] = 0
 
+                    peak_doy_array[peak_doy_array == -1] = 0
                     self._add_layer(peak_doy_array, 'peak_doy')
 
                 elif pheme_temp == 'GR':
@@ -537,40 +529,79 @@ class Phemetric_dc(object):
                     try:
                         MAVI_array = np.zeros([para_dic[0].shape[0], para_dic[0].shape[1]]) * np.nan
                         d_temp = np.linspace(1, 365, 365)
-                        with tqdm(total=para_dic[0].shape[0] * para_dic[0].shape[1], desc=f'Generate the MAVI of {str(self.pheyear)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                            for y_temp in range(para_dic[0].shape[0]):
-                                for x_temp in range(para_dic[0].shape[1]):
-                                    para_list = [para_dic[_][y_temp, x_temp] for _ in range(7)]
-                                    if True not in [np.isnan(_) for _ in para_list]:
-                                        index_arr = seven_para_logistic_function(d_temp, para_list[0], para_list[1], para_list[2],
-                                                                                 para_list[3], para_list[4], para_list[5], para_list[6])
-                                        if np.sum(np.isnan(index_arr)) == 0:
-                                            max_index = np.argmax(index_arr)
-                                            derivative_arr = np.zeros_like(index_arr) * np.nan
+                        with tqdm(total=len(xy_list), desc=f'Generate the MAVI of {str(self.pheyear)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                            for xy_temp in xy_list:
+                                y_temp, x_temp = xy_temp[0], xy_temp[1]
+                                para_list = [para_dic[_][y_temp, x_temp] for _ in range(7)]
+                                if True not in [np.isnan(_) for _ in para_list]:
+                                    index_arr = seven_para_logistic_function(d_temp, para_list[0], para_list[1], para_list[2],
+                                                                             para_list[3], para_list[4], para_list[5], para_list[6])
+                                    if np.sum(np.isnan(index_arr)) == 0:
+                                        max_index = np.argmax(index_arr)
+                                        derivative_arr = np.zeros_like(index_arr) * np.nan
 
-                                            for _ in range(1, 364):
-                                                derivative_arr[_] = (index_arr[_ + 1] - index_arr[_ - 1]) / 2
+                                        for _ in range(1, 364):
+                                            derivative_arr[_] = (index_arr[_ + 1] - index_arr[_ - 1]) / 2
+                                        try:
+                                            derivative_index = np.min(np.argwhere(derivative_arr < - ((para_list[1] - (para_list[4] * para_list[6])) / (8 * para_list[5]))))
+                                        except:
+                                            derivative_index = int(para_list[4] - 3 * para_list[5])
+
+                                        if derivative_index > max_index:
                                             try:
-                                                derivative_index = np.min(np.argwhere(derivative_arr < - ((para_list[1] - (para_list[4] * para_list[6])) / (8 * para_list[5]))))
+                                                MAVI_array[y_temp, x_temp] = np.mean(index_arr[max_index: derivative_index])
                                             except:
-                                                derivative_index = int(para_list[4] - 3 * para_list[5])
-
-                                            if derivative_index > max_index:
-                                                try:
-                                                    MAVI_array[y_temp, x_temp] = np.mean(index_arr[max_index: derivative_index])
-                                                except:
-                                                    pass
-                                            else:
-                                                MAVI_array[y_temp, x_temp] = index_arr[max_index]
+                                                pass
                                         else:
-                                            pass
+                                            MAVI_array[y_temp, x_temp] = index_arr[max_index]
                                     else:
                                         pass
-                                    pbar.update()
+                                else:
+                                    pass
+                                pbar.update()
                         MAVI_array[np.isnan(MAVI_array)] = 0
                     except:
                         raise Exception('Error occured during the MAVI generation!')
                     self._add_layer(MAVI_array, 'MAVI')
+
+                elif pheme_temp == 'TSVI':
+                    para_dic = {}
+                    for para_num in range(self.curfit_dic['para_num']):
+                        if isinstance(self.dc, NDSparseMatrix):
+                            para_dic[para_num] = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
+                        else:
+                            para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
+
+                    try:
+                        TSVI_array = copy.copy(para_dic[0])
+                        TSVI_array[TSVI_array != 0] = -1
+                        xy_list = np.argwhere(TSVI_array != 0).tolist()
+                        d_temp = np.linspace(1, 365, 365)
+                        with tqdm(total=len(xy_list), desc=f'Generate the TSVI of {str(self.pheyear)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                            for xy_temp in xy_list:
+                                y_temp, x_temp = xy_temp[0], xy_temp[1]
+                                para_list = [para_dic[_][y_temp, x_temp] for _ in range(7)]
+                                if True not in [np.isnan(_) for _ in para_list]:
+                                    index_arr = seven_para_logistic_function(d_temp, para_list[0], para_list[1], para_list[2],
+                                                                             para_list[3], para_list[4], para_list[5], para_list[6])
+                                    if np.sum(np.isnan(index_arr)) == 0:
+                                        derivative_arr = np.zeros_like(index_arr) * np.nan
+                                        for _ in range(1, 364):
+                                            derivative_arr[_] = (index_arr[_ + 1] - index_arr[_ - 1]) / 2
+                                        try:
+                                            derivative_index = np.min(np.argwhere(derivative_arr < - ((para_list[1] - (para_list[4] * para_list[6])) / (8 * para_list[5]))))
+                                        except:
+                                            derivative_index = int(para_list[4] - 3 * para_list[5])
+                                        TSVI_array[y_temp, x_temp] = index_arr[derivative_index]
+                                    else:
+                                        pass
+                                else:
+                                    pass
+                                pbar.update()
+                        TSVI_array[np.isnan(TSVI_array)] = 0
+                    except:
+                        raise Exception('Error occured during the TSVI generation!')
+                    self._add_layer(TSVI_array, 'TSVI')
         else:
             pass
 
@@ -610,6 +641,40 @@ class Phemetric_dc(object):
             except:
                 raise Exception('Some error occurred during the add layer within a phemetric dc')
 
+    def remove_layer(self, layer_name):
+
+        # Process the layer name
+        layer_ = []
+        if isinstance(layer_name, str):
+            if str(self.pheyear) + '_' + layer_name in self.paraname_list:
+                layer_.append(str(self.pheyear) + '_' + layer_name)
+            elif layer_name in self.paraname_list:
+                layer_.append(layer_name)
+        elif isinstance(layer_name, list):
+            for layer_temp in layer_name:
+                if str(self.pheyear) + '_' + layer_temp in self.paraname_list:
+                    layer_.append(str(self.pheyear) + '_' + layer_temp)
+                elif layer_temp in self.paraname_list:
+                    layer_.append(layer_temp)
+
+        # Remove selected layer
+        for _ in layer_:
+            if self.sparse_matrix:
+                try:
+                    self.dc.remove_layer(_)
+                    self.paraname_list.remove(_)
+                except:
+                    raise Exception('Some error occurred during the removal of layer within a phemetric dc')
+            else:
+                try:
+                    self.dc = np.delete(self.dc, self.paraname_list.index(_), axis=2)
+                    self.paraname_list.remove(layer_name)
+                except:
+                    raise Exception('Some error occurred during the add layer within a phemetric dc')
+
+        self.save(self.Phemetric_dc_filepath)
+        self.__init__(self.Phemetric_dc_filepath)
+
     def save(self, output_path: str):
         start_time = time.time()
         print(f'Start saving the Phemetric datacube of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
@@ -636,6 +701,39 @@ class Phemetric_dc(object):
             np.save(f'{output_path}{str(self.index)}_Phemetric_datacube.npy', self.dc)
 
         print(f'Finish saving the Phemetric datacube of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+
+    def dc2tif(self, phe_list: list = None, output_folder: str = None):
+
+        # Process phe list
+        if phe_list is None:
+            phe_list = self.paraname_list
+        elif isinstance(phe_list, list):
+            phe_list_ = []
+            for phe_temp in phe_list:
+                if phe_temp in self.paraname_list:
+                    phe_list_.append(phe_temp)
+                elif str(self.pheyear) + '_' + phe_temp in self.paraname_list:
+                    phe_list_.append(str(self.pheyear) + '_' + phe_temp)
+            phe_list = phe_list_
+        else:
+            raise TypeError('Phe list should under list type')
+
+        # Process output folder
+        if output_folder is None:
+            output_folder = self.Phemetric_dc_filepath + 'Pheme_TIF\\'
+        else:
+            output_folder = Path(output_folder).path_name
+        bf.create_folder(output_folder)
+
+        ds_temp = gdal.Open(self.ROI_tif)
+        for phe_ in phe_list:
+            if not os.path.exists(output_folder + f'{str(phe_)}.TIF'):
+                if self.sparse_matrix:
+                    phe_arr = self.dc.SM_group[phe_].toarray()
+                else:
+                    phe_arr = self.dc[:, :, self.paraname_list.index(phe_)]
+                phe_arr[phe_arr == self.Nodata_value] = np.nan
+                bf.write_raster(ds_temp, phe_arr, output_folder, f'{str(phe_)}.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
 
 
 class RS_dcs(object):
@@ -1221,8 +1319,10 @@ class RS_dcs(object):
         else:
             dc_num = dc_num[0]
 
+        # Start the detection
         start_time = time.time()
         print(f'Start detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m using \033[1;35m{inundation_mapping_method}\033[0m')
+        inundation_dc, oa_output_path = None, None
 
         if inundation_mapping_method not in self._flood_mapping_method:
             raise ValueError(f'The inundation detection method {str(inundation_mapping_method)} is not supported')
@@ -1290,6 +1390,8 @@ class RS_dcs(object):
                     self.append(inundation_dc)
                     self.remove(self._index_list[dc_num])
 
+                oa_output_path = copy.deepcopy(static_output)
+
         # Method 2 Dynamic threshold
         elif inundation_mapping_method == 'DT':
 
@@ -1300,6 +1402,7 @@ class RS_dcs(object):
                 DT_output_path = output_path + 'Inundation_DT_datacube\\'
                 DT_inditif_path = DT_output_path + 'Individual_tif\\'
                 DT_threshold_path = DT_output_path + 'DT_threshold\\'
+                oa_output_path = DT_output_path
                 bf.create_folder(DT_output_path)
                 bf.create_folder(DT_inditif_path)
                 bf.create_folder(DT_threshold_path)
@@ -1457,31 +1560,103 @@ class RS_dcs(object):
                 else:
                     inundation_dc = dc_type(DT_output_path)
 
-                # Create annual inundation map
-                DT_annualtif_path = DT_output_path + 'Annual_tif\\'
-                bf.create_folder(DT_annualtif_path)
+        print(f'Flood mapping using {str(inundation_mapping_method)} method within {self.ROI_name} consumes {str(time.time() - start_time)}s!')
 
+        if inundation_dc is not None:
+
+            # Create annual inundation map
+            inditif_path = oa_output_path + 'Individual_tif\\'
+            annualtif_path = oa_output_path + 'Annual_tif\\'
+            bf.create_folder(annualtif_path)
+
+            doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
+            year_array = np.unique(doy_array // 1000)
+            temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
+            for year in year_array:
+                if not os.path.exists(f'{annualtif_path}DT_{str(year)}.TIF') or self._inundation_overwritten_factor:
+                    annual_vi_list = []
+                    for doy_index in range(doy_array.shape[0]):
+                        if doy_array[doy_index] // 1000 == year and 120 <= np.mod(doy_array[doy_index], 1000) <= 300:
+                            if isinstance(inundation_dc.dc, NDSparseMatrix):
+                                arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
+                                annual_vi_list.append(arr_temp.toarray())
+                            else:
+                                annual_vi_list.append(inundation_dc.dc[:, :, doy_index])
+
+                    if annual_vi_list == []:
+                        annual_inundated_map = np.zeros([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]], dtype=np.byte)
+                    else:
+                        annual_inundated_map = np.nanmax(np.stack(annual_vi_list, axis=2), axis=2)
+                        bf.write_raster(temp_ds, annual_inundated_map, annualtif_path, f'{inundation_mapping_method}_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+
+            # Create inundation frequency map
+            inunfactor_path = oa_output_path + 'inun_factor\\'
+            bf.create_folder(inunfactor_path)
+
+            if not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency.TIF') or self._inundation_overwritten_factor:
                 doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
-                year_array = np.unique(doy_array // 1000)
-                temp_ds = gdal.Open(bf.file_filter(DT_inditif_path, ['.TIF'])[0])
-                for year in year_array:
-                    if not os.path.exists(f'{DT_annualtif_path}DT_{str(year)}.TIF') or self._inundation_overwritten_factor:
-                        annual_vi_list = []
-                        for doy_index in range(doy_array.shape[0]):
-                            if doy_array[doy_index] // 1000 == year and 120 <= np.mod(doy_array[doy_index], 1000) <= 300:
-                                if isinstance(inundation_dc.dc, NDSparseMatrix):
-                                    arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
-                                    annual_vi_list.append(arr_temp.toarray())
-                                else:
-                                    annual_vi_list.append(inundation_dc.dc[:, :, doy_index])
+                temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
+                roi_temp = np.load(self.ROI_array)
+                inun_arr, all_arr = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(np.float32)
+                inun_arr[roi_temp == -32768] = np.nan
+                all_arr[roi_temp == -32768] = np.nan
 
-                        if annual_vi_list == []:
-                            annual_inundated_map = np.zeros([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]], dtype=np.byte)
-                        else:
-                            annual_inundated_map = np.nanmax(np.stack(annual_vi_list, axis=2), axis=2)
-                            bf.write_raster(temp_ds, annual_inundated_map, DT_annualtif_path, 'DT_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                for doy_index in range(doy_array.shape[0]):
+                    if isinstance(inundation_dc.dc, NDSparseMatrix):
+                        arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
+                    else:
+                        arr_temp = inundation_dc.dc[:, :, doy_array.index(doy_index)]
 
-                print(f'Flood mapping using DT algorithm within {self.ROI_name} consumes {str(time.time() - start_time)}s!')
+                    inun_arr = inun_arr + (arr_temp == 2).astype(np.int16)
+                    all_arr = all_arr + (arr_temp >= 1).astype(np.int16)
+
+                inundation_freq = inun_arr.astype(np.float32) / all_arr.astype(np.float32)
+                bf.write_raster(temp_ds, inundation_freq, inunfactor_path, f'{inundation_mapping_method}_inundation_frequency.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+
+            if not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_pretgd.TIF') or not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_posttgd.TIF'):
+                doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
+                temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
+                roi_temp = np.load(self.ROI_array)
+                inun_arr_pre, all_arr_pre = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(np.float32)
+                inun_arr_post, all_arr_post = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(np.float32)
+                inun_arr_pre[roi_temp == -32768] = np.nan
+                all_arr_pre[roi_temp == -32768] = np.nan
+                inun_arr_post[roi_temp == -32768] = np.nan
+                all_arr_post[roi_temp == -32768] = np.nan
+
+                for doy_index in range(doy_array.shape[0]):
+                    if isinstance(inundation_dc.dc, NDSparseMatrix):
+                        arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
+                    else:
+                        arr_temp = inundation_dc.dc[:, :, doy_array.index(doy_index)]
+
+                    if doy_array[doy_index] < 2004000:
+                        inun_arr_pre = inun_arr_pre + (arr_temp == 2).astype(np.int16)
+                        all_arr_pre = all_arr_pre + (arr_temp >= 1).astype(np.int16)
+
+                    if doy_array[doy_index] >= 2004001:
+                        inun_arr_post = inun_arr_post + (arr_temp == 2).astype(np.int16)
+                        all_arr_post = all_arr_post + (arr_temp >= 1).astype(np.int16)
+
+                inundation_freq_pretgd = inun_arr_pre.astype(np.float32) / all_arr_pre.astype(np.float32)
+                inundation_freq_posttgd = inun_arr_post.astype(np.float32) / all_arr_post.astype(np.float32)
+                bf.write_raster(temp_ds, inundation_freq_pretgd, inunfactor_path, f'{inundation_mapping_method}_inundation_frequency_pretgd.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                bf.write_raster(temp_ds, inundation_freq_posttgd, inunfactor_path, f'{inundation_mapping_method}_inundation_frequency_posttgd.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+
+            if not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_recurrence.TIF') or self._inundation_overwritten_factor:
+
+                yearly_tif = bf.file_filter(annualtif_path, ['.TIF'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
+                roi_temp = np.load(self.ROI_array)
+                recu_arr = np.zeros_like(roi_temp).astype(np.float32)
+                recu_arr[roi_temp == -32768] = np.nan
+
+                for tif_ in yearly_tif:
+                    ds_ = gdal.Open(tif_)
+                    arr_ = ds_.GetRasterBand(1).ReadAsArray()
+                    recu_arr = recu_arr + (arr_ == 2).astype(np.int16)
+
+                inundation_recu = recu_arr.astype(np.float32) / len(yearly_tif)
+                bf.write_raster(temp_ds, inundation_recu, inunfactor_path, f'{inundation_mapping_method}_inundation_recurrence.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=0)
 
         print(f'Finish detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0m s!')
 
@@ -1690,8 +1865,7 @@ class RS_dcs(object):
                     index_dc_list.append(dc_temp.drop_nanlayer())
                     doy_all_list.append(bf.date2doy(index_dc_list[-1].SM_namelist))
                 else:
-                    index_dc_list.append(index_dc[index_size_list[-1][0]: index_size_list[-1][2],
-                                         index_size_list[-1][1]: index_size_list[-1][3], :])
+                    index_dc_list.append(index_dc[index_size_list[-1][0]: index_size_list[-1][2], index_size_list[-1][1]: index_size_list[-1][3], :])
                     doy_all_list.append(doy_all)
 
             with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as executor:
@@ -2760,7 +2934,7 @@ class RS_dcs(object):
                 else:
                     pass
 
-    def phemetrics_variation(self, phemetric_index: list, year_range: list, output_path: str, ):
+    def phemetrics_variation(self, phemetric_index: list, year_range: list, output_path: str, coordinate=[0, -1], sec='temp'):
         # Check the input arg
         for _ in phemetric_index:
             if _ not in self._phemetric_namelist:
@@ -2790,12 +2964,16 @@ class RS_dcs(object):
                 nodata_value = self._Nodata_value_list[self._pheyear_list.index(year_)]
 
                 if self._sparse_matrix_list[self._pheyear_list.index(year_)]:
-                    arr_base = dc_base.SM_group[f'{str(year_)}_{phemetric_}'][:, 10200:16537].toarray()
+                    arr_base = dc_base.SM_group[f'{str(year_)}_{phemetric_}'][:, coordinate[0]: coordinate[1]].toarray()
                     arr_base = arr_base.flatten()
+
                     if np.isnan(nodata_value):
                         arr_base = np.delete(arr_base, np.isnan(arr_base))
                     else:
                         arr_base = np.delete(arr_base, arr_base == nodata_value)
+
+                    if year_ > 2013:
+                        arr_base = arr_base + 0.025
                     pheme_dic[str(year_)] = arr_base
                     pheme_mean.append(np.nanmean(arr_base))
                 else:
@@ -2806,30 +2984,31 @@ class RS_dcs(object):
             plt.rc('font', size=18)
             plt.rc('axes', linewidth=2)
 
-            print(str(np.nanmean(np.array(pheme_mean[2:9]))))
-            print(str(np.nanmean(np.array(pheme_mean[9:19]))))
-            print(str(np.nanmean(np.array(pheme_mean[19:38]))))
+            # print(str(np.nanmean(np.array(pheme_mean[2:9]))))
+            # print(str(np.nanmean(np.array(pheme_mean[9:19]))))
+            # print(str(np.nanmean(np.array(pheme_mean[19:38]))))
+            print(sec)
 
             fig, ax = plt.subplots(figsize=(23, 3.5), constrained_layout=True)
             box = ax.boxplot(pheme_all, vert = True, labels=[str(_) for _ in year_range],  notch=True, widths=0.5, patch_artist=True, whis=(10, 90), showfliers=False, zorder=4)
-            p0, f0 = curve_fit(linear_f, [_ for _ in range(2, 9)], pheme_mean[1:8])
-            p1, f1 = curve_fit(linear_f, [_ for _ in range(19, 38)], pheme_mean[18:])
-            p2, f2 = curve_fit(linear_f, [_ for _ in range(9, 19)], pheme_mean[8:18])
+            p0, f0 = curve_fit(linear_f, [_ for _ in range(1, 7)], pheme_mean[0: 6])
+            p1, f1 = curve_fit(linear_f, [_ for _ in range(18, 36)], pheme_mean[17: 35])
+            p2, f2 = curve_fit(linear_f, [_ for _ in range(7, 19)], pheme_mean[6: 18])
             # sns.regplot(np.linspace(0, 7, 100), linear_f(np.linspace(0, 7, 100), p0[0], p0[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
             # sns.regplot(np.linspace(19, 37, 100), linear_f(np.linspace(19, 37, 100), p1[0], p1[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
             # sns.regplot(np.linspace(8, 18, 100), linear_f(np.linspace(8, 18, 100), p2[0], p2[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
-            ax.plot(np.linspace(0, 7, 100), linear_f(np.linspace(0, 7, 100), p0[0], p0[1]), lw=4, ls='--', c=(0, 0, 0.8))
-            ax.plot(np.linspace(19, 37, 100), linear_f(np.linspace(19, 37, 100), p1[0], p1[1]), lw=4, ls='--', c=(0.8, 0, 0))
-            ax.plot(np.linspace(8, 18, 100), linear_f(np.linspace(8, 18, 100), p2[0], p2[1]), lw=4, ls='--', c=(0, 0, 0.8))
-            ax.set_xlim(1, 38)
+            ax.plot(np.linspace(1, 6, 100), linear_f(np.linspace(1, 6, 100), p0[0], p0[1]), lw=4, ls='--', c=(0, 0, 0.8))
+            ax.plot(np.linspace(18, 35, 100), linear_f(np.linspace(18, 35, 100), p1[0], p1[1]), lw=4, ls='--', c=(0.8, 0, 0))
+            ax.plot(np.linspace(7, 17, 100), linear_f(np.linspace(7, 17, 100), p2[0], p2[1]), lw=4, ls='--', c=(0, 0, 0.8))
+            ax.set_xlim(0.5, 35.5)
             print(p0[0])
-            print(p0[1])
-            print(p1[0])
-            print(p1[1])
+            print(p0[1] - p0[0] * 1985)
             print(p2[0])
-            print(p2[1])
+            print(p2[1] - p2[0] * 1985)
+            print(p1[0])
+            print(p1[1] - p1[0] * 1985)
             plt.setp(box['boxes'], color=(89 / 256, 117 / 256, 164 / 256), edgecolor=(60 / 256, 60 / 256, 60 / 256), alpha=0.4)
-            plt.savefig(f'{output_path}{phemetric_}_var\\fig.png', dpi=300)
+            plt.savefig(f'{output_path}{phemetric_}_var\\fig_{sec}.png', dpi=300)
 
     def indi_timelapse_gif(self, timeunit):
         pass

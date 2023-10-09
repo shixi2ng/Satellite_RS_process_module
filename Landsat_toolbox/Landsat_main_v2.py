@@ -1,5 +1,6 @@
 import concurrent.futures
 from itertools import repeat
+import pandas as pd
 from .built_in_index import built_in_index
 import matplotlib.pyplot as plt
 import tarfile
@@ -8,7 +9,7 @@ from scipy.optimize import curve_fit
 import glob
 from lxml import etree
 from RSDatacube.utils import *
-
+from Landsat_toolbox.utils import *
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
@@ -1389,6 +1390,43 @@ class Landsat_dc(object):
             json.dump(metadata_dic, js_temp)
 
         print(f'Finish saving the Landsat dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+
+    def print_stacked_Zvalue(self, output_foldername: str = None):
+
+        print(f'Start print stacked Zvalue of the Landsat dc \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+
+        # Print stacked zvalue
+        if output_foldername is not None and isinstance(output_foldername, str):
+            output_folder = bf.Path(self.dc_filepath).path_name + output_foldername + '\\'
+        else:
+            output_folder = bf.Path(self.dc_filepath).path_name + 'stacked_Zvalue\\'
+        bf.create_folder(output_folder)
+
+        # Get the ROI
+        roi_temp = np.load(self.ROI_array)
+        roi_xy = np.argwhere(roi_temp != -32768)
+        roi_xy = pd.DataFrame(roi_xy, columns=['y', 'x'])
+        roi_xy = roi_xy.sort_values(['x', 'y'], ascending=True).reset_index(drop=True)
+
+        roi_xy_list, offset_list, dc_list = [], [], []
+        cpu_amount = os.cpu_count()
+        roi_xy_itr = int(np.floor(roi_xy.shape[0]/cpu_amount))
+
+        for _ in range(cpu_amount):
+            if _ != cpu_amount - 1:
+                roi_xy_list.append(np.array(roi_xy[_ * roi_xy_itr: (_ + 1) * roi_xy_itr]))
+            else:
+                roi_xy_list.append(np.array(roi_xy[_ * roi_xy_itr:]))
+            offset_list.append([np.nanmin(roi_xy_list[-1][:, 0]), np.nanmin(roi_xy_list[-1][:, 1])])
+            if self.sparse_matrix:
+                dc_list.append(self.dc.extract_matrix(([np.nanmin(roi_xy_list[-1][:, 0]), np.nanmax(roi_xy_list[-1][:, 0]) + 1], [np.nanmin(roi_xy_list[-1][:, 1]), np.nanmax(roi_xy_list[-1][:, 1]) + 1], ['all'])))
+            else:
+                dc_list.append(self.dc[np.nanmin(roi_xy_list[-1][:, 0]): np.nanmax(roi_xy_list[-1][:, 0]) + 1, np.nanmin(roi_xy_list[-1][:, 1]): np.nanmax(roi_xy_list[-1][:, 1]) + 1, :])
+
+        doy_list = bf.date2doy(self.sdc_doylist)
+        doy_list = [np.mod(__, 1000) for __ in doy_list]
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            executor.map(print_single_stacked_Zvalue, repeat(output_folder), roi_xy_list, dc_list, offset_list, repeat(self.Nodata_value), repeat(doy_list))
 
 
 class Landsat_dcs(object):

@@ -14,6 +14,7 @@ import time
 from itertools import chain
 from collections import Counter
 import basic_function as bf
+import matplotlib.pyplot as plt
 
 
 def union_list(small_list, big_list) -> list:
@@ -1285,3 +1286,22 @@ def cor_to_pixel(two_corner_coordinate, study_area_example_file_path):
         print('please remove the temp file manually')
     return pixel_limitation_f
 
+
+def print_single_stacked_Zvalue(output_folder, xy_list, datacube, offset_list, nodata_value, doy_list):
+
+    # Generate the zValue series
+    for _ in range(xy_list.shape[0]):
+        x, y = xy_list[_, 1], xy_list[_, 0]
+        x_rel, y_rel = x - offset_list[1], y - offset_list[0]
+
+        if not os.path.exists(output_folder + f'stacked_{str(x)}_{str(y)}.png'):
+            dc_temp = datacube[y_rel, x_rel, :].flatten()
+            doy_list_ = np.array(copy.copy(doy_list))
+            doy_list_ = np.delete(doy_list_, np.argwhere(dc_temp == nodata_value))
+            dc_temp = np.delete(dc_temp, np.argwhere(dc_temp == nodata_value))
+            if dc_temp.shape[0] != 0:
+                fig1, ax1 = plt.subplots(figsize=(12, 8), constrained_layout=True)
+                ax1.scatter(doy_list_, dc_temp, s=8**2, color=(196/256, 80/256, 80/256), edgecolor=(0/256, 0/256, 0/256), linewidth=2, zorder=4)
+                plt.savefig(output_folder + f'stacked_{str(x)}_{str(y)}.png')
+                fig1 = None
+                ax1 = None

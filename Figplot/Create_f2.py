@@ -2,7 +2,15 @@ import os.path
 from RSDatacube.RSdc import *
 from skimage import io, feature
 from sklearn.metrics import r2_score
+import seaborn as sns
+from River_GIS.River_centreline import *
 
+
+def x_minus(x, a, b, c ):
+    return a * (x + b) ** -1 + c
+
+def guassain_dis(x, sig, mean):
+    return np.exp(-(x - mean) ** 2 / (2 * sig ** 2)) / (np.sqrt(2 * np.pi) * sig)
 
 def xpoly(x, a, b):
     return - a ** x + b
@@ -22,6 +30,9 @@ def ln_minus(x, a, b, c):
 
 def exp_minus(x, a, b, c):
     return - a * np.exp(b * x + c)
+
+def exp_minus3(x, a, b, c, d):
+    return - a * np.exp(b * x + c) + d
 
 
 def exp_minus2(x, a, b, c):
@@ -49,7 +60,12 @@ def log_func(x, a, b, c, d):
 
 
 def fig1_func():
-    fig1, ax1 = plt.subplots(figsize=(6, 6), constrained_layout=True)
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=20)
+    plt.rc('axes', linewidth=2)
+
+    fig1, ax1 = plt.subplots(figsize=(12, 8), constrained_layout=True)
     ax1.set_axisbelow(True)
     ax1.yaxis.grid(True, color=(0.8,0.8,0.8),lw=0.5)
     ax1.xaxis.grid(True, color=(0.8,0.8,0.8),lw=0.5)
@@ -68,7 +84,7 @@ def fig1_func():
     ax1.plot(np.linspace(0, 15), np.linspace(0, 15), color=(0.2, 0.2, 0.2), ls = '-.', linewidth = 2)
     ax1.plot(np.linspace(0, 15), np.linspace(2, 17), color=(0.2, 0.2, 0.2), ls='--', linewidth=1)
     ax1.plot(np.linspace(0, 15), np.linspace(-2, 13), color=(0.2, 0.2, 0.2), ls='--', linewidth=1)
-    ax1.set_xticks([0, 3, 6, 9])
+    ax1.set_xticks([0, 3, 6, 9, 12, 15])
     ax1.set_xticklabels(['0', '3', '6', '9', '12', '15'], fontname='Times New Roman', fontsize=12)
     ax1.set_yticks([0, 3, 6, 9, 12, 15])
     ax1.set_yticklabels(['0', '3', '6', '9', '12', '15'], fontname='Times New Roman', fontsize=12)
@@ -387,11 +403,8 @@ def fig8_func():
     # ax.pie([7828, 2206, 4481, 5268], labels=['2019', '2020', '2021', '2022'], )
 
     autotexts1[0].set_color('white')
-
     autotexts2[0].set_color('white')
-
     autotexts3[0].set_color('white')
-
     autotexts4[0].set_color('white')
     plt.savefig('G:\A_veg\Paper\Figure\Fig8\\fig83.png', dpi=300)
 
@@ -827,23 +840,24 @@ def fig14_func():
 def ep_fig2_func():
 
     plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
-    plt.rc('font', size=18)
+    plt.rc('font', size=22)
     plt.rc('axes', linewidth=2)
 
-    data = 'G:\\A_Landsat_veg\\Paper\\Fig3\\data.xlsx'
+    data = 'G:\\A_Landsat_veg\\Paper\\Fig4\\data.xlsx'
     data_pd = pd.read_excel(data)
-    fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(10, 10), constrained_layout=True)
+    fig, ax = plt.subplots(nrows=2, ncols=1, figsize=(12, 16), constrained_layout=True)
     ax[0].plot(data_pd['DOY'], data_pd['total biomas site1'], lw=3, ls='--', c=(25/256, 25/256, 25/256), zorder=3)
     ax[0].scatter(data_pd['DOY'], data_pd['total biomas site1'], zorder=4, s=13**2, marker='s', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2)
     ax[0].errorbar(data_pd['DOY'], data_pd['total biomas site1'], yerr=None)
     ax[0].plot(data_pd['DOY'], data_pd['leaf biomass (site1)'], lw=3, ls='--', c=(25/256, 25/256, 25/256), zorder=3)
     ax[0].scatter(data_pd['DOY'], data_pd['leaf biomass (site1)'], zorder=4, s=14**2, marker='^', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2)
-    ax[0].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0], data_pd['total biomas site1'], zorder=1, alpha=0.5, fc=(54/256, 92/256, 141/256))
-    ax[0].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0], data_pd['leaf biomass (site1)'], zorder=2, alpha=0.5, fc=(196/256, 78/256, 82/256))
+    ax[0].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0,0], data_pd['total biomas site1'], zorder=1, alpha=0.5, fc=(54/256, 92/256, 141/256))
+    ax[0].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0,0], data_pd['leaf biomass (site1)'], zorder=2, alpha=0.5, fc=(196/256, 78/256, 82/256))
     ax[0].set_xticks([75, 135, 195, 255, 315])
-    ax[0].set_xticklabels(['March', 'May', 'July', 'September', 'November'], fontname='Times New Roman', fontsize=18)
-    ax[0].set_xlabel('Date', fontname='Times New Roman', fontsize=20, fontweight='bold')
-    ax[0].set_ylabel('Biomass per plant/g', fontname='Times New Roman', fontsize=20, fontweight='bold')
+    ax[0].grid(axis='y', color=(240 / 256, 240 / 256, 240 / 256))
+    ax[0].set_xticklabels(['March', 'May', 'July', 'September', 'November'], fontname='Times New Roman', fontsize=26)
+    ax[0].set_xlabel('Date', fontname='Times New Roman', fontsize=34, fontweight='bold')
+    ax[0].set_ylabel('Biomass per plant/g', fontname='Times New Roman', fontsize=34, fontweight='bold')
     ax[0].set_xlim([60, 345])
     ax[0].set_ylim([0, 25])
 
@@ -852,15 +866,16 @@ def ep_fig2_func():
     ax[1].errorbar(data_pd['DOY'], data_pd['total biomas site2'], yerr=None)
     ax[1].plot(data_pd['DOY'], data_pd['leaf biomass (site2)'], lw=3, ls='--', c=(25/256, 25/256, 25/256), zorder=3)
     ax[1].scatter(data_pd['DOY'], data_pd['leaf biomass (site2)'], zorder=4, s=14**2, marker='^', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2)
-    ax[1].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0], data_pd['total biomas site2'], zorder=1, alpha=0.5, fc=(54/256, 92/256, 141/256))
-    ax[1].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0], data_pd['leaf biomass (site2)'], zorder=2, alpha=0.5, fc=(196/256, 78/256, 82/256))
+    ax[1].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0,0], data_pd['total biomas site2'], zorder=1, alpha=0.5, fc=(54/256, 92/256, 141/256))
+    ax[1].fill_between(data_pd['DOY'], [0, 0, 0, 0, 0, 0, 0, 0,0], data_pd['leaf biomass (site2)'], zorder=2, alpha=0.5, fc=(196/256, 78/256, 82/256))
     ax[1].set_xticks([75, 135, 195, 255, 315])
-    ax[1].set_xticklabels(['March', 'May', 'July', 'September', 'November'], fontname='Times New Roman', fontsize=18)
-    ax[1].set_xlabel('Date', fontname='Times New Roman', fontsize=20, fontweight='bold')
-    ax[1].set_ylabel('Biomass per plant/g', fontname='Times New Roman', fontsize=20, fontweight='bold')
+    ax[1].grid(axis='y', color=(240 / 256, 240 / 256, 240 / 256))
+    ax[1].set_xticklabels(['March', 'May', 'July', 'September', 'November'], fontname='Times New Roman', fontsize=26)
+    ax[1].set_xlabel('Date', fontname='Times New Roman', fontsize=34, fontweight='bold')
+    ax[1].set_ylabel('Biomass per plant/g', fontname='Times New Roman', fontsize=34, fontweight='bold')
     ax[1].set_xlim([60, 345])
-    ax[1].set_ylim([0, 60])
-    plt.savefig(f'G:\\A_Landsat_veg\\Paper\\Fig3\\Fig3.png', dpi=300)
+    ax[1].set_ylim([0, 70])
+    plt.savefig(f'G:\\A_Landsat_veg\\Paper\\Fig4\\Fig4.png', dpi=300)
 
 
 def ep_fig3_func():
@@ -1578,7 +1593,517 @@ def canny_edge():
     bf.write_raster(ds, res, 'E:\\A_Vegetation_Identification\\Paper\\Major_rev\\', 'tenmp2.tif')
 
 
-fig15_func()
+def fig_his_func():
 
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=20)
+    plt.rc('axes', linewidth=2)
+
+    #
+    Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\MNDWI_datacube\\')
+    wi = Landsat_VI_temp.dc[214,11430,:].flatten()
+    wi = wi.astype(np.float32)
+    wi[wi ==0] = np.nan
+    wi = (wi-32768) / 10000
+    sdc = Landsat_VI_temp.sdc_doylist
+    dic = {'wi': wi, 'doy': sdc}
+    df = pd.DataFrame(dic)
+
+    # set a grey background (use sns.set_theme() if seaborn version 0.11.0 or above)
+    sns.set(style="white", palette='dark', font='Times New Roman', font_scale=1,
+            rc={'ytick.left': True, 'xtick.bottom': True})
+    df = df.drop(df[df['wi'] < -0.5].index)
+    df = df.drop(df[np.isnan(df['wi'])].index)
+    df2 = copy.copy(df)
+    df2 = df2.drop(df2[np.logical_and(np.mod(df['doy'], 1000) < 270, np.mod(df['doy'], 1000) > 180)].index)
+    df2 = df2.drop(df2[df2['wi'] > -0.02625].index)
+    fig, ax = plt.subplots(figsize=(10, 7.5), constrained_layout=True)
+    sns.histplot(data=df, x="wi", binwidth=0.015, binrange=(-0.3, 1.0), kde=True,
+                 color=(30 / 256, 96 / 256, 164 / 256, 1), element='step',
+                 line_kws={'color': (30 / 256, 96 / 256, 164 / 256, 1), 'lw': 3, 'ls': '-'})
+    sns.histplot(data=df2, x="wi", binwidth=0.015, binrange=(-0.3, 1.0), kde=False,
+                 line_kws={'color': (256 / 256, 30 / 256, 30 / 256, 1), 'lw': 3, 'ls': '-'},
+                 color=(180 / 256, 30 / 256, 54 / 256, 0.4), element='step', alpha=0.4)
+    plt.plot(np.linspace(-0.4, 0.05, 100),
+             4.5 * guassain_dis(np.linspace(-0.4, 0.05, 100), np.nanstd(df2['wi']), np.nanmean(df2['wi'])),
+             color=(180 / 256, 46 / 256, 23 / 256), lw=3)
+    ax.set_xlim([-0.3, 0.4])
+
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig3\\fig1.png', dpi=300)
+
+
+def fig4_func():
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=20)
+    plt.rc('axes', linewidth=2)
+
+    #
+    if not os.path.exists('G:\\A_Landsat_veg\\Paper\\Fig4\\data2.xlsx'):
+        Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_datacube\\')
+        wi = Landsat_VI_temp.dc[4530, 5400, :].flatten()
+        wi = wi.astype(np.float32)
+        wi[wi ==0] = np.nan
+        wi = (wi-32768) / 10000
+        sdc = Landsat_VI_temp.sdc_doylist
+        sdc = bf.date2doy(sdc)
+        sdc = [np.mod(_, 1000) for _ in sdc]
+        dic = {'OSAVI': wi, 'DOY': sdc}
+        df = pd.DataFrame(dic)
+        df.to_excel('G:\\A_Landsat_veg\\Paper\\Fig4\\data2.xlsx')
+
+    # Create fig4
+    VI_curve_fitting = {'para_ori': [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225], 'para_boundary': (
+    [0.08, 0.7, 100, 6.2, 301.6, 4.5, 0.0015], [0.12, 1.0, 115, 11.5, 321.5, 8.8, 0.0028])}
+    VI_curve_fitting = {'para_ori': [0.01, 0.01, 0, 2, 180, 2, 0.01], 'para_boundary': ([0, 0, 0, 0, 180, 0, 0], [0.5, 1, 180, 20, 330, 10, 0.01])}
+    fig4_df = pd.read_excel('G:\\A_Landsat_veg\\Paper\\Fig4\\data2.xlsx')
+    DOY_arr = np.array(fig4_df['DOY'])
+    OSAVI_arr = np.array(fig4_df['OSAVI'])
+    DOY_arr = np.delete(DOY_arr, np.argwhere(np.isnan(OSAVI_arr)))
+    OSAVI_arr = np.delete(OSAVI_arr, np.argwhere(np.isnan(OSAVI_arr)))
+    fig4, ax4 = plt.subplots(figsize=(12, 8), constrained_layout=True)
+    # fig4, ax4 = plt.subplots(figsize=(10.5, 10.5), constrained_layout=True)
+    ax4.set_axisbelow(True)
+    ax4.set_xlim(0, 365)
+    ax4.set_ylim(0, 0.6)
+
+    paras, extra = curve_fit(seven_para_logistic_function, DOY_arr, OSAVI_arr, maxfev=500000, p0=VI_curve_fitting['para_ori'], bounds=VI_curve_fitting['para_boundary'])
+
+    # define p3 and p5
+    doy_all = DOY_arr
+    vi_all = OSAVI_arr
+    vi_dormancy = []
+    doy_dormancy = []
+    vi_senescence = []
+    doy_senescence = []
+    vi_max = []
+    doy_max = []
+    doy_index_max = np.argmax(seven_para_logistic_function(np.linspace(0, 366, 365), paras[0], paras[1], paras[2], paras[3], paras[4],paras[5], paras[6]))
+
+    ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]), linewidth=10, color=(0/256, 44/256, 156/256))
+    # ax4.plot(array_temp[0, :], array_temp[1, :], linewidth=4, markersize=12, **{'ls': '--', 'marker': 'o', 'color': 'b'})
+    ax4.fill_between(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), 0.18, 0.48, 82.6, 11, 316, 12, 0.000695), seven_para_logistic_function(np.linspace(0, 365, 366), 0.018, 0.315, 88, 7.5, 340, 8, 0.000705), color=(0.1, 0.1, 0.1), alpha=0.1)
+    ax4.scatter(DOY_arr, OSAVI_arr, s=12**2, color="none", edgecolor=(160/256, 160/256, 196/256), linewidth=3)
+    # ax4.fill_between(np.linspace(560, 650, 100), np.linspace(0, 0, 100), np.linspace(1, 1, 100), color=(0, 197/255, 1), alpha=1)
+    # ax4.plot(np.linspace(365, 365, 100), np.linspace(0, 1, 100), linewidth=4, **{'ls': '--', 'color': (0, 0, 0)})
+    ax4.set_xlabel('DOY', fontname='Times New Roman', fontsize=34, fontweight='bold')
+    ax4.set_ylabel('OSAVI', fontname='Times New Roman', fontsize=34, fontweight='bold')
+    ax4.grid( axis='y', color=(240/256, 240/256, 240/256))
+    ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), 0.18, 0.48, 82.6, 11, 316, 12, 0.000695), linewidth=2, color=(0 / 256, 44 / 256, 156 / 256), **{'ls': '--'})
+    ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), 0.018, 0.315, 88, 7.5, 340, 8, 0.000705), linewidth=2, color=(0 / 256, 44 / 256, 156 / 256), **{'ls': '--'})
+    # ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), paras1_min, paras2_min, paras3_min, paras4_max, paras5_min, paras6_max, paras7_max), linewidth=2, color=(0/256, 109/256, 44/256), **{'ls': '--'})
+    # ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), paras1_max, paras2_max, paras3_max, paras4_min, paras5_max, paras6_min, paras7_min), linewidth=2, color=(0/256, 109/256, 44/256), **{'ls': '--'})
+    predicted_y_data = seven_para_logistic_function(np.array(DOY_arr), paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6])
+    r_square = (1 - np.nansum((predicted_y_data - np.array(OSAVI_arr)) ** 2) / np.nansum((np.array(OSAVI_arr) - np.nanmean(np.array(OSAVI_arr))) ** 2))
+    ax4.set_yticklabels(['0', '0.1', '0.2', '0.3', '0.4', '0.5', '0.6',], fontname='Times New Roman', fontsize=26)
+    a = [15, 45, 75, 105, 136, 166, 197, 227, 258, 288, 320, 350]
+    c = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    points = np.array([OSAVI_arr,DOY_arr]).transpose()
+    # hull = ConvexHull(points)
+    # # # for i in b:
+    # # #     a.append(i)
+    # ax4.plot(points[hull.vertices,1], points[hull.vertices,0], 'r--', lw=2)
+    ax4.set_xticks(a)
+    ax4.set_xticklabels(c, fontname='Times New Roman', fontsize=30)
+    # sns.relplot(x="DOY", y='OSAVI', kind="line",  markers=True, data=fig4_df)
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig4\\Figure_41.png', dpi=1000)
+    plt.show()
+    print(r_square)
+
+
+def fig42_func():
+    # Create fig4
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=20)
+    plt.rc('axes', linewidth=2)
+
+    #
+    if not os.path.exists('G:\\A_Landsat_veg\\Paper\\Fig4\\data3.xlsx'):
+        Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_datacube\\')
+        wi = Landsat_VI_temp.dc[4530, 5400, :].flatten()
+        wi = wi.astype(np.float32)
+        wi[wi ==0] = np.nan
+        wi = (wi-32768) / 10000
+        sdc = Landsat_VI_temp.sdc_doylist
+        sdc = bf.date2doy(sdc)
+        sdc = [np.mod(_, 1000) for _ in sdc]
+        dic = {'OSAVI': wi, 'DOY': sdc}
+        df = pd.DataFrame(dic)
+        df.to_excel('G:\\A_Landsat_veg\\Paper\\Fig4\\data3.xlsx')
+
+    # Create fig4
+    VI_curve_fitting = {'para_ori': [0.10, 0.8802, 108.2, 7.596, 311.4, 7.473, 0.00225], 'para_boundary': (
+    [0.08, 0.7, 100, 6.2, 301.6, 4.5, 0.0015], [0.12, 1.0, 115, 11.5, 321.5, 8.8, 0.0028])}
+    VI_curve_fitting = {'para_ori': [0.01, 0.01, 0, 2, 180, 2, 0.01], 'para_boundary': ([0, 0, 0, 0, 180, 0, 0], [0.5, 1, 180, 20, 330, 10, 0.01])}
+    fig4_df = pd.read_excel('G:\\A_Landsat_veg\\Paper\\Fig4\\data3.xlsx')
+    DOY_arr = np.array(fig4_df['DOY'])
+    OSAVI_arr = np.array(fig4_df['OSAVI'])
+    DOY_arr = np.delete(DOY_arr, np.argwhere(np.isnan(OSAVI_arr)))
+    OSAVI_arr = np.delete(OSAVI_arr, np.argwhere(np.isnan(OSAVI_arr)))
+    fig4, ax4 = plt.subplots(figsize=(12, 8), constrained_layout=True)
+    # fig4, ax4 = plt.subplots(figsize=(10.5, 10.5), constrained_layout=True)
+    ax4.set_axisbelow(True)
+    ax4.set_xlim(0, 365)
+    ax4.set_ylim(0, 0.6)
+
+    paras, extra = curve_fit(seven_para_logistic_function, DOY_arr, OSAVI_arr, maxfev=500000, p0=VI_curve_fitting['para_ori'], bounds=VI_curve_fitting['para_boundary'])
+
+    # define p3 and p5
+    doy_all = DOY_arr
+    vi_all = OSAVI_arr
+    vi_dormancy = []
+    doy_dormancy = []
+    vi_senescence = []
+    doy_senescence = []
+    vi_max = []
+    doy_max = []
+    doy_index_max = np.argmax(seven_para_logistic_function(np.linspace(0, 366, 365), paras[0], paras[1], paras[2], paras[3], paras[4],paras[5], paras[6]))
+
+    ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6]), linewidth=10, color=(156/256, 44/256, 0/256))
+    # ax4.plot(array_temp[0, :], array_temp[1, :], linewidth=4, markersize=12, **{'ls': '--', 'marker': 'o', 'color': 'b'})
+    ax4.fill_between(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), 0.18, 0.48, 82.6, 11, 316, 12, 0.000695), seven_para_logistic_function(np.linspace(0, 365, 366), 0.018, 0.315, 88, 7.5, 340, 8, 0.000705), color=(0.1, 0.1, 0.1), alpha=0.1)
+    ax4.scatter(DOY_arr, OSAVI_arr, s=12**2, color=(196/256, 80/256, 80/256), edgecolor=(196/256, 80/256, 80/256), linewidth=3)
+    # ax4.fill_between(np.linspace(560, 650, 100), np.linspace(0, 0, 100), np.linspace(1, 1, 100), color=(0, 197/255, 1), alpha=1)
+    # ax4.plot(np.linspace(365, 365, 100), np.linspace(0, 1, 100), linewidth=4, **{'ls': '--', 'color': (0, 0, 0)})
+    ax4.set_xlabel('DOY', fontname='Times New Roman', fontsize=34, fontweight='bold')
+    ax4.set_ylabel('OSAVI', fontname='Times New Roman', fontsize=34, fontweight='bold')
+    ax4.grid( axis='y', color=(240/256, 240/256, 240/256))
+    ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), 0.18, 0.48, 82.6, 11, 316, 12, 0.000695), linewidth=2, color=(156 / 256, 44 / 256, 0 / 256), **{'ls': '--'})
+    ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), 0.018, 0.315, 88, 7.5, 340, 8, 0.000705), linewidth=2, color=(156 / 256, 44 / 256, 0 / 256), **{'ls': '--'})
+    # ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), paras1_min, paras2_min, paras3_min, paras4_max, paras5_min, paras6_max, paras7_max), linewidth=2, color=(0/256, 109/256, 44/256), **{'ls': '--'})
+    # ax4.plot(np.linspace(0, 365, 366), seven_para_logistic_function(np.linspace(0, 365, 366), paras1_max, paras2_max, paras3_max, paras4_min, paras5_max, paras6_min, paras7_min), linewidth=2, color=(0/256, 109/256, 44/256), **{'ls': '--'})
+    predicted_y_data = seven_para_logistic_function(np.array(DOY_arr), paras[0], paras[1], paras[2], paras[3], paras[4], paras[5], paras[6])
+    r_square = (1 - np.nansum((predicted_y_data - np.array(OSAVI_arr)) ** 2) / np.nansum((np.array(OSAVI_arr) - np.nanmean(np.array(OSAVI_arr))) ** 2))
+    ax4.set_yticklabels(['0', '0.1', '0.2', '0.3', '0.4', '0.5', '0.6',], fontname='Times New Roman', fontsize=26)
+    a = [15, 45, 75, 105, 136, 166, 197, 227, 258, 288, 320, 350]
+    c = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    points = np.array([OSAVI_arr,DOY_arr]).transpose()
+    # hull = ConvexHull(points)
+    # # # for i in b:
+    # # #     a.append(i)
+    # ax4.plot(points[hull.vertices,1], points[hull.vertices,0], 'r--', lw=2)
+    ax4.set_xticks(a)
+    ax4.set_xticklabels(c, fontname='Times New Roman', fontsize=30)
+    # sns.relplot(x="DOY", y='OSAVI', kind="line",  markers=True, data=fig4_df)
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig4\\Figure_42.png', dpi=1000)
+    plt.show()
+    print(r_square)
+
+
+def fig15_func():
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=24)
+    plt.rc('axes', linewidth=2)
+
+    file_list = bf.file_filter('G:\A_Landsat_veg\Water_level_python\original_water_level\\', ['.xls'])
+    corr_temp = pd.read_csv('G:\A_Landsat_veg\Water_level_python\original_water_level\\对应表.csv')
+    cs_list, wl_list = [], []
+
+    wl1 = hydrometric_station_data()
+    for file_ in file_list:
+        for hs_num in range(corr_temp.shape[0]):
+            hs = corr_temp[corr_temp.keys()[1]][hs_num]
+            if hs in file_:
+                cs_list.append(corr_temp[corr_temp.keys()[0]][hs_num])
+                wl_list.append(corr_temp[corr_temp.keys()[2]][hs_num])
+
+    for fn_, cs_, wl_ in zip(file_list, cs_list, wl_list):
+        wl1.import_from_standard_excel(fn_, cs_, water_level_offset=wl_)
+
+    for sec, r1, l1, ytick, in zip(['宜昌', '枝城', '莲花塘', '汉口'], [(38, 56), (36, 52), (18, 36), (12, 32)], [49, 46, 31, 25], [[38, 41, 44, 47, 50, 53, 56], [36, 40, 44, 48, 52], [18, 21, 24, 27, 30, 33, 36], [12, 17, 22, 27, 32]]):
+        fig14_df = wl1.hydrological_inform_dic[sec]
+        year_dic = {}
+        wl_pri, wl_post = [], []
+        sd_pri, sd_post = [], []
+        for year in range(1985, 2021):
+            year_temp = fig14_df['year'] == year
+            flow_temp = fig14_df['water_level/m'][year_temp].tolist()
+            sed_temp = fig14_df['sediment_concentration/kg/m3'][year_temp].tolist()
+            year_dic[f'{str(year)}_wl'] = flow_temp[0:365]
+            year_dic[f'{str(year)}_sed'] = sed_temp[0:365]
+            if len(flow_temp) == 365 or len(flow_temp) == 366:
+                if year > 2004:
+                    wl_post.append(flow_temp[0:365])
+                    sd_post.append(sed_temp[0:365])
+                elif year <= 2004:
+                    wl_pri.append(flow_temp[0:365])
+                    sd_pri.append(sed_temp[0:365])
+        wl_post = np.array(wl_post)
+        sd_post = np.array(sd_post)
+        wl_pri = np.array(wl_pri)
+        sd_pri = np.array(sd_pri)
+
+        sd_pri[sd_pri == 0] = np.nan
+        sd_post[sd_post == 0] = np.nan
+
+        plt.close()
+        plt.rc('axes', axisbelow=True)
+        plt.rc('axes', linewidth=3)
+        fig_temp, ax_temp = plt.subplots(figsize=(12, 5), constrained_layout=True)
+        ax_temp.grid(axis='y', color=(210 / 256, 210 / 256, 210 / 256), zorder=0)
+        ax_temp.fill_between(np.linspace(175, 300, 121), np.linspace(r1[1], r1[1], 121), np.linspace(r1[0],r1[0],121),alpha=1, color=(0.9, 0.9, 0.9))
+        ax_temp.fill_between(np.linspace(1, 365, 365), np.nanmax(wl_post, axis=0).reshape([365]), np.nanmin(wl_post, axis=0).reshape([365]),alpha=0.3, color=(0.8, 0.2, 0.1), zorder=3)
+        ax_temp.fill_between(np.linspace(1, 365, 365), np.nanmax(wl_pri, axis=0).reshape([365]), np.nanmin(wl_pri, axis=0).reshape([365]),alpha=0.3, color=(0.1, 0.2, 0.8), zorder=2)
+        ax_temp.plot(np.linspace(1, 365, 365), np.nanmean(wl_pri, axis=0).reshape([365]), lw=5, c=(0, 0, 1), zorder=4)
+        ax_temp.plot(np.linspace(1, 365, 365), np.nanmean(wl_post, axis=0).reshape([365]), lw=5, c=(1, 0, 0), zorder=4)
+        ax_temp.plot(np.linspace(1, 365,365), np.linspace(l1,l1,365), lw=2, ls='--', c=(0,0,0))
+        ax_temp.set_xlim(1, 365)
+        ax_temp.set_ylim(r1[0], r1[1])
+        ax_temp.set_yticks(ytick)
+
+        a = [15,  105, 197,  288,  350]
+        c = ['Jan', 'Apr',  'Jul',  'Oct',  'Dec']
+        ax_temp.set_xticks(a)
+        ax_temp.set_xticklabels(c, fontname='Times New Roman', fontsize=24)
+        ax_temp.set_xlabel('Month', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        ax_temp.set_ylabel('Water level(m)', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        # sns.relplot(x="DOY", y='OSAVI', kind="line",  markers=True, data=fig4_df)
+        plt.savefig(f'G:\A_Landsat_veg\Paper\Fig6\\{sec}_wl.png', dpi=500)
+        plt.close()
+
+        # plt.rc('axes', axisbelow=True)
+        # plt.rc('axes', linewidth=3)
+        # fig_temp, ax_temp = plt.subplots(figsize=(11, 5), constrained_layout=True)
+        # ax_temp.grid( axis='y', color=(210 / 256, 210 / 256, 210 / 256), zorder=0)
+        # # ax_temp.fill_between(np.linspace(175, 300, 121), np.linspace(r1[1], r1[1], 121), np.linspace(r1[0],r1[0],121),alpha=1, color=(0.9, 0.9, 0.9))
+        # ax_temp.fill_between(np.linspace(1, 365, 365), np.nanmax(sd_post, axis=0).reshape([365]), np.nanmin(sd_post, axis=0).reshape([365]), alpha=0.3, color=(0/256, 92/256, 171/256), zorder=3)
+        # ax_temp.fill_between(np.linspace(1, 365, 365), np.nanmax(sd_pri, axis=0).reshape([365]), np.nanmin(sd_pri, axis=0).reshape([365]), alpha=0.3, color=(255/256, 155/256, 37/256), zorder=2)
+        # ax_temp.plot(np.linspace(1, 365, 365), np.nanmean(sd_pri, axis=0).reshape([365]), lw=5, c=(255/256, 155/256, 37/256), zorder=4)
+        # ax_temp.plot(np.linspace(1, 365, 365), np.nanmean(sd_post, axis=0).reshape([365]), lw=5, c=(0/256, 92/256, 171/256), zorder=4)
+        # # ax_temp.plot(np.linspace(1,365,365), np.linspace(l1,l1,365), lw=2, ls='--', c=(0,0,0))
+        # ax_temp.set_xlim(1, 365)
+        # # ax_temp.set_ylim(r1[0], r1[1])
+        # # ax_temp.set_yticks(ytick)
+        # cc = np.nanmean(sd_pri, axis=0)/np.nanmean(sd_post, axis=0)
+        # print(str(np.nanmax(cc[150: 300])))
+        # print(str(np.nanmin(cc[150: 300])))
+        # plt.yscale("log")
+        # a = [15,  105, 197,  288,  350]
+        # c = ['Jan', 'Apr',  'Jul',  'Oct',  'Dec']
+        # ax_temp.set_xticks(a)
+        # ax_temp.set_xticklabels(c, fontname='Times New Roman', fontsize=24)
+        # ax_temp.set_xlabel('Month', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        # ax_temp.set_ylabel('Sediment con(kg/m^3)', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        # # sns.relplot(x="DOY", y='OSAVI', kind="line",  markers=True, data=fig4_df)
+        # plt.savefig(f'G:\A_Landsat_veg\Paper\Fig6\\{sec}_sd.png', dpi=500)
+
+        if sec == '宜昌':
+            fig_temp, ax_temp = plt.subplots(figsize=(12, 6), constrained_layout=True)
+            wl_temp = np.concatenate([np.nanmax(wl_pri, axis=1), np.nanmax(wl_post, axis=1)])
+            # ax_temp.bar([_ for _ in range(1985, 2005)], np.nanmax(wl_pri, axis=1), 0.65, label='SAR', color=(0.2, 0.3, 0.8), edgecolor=(0/256, 0/256, 0/256), linewidth=1, zorder=3, alpha=0.5)
+            # ax_temp.bar([_ for _ in range(2005, 2021)], np.nanmax(wl_post, axis=1), 0.65, label='SAR', color=(0.8, 0.3, 0.2), edgecolor=(0 / 256, 0 / 256, 0 / 256), linewidth=1, zorder=3, alpha=0.5)
+            ax_temp.grid(axis='y', color=(128 / 256, 128 / 256, 128 / 256), zorder=1)
+            ax_temp.plot([_ for _ in range(1985, 2005)], np.nanmax(wl_pri, axis=1), color=(0.2, 0.3, 0.8), linewidth=3,ls='--', label='Pre-TGD')
+            ax_temp.plot([_ for _ in range(2005, 2021)], np.nanmax(wl_post, axis=1), color=(0.8, 0.3, 0.2), linewidth=3,ls='--', label='Post-TGD')
+            ax_temp.fill_between(np.linspace(0.5, 3004.5, 100), np.linspace(0, 0, 100), np.linspace(51.5, 51.5, 100), edgecolor='none', facecolor=(0.8,0.8,0.8), alpha=0.3, lw=2)
+            ax_temp.plot(np.linspace(0.5, 3004.5, 100), np.linspace(51.5, 51.5, 100), color=(0, 0, 0), ls='-.', lw=2, label='Overbank')
+            ax_temp.scatter([_ for _ in range(1985, 2005)], np.nanmax(wl_pri, axis=1), s = 14 **2, marker='s', color="none", edgecolor=(0,0,1), linewidth=3)
+            ax_temp.scatter([_ for _ in range(2005, 2021)], np.nanmax(wl_post, axis=1), s = 14 **2, marker='s', color="none", edgecolor=(1,0,0), linewidth=3)
+            # ax_temp.plot(np.linspace([2004.5, 2004.5, 100]), np.linspace([0, 100, 100]), color=(0.2, 0.2, 0.2))
+            ax_temp.set_xlabel('Year', fontname='Times New Roman', fontsize=24)
+            ax_temp.set_ylabel('Annual maximum water level(m)', fontname='Times New Roman', fontsize=24)
+            ax_temp.legend(fontsize=22)
+            ax_temp.set_yticks([47, 49,51,53,55, 57])
+            ax_temp.set_yticklabels(['47', '49','51','53','55','57'], fontname='Times New Roman', fontsize=24)
+            ax_temp.set_xlim(1984.5, 2020.5)
+            ax_temp.set_ylim(47, 57)
+            plt.savefig(f'G:\A_Landsat_veg\Paper\Fig6\\{sec}_annual_wl.png', dpi=500)
+            plt.close()
+
+        if sec == '汉口':
+            fig_temp, ax_temp = plt.subplots(figsize=(12, 6), constrained_layout=True)
+            wl_temp = np.concatenate([np.nanmax(wl_pri, axis=1), np.nanmax(wl_post, axis=1)])
+            ax_temp.grid(axis='y', color=(128 / 256, 128 / 256, 128 / 256), zorder=1)
+            # ax_temp.bar([_ for _ in range(1985, 2005)], np.nanmax(wl_pri, axis=1), 0.65, label='SAR', color=(0.2, 0.3, 0.8), edgecolor=(0/256, 0/256, 0/256), linewidth=1, zorder=3, alpha=0.5)
+            # ax_temp.bar([_ for _ in range(2005, 2021)], np.nanmax(wl_post, axis=1), 0.65, label='SAR', color=(0.8, 0.3, 0.2), edgecolor=(0 / 256, 0 / 256, 0 / 256), linewidth=1, zorder=3, alpha=0.5)
+            ax_temp.plot([_ for _ in range(1985, 2005)], np.nanmax(wl_pri, axis=1), color=(0.2, 0.3, 0.8), linewidth=3,
+                         ls='--', label='Pre-TGD')
+            ax_temp.plot([_ for _ in range(2005, 2021)], np.nanmax(wl_post, axis=1), color=(0.8, 0.3, 0.2), linewidth=3,
+                         ls='--', label='Post-TGD')
+            ax_temp.fill_between(np.linspace(0.5, 3004.5, 100), np.linspace(0, 0, 100), np.linspace(26.5, 26.5, 100),
+                                 edgecolor='none', facecolor=(0.8, 0.8, 0.8), alpha=0.3, lw=2)
+            ax_temp.plot(np.linspace(0.5, 3004.5, 100), np.linspace(26.5, 26.5, 100), color=(0, 0, 0), ls='-.', lw=2, label='Overbank')
+            ax_temp.scatter([_ for _ in range(1985, 2005)], np.nanmax(wl_pri, axis=1), s=14 ** 2, marker='s',
+                            color="none", edgecolor=(0, 0, 1), linewidth=3)
+            ax_temp.scatter([_ for _ in range(2005, 2021)], np.nanmax(wl_post, axis=1), s=14 ** 2, marker='s',
+                            color="none", edgecolor=(1, 0, 0), linewidth=3)
+            # ax_temp.plot(np.linspace([2004.5, 2004.5, 100]), np.linspace([0, 100, 100]), color=(0.2, 0.2, 0.2))
+
+            ax_temp.set_xlabel('Year', fontname='Times New Roman', fontsize=24)
+            ax_temp.set_ylabel('Annual maximum water level(m)', fontname='Times New Roman', fontsize=24)
+            ax_temp.set_yticks([22, 24, 26, 28, 30, 32])
+            ax_temp.set_yticklabels([ '22', '24', '26', '28', '30', '32'], fontname='Times New Roman', fontsize=24)
+            ax_temp.set_xlim(1984.5, 2020.5)
+            ax_temp.set_ylim(22, 32)
+            plt.savefig(f'G:\A_Landsat_veg\Paper\Fig6\\{sec}_annual_wl.png', dpi=500)
+            plt.close()
+
+        #
+        # fig_temp, ax_temp = plt.subplots(figsize=(11, 6), constrained_layout=True)
+        # wl_temp = np.concatenate([np.nanmean(sd_pri[:, 150: 300], axis=1), np.nanmean(sd_post[:, 150: 300], axis=1)])
+        # ax_temp.bar([_ for _ in range(1990, 2005)], np.nanmean(sd_pri[:, 150: 300], axis=1), 0.6, label='SAR', color=(255/256, 155/256, 37/256), edgecolor=(0/256, 0/256, 0/256), linewidth=1, zorder=3, alpha=0.5)
+        # ax_temp.plot([_ for _ in range(1990, 2005)], [np.nanmean(np.nanmean(sd_pri[:, 150: 300], axis=1)) for _ in range(1990, 2005)], linewidth=3, c=(255/256, 155/256, 37/256))
+        # ax_temp.bar([_ for _ in range(2005, 2021)], np.nanmean(sd_post[:, 150: 300], axis=1), 0.6, label='SAR', color=(0/256, 92/256, 171/256), edgecolor=(0 / 256, 0 / 256, 0 / 256), linewidth=1, zorder=3, alpha=0.5)
+        # ax_temp.plot([_ for _ in range(2005, 2021)], [np.nanmean(np.nanmean(sd_post[:, 150: 300], axis=1)) for _ in range(2005, 2021)], linewidth=3, c=(0/256, 92/256, 171/256))
+        # ax_temp.set_xlabel('Year', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        # ax_temp.set_ylabel('S during flood season(m)', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        # ax_temp.set_xlim(1989.5, 2020.5)
+        # plt.savefig(f'G:\A_Landsat_veg\Paper\Fig6\\{sec}_annual_sd.png', dpi=500)
+
+
+def fig16_func():
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=24)
+    plt.rc('axes', linewidth=3)
+
+    pre_TGD_ds = gdal.Open('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube\\inun_factor\\DT_inundation_frequency_pretgd.TIF')
+    post_TGD_ds = gdal.Open('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube\\inun_factor\\DT_inundation_frequency_posttgd.TIF')
+    pre_TGD_arr = pre_TGD_ds.GetRasterBand(1).ReadAsArray()
+    post_TGD_arr = post_TGD_ds.GetRasterBand(1).ReadAsArray()
+
+    for sec, cord, domain, tick, ticklabels in zip(['yz', 'jj', 'ch', 'hh'], [[0, 950], [950, 6100], [6100, 10210], [10210, 16537]], [[65, 100], [30, 100], [40, 100], [40, 100]], [[0.65, 0.70, 0.80, 0.90, 1], [0.30, 0.40,  0.60, 0.80, 1], [0.40, 0.60, 0.80, 1], [0.40, 0.60, 0.80, 1]], [['65%', '70%', '80%', '90%', '100%'], ['30%', '40%', '60%', '80%', '100%'], ['40%', '60%', '80%', '100%'], ['40%', '60%', '80%', '100%']]):
+        pre_tgd_data = pre_TGD_arr[:, cord[0]: cord[1]].flatten()
+        post_tgd_data = post_TGD_arr[:, cord[0]: cord[1]].flatten()
+        post_tgd_data = np.sort(np.delete(post_tgd_data, np.argwhere(np.isnan(post_tgd_data))))
+        pre_tgd_data = np.sort(np.delete(pre_tgd_data, np.argwhere(np.isnan(pre_tgd_data))))
+        plt.rc('axes', linewidth=3)
+        fig = plt.figure(figsize=(12, 5), layout="constrained")
+
+        ax_temp = fig.subplots(1, 1, sharex=True, sharey=True)
+        ax_temp.grid(axis='y', color=(210 / 256, 210 / 256, 210 / 256), zorder=5)
+        bins = 0.0001
+        pre_num = []
+        pre_cdf = []
+        post_num = []
+        post_cdf = []
+        for _ in range(0, 10001):
+            pre_num.append(bins * _)
+            post_num.append(bins * _)
+            pre_cdf.append(np.sum(pre_tgd_data > bins * _) / pre_tgd_data.shape[0])
+            post_cdf.append(np.sum(post_tgd_data > bins * _) / post_tgd_data.shape[0])
+
+        itr_list = []
+        pre_list = []
+        post_list = []
+        for _ in range(0, 1000):
+            q = _ / 1000
+            for pre_cdf_ in pre_cdf:
+                if pre_cdf_ - q < 0.001:
+                    pre_num_ = pre_num[pre_cdf.index(pre_cdf_)]
+                    break
+            for post_cdf_ in post_cdf:
+                if post_cdf_ - q < 0.001:
+                    post_num_ = post_num[post_cdf.index(post_cdf_)]
+                    break
+            itr_list.append(pre_num_ - post_num_)
+            pre_list.append(pre_num_)
+            post_list.append(post_num_)
+        print(str(itr_list.index(max(itr_list)) * 10))
+
+        # sns.ecdfplot(post_tgd_data, label="Pre-TGD", complementary=True, lw=3, color=(0,0,1))
+        # sns.ecdfplot(pre_tgd_data, label="Post-TGD", complementary=True, lw=3, color=(1,0,0))
+        ax_temp.plot(np.linspace(post_list[itr_list.index(max(itr_list))], pre_list[itr_list.index(max(itr_list))], 100), np.linspace(itr_list.index(max(itr_list))/1000, itr_list.index(max(itr_list))/1000, 100), color=(1, 0, 0), zorder=8)
+        print(str(post_list[itr_list.index(max(itr_list))]))
+        print(pre_list[itr_list.index(max(itr_list))])
+        # ax_temp.fill_between(pre_num, np.linspace(0, 0, 10001), post_cdf, color=(1, 1, 1), edgecolor='none', lw=0.0, zorder=4)
+        # ax_temp.fill_between(pre_num, pre_cdf, np.linspace(1, 1, 10001), color=(1, 1, 1), edgecolor='none', lw=0.0, zorder=4)
+        ax_temp.fill_between(pre_num, np.linspace(0, 0, 10001), np.linspace(post_cdf[-2], post_cdf[-2], 10001), color=(0.9, 0.9, 0.9), edgecolor=(0.5, 0.5, 0.5), lw=1.0, zorder=5)
+        ax_temp.fill_between(pre_num, np.linspace(0, 0, 10001), post_cdf, color=(0.9, 0.9, 0.9), alpha=0.1)
+        ax_temp.fill_between(pre_num, post_cdf, pre_cdf, hatch='-', color=(1, 1, 1), edgecolor=(0, 0, 0), lw=2.5,zorder=6)
+        ax_temp.plot(pre_num, pre_cdf, lw=5, color=(0,0,1), label="Pre-TGD",zorder=7)
+        ax_temp.plot(post_num, post_cdf, lw=5, color=(1,0,0), label="Post-TGD",zorder=7)
+        ax_temp.set_xlabel('Inundation frequency', fontname='Times New Roman', fontsize=28, fontweight='bold', )
+        ax_temp.set_ylabel('Exceedance probability', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        ax_temp.legend(fontsize=22)
+        ax_temp.set_ylim(domain[0]/100, domain[1]/100)
+        ax_temp.set_yticks(tick)
+        ax_temp.set_yticklabels(ticklabels, fontname='Times New Roman', fontsize=24)
+        ax_temp.set_xlim(0, 1)
+        ax_temp.set_xticks([0, 0.25, 0.5, 0.75, 1])
+        ax_temp.set_xticklabels(['0%', '25%', '50%', '75%', '100%'], fontname='Times New Roman', fontsize=24)
+        plt.savefig(f'G:\A_Landsat_veg\Paper\Fig6\\{sec}_inun_freq.png', dpi=500)
+        plt.close()
+
+
+def fig10_func():
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=28)
+    plt.rc('axes', linewidth=3)
+
+    if not os.path.exists('G:\\A_Landsat_veg\\Paper\\Fig10\\veg_pre_tgd.TIF') or not os.path.exists('G:\\A_Landsat_veg\\Paper\\Fig10\\veg_post_tgd.TIF'):
+        inundated_dc = []
+        for _ in range(1986, 2023):
+            inundated_dc.append(Phemetric_dc(f'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\{str(_)}\\'))
+        rs_dc = RS_dcs(*inundated_dc)
+
+        veg_arr_pri = None
+        veg_arr_post = None
+        y_shape, x_shape = rs_dc.dcs_YSize, rs_dc.dcs_XSize
+        for phe_year in rs_dc._pheyear_list:
+            if phe_year <= 2004:
+                if veg_arr_pri is None:
+                    veg_arr_pri = rs_dc.dcs[rs_dc._pheyear_list.index(phe_year)].SM_group[f'{str(phe_year)}_peak_vi'][:,:].toarray().reshape([y_shape, x_shape, 1])
+                else:
+                    veg_arr_pri = np.concatenate((veg_arr_pri, rs_dc.dcs[rs_dc._pheyear_list.index(phe_year)].SM_group[f'{str(phe_year)}_peak_vi'][:,:].toarray().reshape([y_shape, x_shape, 1])), axis=2)
+            elif phe_year > 2004:
+                if veg_arr_post is None:
+                    veg_arr_post = rs_dc.dcs[rs_dc._pheyear_list.index(phe_year)].SM_group[f'{str(phe_year)}_peak_vi'][:,:].toarray().reshape([y_shape, x_shape, 1])
+                else:
+                    veg_arr_post = np.concatenate((veg_arr_post, rs_dc.dcs[rs_dc._pheyear_list.index(phe_year)].SM_group[f'{str(phe_year)}_peak_vi'][:,:].toarray().reshape([y_shape, x_shape, 1])), axis=2)
+
+        veg_arr_pri[veg_arr_pri == 0] = np.nan
+        veg_arr_post[veg_arr_post == 0] = np.nan
+        veg_arr_pri = np.nanmean(veg_arr_pri, axis=2)
+        veg_arr_post = np.nanmean(veg_arr_post, axis=2)
+
+        ds = gdal.Open(rs_dc.ROI_tif)
+        bf.write_raster(ds, veg_arr_pri, 'G:\\A_Landsat_veg\\Paper\\Fig10\\', 'veg_pre_tgd.TIF', raster_datatype=gdal.GDT_Float32)
+        bf.write_raster(ds, veg_arr_post, 'G:\\A_Landsat_veg\\Paper\\Fig10\\', 'veg_post_tgd.TIF', raster_datatype=gdal.GDT_Float32)
+
+    inun_pre_ds = gdal.Open('G:\\A_Landsat_veg\\Paper\\Fig10\\DT_inundation_frequency_pretgd.TIF')
+    inun_post_ds = gdal.Open('G:\\A_Landsat_veg\\Paper\\Fig10\\DT_inundation_frequency_posttgd.TIF')
+    veg_pre_ds = gdal.Open('G:\\A_Landsat_veg\\Paper\\Fig10\\veg_pre_tgd.TIF')
+    veg_post_ds = gdal.Open('G:\\A_Landsat_veg\\Paper\\Fig10\\veg_post_tgd.TIF')
+
+    inun_pre_arr = inun_pre_ds.GetRasterBand(1).ReadAsArray()
+    inun_post_arr = inun_post_ds.GetRasterBand(1).ReadAsArray()
+    veg_pre_arr = veg_pre_ds.GetRasterBand(1).ReadAsArray()
+    veg_post_arr = veg_post_ds.GetRasterBand(1).ReadAsArray()
+
+    inun_diff = inun_post_arr - inun_pre_arr
+    veg_diff = veg_post_arr - veg_pre_arr
+
+    inun_diff = inun_diff.flatten()
+    veg_diff = veg_diff.flatten()
+
+    inun_temp = inun_pre_arr.flatten()
+    inun_temp2 = inun_post_arr.flatten()
+    inun_diff = np.delete(inun_diff, np.argwhere(np.logical_or(np.logical_or(inun_temp == 0, inun_temp == 1), np.logical_or(inun_temp2 == 0, inun_temp2 == 1))))
+    veg_diff = np.delete(veg_diff, np.argwhere(np.logical_or(np.logical_or(inun_temp == 0, inun_temp == 1), np.logical_or(inun_temp2 == 0, inun_temp2 == 1))))
+
+    inun_diff = np.delete(inun_diff, np.argwhere(inun_temp == 0))
+    veg_diff = np.delete(veg_diff, np.argwhere(inun_temp == 0))
+
+    inun_diff = np.delete(inun_diff, np.argwhere(np.isnan(veg_diff)))
+    veg_diff = np.delete(veg_diff, np.argwhere(np.isnan(veg_diff)))
+
+    veg_diff = np.delete(veg_diff, np.argwhere(np.isnan(inun_diff)))
+    inun_diff = np.delete(inun_diff, np.argwhere(np.isnan(inun_diff)))
+
+    fig_temp, ax_temp = plt.subplots(figsize=(12, 12), constrained_layout=True)
+    p0, f0 = curve_fit(x_minus, inun_diff, veg_diff)
+    sns.histplot(x = inun_diff, y=veg_diff, thresh=0.1, bins = 500, pmax=0.25, kde = True, stat='density', weights = 0.1)
+    ax_temp.plot(np.linspace(-1,1,100), x_minus(np.linspace(-1,1,100), p0[0], p0[1], p0[2]), lw=3, c=(1,0,0))
+    ax_temp.plot(np.linspace(-1,1,100), np.linspace(0,0,100), lw=1.5, c=(0,0,0))
+    ax_temp.plot(np.linspace(0, 0, 100), np.linspace(-1, 1, 100), lw=1.5, c=(0,0,0))
+    ax_temp.set_xlim(-0.8, 0.8)
+    ax_temp.set_ylim(-0.4, 0.4)
+    plt.savefig(f'G:\A_Landsat_veg\Paper\Fig10\\Fig10.png', dpi=300)
+    a = 1
+
+
+fig10_func()
 
 

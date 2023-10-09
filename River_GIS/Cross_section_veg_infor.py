@@ -1,5 +1,5 @@
 # coding=utf-8
-import gdal
+from osgeo import gdal
 import os
 import numpy as np
 import pandas as pd
@@ -11,7 +11,6 @@ from matplotlib import pyplot as plt
 from pylab import mpl
 import openpyxl
 from openpyxl.chart import LineChart, Reference, ScatterChart, Series
-from openpyxl.chart.layout import Layout, ManualLayout
 
 
 ### Description:

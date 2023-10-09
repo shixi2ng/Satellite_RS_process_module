@@ -1,5 +1,4 @@
 import random
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -2222,6 +2221,7 @@ def fig20_func():
 
     plt.savefig('E:\A_Vegetation_Identification\Paper\Fig\Fig20\\fig20.png', dpi=300)
 
+
 def fig21_func():
     for sa in ['baishazhou', 'nanyangzhou', 'nanmenzhou', 'zhongzhou']:
         folder = f'G:\Landsat\Sample123039\Landsat_{sa}_datacube\Landsat_Inundation_Condition\\{sa}_DT\\annual\\'
@@ -2257,6 +2257,7 @@ def fig21_func():
 
         bf.write_raster(ds_temp, array_before,'E:\A_Vegetation_Identification\Paper\Fig\Fig22\\', f'{sa}_before.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
         bf.write_raster(ds_temp, array_after,'E:\A_Vegetation_Identification\Paper\Fig\Fig22\\', f'{sa}_after.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+
 
 def fig_23_func():
 
@@ -2328,7 +2329,6 @@ def fig_23_func():
                    palette={"inundated": "b", "noninundated": ".85"})
     ax1.set_ylim(-0.3,0.3)
     plt.savefig('E:\A_Vegetation_Identification\Paper\Fig\Fig25\\Fig25.png',dpi=300)
-
 
 
 fig11_func()
