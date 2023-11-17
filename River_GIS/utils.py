@@ -12,6 +12,121 @@ from tqdm.auto import tqdm
 from shapely.ops import nearest_points
 from osgeo import osr
 import time
+import scipy.sparse as sm
+from NDsm import NDSparseMatrix
+import rasterio.features
+from River_GIS.River_centreline import *
+
+
+def multiple_concept_model(year, thal, ):
+    hydrodc1 = HydroDatacube()
+    hydrodc1.import_from_matrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
+    hydrodc1.simplified_conceptual_inundation_model(
+        'G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\ele_pretgd4model.TIF', thal,
+        'G:\A_Landsat_veg\Water_level_python\inundation_status\\prewl_predem\\')
+
+
+def concept_inundation_model(wl_nm, wl_sm, demfile, thalweg, output_filepath):
+
+    # Import datacube
+    if demfile.endswith('.tif') or demfile.endswith('.TIF'):
+        dem_file_ds = gdal.Open(demfile)
+        dem_file_arr = dem_file_ds.GetRasterBand(1).ReadAsArray()
+    else:
+        raise TypeError('Please input the dem file with right type')
+
+    for _ in range(len(wl_nm)):
+        try:
+            wl_sm_, wl_nm_ = wl_sm[_], wl_nm[_]
+            if not os.path.exists(f'{output_filepath}\\inundation_final\\{str(wl_nm_)}.tif'):
+                if wl_sm_.shape[0] != dem_file_arr.shape[0]:
+                    wl_sm_ = np.row_stack((wl_sm_.toarray(), np.zeros([dem_file_arr.shape[0] - wl_sm_.shape[0], wl_sm_.shape[1]])))
+
+                if wl_sm_.shape[1] != dem_file_arr.shape[1]:
+                    wl_sm_ = np.column_stack((wl_sm_.toarray(), np.zeros([wl_sm_.shape[0], dem_file_arr.shape[1] - wl_sm_.shape[1]])))
+
+                inun_arr = np.array(wl_sm_ > dem_file_arr).astype(np.uint8)
+                bf.create_folder(f'{output_filepath}\\inundation_temp\\')
+                bf.write_raster(dem_file_ds, inun_arr, f'{output_filepath}\\inundation_temp\\', str(wl_nm_) + '.tif', raster_datatype=gdal.GDT_Byte)
+
+                src_temp = rasterio.open(f'{output_filepath}\\inundation_temp\\{str(wl_nm_)}.tif')
+                shp_dic = ({'properties': {'raster_val': int(v)}, 'geometry': s} for i, (s, v) in
+                           enumerate(rasterio.features.shapes(inun_arr, connectivity=8, transform=src_temp.transform)) if
+                           ~np.isnan(v))
+                meta = src_temp.meta.copy()
+                meta.update(compress='lzw')
+
+                shp_list = list(shp_dic)
+                nw_shp_list = []
+                shp_file = gp.GeoDataFrame.from_features(shp_list)
+                for __ in range(shp_file.shape[0]):
+                    if shp_file['raster_val'][__] == 1:
+                        if thalweg.intersects(shp_file['geometry'][__]):
+                            nw_shp_list.append(shp_list[__])
+                nw_shp_file = gp.GeoDataFrame.from_features(nw_shp_list)
+
+                bf.create_folder(f'{output_filepath}\\inundation_final\\')
+                with rasterio.open(f'{output_filepath}\\inundation_final\\{str(wl_nm_)}.tif', 'w+', **meta) as out:
+                    out_arr = out.read(1)
+
+                    # this is where we create a generator of geom, value pairs to use in rasterizing
+                    shapes = ((geom, value) for geom, value in zip(nw_shp_file.geometry, nw_shp_file.raster_val))
+
+                    burned = rasterio.features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=src_temp.transform)
+                out.write_band(1, burned)
+            print(f'The {str(wl_nm_)} is generated!')
+        except:
+            print(traceback.format_exc())
+            print(f'The {str(wl_nm_)} is not generated!!!!!')
+
+
+def process_hydroinform_df(hydro_inform):
+    try:
+        yearly_hydroinform_all = []
+        with tqdm(total=len(hydro_inform), desc=f'Process hydroinform df', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            for _ in hydro_inform:
+                yearly_hydroinform = []
+                wl_list = _.split('[')
+                for __ in range(2, len(_.split('['))):
+                    wl_temp = []
+                    wl_ = wl_list[__].split(']')[0].split(', ')
+                    for ___ in wl_:
+                        if "'" in ___:
+                            ___ = ___.split("'")[1]
+
+                        try:
+                            wl_temp.append(float(___))
+                        except:
+                            wl_temp.append(str(___))
+
+                    yearly_hydroinform.append(wl_temp)
+                yearly_hydroinform_all.append(yearly_hydroinform)
+                pbar.update()
+        return yearly_hydroinform_all
+    except:
+        print(traceback.format_exc())
+
+
+def generate_hydrodatacube(year, y_list, x_list, hydro_dic, hydro_inform):
+
+    # Define the sparse matrix
+    ymax, xmax = int(np.max(y_list)) + 1, int(np.max(x_list)) + 1
+    doy_list = [year * 1000 + _ for _ in range(1, datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal() + 1)]
+    sm_list = [sm.lil_matrix((ymax, xmax)) for _ in range(len(doy_list))]
+
+    with tqdm(total=len(y_list), desc=f'Generate hydrodatcube', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+        for _ in range(len(y_list)):
+            y, x = int(y_list[_]), int(x_list[_])
+            wl_start_series = np.array(hydro_dic[hydro_inform[_][1]])
+            wl_end_series = np.array(hydro_dic[hydro_inform[_][2]])
+            wl_start_dis = hydro_inform[_][3]
+            wl_end_dis = hydro_inform[_][4]
+            wl_inter = wl_start_series + (wl_end_series - wl_start_series) * wl_start_dis / (wl_start_dis + wl_end_dis)
+            for __ in range(len(wl_inter)):
+                sm_list[__][y, x] = wl_inter[__]
+            pbar.update()
+    ND_temp = NDSparseMatrix(*sm_list, SM_namelist=doy_list)
+    ND_temp.save('G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\')
 
 
 def retrieve_srs(ds_temp):
@@ -187,9 +302,12 @@ def dis2points_via_line(point1, point2, line_temp: LineString, line_distance=Non
             return distance_between_2points([point1_x, point1_y], [point2_x, point2_y])
 
 
-def frequency_based_elevation(df: pd.DataFrame, thal,  year_range, geotransform: list, cs_list: list, year_domain: list, hydro_pos: list, df_arr_factor = True):
+def frequency_based_elevation(df: pd.DataFrame, thal, year_range, geotransform: list, cs_list: list, year_domain: list, hydro_pos: list, hydro_datacube: bool):
 
     try:
+
+        # Drop unnes water level
+        all_year_list, year_doy = [], []
         for _ in cs_list:
             unne_series = None
             for year in range(year_range[0], year_range[1]):
@@ -198,43 +316,32 @@ def frequency_based_elevation(df: pd.DataFrame, thal,  year_range, geotransform:
                 else:
                     unne_series = unne_series & (thal.hydro_inform_dic[_]['year'] != year)
 
-            if df_arr_factor is False:
-                thal.hydro_inform_dic[_] = np.array(thal.hydro_inform_dic[_].drop(thal.hydro_inform_dic[_][unne_series].index).reset_index(drop=True))
-                year_domain[cs_list.index(_)] = np.unique(thal.hydro_inform_dic[_][:, 0]).tolist()
-            elif df_arr_factor is True:
-                thal.hydro_inform_dic[_] = thal.hydro_inform_dic[_].drop(thal.hydro_inform_dic[_][unne_series].index).reset_index(drop=True)
-                year_domain[cs_list.index(_)] = np.unique(np.array(thal.hydro_inform_dic[_]['year'])).tolist()
+            thal.hydro_inform_dic[_] = thal.hydro_inform_dic[_].drop(thal.hydro_inform_dic[_][unne_series].index).reset_index(drop=True)
+            year_domain[cs_list.index(_)] = np.unique(np.array(thal.hydro_inform_dic[_]['year'])).tolist()
 
-        # line_dis_property = None
-        # if thal.smoothed_Thelwag is None:
-        #     coords_temp = list(thal.Thelwag_Linestring.coords)
-        #     for _ in range(len(coords_temp)):
-        #         if line_dis_property is None:
-        #             line_dis_property = [0]
-        #         else:
-        #             line_dis_property.append(distance_between_2points([coords_temp[_][0], coords_temp[_][1]], [coords_temp[_ - 1][0], coords_temp[_ - 1][1]]))
-        # elif isinstance(thal.smoothed_Thelwag, LineString):
-        #     coords_temp = list(thal.smoothed_Thelwag.coords)
-        #     for _ in range(len(coords_temp)):
-        #         if line_dis_property is None:
-        #             line_dis_property = [0]
-        #         else:
-        #             line_dis_property.append(distance_between_2points([coords_temp[_][0], coords_temp[_][1]], [coords_temp[_ - 1][0], coords_temp[_ - 1][1]]))
+        # Generate year list
+        for year_ in range(year_range[0], year_range[1]):
+            all_year_list.append(year_)
+            year_doy.append(datetime(year=year_ + 1, month=1, day=1).toordinal() - datetime(year=year_, month=1, day=1).toordinal())
 
+        # Define the output data
         ul_x, x_res, ul_y, y_res = geotransform
         df = df.reset_index(drop=True)
-        wl, fr = [], []
+        wl, fr, yearly_wl = [], [], []
 
         with tqdm(total=df.shape[0], desc=f'Process the inundation frequency', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-            t1_all, t2_all, t3_all, t4_all, t5_all, t6_all = 0, 0, 0, 0, 0, 0
+            # t1_all, t2_all, t3_all, t4_all, t5_all, t6_all = 0, 0, 0, 0, 0, 0
             for len_t in range(df.shape[0]):
                 y_temp, x_temp, if_value = int(df['y'][len_t]), int(df['x'][len_t]), df['if'][len_t]
+                if hydro_datacube:
+                    yearly_wl_temp = [[] for _ in range(year_range[0], year_range[1])]
+
                 if ~np.isnan(if_value):
                     coord_x, coord_y = ul_x + (x_temp + 0.5) * x_res, ul_y + (y_temp + 0.5) * y_res
                     wl_all = []
                     hydro_pos_temp = copy.deepcopy(hydro_pos)
-                    if thal.smoothed_Thelwag is None:
 
+                    if thal.smoothed_Thelwag is None:
                         nearest_p = nearest_points(Point([coord_x, coord_y]), thal.Thelwag_Linestring)[1]
                         start_vertex_index = determin_start_vertex_of_point(nearest_p, thal.Thelwag_Linestring)
 
@@ -331,7 +438,7 @@ def frequency_based_elevation(df: pd.DataFrame, thal,  year_range, geotransform:
                         start_vertex_index = determin_start_vertex_of_point(nearest_p, thal.smoothed_Thelwag)
 
                         # Determine the hydrostation
-                        t1 = time.time()
+                        # t1 = time.time()
                         factor = None
                         hydro_index_list, year_list = [], []
                         for year in range(year_range[0], year_range[1]):
@@ -379,71 +486,48 @@ def frequency_based_elevation(df: pd.DataFrame, thal,  year_range, geotransform:
 
                             year_list.append(year)
                             hydro_index_list.append([start_hydro_index, end_hydro_index])
-                        t1_all += time.time() - t1
+                        # t1_all += time.time() - t1
 
                         hydro_unique_index_list = np.unique(np.array(hydro_index_list), axis=0).tolist()
                         for _ in hydro_unique_index_list:
 
-                            # _ 2/3 dis
+                            # get the hydro station index
                             start_hydro_index = _[0]
                             end_hydro_index = _[1]
 
+                            # Calculate the dis between nearest p with start and end station
                             t2 = time.time()
                             dis_to_start_station = dis2points_via_line(nearest_p, [thal.smoothed_Thelwag.coords[start_hydro_index][0], thal.smoothed_Thelwag.coords[start_hydro_index][1]], thal.smoothed_Thelwag)
                             dis_to_end_station = dis2points_via_line(nearest_p, [thal.smoothed_Thelwag.coords[end_hydro_index][0], thal.smoothed_Thelwag.coords[end_hydro_index][1]], thal.smoothed_Thelwag)
-                            t2_all += time.time() - t2
+                            # t2_all += time.time() - t2
 
-                            # T3
-                            t3 = time.time()
+                            # Retrieve the water series of start and end stations
+                            # t3 = time.time()
                             start_cs = cs_list[hydro_pos.index(start_hydro_index)]
                             end_cs = cs_list[hydro_pos.index(end_hydro_index)]
 
-                            if df_arr_factor is True:
-                                year_unique_list = [year_list[__] for __ in range(len(hydro_index_list)) if hydro_index_list[__] == _]
-                                if max(year_unique_list) - min(year_unique_list) == len(year_unique_list) - 1:
-                                    wl_start_series = (thal.hydro_inform_dic[start_cs]['year'] >= min(year_unique_list)) & (thal.hydro_inform_dic[start_cs]['year'] <= max(year_unique_list))
-                                    wl_end_series = (thal.hydro_inform_dic[end_cs]['year'] >= min(year_unique_list)) & (thal.hydro_inform_dic[end_cs]['year'] <= max(year_unique_list))
-                                else:
-                                    wl_start_series, wl_end_series = None, None
-                                    for year in year_unique_list:
-                                        if wl_start_series is None:
-                                            wl_start_series = (thal.hydro_inform_dic[start_cs]['year'] == year)
-                                        else:
-                                            wl_start_series = wl_start_series | (thal.hydro_inform_dic[start_cs]['year'] == year)
+                            year_unique_list = [year_list[__] for __ in range(len(hydro_index_list)) if hydro_index_list[__] == _]
+                            if max(year_unique_list) - min(year_unique_list) == len(year_unique_list) - 1:
+                                wl_start_series = (thal.hydro_inform_dic[start_cs]['year'] >= min(year_unique_list)) & (thal.hydro_inform_dic[start_cs]['year'] <= max(year_unique_list))
+                                wl_end_series = (thal.hydro_inform_dic[end_cs]['year'] >= min(year_unique_list)) & (thal.hydro_inform_dic[end_cs]['year'] <= max(year_unique_list))
+                            else:
+                                wl_start_series, wl_end_series = None, None
+                                for year in year_unique_list:
+                                    if wl_start_series is None:
+                                        wl_start_series = (thal.hydro_inform_dic[start_cs]['year'] == year)
+                                    else:
+                                        wl_start_series = wl_start_series | (thal.hydro_inform_dic[start_cs]['year'] == year)
 
-                                        if wl_end_series is None:
-                                            wl_end_series = (thal.hydro_inform_dic[end_cs]['year'] == year)
-                                        else:
-                                            wl_end_series = wl_end_series | (thal.hydro_inform_dic[end_cs]['year'] == year)
-                                t3_all += time.time() - t3
+                                    if wl_end_series is None:
+                                        wl_end_series = (thal.hydro_inform_dic[end_cs]['year'] == year)
+                                    else:
+                                        wl_end_series = wl_end_series | (thal.hydro_inform_dic[end_cs]['year'] == year)
+                            # t3_all += time.time() - t3
 
-                                t4 = time.time()
-                                wl_start = thal.hydro_inform_dic[start_cs][wl_start_series]['water_level/m'].reset_index(drop=True)
-                                wl_end = thal.hydro_inform_dic[end_cs][wl_end_series]['water_level/m'].reset_index(drop=True)
-                            elif df_arr_factor is False:
-                                year_unique_list = [year_list[__] for __ in range(len(hydro_index_list)) if hydro_index_list[__] == _]
-                                if max(year_unique_list) - min(year_unique_list) == len(year_unique_list) - 1:
-                                    wl_start_series = (thal.hydro_inform_dic[start_cs]['year'] >= min(year_unique_list)) & (thal.hydro_inform_dic[start_cs]['year'] <= max(year_unique_list))
-                                    wl_end_series = (thal.hydro_inform_dic[end_cs]['year'] >= min(year_unique_list)) & (thal.hydro_inform_dic[end_cs]['year'] <= max(year_unique_list))
-                                else:
-                                    wl_start_series, wl_end_series = None, None
-                                    for year in year_unique_list:
-                                        if wl_start_series is None:
-                                            wl_start_series = (thal.hydro_inform_dic[start_cs]['year'] == year)
-                                        else:
-                                            wl_start_series = wl_start_series | (
-                                                        thal.hydro_inform_dic[start_cs]['year'] == year)
-
-                                        if wl_end_series is None:
-                                            wl_end_series = (thal.hydro_inform_dic[end_cs]['year'] == year)
-                                        else:
-                                            wl_end_series = wl_end_series | (
-                                                        thal.hydro_inform_dic[end_cs]['year'] == year)
-                                t3_all += time.time() - t3
-
-                                t4 = time.time()
-                                wl_start = thal.hydro_inform_dic[start_cs][wl_start_series]['water_level/m'].reset_index(drop=True)
-                                wl_end = thal.hydro_inform_dic[end_cs][wl_end_series]['water_level/m'].reset_index(drop=True)
+                            # Interpolate the water level
+                            # t4 = time.time()
+                            wl_start = thal.hydro_inform_dic[start_cs][wl_start_series]['water_level/m'].reset_index(drop=True)
+                            wl_end = thal.hydro_inform_dic[end_cs][wl_end_series]['water_level/m'].reset_index(drop=True)
 
                             if wl_start.shape[0] != wl_end.shape[0]:
                                 raise ValueError(f'The water level of {cs_list[end_hydro_index]} and {cs_list[start_hydro_index]} in year {str(year)} is not consistent')
@@ -454,61 +538,69 @@ def frequency_based_elevation(df: pd.DataFrame, thal,  year_range, geotransform:
                                     wl_pos = wl_start + (wl_end - wl_start) * dis_to_start_station / (dis_to_start_station - dis_to_end_station)
                                 elif factor == 3:
                                     wl_pos = wl_start + (wl_end - wl_start) * dis_to_start_station / (dis_to_start_station + dis_to_end_station)
-                            t4_all += time.time() - t4
+                            # t4_all += time.time() - t4
 
-                            t5 = time.time()
-                            wl_all.extend(list(wl_pos))
-                            t5_all += time.time() - t5
+                            wl_pos = list(wl_pos)
+                            wl_all.extend(wl_pos)
+
+                            if hydro_datacube:
+                                for year_temp in year_unique_list:
+                                    yearly_wl_temp[all_year_list.index(year_temp)] = [year_temp, start_cs, end_cs, dis_to_start_station, dis_to_end_station]
+
                     else:
                         raise Exception('Code Error')
 
                     t6 = time.time()
-                    wl_all = np.sort(np.array(wl_all))
-                    inun_freq = np.linspace(1, 1 / wl_all.shape[0], wl_all.shape[0])
-                    wl_factor = False
-                    for _ in range(inun_freq.shape[0] - 1):
-                        if (inun_freq[_] - if_value) * (inun_freq[_ + 1] - if_value) < 0:
-                            wl.append(wl_all[_])
-                            fr.append(inun_freq[_])
-                            wl_factor = True
-                            break
-                        elif inun_freq[_] - if_value == 0:
-                            wl.append(wl_all[_])
-                            fr.append(inun_freq[_])
-                            wl_factor = True
-                            break
-                        elif inun_freq[_ + 1] - if_value == 0:
-                            wl.append(wl_all[_ + 1])
-                            fr.append(inun_freq[_ + 1])
-                            wl_factor = True
-                            break
-
-                    # for _ in range(wl_unique.shape[0] - 1):
-                    #     if_lower = np.sum(wl_all <= wl_unique[_]) / wl_all.shape[0]
-                    #     if_higher = np.sum(wl_all <= wl_unique[_ + 1]) / wl_all.shape[0]
-                    #     if if_lower <= if_value and if_higher > if_value:
-                    #         wl.append(wl_unique[_])
-                    #         fr.append(np.sum(wl_all >= wl_unique[_]) / wl_all.shape[0])
-                    #         wl_factor = True
-                    #         break
-
-                    if wl_factor is False:
+                    if if_value == 1:
                         wl.append(np.nan)
-                        fr.append(np.nan)
-                    t6_all += -t6 + time.time()
+                        fr.append(1)
+                    else:
+                        wl_all = np.sort(np.array(wl_all))
+                        inun_freq = np.linspace(1, 1 / wl_all.shape[0], wl_all.shape[0])
+                        wl_factor = False
+                        for _ in range(inun_freq.shape[0] - 1):
+                            if (inun_freq[_] - if_value) * (inun_freq[_ + 1] - if_value) < 0:
+                                wl.append(wl_all[_])
+                                fr.append(inun_freq[_])
+                                wl_factor = True
+                                break
+                            elif inun_freq[_] - if_value == 0:
+                                wl.append(wl_all[_])
+                                fr.append(inun_freq[_])
+                                wl_factor = True
+                                break
+                            elif inun_freq[_ + 1] - if_value == 0:
+                                wl.append(wl_all[_ + 1])
+                                fr.append(inun_freq[_ + 1])
+                                wl_factor = True
+                                break
+                        # for _ in range(wl_unique.shape[0] - 1):
+                        #     if_lower = np.sum(wl_all <= wl_unique[_]) / wl_all.shape[0]
+                        #     if_higher = np.sum(wl_all <= wl_unique[_ + 1]) / wl_all.shape[0]
+                        #     if if_lower <= if_value and if_higher > if_value:
+                        #         wl.append(wl_unique[_])
+                        #         fr.append(np.sum(wl_all >= wl_unique[_]) / wl_all.shape[0])
+                        #         wl_factor = True
+                        #         break
+                        if wl_factor is False:
+                            wl.append(np.nan)
+                            fr.append(np.nan)
+
+                    # t6_all += t6 + time.time()
                     # if np.mod(len_t, 5000) == 0:
                     #     print(f'{str(t1_all)}s, {str(t2_all)}s, {str(t3_all)}s, {str(t4_all)}s, {str(t5_all)}s, {str(t6_all)}s')
                 elif np.isnan(if_value):
                     wl.append(np.nan)
                     fr.append(np.nan)
-                elif if_value == 1:
-                    wl.append(np.nan)
-                    fr.append(1)
+
+                if hydro_datacube:
+                    yearly_wl.append(yearly_wl_temp)
+
                 pbar.update()
         df['wl'] = wl
         df['fr'] = fr
+        if hydro_datacube:
+            df['yearly_wl'] = yearly_wl
         return df
-
     except:
         print(traceback.format_exc())
-

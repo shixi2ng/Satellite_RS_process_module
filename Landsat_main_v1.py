@@ -4226,7 +4226,7 @@ def landsat_inundation_detection(root_path_f, sate_dem_inundation_factor=False, 
                 survey_inundation_dic = {}
             survey_inundation_dic['year_range'] = Year_range,
             survey_inundation_dic['date_list'] = water_level_data[:, 0],
-            survey_inundation_dic['cross_section'] = cross_section
+            survey_inundation_dic['CrossSection'] = cross_section
             survey_inundation_dic['study_area'] = study_area
             survey_inundation_dic['surveyed_' + study_area] = str(root_path_f) + 'Landsat_Inundation_Condition\\' + str(study_area) + '_survey\\'
             create_folder(survey_inundation_dic['surveyed_' + study_area])

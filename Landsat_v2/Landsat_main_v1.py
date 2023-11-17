@@ -1646,7 +1646,7 @@ def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, 
         VEG_ds = gdal.Open(VEG_path + 'veg_' + study_area + '.tif')
         VEG_array = VEG_ds.GetRasterBand(1).ReadAsArray()
         water_level_data = excel2water_level_array(water_level_data_path, Year_range, cross_section)
-        inundation_dic = {'year_range': Year_range, 'date_list': water_level_data[:, 0], 'cross_section': cross_section, 'study_area': study_area, 'folder_path': root_path_f + 'Surveyed_Inundation_condition\\' + study_area + '\\'}
+        inundation_dic = {'year_range': Year_range, 'date_list': water_level_data[:, 0], 'CrossSection': cross_section, 'study_area': study_area, 'folder_path': root_path_f + 'Surveyed_Inundation_condition\\' + study_area + '\\'}
         create_folder(root_path_f + 'Surveyed_Inundation_condition\\')
         create_folder(inundation_dic['folder_path'])
         for year in range(np.amin(water_level_data[:, 0].astype(np.int32) // 10000, axis=0), np.amax(water_level_data[:, 0].astype(np.int32) // 10000, axis=0) + 1):

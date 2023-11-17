@@ -2227,7 +2227,7 @@ class Landsat_dcs(object):
         #         inundation_dic['DEM_fix_' + self.ROI_name] = self.work_env + 'Landsat_Inundation_Condition\\' + self.ROI_name + '_final\\' + self.ROI_name + '_dem_fixed\\'
         #         bf.create_folder(inundation_dic['DEM_fix_' + self.ROI_name])
         #         if not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'fixed_dem_min_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'fixed_dem_max_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'inundated_threshold_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'variation_dem_max_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'variation_dem_min_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'dem_fix_num_' + self.ROI_name + '.tif'):
-        #             water_level_data = excel2water_level_array(water_level_data_path, Year_range, cross_section)
+        #             water_level_data = excel2water_level_array(water_level_data_path, Year_range, CrossSection)
         #             year_range = range(int(np.min(water_level_data[:, 0] // 10000)), int(np.max(water_level_data[:, 0] // 10000) + 1))
         #             min_dem_pos = np.argwhere(DEM_array == np.nanmin(DEM_array))
         #             # The first layer displays the maximum variation and second for the minimum and the third represents the
@@ -2286,21 +2286,21 @@ class Landsat_dcs(object):
         #             bf.write_raster(DEM_ds, dem_variation[:, :, 2], inundation_dic['DEM_fix_' + self.ROI_name], 'dem_fix_num_' + self.ROI_name + '.tif')
         #
         #     if surveyed_inundation_detection_factor:
-        #         if Year_range is None or cross_section is None or VEG_path is None or water_level_data_path is None:
+        #         if Year_range is None or CrossSection is None or VEG_path is None or water_level_data_path is None:
         #             print('Please input the required year range, the cross section name or the Veg distribution.')
         #             sys.exit(-1)
         #         DEM_ds = gdal.Open(DEM_path + 'dem_' + self.ROI_name + '.tif')
         #         DEM_array = DEM_ds.GetRasterBand(1).ReadAsArray()
         #         VEG_ds = gdal.Open(VEG_path + 'veg_' + self.ROI_name + '.tif')
         #         VEG_array = VEG_ds.GetRasterBand(1).ReadAsArray()
-        #         water_level_data = excel2water_level_array(water_level_data_path, Year_range, cross_section)
+        #         water_level_data = excel2water_level_array(water_level_data_path, Year_range, CrossSection)
         #         if os.path.exists(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_survey_inundation_dic.npy'):
         #             survey_inundation_dic = np.load(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_survey_inundation_dic.npy', allow_pickle=True).item()
         #         else:
         #             survey_inundation_dic = {}
         #         survey_inundation_dic['year_range'] = Year_range,
         #         survey_inundation_dic['date_list'] = water_level_data[:, 0],
-        #         survey_inundation_dic['cross_section'] = cross_section
+        #         survey_inundation_dic['CrossSection'] = CrossSection
         #         survey_inundation_dic['study_area'] = self.ROI_name
         #         survey_inundation_dic['surveyed_' + self.ROI_name] = str(self.work_env) + 'Landsat_Inundation_Condition\\' + str(self.ROI_name) + '_survey\\'
         #         bf.create_folder(survey_inundation_dic['surveyed_' + self.ROI_name])
@@ -4398,7 +4398,7 @@ class Landsat_dcs(object):
 
     def phenology_analyse(self, **kwargs):
         pass
-#     def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, phenology_comparison_factor=True, self._inundation_overwritten_factor=False, inundated_pixel_phe_curve_factor=True, mndwi_threshold=0, VI_list_f=None, self._flood_month_list=None, pixel_limitation_f=None, curve_fitting_algorithm=None, dem_fix_inundated_factor=True, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, cross_section=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, self._variance_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, initial_dem_fix_year_interval=1, phenology_overview_factor=False, landsat_detected_inundation_area=True, phenology_individual_factor=True, surveyed_inundation_detection_factor=False):
+#     def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, phenology_comparison_factor=True, self._inundation_overwritten_factor=False, inundated_pixel_phe_curve_factor=True, mndwi_threshold=0, VI_list_f=None, self._flood_month_list=None, pixel_limitation_f=None, curve_fitting_algorithm=None, dem_fix_inundated_factor=True, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, CrossSection=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, self._variance_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, initial_dem_fix_year_interval=1, phenology_overview_factor=False, landsat_detected_inundation_area=True, phenology_individual_factor=True, surveyed_inundation_detection_factor=False):
 #         global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
 #         # so, this is the Curve fitting Version 1, Generally it is used to implement two basic functions:
 #         # (1) Find the inundated pixel by introducing MNDWI with an appropriate threshold and remove it.

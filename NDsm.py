@@ -49,7 +49,7 @@ class NDSparseMatrix:
                 self.SM_namelist = [i for i in range(len(args))]
         i = 0
         for ele in args:
-            if type(ele) not in (sm.spmatrix, sm.csr_matrix, sm.csc_matrix, sm.coo_matrix, sm.bsr_matrix, sm.dia_matrix, sm.dok_matrix):
+            if type(ele) not in (sm.spmatrix, sm.csr_matrix, sm.lil_matrix, sm.csc_matrix, sm.coo_matrix, sm.bsr_matrix, sm.dia_matrix, sm.dok_matrix):
                 raise TypeError(f'Please input the {str(ele)} under sparse matrix type!')
             else:
                 if self._matrix_type is None:

@@ -576,7 +576,7 @@ def link_GEDI_pheinform(dc, gedi_list, year_list, raster_gt, furname, phe_name):
 
             # Draw a circle around the central point
             point_coords = [lon, lat]
-            polygon = create_circle_polygon(point_coords, 25)
+            polygon = create_circle_polygon(point_coords, 45.2)
 
             t1 = time.time()
             print(f'Start linking the {phe_name} value with the GEDI dataframe!({str(i)} of {str(df_size)})')

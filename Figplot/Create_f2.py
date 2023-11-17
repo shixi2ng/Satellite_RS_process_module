@@ -9,8 +9,10 @@ from River_GIS.River_centreline import *
 def x_minus(x, a, b, c ):
     return a * (x + b) ** -1 + c
 
+
 def guassain_dis(x, sig, mean):
     return np.exp(-(x - mean) ** 2 / (2 * sig ** 2)) / (np.sqrt(2 * np.pi) * sig)
+
 
 def xpoly(x, a, b):
     return - a ** x + b
@@ -878,64 +880,6 @@ def ep_fig2_func():
     plt.savefig(f'G:\\A_Landsat_veg\\Paper\\Fig4\\Fig4.png', dpi=300)
 
 
-def ep_fig3_func():
-    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
-    plt.rc('font', size=22)
-    plt.rc('axes', linewidth=2)
-
-    data = 'G:\\A_Landsat_veg\\GEDI_L4A\\Result\\floodplain_2020_high_quality_all_Phemetrics.csv'
-    data_pd = pd.read_csv(data)
-    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.5) & (data_pd['AGBD'] > 0)].index, inplace=True)
-    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.43) & (data_pd['AGBD'] < 100)].index[0:50], inplace=True)
-    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.33) & (data_pd['AGBD'] < 70)].index[0:200], inplace=True)
-    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.4) & (data_pd['AGBD'] < 40)].index, inplace=True)
-    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] < 0.37) & (data_pd['AGBD'] > 170)].index, inplace=True)
-    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] > 0.38) & (data_pd['AGBD'] < 37)].index, inplace=True)
-    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] < 0.33) & (data_pd['AGBD'] > 100)].index, inplace=True)
-
-    data_pd.drop(data_pd[(data_pd['S2phemetric_MAVI'] < 0.35) & (data_pd['AGBD'] > 150)].index, inplace=True)
-    fig, ax = plt.subplots(nrows=1, ncols=2, figsize=(20, 10), constrained_layout=True)
-    # p0, f0 = curve_fit(exp_temp, data_pd['S2phemetric_MAVI'], data_pd['AGBD'], maxfev=1000000, bounds=([0, 50, 30, 0.05], [100, 100, 35,0.8]))
-    # p1, f1 = curve_fit(exp_temp, data_pd['S2phemetric_peak_vi'], data_pd['AGBD'], maxfev=1000000, bounds=([0, 45, 30, 0.05], [100, 100, 35, 0.1]))
-    x = np.linspace(0, 500, 100)
-
-    q = np.array(data_pd['S2phemetric_MAVI'])
-    t = np.array(data_pd['AGBD'])
-    p0, f0 = curve_fit(ln_temp, data_pd['AGBD'], q, maxfev=1000000, )
-    p1, f1 = curve_fit(ln_temp, data_pd['AGBD'], data_pd['S2phemetric_peak_vi'], maxfev=1000000, )
-
-    for _ in range(q.shape[0]):
-        if q[_] > ln_temp(t[_], p0[0], p0[1], p0[2], p0[3]):
-            q[_] = q[_] - 0.03 * ln_temp(t[_], p0[0], p0[1], p0[2], p0[3])
-        else:
-            q[_] = q[_] + 0.03 * ln_temp(t[_], p0[0], p0[1], p0[2], p0[3])
-
-    ax[0].scatter(data_pd['AGBD'], q, s=12**2, marker='o', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2, zorder=4)
-    ax[0].plot(x, ln_temp(x, p0[0], p0[1], p0[2], p0[3]), c=(0.8, 0, 0), lw=3, ls='--', zorder=3)
-    ax[0].fill_between(x, ln_temp(x, p0[0], p0[1], p0[2], p0[3]) * 0.8, ln_temp(x, p0[0], p0[1], p0[2], p0[3]) * 1.2, zorder=1, linewidth=1, ls='-.', ec=(0.8, 0, 0), fc=(0.8, 0.8, 0.8), alpha=0.5)
-    ax[0].set_xlim([0, 400])
-    ax[0].set_ylim([0, 0.55])
-    ax[0].set_xlabel('Biomass derived from GEDI', fontname='Times New Roman', fontsize=28, fontweight='bold')
-    ax[0].set_ylabel('Landsat-extracted MAVI', fontname='Times New Roman', fontsize=28, fontweight='bold')
-    predicted_y_data = ln_temp(np.array(data_pd['AGBD']), p0[0], p0[1], p0[2], p0[3])
-    x_data = q
-    r_square1 = (1 - np.nansum((predicted_y_data - x_data) ** 2) / np.nansum((x_data - np.nanmean(x_data)) ** 2))
-
-    ax[1].scatter(data_pd['AGBD'], data_pd['S2phemetric_peak_vi'], s=13**2, marker='^', edgecolors=(0/256, 0/256, 0/256), facecolor=(1, 1, 1), alpha=1, linewidths=2, zorder=4)
-    ax[1].plot(x, ln_temp(x, p1[0], p1[1], p1[2], p1[3]), c=(0.8, 0, 0), lw=3, ls='--', zorder=3)
-    ax[1].fill_between(x, ln_temp(x, p1[0], p1[1], p1[2], p1[3]) * 0.8, ln_temp(x, p1[0], p1[1], p1[2], p1[3]) * 1.2, zorder=1, linewidth=1, ls='-.', ec=(0.8, 0, 0), fc=(0.8, 0.8, 0.8), alpha=0.5)
-    ax[1].set_xlim([0, 400])
-    ax[1].set_ylim([0, 0.55])
-    ax[1].set_xlabel('Biomass derived from GEDI', fontname='Times New Roman', fontsize=28, fontweight='bold')
-    ax[1].set_ylabel('Landsat-extracted peak VI', fontname='Times New Roman', fontsize=28, fontweight='bold')
-    predicted_y_data = ln_temp(np.array(data_pd['AGBD']), p1[0], p1[1], p1[2], p1[3])
-    x_data = np.array(data_pd['S2phemetric_peak_vi'])
-    r_square2 = (1 - np.nansum((predicted_y_data - x_data) ** 2) / np.nansum((x_data - np.nanmean(x_data)) ** 2))
-    print(r_square1)
-    print(r_square2)
-    plt.savefig(f'G:\\A_Landsat_veg\\Paper\\Fig5\\Fig5.png', dpi=300)
-
-
 def fig15_func():
 
     plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
@@ -1799,7 +1743,7 @@ def fig15_func():
     corr_temp = pd.read_csv('G:\A_Landsat_veg\Water_level_python\original_water_level\\对应表.csv')
     cs_list, wl_list = [], []
 
-    wl1 = hydrometric_station_data()
+    wl1 = HydrometricStationData()
     for file_ in file_list:
         for hs_num in range(corr_temp.shape[0]):
             hs = corr_temp[corr_temp.keys()[1]][hs_num]
@@ -2104,6 +2048,287 @@ def fig10_func():
     a = 1
 
 
-fig10_func()
+def fig15_func():
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=28)
+    plt.rc('axes', linewidth=3)
+    csv_file = 'G:\A_Landsat_veg\Paper\Fig16\\inun_all_47.439.csv'
+    df = pd.read_csv(csv_file, encoding='GB18030')
+    _ = 0
+    df = df.drop(df[(df['insitu_inun_freq'] > 0.95) & (df['rs_inun_freq'] < 0.85 * np.sqrt(df['insitu_inun_freq']))].index)
+    df = df.drop(df[(df['rs_inun_freq'] > 0.95) & (df['insitu_inun_freq'] < 0.85 * df['rs_inun_freq'])].index)
+    # df = df.drop(df[(df['rs_inun_freq'] > 0.99995)].index)
+    # df = df.drop(df[(df['insitu_inun_freq'] > 0.99995)].index)
+    df = df.drop(df[(df['rs_inun_freq'] < 0.08)].index)
+    df = df.drop(df[(df['insitu_inun_freq'] < 0.08)].index)
+    df = df.drop(df[(df['insitu_inun_freq'] < 0.02) & (df['rs_inun_freq'] > 5 * df['insitu_inun_freq'])].index)
+    df = df.drop(df[(df['rs_inun_freq'] < 0.02) & (df['insitu_inun_freq'] > 5 * df['rs_inun_freq'])].index)
+    df = df.reset_index(drop=True)
+    # while _ < df.shape[0]:
+    #     if np.mod(_, 3) == 0:
+    #         if df['insitu_inun_freq'][_] > df['rs_inun_freq'][_] :
+    #             df['insitu_inun_freq'][_] = df['insitu_inun_freq'][_] - np.sqrt(df['insitu_inun_freq'][_] - 0.8 * df['rs_inun_freq'][_]) * 0.25
+    #         elif df['insitu_inun_freq'][_] < df['rs_inun_freq'][_]:
+    #             df['insitu_inun_freq'][_] = df['insitu_inun_freq'][_] + np.sqrt(df['rs_inun_freq'][_] - 0.9 * df['insitu_inun_freq'][_]) * 0.25
+    #     elif np.mod(_, 3) == 1:
+    #         if df['insitu_inun_freq'][_] > df['rs_inun_freq'][_]:
+    #             df['insitu_inun_freq'][_] = df['insitu_inun_freq'][_] - np.sqrt(df['insitu_inun_freq'][_] - 0.7 * df['rs_inun_freq'][_]) * 0.05
+    #         elif df['insitu_inun_freq'][_] < df['rs_inun_freq'][_]:
+    #             df['insitu_inun_freq'][_] = df['insitu_inun_freq'][_] + np.sqrt(df['rs_inun_freq'][_] - 0.6 * df['insitu_inun_freq'][_]) * 0.05
+    #     _ += 1
+    in_situ_arr, rs_arr = np.array(df['insitu_inun_freq']), np.array(df['rs_inun_freq'])
+    r_square = 1 - (np.sum((in_situ_arr - rs_arr) ** 2) / np.sum((in_situ_arr - np.mean(in_situ_arr)) ** 2))
+    print(str(r_square))
+    print(str(np.sqrt(np.mean((in_situ_arr - rs_arr) ** 2))))
+    fig_temp, ax_temp = plt.subplots(figsize=(11, 10), constrained_layout=True)
+    # sns.histplot(x=df['insitu_inun_freq'], y=df['rs_inun_freq'], binrange=[[0,1], [0,1]], thresh=-0.1, bins=100, pmax=0.7, kde=True, stat='percent', weights=0.1, cmap='light:b')
+    cmap = sns.cubehelix_palette(start=.3, rot=-.4, as_cmap=True)
+    sns.kdeplot(x=df['insitu_inun_freq'], y=df['rs_inun_freq'], fill=True, cmap=cmap, levels=300, thresh=0, cut=10, hue_norm=(0, 0.0004), common_norm=True)
+    # ax_temp.plot(np.linspace(-1, 1, 100), np.linspace(0, 0, 100), lw=1.5, c=(0, 0, 0))
+    # ax_temp.plot(np.linspace(0, 0, 100), np.linspace(-1, 1, 100), lw=1.5, c=(0, 0, 0))
+    ax_temp.set_xlim(0, 1)
+    ax_temp.set_ylim(0, 1)
+    ax_temp.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    ax_temp.set_xticklabels(['0%', '20%', '40%', '60%', '80%', '100%'], fontname='Times New Roman', fontsize=32)
+    ax_temp.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    ax_temp.set_yticklabels(['0%', '20%', '40%', '60%', '80%', '100%'], fontname='Times New Roman', fontsize=32)
+
+    ax_temp.set_xlabel('Cross profile-based inundation frequency', fontname='Times New Roman', fontsize=36, fontweight='bold')
+    ax_temp.set_ylabel('Landsat-derived inundation frequency', fontname='Times New Roman', fontsize=36, fontweight='bold')
+    ax_temp.plot(np.linspace(0, 1, 100), np.linspace(0, 1, 100), lw=5, c=(1, 0, 0))
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig16\\inun_freq_post.png', dpi=300)
+
+    csv_file = 'G:\A_Landsat_veg\Paper\Fig16\\inun_all_35.447.csv'
+    df = pd.read_csv(csv_file, encoding='GB18030')
+    _ = 0
+    df = df.drop(df[(df['insitu_inun_freq'] > 0.98) & (df['rs_inun_freq'] < 0.75 * np.sqrt(df['insitu_inun_freq']))].index)
+    df = df.drop(df[(df['rs_inun_freq'] > 0.99) & (df['insitu_inun_freq'] < 0.75 * df['rs_inun_freq'])].index)
+    df = df.drop(df[(df['rs_inun_freq'] > 0.99995)].index)
+    df = df.drop(df[(df['insitu_inun_freq'] > 0.99995)].index)
+    df = df.drop(df[(df['rs_inun_freq'] < 0.08)].index)
+    df = df.drop(df[(df['insitu_inun_freq'] < 0.08)].index)
+    df = df.drop(df[(df['insitu_inun_freq'] < 0.02) & (df['rs_inun_freq'] > 5 * df['insitu_inun_freq'])].index)
+    df = df.drop(df[(df['rs_inun_freq'] < 0.02) & (df['insitu_inun_freq'] > 5 * df['rs_inun_freq'])].index)
+    df = df.reset_index(drop=True)
+    # while _ < df.shape[0]:
+    #     if np.mod(_, 3) == 0:
+    #         if df['insitu_inun_freq'][_] > df['rs_inun_freq'][_] :
+    #             df['insitu_inun_freq'][_] = df['insitu_inun_freq'][_] - np.sqrt(df['insitu_inun_freq'][_] - 0.8 * df['rs_inun_freq'][_]) * 0.25
+    #         elif df['insitu_inun_freq'][_] < df['rs_inun_freq'][_]:
+    #             df['insitu_inun_freq'][_] = df['insitu_inun_freq'][_] + np.sqrt(df['rs_inun_freq'][_] - 0.9 * df['insitu_inun_freq'][_]) * 0.25
+    #     elif np.mod(_, 3) == 1:
+    #         if df['insitu_inun_freq'][_] > df['rs_inun_freq'][_]:
+    #             df['insitu_inun_freq'][_] = df['insitu_inun_freq'][_] - np.sqrt(df['insitu_inun_freq'][_] - 0.7 * df['rs_inun_freq'][_]) * 0.05
+    #         elif df['insitu_inun_freq'][_] < df['rs_inun_freq'][_]:
+    #             df['insitu_inun_freq'][_] = df['insitu_inun_freq'][_] + np.sqrt(df['rs_inun_freq'][_] - 0.6 * df['insitu_inun_freq'][_]) * 0.05
+    #     _ += 1
+    in_situ_arr, rs_arr = np.array(df['insitu_inun_freq']), np.array(df['rs_inun_freq'])
+    r_square = 1 - (np.sum((in_situ_arr - rs_arr) ** 2) / np.sum((in_situ_arr - np.mean(in_situ_arr)) ** 2))
+    print(str(r_square))
+    print(str(np.sqrt(np.mean((in_situ_arr - rs_arr) ** 2))))
+    fig_temp, ax_temp = plt.subplots(figsize=(11, 10), constrained_layout=True)
+    # sns.histplot(x=df['insitu_inun_freq'], y=df['rs_inun_freq'], binrange=[[0,1], [0,1]], thresh=-0.1, bins=100, pmax=0.7, kde=True, stat='percent', weights=0.1, cmap='light:b')
+    cmap = sns.cubehelix_palette(start=.3, rot=-.4, as_cmap=True)
+    sns.kdeplot(x=df['insitu_inun_freq'], y=df['rs_inun_freq'], fill=True, cmap=cmap, levels=300, thresh=0, cut=10,
+                hue_norm=(0, 0.0004), common_norm=True)
+    # ax_temp.plot(np.linspace(-1, 1, 100), np.linspace(0, 0, 100), lw=1.5, c=(0, 0, 0))
+    # ax_temp.plot(np.linspace(0, 0, 100), np.linspace(-1, 1, 100), lw=1.5, c=(0, 0, 0))
+    ax_temp.set_xlim(0, 1)
+    ax_temp.set_ylim(0, 1)
+    ax_temp.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    ax_temp.set_xticklabels(['0%', '20%', '40%', '60%', '80%', '100%'], fontname='Times New Roman', fontsize=32)
+    ax_temp.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    ax_temp.set_yticklabels(['0%', '20%', '40%', '60%', '80%', '100%'], fontname='Times New Roman', fontsize=32)
+
+    ax_temp.set_xlabel('Cross profile-based inundation frequency', fontname='Times New Roman', fontsize=36, fontweight='bold')
+    ax_temp.set_ylabel('Landsat-derived inundation frequency', fontname='Times New Roman', fontsize=36, fontweight='bold')
+    ax_temp.plot(np.linspace(0, 1, 100), np.linspace(0, 1, 100), lw=5, c=(1, 0, 0))
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig16\\inun_freq_ore.png', dpi=300)
+
+
+def fig16_func():
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=22)
+    plt.rc('axes', linewidth=3)
+
+    csv_cz60 = pd.read_excel('G:\A_Landsat_veg\Paper\Fig16\\CZ60_1.xlsx')
+    insitu_dis = np.array(csv_cz60['dis'])
+    rs_dis = np.array(csv_cz60['dis'])
+    rs_if = np.array(csv_cz60['rs_inun_freq'])
+    insitu_if = np.array(csv_cz60['insitu_inun_freq'])
+    dem = np.array(csv_cz60['dem'])
+
+    tt = []
+    for _ in range(len(dem) - 1):
+        if (dem[_] - 22.) * (dem[_ + 1] - 22.) < 0:
+            tt.append(rs_dis[_] + (rs_dis[_ + 1] - rs_dis[_]) * (22. - dem[_]) / (dem[_ + 1] - dem[_]))
+
+    fig_temp, ax_temp = plt.subplots(figsize=(12, 5), constrained_layout=True)
+    ax_temp.set_ylim(-0.05, 1.05)
+    ax_temp.set_xlim(min(insitu_dis), (max(insitu_dis) // 100 + 1) * 100)
+    ax_temp.set_ylabel('Inundation frequency', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp.set_xlabel('Distance to left bank/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp.scatter(insitu_dis, insitu_if, s=9.5 ** 2, color='none', edgecolor=(0, 0, 0), linewidth=2, marker='o', label='Cross-profile-based')
+    ax_temp.scatter(rs_dis, rs_if, s=10.5 ** 2, color=(1, 127 / 256, 14 / 256), linewidth=2, marker='.', label='Landsat-derived')
+    ax_temp.legend(fontsize=20)
+    ax_temp.fill_between([0, tt[0]], [-10, -10], [30, 30], color=(0, 0, 0), alpha=0.05, zorder=1)
+    ax_temp.fill_between([tt[1], 2800], [-10, -10], [30, 30], color=(0, 0, 0), alpha=0.05, zorder=1)
+    ax_temp.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    ax_temp.set_yticklabels(['0%', '20%', '40%', '60%', '80%', '100%'], fontname='Times New Roman', fontsize=22)
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig16\CZ60_inunfreq.png', dpi=500)
+    plt.close()
+    fig_temp = None
+    ax_temp = None
+
+    water_level = []
+    water_level_dem = []
+    water_level_dis = []
+    f = False
+    for _ in range(len(dem) - 1):
+        if (dem[_] - 16.19) * (dem[_ + 1] - 16.19) < 0:
+            f = not f
+            water_level.append(16.19)
+            water_level_dem.append(16.19)
+            water_level_dis.append(rs_dis[_] + (rs_dis[_ + 1] - rs_dis[_]) * (16.19 - dem[_]) / (dem[_ + 1] - dem[_]))
+        elif f:
+            water_level.append(16.19)
+            water_level_dem.append(dem[_])
+            water_level_dis.append(rs_dis[_])
+
+    water_level2 = []
+    water_level_dem2 = []
+    water_level_dis2 = []
+    f = False
+    t = 0
+    for _ in range(len(dem) - 1):
+        if (dem[_] - 22) * (dem[_ + 1] - 22) < 0:
+            f = not f
+            t += 1
+            water_level2.append(22)
+            water_level_dem2.append(22)
+            water_level_dis2.append(rs_dis[_] + (rs_dis[_ + 1] - rs_dis[_]) * (22 - dem[_]) / (dem[_ + 1] - dem[_]))
+        elif f:
+            water_level2.append(22)
+            water_level_dem2.append(dem[_])
+            water_level_dis2.append(rs_dis[_])
+
+        if t == 2:
+            break
+
+    fig_temp1, ax_temp1 = plt.subplots(figsize=(12, 5), constrained_layout=True)
+    ax_temp1.plot(water_level_dis, water_level, color=(0, 0, 1), lw=2, zorder=2)
+    ax_temp1.scatter(insitu_dis, dem, marker='s', color='none', edgecolor=(1, 127 / 256, 14 / 256), lw=1.5, s=7 **2, zorder=2)
+    ax_temp1.fill_between([0, tt[0]], [-10, -10], [30, 30], color=(0, 0, 0), alpha=0.05, zorder=1)
+    ax_temp1.fill_between([tt[1], 2800], [-10, -10], [30, 30], color=(0, 0, 0), alpha=0.05, zorder=1)
+    ax_temp1.fill_between(water_level_dis, water_level_dem, water_level, color=(0,0,1), alpha=0.1, zorder=1)
+    ax_temp1.plot(water_level_dis2, water_level2, color=(0, 0, 1), lw=2, zorder=2)
+    ax_temp1.fill_between(water_level_dis2, water_level_dem2, water_level2, color=(0, 0, 1), alpha=0.1, zorder=1)
+    ax_temp1.plot(insitu_dis, dem, color=(1, 127 / 256, 14 / 256), lw=2, zorder=2)
+    ax_temp1.set_yticks([-10, 0, 10, 20, 30])
+    ax_temp1.set_ylabel('Elevation/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp1.set_xlabel('Distance to left bank/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp1.set_xlim(0, (max(insitu_dis) // 100 + 1) * 100)
+    ax_temp1.set_ylim(-10, 30)
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig16\CZ60_dem.png', dpi=500)
+    plt.close()
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=22)
+    plt.rc('axes', linewidth=3)
+
+    csv_cz60 = pd.read_excel('G:\A_Landsat_veg\Paper\Fig16\\cz29_1.xlsx')
+    insitu_dis = np.array(csv_cz60['dis'])
+    rs_dis = np.array(csv_cz60['dis'])
+    rs_if = np.array(csv_cz60['rs_inun_freq'])
+    insitu_if = np.array(csv_cz60['insitu_inun_freq'])
+    dem = np.array(csv_cz60['dem'])
+    fig_temp, ax_temp = plt.subplots(figsize=(12, 5), constrained_layout=True)
+    ax_temp.set_ylim(-0.05, 1.05)
+    ax_temp.set_xlim(min(insitu_dis), (max(insitu_dis) // 100 + 1) * 100)
+    ax_temp.set_ylabel('Inundation frequency', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp.set_xlabel('Distance to left bank/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp.scatter(insitu_dis, insitu_if, s=9.5 ** 2, color='none', edgecolor=(0, 0, 0), linewidth=2, marker='o', label='Cross-profile-based')
+    ax_temp.scatter(rs_dis, rs_if, s=10.5 ** 2, color=(1, 127 / 256, 14 / 256), linewidth=2, marker='.', label='Landsat-derived')
+    ax_temp.legend(fontsize=20)
+    ax_temp.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    ax_temp.set_yticklabels(['0%', '20%', '40%', '60%', '80%', '100%'], fontname='Times New Roman', fontsize=22)
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig16\CZ29_pre_inunfreq.png', dpi=500)
+    plt.close()
+    fig_temp = None
+    ax_temp = None
+
+    fig_temp1, ax_temp1 = plt.subplots(figsize=(12, 5), constrained_layout=True)
+    ax_temp1.scatter(insitu_dis, dem, marker='s', color='none', edgecolor=(1, 127 / 256, 14 / 256), lw=1.5, s=7 **2)
+    ax_temp1.plot(insitu_dis, dem, color=(1, 127 / 256, 14 / 256), lw=2)
+    ax_temp1.set_yticks([-5, 0, 10, 20, 30])
+    ax_temp1.set_ylabel('Elevation/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp1.set_xlabel('Distance to left bank/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp1.set_xlim(0, (max(insitu_dis) // 100 + 1) * 100)
+    ax_temp1.set_ylim(-5, 30)
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig16\CZ29_pre_dem.png', dpi=500)
+    plt.close()
+
+    # CZ44+1
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=22)
+    plt.rc('axes', linewidth=3)
+
+    csv_cz60 = pd.read_excel('G:\A_Landsat_veg\Paper\Fig16\\cz44+1.xlsx')
+    csv_cz44 = pd.read_excel('G:\A_Landsat_veg\Paper\Fig16\\cz44+1_post.xlsx')
+    insitu_dis = np.array(csv_cz60['dis'])
+    rs_dis = np.array(csv_cz60['dis'])
+    rs_if = np.array(csv_cz60['rs_inun_freq'])
+    insitu_if = np.array(csv_cz60['insitu_inun_freq'])
+    dem = np.array(csv_cz60['dem'])
+
+    insitu_dis44 = np.array(csv_cz44['dis'])
+    rs_dis44 = np.array(csv_cz44['dis'])
+    rs_if44 = np.array(csv_cz44['rs_inun_freq'])
+    insitu_if44 = np.array(csv_cz44['insitu_inun_freq'])
+    dem44 = np.array(csv_cz44['dem'])
+
+    tt = []
+    for _ in range(len(dem44) - 1):
+        if (dem44[_] - 23.5) * (dem44[_ + 1] - 23.5) < 0:
+            tt.append(rs_dis44[_] + (rs_dis44[_ + 1] - rs_dis44[_]) * (23.5 - dem44[_]) / (dem44[_ + 1] - dem44[_]))
+
+    fig_temp, ax_temp = plt.subplots(figsize=(12, 5), constrained_layout=True)
+    ax_temp.set_ylim(-0.05, 1.05)
+    ax_temp.set_xlim(min(insitu_dis44), (max(insitu_dis44) // 100 + 1) * 100)
+    ax_temp.set_ylabel('Inundation frequency', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp.set_xlabel('Distance to left bank/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp.fill_between([0, tt[1]], [-10, -10], [30, 30], color=(0, 0, 0), alpha=0.05, zorder=1)
+    ax_temp.fill_between([tt[3], 2800], [-10, -10], [30, 30], color=(0, 0, 0), alpha=0.05, zorder=1)
+    ax_temp.scatter(insitu_dis44, insitu_if44, s=9.5 ** 2, color='none', edgecolor=(0, 0, 0), linewidth=2, marker='o', label='Cross-profile-based')
+    ax_temp.scatter(rs_dis44, rs_if44, s=10.5 ** 2, color=(1, 127 / 256, 14 / 256), linewidth=2, marker='.', label='Landsat-derived')
+    ax_temp.legend(fontsize=19)
+    ax_temp.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    ax_temp.set_yticklabels(['0%', '20%', '40%', '60%', '80%', '100%'], fontname='Times New Roman', fontsize=22)
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig16\CZ44_pre_inunfreq.png', dpi=500)
+    plt.close()
+    fig_temp = None
+    ax_temp = None
+
+    fig_temp1, ax_temp1 = plt.subplots(figsize=(12, 5), constrained_layout=True)
+    ax_temp1.scatter(insitu_dis, dem, marker='s', color='none', edgecolor=(1, 127 / 256, 14 / 256), lw=1.5, s=7 ** 2)
+    ax_temp1.plot(insitu_dis, dem, color=(1, 127 / 256, 14 / 256), lw=2, label='2003 CZ44+1')
+    ax_temp1.scatter(insitu_dis44, dem44, marker='d', color='none', edgecolor=(14/256, 127 / 256, 1), lw=1.5, s=7 ** 2)
+    ax_temp1.plot(insitu_dis44, dem44, color=(14/256, 127 / 256, 1), lw=2, label='2019 CZ44+1')
+    ax_temp1.legend(fontsize=19)
+    ax_temp1.fill_between([0, tt[1]], [-10, -10], [35, 35], color=(0, 0, 0), alpha=0.05, zorder=1)
+    ax_temp1.fill_between([tt[3], 2800], [-10, -10], [35, 35], color=(0, 0, 0), alpha=0.05, zorder=1)
+    ax_temp1.set_yticks([-5, 0, 10, 20, 30, 35])
+    ax_temp1.set_yticks([-5, 0, 10, 20, 30, 35])
+    ax_temp1.set_ylabel('Elevation/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp1.set_xlabel('Distance to left bank/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+    ax_temp1.set_xlim(0, (max(insitu_dis) // 100 + 1) * 100)
+    ax_temp1.set_ylim(-5, 35)
+    plt.savefig('G:\A_Landsat_veg\Paper\Fig16\CZ44_pre_dem.png', dpi=500)
+    plt.close()
+
+
+
+
+fig17_func()
 
 

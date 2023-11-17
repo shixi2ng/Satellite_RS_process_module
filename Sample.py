@@ -8,12 +8,13 @@ if __name__ == '__main__':
     for _ in range(1986, 2023):
         inundated_dc.append(Phemetric_dc(f'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\{str(_)}\\'))
     rs_dc = RS_dcs(*inundated_dc)
-    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2022)], 'G:\\A_Landsat_veg\\Paper\\Fig8\\', coordinate=[0, 5000], sec='yz')
-    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2022)], 'G:\\A_Landsat_veg\\Paper\\Fig8\\',
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2022)], 'G:\\A_Landsat_veg\\Paper\\Fig10\\', coordinate=[0, 16537], sec='yz')
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2022)], 'G:\\A_Landsat_veg\\Paper\\Fig10\\', coordinate=[0, 5000], sec='yz')
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2022)], 'G:\\A_Landsat_veg\\Paper\\Fig10\\',
                                coordinate=[950, 6100], sec='jj')
-    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2022)], 'G:\\A_Landsat_veg\\Paper\\Fig8\\',
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2022)], 'G:\\A_Landsat_veg\\Paper\\Fig10\\',
                                coordinate=[6100, 10210], sec='ch')
-    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2022)], 'G:\\A_Landsat_veg\\Paper\\Fig8\\',
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2022)], 'G:\\A_Landsat_veg\\Paper\\Fig10\\',
                                coordinate=[10210, 16537], sec='hh')
     #
     # # Estimate inundation

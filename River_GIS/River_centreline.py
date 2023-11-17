@@ -2,9 +2,12 @@ import pandas as pd
 import numpy as np
 import geopandas as gp
 import os
-
+import matplotlib.pyplot as plt
 import shapely
+import scipy.sparse as sm
 from shapely import LineString, Geometry, Point
+
+import NDsm
 import basic_function as bf
 import copy
 from datetime import datetime
@@ -15,9 +18,38 @@ from tqdm.auto import tqdm
 from shapely.ops import nearest_points
 import concurrent.futures
 from itertools import repeat
+from scipy import interpolate
+import seaborn as sns
+from NDsm import NDSparseMatrix as ndsm
+import rasterio
 
 
-class hydrometric_station_data(object):
+class RiverChannel2D():
+    def __init__(self):
+        # Define the dem factor
+        self.DEM_arr = None
+
+        # Define the work env
+        self.work_env = None
+
+
+class DEM(object):
+
+    def __init__(self):
+        # Define the dem factor
+        self.DEM_arr = None
+
+        # Define the work env
+        self.work_env = None
+
+    def from_tiffile(self, tiffile: str):
+
+        # Path exists
+        if os.path.exists(tiffile):
+            pass
+
+
+class HydrometricStationData(object):
 
     def __init__(self):
 
@@ -198,7 +230,237 @@ class hydrometric_station_data(object):
             pass
 
 
-class Thelwag(object):
+class HydroDatacube(object):
+
+    def __init__(self):
+
+        # Define the hydroinform
+        self.hydro_inform_dic = None
+
+        # Define the hydrodatacube
+        self.hydrodatacube = None
+        self.year = None
+        self.sparse_factor = None
+
+    def merge_hydro_inform(self, hydro_ds: HydrometricStationData):
+
+        # Create the hydro inform dic
+        self.hydro_inform_dic = {}
+
+        # Detect the datatype
+        if not isinstance(hydro_ds, HydrometricStationData):
+            raise TypeError('The hydro ds is not a standard hydrometric station data!')
+
+        # Merge hydro inform
+        for _ in hydro_ds.cross_section_namelist:
+            wl_offset = hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
+            self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
+            self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
+
+    def generate_hydrodc_from_csv(self, hydroinform_csv):
+
+        # Check if hydrostation data is import
+        if self.hydro_inform_dic is None:
+            raise Exception('Please input the hydro inform first')
+
+        # Import hydroinform_csv
+        if isinstance(hydroinform_csv, str):
+            if not os.path.exists(hydroinform_csv):
+                raise ValueError(f'The {str(hydroinform_csv)} does not exist!')
+            elif hydroinform_csv.endswith('.xlsx') or hydroinform_csv.endswith('.xls'):
+                hydroinform_df = pd.read_excel(hydroinform_csv)
+            elif hydroinform_csv.endswith('.csv'):
+                hydroinform_df = pd.read_csv(hydroinform_csv)
+            else:
+                raise TypeError(f'The hydroinform_csv should be a xlsx!')
+        else:
+            raise TypeError(f'The {str(hydroinform_csv)} should be a str!')
+
+        # Get the year list
+        hydroinform_df_list = []
+        cpu_amount = os.cpu_count()
+        size = int(np.ceil(hydroinform_df.shape[0] / cpu_amount))
+        for _ in range(cpu_amount):
+            if _ != cpu_amount - 1:
+                hydroinform_df_list.append(list(hydroinform_df['yearly_wl'][_ * size: (_ + 1) * size]))
+            else:
+                hydroinform_df_list.append(list(hydroinform_df['yearly_wl'][_ * size: ]))
+
+        with concurrent.futures.ProcessPoolExecutor() as exe:
+            res = exe.map(process_hydroinform_df, hydroinform_df_list)
+
+        yearly_hydroinform_all = []
+        res = list(res)
+        for _ in res:
+            yearly_hydroinform_all.extend(_)
+        hydroinform_df['yearly_wl'] = yearly_hydroinform_all
+
+        # Get the year list and array size
+        year_list = [int(_[0]) for _ in yearly_hydroinform_all[0]]
+        y_list, x_list = list(hydroinform_df['y']), list(hydroinform_df['x'])
+        hydro_inform = list(hydroinform_df['yearly_wl'])
+        hydro_inform_list = []
+        for year in year_list:
+            yearly_hydro = []
+            for _ in hydro_inform:
+                yearly_hydro.append(_[year_list.index(year)])
+            hydro_inform_list.append(yearly_hydro)
+
+        hydro_list = []
+        for year in year_list:
+            hydro_temp = {}
+            for _ in self.hydro_inform_dic.keys():
+                hydro_temp[_] = list(self.hydro_inform_dic[_][self.hydro_inform_dic[_]['year'] == year]['water_level/m'])
+            hydro_list.append(hydro_temp)
+
+        # Define the sparse matrix
+        for year, hydro_dic, hydro_inform in zip(year_list, hydro_list, hydro_inform_list):
+            ymax, xmax = int(np.max(y_list)) + 1, int(np.max(x_list)) + 1
+            doy_list = [year * 1000 + _ for _ in range(1, datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal() + 1)]
+            sm_list = [sm.lil_matrix((ymax, xmax)) for _ in range(len(doy_list))]
+
+            with tqdm(total=len(y_list), desc=f'Generate hydrodatcube', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for _ in range(len(y_list)):
+                    y, x = int(y_list[_]), int(x_list[_])
+                    wl_start_series = np.array(hydro_dic[hydro_inform[_][1]])
+                    wl_end_series = np.array(hydro_dic[hydro_inform[_][2]])
+                    wl_start_dis = hydro_inform[_][3]
+                    wl_end_dis = hydro_inform[_][4]
+                    wl_inter = wl_start_series + (wl_end_series - wl_start_series) * wl_start_dis / (wl_start_dis + wl_end_dis)
+                    for __ in range(len(wl_inter)):
+                        sm_list[__][y, x] = wl_inter[__]
+                    pbar.update()
+
+            for _ in range(len(sm_list)):
+                sm_list[_] = sm.csc_matrix(sm_list[_])
+
+            ND_temp = NDSparseMatrix(*sm_list, SM_namelist=doy_list)
+            ND_temp.save(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
+
+        # with concurrent.futures.ProcessPoolExecutor(max_workers=2) as exe:
+        #     exe.map(generate_hydrodatacube, year_list, repeat(y_list), repeat(x_list), hydro_list, hydro_inform_list)
+
+    def import_from_matrix(self, filepath):
+
+        # Import datacube
+        if filepath.endswith('.npy'):
+            self.hydrodatacube = np.load(filepath)
+            self.sparse_factor = False
+        else:
+            try:
+                self.hydrodatacube = NDSparseMatrix()
+                self.hydrodatacube = self.hydrodatacube.load(filepath)
+                self.sparse_factor = True
+            except:
+                raise TypeError('Please input correct type of hydro datacube')
+
+        # Extract year inform
+        self.year = filepath.split('\\')[-2]
+
+    def simplified_conceptual_inundation_model(self, demfile, thalweg_temp, output_path):
+
+        # Check the thalweg
+        if isinstance(thalweg_temp,Thalweg):
+            thelwag_linesting = thalweg_temp.Thalweg_Linestring
+        else:
+            raise TypeError('Please input the thalweg with right type')
+
+        # Check the consistency
+        if self.hydrodatacube is None:
+            raise Exception('Please import the datacube before the comparison')
+
+        # create folder
+        bf.create_folder(output_path)
+
+        # Compare with dem
+        if self.sparse_factor:
+            cpu_amount = os.cpu_count()
+            itr = int(np.floor(self.hydrodatacube.shape[2]/cpu_amount))
+            sm_list, nm_list = [], []
+            for _ in range(cpu_amount):
+                if _ != cpu_amount - 1:
+                    nm_list.append(self.hydrodatacube.SM_namelist[_ * itr: (_ + 1) * itr])
+                else:
+                    nm_list.append(self.hydrodatacube.SM_namelist[_ * itr:])
+                sm_list.append([self.hydrodatacube.SM_group[__] for __ in nm_list[-1]])
+
+            with concurrent.futures.ProcessPoolExecutor() as exe:
+                exe.map(concept_inundation_model, nm_list, sm_list, repeat(demfile), repeat(thelwag_linesting), repeat(output_path))
+
+    def seq_simplified_conceptual_inundation_model(self, demfile, thalweg_temp, output_path):
+
+        # Check the thalweg
+        if isinstance(thalweg_temp,Thalweg):
+            thelwag_linesting = thalweg_temp.Thalweg_Linestring
+        else:
+            raise TypeError('Please input the thalweg with right type')
+
+        if demfile.endswith('.tif') or demfile.endswith('.TIF'):
+            dem_file_ds = gdal.Open(demfile)
+            dem_file_arr = dem_file_ds.GetRasterBand(1).ReadAsArray()
+        else:
+            raise TypeError('Please input the dem file with right type')
+
+        # Check the consistency
+        if self.hydrodatacube is None:
+            raise Exception('Please import the datacube before the comparison')
+
+        # create folder
+        bf.create_folder(output_path)
+
+        # Compare with dem
+        if self.sparse_factor:
+            for _ in range(len(self.hydrodatacube.SM_namelist)):
+                wl_sm_, wl_nm_ = self.hydrodatacube.SM_group[self.hydrodatacube.SM_namelist[_]], self.hydrodatacube.SM_namelist[_]
+                try:
+                    if not os.path.exists(f'{output_path}\\inundation_final\\{str(wl_nm_)}.tif'):
+                        if wl_sm_.shape[0] != dem_file_arr.shape[0]:
+                            wl_sm_ = np.row_stack((wl_sm_.toarray(), np.zeros([dem_file_arr.shape[0] - wl_sm_.shape[0], wl_sm_.shape[1]])))
+
+                        if wl_sm_.shape[1] != dem_file_arr.shape[1]:
+                            wl_sm_ = np.column_stack(
+                                (wl_sm_.toarray(), np.zeros([wl_sm_.shape[0], dem_file_arr.shape[1] - wl_sm_.shape[1]])))
+
+                        inun_arr = np.array(wl_sm_ > dem_file_arr).astype(np.uint8)
+                        bf.create_folder(f'{output_path}\\inundation_temp\\')
+                        bf.write_raster(dem_file_ds, inun_arr, f'{output_path}\\inundation_temp\\', str(wl_nm_) + '.tif',
+                                        raster_datatype=gdal.GDT_Byte)
+
+                        src_temp = rasterio.open(f'{output_path}\\inundation_temp\\{str(wl_nm_)}.tif')
+                        shp_dic = ({'properties': {'raster_val': int(v)}, 'geometry': s} for i, (s, v) in
+                                   enumerate(rasterio.features.shapes(inun_arr, connectivity=8, transform=src_temp.transform)) if
+                                   ~np.isnan(v))
+                        meta = src_temp.meta.copy()
+                        meta.update(compress='lzw')
+
+                        shp_list = list(shp_dic)
+                        nw_shp_list = []
+                        shp_file = gp.GeoDataFrame.from_features(shp_list)
+                        for __ in range(shp_file.shape[0]):
+                            if shp_file['raster_val'][__] == 1:
+                                if thelwag_linesting.intersects(shp_file['geometry'][__]):
+                                    nw_shp_list.append(shp_list[__])
+                        nw_shp_file = gp.GeoDataFrame.from_features(nw_shp_list)
+
+                        bf.create_folder(f'{output_path}\\inundation_final\\')
+                        with rasterio.open(f'{output_path}\\inundation_final\\{str(wl_nm_)}.tif', 'w+', **meta) as out:
+                            out_arr = out.read(1)
+
+                            # this is where we create a generator of geom, value pairs to use in rasterizing
+                            shapes = ((geom, value) for geom, value in zip(nw_shp_file.geometry, nw_shp_file.raster_val))
+
+                            burned = rasterio.features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=src_temp.transform)
+                            out.write_band(1, burned)
+                    print(f'The {str(wl_nm_)} is generated!')
+                except:
+                    print(traceback.format_exc())
+                    print(f'The {str(wl_nm_)} is not generated!!!!!')
+
+    def remove_depression(self):
+        pass
+
+
+class Thalweg(object):
 
     def __init__(self):
 
@@ -206,48 +468,48 @@ class Thelwag(object):
         self.work_env = None
 
         # Define the property of cross section
-        self.Thelwag_cs_namelist = None
-        self.Thelwag_Linestring = None
-        self.Thelwag_geodf = None
+        self.Thalweg_cs_namelist = None
+        self.Thalweg_Linestring = None
+        self.Thalweg_geodf = None
         self.original_cs = None
 
         # Define smooth index
-        self.smoothed_Thelwag = None
+        self.smoothed_Thalweg = None
         self.smoothed_cs_index = None
 
         # Define the property of cross section
         self.crs = None
 
-    def _extract_Thelwag_geodf(self):
+    def _extract_Thalweg_geodf(self):
 
         # Check the keys
         try:
-            self.crs = self.Thelwag_geodf.crs
+            self.crs = self.Thalweg_geodf.crs
         except:
             raise ValueError('The crs of geodf is missing')
 
-        if False in [_ in list(self.Thelwag_geodf.keys()) for _ in ['cs_namelist', 'geometry']]:
-            missing_keys = [_ for _ in ['cs_namelist', 'geometry'] if _ not in list(self.Thelwag_geodf.keys())]
+        if False in [_ in list(self.Thalweg_geodf.keys()) for _ in ['cs_namelist', 'geometry']]:
+            missing_keys = [_ for _ in ['cs_namelist', 'geometry'] if _ not in list(self.Thalweg_geodf.keys())]
             raise KeyError(f'The key {str(missing_keys)} of geodf is missing!')
 
-        # Restruct the thelwag
-        if len(self.Thelwag_geodf['cs_namelist'][0]) == self.Thelwag_geodf['geometry'][0].coords.__len__():
-            self.Thelwag_cs_namelist = self.Thelwag_geodf['cs_namelist'][0]
-            self.Thelwag_Linestring = self.Thelwag_geodf['geometry'][0]
+        # Restruct the thalweg
+        if len(self.Thalweg_geodf['cs_namelist'][0]) == self.Thalweg_geodf['geometry'][0].coords.__len__():
+            self.Thalweg_cs_namelist = self.Thalweg_geodf['cs_namelist'][0]
+            self.Thalweg_Linestring = self.Thalweg_geodf['geometry'][0]
         else:
-            raise Exception('The thelwag has inconsistent cross section name and linstring!')
+            raise Exception('The thalweg has inconsistent cross section name and linstring!')
 
-    def _struct_Thelwag_geodf(self):
+    def _struct_Thalweg_geodf(self):
 
-        if self.Thelwag_cs_namelist is None or self.Thelwag_Linestring is None or len(self.Thelwag_cs_namelist) == 0 or self.Thelwag_Linestring.coords.__len__() == 0:
-            raise ValueError('No information concerning the thelwag is imported')
+        if self.Thalweg_cs_namelist is None or self.Thalweg_Linestring is None or len(self.Thalweg_cs_namelist) == 0 or self.Thalweg_Linestring.coords.__len__() == 0:
+            raise ValueError('No information concerning the thalweg is imported')
         else:
-            if len(self.Thelwag_cs_namelist) == self.Thelwag_Linestring.coords.__len__():
-                thelwag_dic = {'cs_namelist': self.Thelwag_cs_namelist}
-                self.Thelwag_geodf = gp.GeoDataFrame(thelwag_dic)
+            if len(self.Thalweg_cs_namelist) == self.Thalweg_Linestring.coords.__len__():
+                thalweg_dic = {'cs_namelist': self.Thalweg_cs_namelist}
+                self.Thalweg_geodf = gp.GeoDataFrame(thalweg_dic)
 
                 if self.crs is not None:
-                    self.Thelwag_geodf = self.Thelwag_geodf.set_crs(self.crs)
+                    self.Thalweg_geodf = self.Thalweg_geodf.set_crs(self.crs)
 
     # def load_shapefile(self, shapefile):
     #
@@ -259,19 +521,19 @@ class Thelwag(object):
     #         if not os.path.exists(shapefile):
     #             raise ValueError(f'The {str(shapefile)} does not exist!')
     #         elif shapefile.endswith('.shp'):
-    #             self.Thelwag_geodf = gp.read_file(shapefile, encoding='utf-8')
+    #             self.Thalweg_geodf = gp.read_file(shapefile, encoding='utf-8')
     #         else:
     #             raise TypeError(f'The geodf json file should be a json!')
     #     else:
     #         raise TypeError(f'The {str(shapefile)} should be a str!')
     #
     #     # Extract information from geodf
-    #     cs_name_temp = self.Thelwag_geodf['cs_namelis'][0]
+    #     cs_name_temp = self.Thalweg_geodf['cs_namelis'][0]
     #     cs_name = []
     #     for _ in cs_name_temp.split("',"):
     #         cs_name.append(_.split("'")[-1])
     #
-    #     self._extract_Thelwag_geodf()
+    #     self._extract_Thalweg_geodf()
     #     return self
 
     def load_smooth_Thalweg_shp(self, shpfile):
@@ -281,45 +543,45 @@ class Thelwag(object):
             if not os.path.exists(shpfile):
                 raise ValueError(f'The {str(shpfile)} does not exist!')
             elif shpfile.endswith('.shp'):
-                Thelwag_geodf_temp = gp.read_file(shpfile, encoding='utf-8')
+                Thalweg_geodf_temp = gp.read_file(shpfile, encoding='utf-8')
             else:
                 raise TypeError(f'The geodf json file should be a json!')
         else:
             raise TypeError(f'The {str(shpfile)} should be a str!')
 
         # Extract information from geodf
-        if Thelwag_geodf_temp.shape[0] != 1 or type(Thelwag_geodf_temp['geometry'][0]) != LineString:
+        if Thalweg_geodf_temp.shape[0] != 1 or type(Thalweg_geodf_temp['geometry'][0]) != LineString:
             raise ValueError('The shpfile should be a string type')
         else:
-            self.smoothed_Thelwag = Thelwag_geodf_temp['geometry'][0]
+            self.smoothed_Thalweg = Thalweg_geodf_temp['geometry'][0]
             self.smoothed_cs_index = []
 
-            for _ in range(len(self.Thelwag_cs_namelist)):
-                simplified_thelwag_arr = np.array(self.smoothed_Thelwag.coords)
+            for _ in range(len(self.Thalweg_cs_namelist)):
+                simplified_thalweg_arr = np.array(self.smoothed_Thalweg.coords)
                 if _ == 0:
                     self.smoothed_cs_index.append(0)
-                elif _ == len(self.Thelwag_cs_namelist) - 1:
-                    self.smoothed_cs_index.append(simplified_thelwag_arr.shape[0] - 1)
+                elif _ == len(self.Thalweg_cs_namelist) - 1:
+                    self.smoothed_cs_index.append(simplified_thalweg_arr.shape[0] - 1)
                 else:
-                    cs_line = list(self.original_cs.cross_section_geodf['geometry'][self.original_cs.cross_section_geodf['cs_name'] == self.Thelwag_cs_namelist[_]])[0]
-                    intersect = shapely.intersection(cs_line, self.smoothed_Thelwag)
+                    cs_line = list(self.original_cs.cross_section_geodf['geometry'][self.original_cs.cross_section_geodf['cs_name'] == self.Thalweg_cs_namelist[_]])[0]
+                    intersect = shapely.intersection(cs_line, self.smoothed_Thalweg)
                     if not isinstance(intersect, Point):
-                        raise Exception(f'Smooth line is not intersected with cross section {str(self.Thelwag_cs_namelist[_])}')
+                        raise Exception(f'Smooth line is not intersected with cross section {str(self.Thalweg_cs_namelist[_])}')
 
-                    start_vertex = determin_start_vertex_of_point(intersect, self.smoothed_Thelwag)
-                    arr_ = np.zeros([1, simplified_thelwag_arr.shape[1]])
+                    start_vertex = determin_start_vertex_of_point(intersect, self.smoothed_Thalweg)
+                    arr_ = np.zeros([1, simplified_thalweg_arr.shape[1]])
                     arr_[0, 0], arr_[0, 1], arr_[0, 2] = intersect.coords[0][0], intersect.coords[0][1], intersect.coords[0][2]
-                    simplified_thelwag_arr = np.insert(simplified_thelwag_arr, start_vertex + 1, arr_, axis=0)
+                    simplified_thalweg_arr = np.insert(simplified_thalweg_arr, start_vertex + 1, arr_, axis=0)
                     self.smoothed_cs_index.append(start_vertex + 1)
 
                     if arr_.shape[1] == 2:
-                        smoothed_thelwag_list = [(simplified_thelwag_arr[_, 0], simplified_thelwag_arr[_, 1]) for _ in range(simplified_thelwag_arr.shape[0])]
+                        smoothed_thalweg_list = [(simplified_thalweg_arr[_, 0], simplified_thalweg_arr[_, 1]) for _ in range(simplified_thalweg_arr.shape[0])]
                     elif arr_.shape[1] == 3:
-                        smoothed_thelwag_list = [(simplified_thelwag_arr[_, 0], simplified_thelwag_arr[_, 1], simplified_thelwag_arr[_, 2]) for _ in range(simplified_thelwag_arr.shape[0])]
+                        smoothed_thalweg_list = [(simplified_thalweg_arr[_, 0], simplified_thalweg_arr[_, 1], simplified_thalweg_arr[_, 2]) for _ in range(simplified_thalweg_arr.shape[0])]
                     else:
                         raise Exception('Code error!')
-                    self.smoothed_Thelwag = LineString(smoothed_thelwag_list)
-            # geodf = gp.GeoDataFrame(data=[{'a': 'b'}], geometry=[self.smoothed_Thelwag])
+                    self.smoothed_Thalweg = LineString(smoothed_thalweg_list)
+            # geodf = gp.GeoDataFrame(data=[{'a': 'b'}], geometry=[self.smoothed_Thalweg])
             # geodf.to_file('G:\A_Landsat_veg\Water_level_python\\a.shp')
 
     def load_geojson(self, geodf_json):
@@ -332,7 +594,7 @@ class Thelwag(object):
             if not os.path.exists(geodf_json):
                 raise ValueError(f'The {str(geodf_json)} does not exist!')
             elif geodf_json.endswith('.json'):
-                self.Thelwag_geodf = gp.read_file(geodf_json)
+                self.Thalweg_geodf = gp.read_file(geodf_json)
             else:
                 raise TypeError(f'The geodf json file should be a json!')
         else:
@@ -340,16 +602,16 @@ class Thelwag(object):
 
         # Check the cs json existence
         try:
-            cs_json = os.path.dirname(geodf_json) + '\\cross_section.json'
+            cs_json = os.path.dirname(geodf_json) + '\\CrossSection.json'
         except:
             print(traceback.format_exc())
             raise Exception('The cs json can not be generated!')
 
         if isinstance(cs_json, str):
             if not os.path.exists(cs_json):
-                raise ValueError(f"The cross_section json does not exist!")
+                raise ValueError(f"The CrossSection json does not exist!")
             elif cs_json.endswith('.json'):
-                self.original_cs = cross_section()
+                self.original_cs = CrossSection()
                 self.original_cs = self.original_cs.load_geojson(cs_json)
             else:
                 raise TypeError(f'The cs_json file should be a json!')
@@ -357,7 +619,7 @@ class Thelwag(object):
             raise TypeError(f'The {str(cs_json)} should be a str!')
 
         # Extract information from geodf
-        self._extract_Thelwag_geodf()
+        self._extract_Thalweg_geodf()
         return self
 
     def to_geojson(self,  output_path: str = None):
@@ -370,11 +632,11 @@ class Thelwag(object):
         bf.create_folder(output_path)
 
         # To geojson
-        if isinstance(self.Thelwag_geodf, gp.GeoDataFrame):
-            self.Thelwag_geodf['cs_namelist'] = self.Thelwag_geodf['cs_namelist'].astype(str)
-            self.Thelwag_geodf.to_file(output_path + 'thelwag.json', driver='GeoJSON')
+        if isinstance(self.Thalweg_geodf, gp.GeoDataFrame):
+            self.Thalweg_geodf['cs_namelist'] = self.Thalweg_geodf['cs_namelist'].astype(str)
+            self.Thalweg_geodf.to_file(output_path + 'thalweg.json', driver='GeoJSON')
 
-        if isinstance(self.original_cs, cross_section):
+        if isinstance(self.original_cs, CrossSection):
             self.original_cs.to_geojson(output_path)
 
     def to_shapefile(self,  output_path: str = None):
@@ -387,28 +649,30 @@ class Thelwag(object):
         bf.create_folder(output_path)
 
         # To shapefile
-        if isinstance(self.Thelwag_geodf, gp.GeoDataFrame):
-            self.Thelwag_geodf['cs_namelist'] = self.Thelwag_geodf['cs_namelist'].astype(str)
-            self.Thelwag_geodf.to_file(output_path + 'thelwag.shp', encoding='utf-8')
+        if isinstance(self.Thalweg_geodf, gp.GeoDataFrame):
+            self.Thalweg_geodf['cs_namelist'] = self.Thalweg_geodf['cs_namelist'].astype(str)
+            self.Thalweg_geodf.to_file(output_path + 'thalweg.shp', encoding='utf-8')
 
-        if isinstance(self.original_cs, cross_section):
+        if isinstance(self.original_cs, CrossSection):
             self.original_cs.to_shpfile(output_path)
 
-    def merged_hydro_inform(self, hydro_ds: hydrometric_station_data):
+    def merged_hydro_inform(self, hydro_ds: HydrometricStationData):
 
         # Create the hydro inform dic
         self.hydro_inform_dic = {}
 
         # Detect the datatype
-        if not isinstance(hydro_ds, hydrometric_station_data):
+        if not isinstance(hydro_ds, HydrometricStationData):
             raise TypeError('The hydrods is not a standard hydrometric station data!')
 
         # Merge hydro inform
         for _ in hydro_ds.cross_section_namelist:
-            if _ in self.Thelwag_cs_namelist and ~np.isnan(hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]):
+            if _ in self.Thalweg_cs_namelist and ~np.isnan(hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]):
+                wl_offset = hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
                 self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
+                self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
 
-    def link_inundation_frequency_map(self, inundation_frequency_tif: str, year_range: list = [1900, 2100]):
+    def link_inundation_frequency_map(self, inundation_frequency_tif: str, year_range: list = [1900, 2100], hydro_datacube=True):
 
         # Check if the hydro inform is merged
         if 'hydro_inform_dic' not in self.__dict__.keys():
@@ -416,23 +680,23 @@ class Thelwag(object):
 
         # Process cross section inform
         cs_list, year_domain, hydro_pos = [], [], []
-        if self.smoothed_Thelwag is None:
-            for _ in range(len(self.Thelwag_cs_namelist)):
-                if self.Thelwag_cs_namelist[_] in self.hydro_inform_dic.keys():
-                    year_domain.append(np.unique(np.array(self.hydro_inform_dic[self.Thelwag_cs_namelist[_]]['year'])).tolist())
+        if self.smoothed_Thalweg is None:
+            for _ in range(len(self.Thalweg_cs_namelist)):
+                if self.Thalweg_cs_namelist[_] in self.hydro_inform_dic.keys():
+                    year_domain.append(np.unique(np.array(self.hydro_inform_dic[self.Thalweg_cs_namelist[_]]['year'])).tolist())
                     hydro_pos.append(_)
-                    cs_list.append(self.Thelwag_cs_namelist[_])
+                    cs_list.append(self.Thalweg_cs_namelist[_])
 
-        elif isinstance(self.smoothed_Thelwag, LineString):
-            for _ in range(len(self.Thelwag_cs_namelist)):
+        elif isinstance(self.smoothed_Thalweg, LineString):
+            for _ in range(len(self.Thalweg_cs_namelist)):
                 pos = self.smoothed_cs_index[_]
-                if self.Thelwag_cs_namelist[_] in self.hydro_inform_dic.keys():
-                    year_domain.append(np.unique(np.array(self.hydro_inform_dic[self.Thelwag_cs_namelist[_]]['year'])).tolist())
+                if self.Thalweg_cs_namelist[_] in self.hydro_inform_dic.keys():
+                    year_domain.append(np.unique(np.array(self.hydro_inform_dic[self.Thalweg_cs_namelist[_]]['year'])).tolist())
                     hydro_pos.append(pos)
-                    cs_list.append(self.Thelwag_cs_namelist[_])
+                    cs_list.append(self.Thalweg_cs_namelist[_])
 
         else:
-            raise TypeError('The smoothed thelwag is not under the correct type')
+            raise TypeError('The smoothed thalweg is not under the correct type')
 
         # Import Inundation_frequency_tif
         if isinstance(inundation_frequency_tif, str):
@@ -453,11 +717,6 @@ class Thelwag(object):
             raise TypeError('The inundation frequency map should be a TIF file')
 
         # Process the inundation frequency map
-        ele_arr = np.zeros_like(arr)
-        ele_arr[np.isnan(arr)] = np.nan
-        inun_arr = np.zeros_like(arr)
-        inun_arr[np.isnan(arr)] = np.nan
-
         arr_pd = np.argwhere(~np.isnan(arr))
         v_list = []
         for _ in arr_pd:
@@ -476,7 +735,7 @@ class Thelwag(object):
                 arr_pd_list.append(arr_pd[indi_size * i_size: -1])
 
         with concurrent.futures.ProcessPoolExecutor() as exe:
-            res = exe.map(frquency_based_elevation, arr_pd_list, repeat(self), repeat(year_range), repeat([ul_x, x_res, ul_y, y_res]), repeat(cs_list), repeat(year_domain), repeat(hydro_pos))
+            res = exe.map(frequency_based_elevation, arr_pd_list, repeat(self), repeat(year_range), repeat([ul_x, x_res, ul_y, y_res]), repeat(cs_list), repeat(year_domain), repeat(hydro_pos), repeat(hydro_datacube))
 
         res_df = None
         res = list(res)
@@ -486,6 +745,13 @@ class Thelwag(object):
             else:
                 res_df = pd.concat([res_df, result_temp])
 
+        res_df.to_csv(self.work_env + 'inundation_inform' + inundation_frequency_tif.split('\\')[-1].split('.')[0] + '.csv')
+
+        # Generate ele and inundation arr
+        ele_arr = np.zeros_like(arr)
+        ele_arr[np.isnan(arr)] = np.nan
+        inun_arr = np.zeros_like(arr)
+        inun_arr[np.isnan(arr)] = np.nan
         res_df = res_df.reset_index(drop=True)
         for _ in range(res_df.shape[0]):
             ele_arr[int(res_df['y'][_]), int(res_df['x'][_])] = res_df['wl'][_]
@@ -493,13 +759,40 @@ class Thelwag(object):
         bf.write_raster(ds_temp, ele_arr, self.work_env, 'ele_' + inundation_frequency_tif.split('\\')[-1], raster_datatype=gdal.GDT_Float32)
         bf.write_raster(ds_temp, inun_arr, self.work_env, 'inun_' + inundation_frequency_tif.split('\\')[-1], raster_datatype=gdal.GDT_Float32)
 
+        # Generate water level dc
+        # all_year_list = [year_ for year_ in range(year_range[0], year_range[1])]
+        # for year in range(year_range[0], year_range[1]):
+        #     doy_list = [year * 1000 + date for date in range(1, 1 + datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal())]
+        #     matrix_list = [sm.lil_matrix((arr.shape[0], arr.shape[1])) for date in range(1, 1 + datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal())]
+        #     bf.create_folder(self.work_env + f'yearly_wl\\{str(year)}\\')
+        #     for _ in range(res_df.shape[0]):
+        #         st_cs, ed_cs = res_df['yearly_wl'][_][int(all_year_list.index(year))][0], res_df['yearly_wl'][_][int(all_year_list.index(year))][1]
+        #         st_dis, ed_dis = res_df['yearly_wl'][_][int(all_year_list.index(year))][2], res_df['yearly_wl'][_][int(all_year_list.index(year))][3]
+        #         wl_st_series = self.hydro_inform_dic[st_cs]['year'] == year
+        #         wl_end_series = self.hydro_inform_dic[ed_cs]['year'] == year
+        #         wl_start = self.hydro_inform_dic[st_cs][wl_st_series]['water_level/m'].reset_index(drop=True)
+        #         wl_end = self.hydro_inform_dic[ed_cs][wl_end_series]['water_level/m'].reset_index(drop=True)
+        #         wl_pos = list(wl_start + (wl_end - wl_start) * st_dis / (st_dis + ed_dis))
+        #         if len(wl_pos) == len(doy_list):
+        #             for __ in range(len(wl_pos)):
+        #                 matrix_list[__][int(res_df['y'][_]), int(res_df['x'][_])] = wl_pos[__]
+        #     year_m = ndsm(*matrix_list, SM_namelist=doy_list)
+        #     year_m.save(self.work_env + f'yearly_wl\\{str(year)}\\')
 
-class cross_section(object):
 
-    def __init__(self):
+class CrossSection(object):
+
+    def __init__(self, work_env=None):
 
         # Define work env
-        self.work_env = None
+        if work_env is None:
+            self.work_env = None
+        else:
+            try:
+                bf.create_folder(work_env)
+                self.work_env = bf.Path(work_env).path_name
+            except:
+                self.work_env = None
 
         # Define the property of cross section
         self.cross_section_name = None
@@ -514,6 +807,10 @@ class cross_section(object):
 
         # Define the DEM extracted cross section inform
         self.cross_section_2D_dem = None
+
+        # Define the differential dem
+        self.cross_section_diff = None
+        self.cross_section_diff_geometry = None
 
     def _consistent_cross_section_inform(self):
 
@@ -643,7 +940,7 @@ class cross_section(object):
             self.cross_section_dem[_] = self.cross_section_geodf['cs_dem'][cs_index]
         self.cross_section_geodf['cs_dem'] = dem4df
 
-    def from_standard_xlsx(self, dem_xlsx_filename: str):
+    def from_standard_cross_profiles(self, dem_xlsx_filename: str):
 
         # Import dem xlsx filename
         if isinstance(dem_xlsx_filename, str):
@@ -659,7 +956,8 @@ class cross_section(object):
             raise TypeError(f'The {str(dem_xlsx_filename)} should be a str!')
 
         # Process work env
-        self.work_env = bf.Path(os.path.dirname(dem_xlsx_filename)).path_name
+        if self.work_env is None:
+            self.work_env = bf.Path(os.path.dirname(dem_xlsx_filename)).path_name
 
         # Process dem xlsx file
         cs_start_index = dem_xlsx_file.loc[dem_xlsx_file[dem_xlsx_file.keys()[0]] == '序号'].index
@@ -697,7 +995,7 @@ class cross_section(object):
 
         # Check whether the cross section name is imported
         if self.cross_section_name is None or len(self.cross_section_name) == 0:
-            raise ValueError('Please import the cross section standard information before the coordianates!')
+            raise ValueError('Please import the cross section standard information before the coordinates!')
 
         # Process crs
         if not isinstance(epsg_crs, str):
@@ -737,7 +1035,7 @@ class cross_section(object):
 
         # Check whether the cross section name is imported
         if self.cross_section_name is None or len(self.cross_section_name) == 0:
-            raise ValueError('Please import the cross section standard information before the coordianates!')
+            raise ValueError('Please import the cross section standard information before the tributary!')
 
         # Load coordinate_files
         if isinstance(tributary_files, str):
@@ -759,6 +1057,310 @@ class cross_section(object):
                 self.cross_section_tribu[_] = tributary_file_df[tributary_file_df.keys()[1]][pos]
 
         self._construct_geodf()
+
+    def merged_hydro_inform(self, hydro_ds: HydrometricStationData):
+
+        # Create the hydro inform dic
+        self.hydro_inform_dic = {}
+
+        # Detect the datatype
+        if not isinstance(hydro_ds, HydrometricStationData):
+            raise TypeError('The hydro ds is not a standard hydrometric station data!')
+
+        # Merge hydro inform
+        for _ in hydro_ds.cross_section_namelist:
+            if _ in self.cross_section_name and ~np.isnan(hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]):
+                wl_offset = hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
+                self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
+                self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
+
+    def generate_differential_cross_profile(self, cross_section2):
+
+        # Check the type of input
+        if self.cross_section_dem is None:
+            raise Exception('Please input the cross profiles before further process!')
+        elif self.cross_section_bank_coord is None:
+            raise Exception('Please input the bank coordinate before further process!')
+
+        if not isinstance(cross_section2, CrossSection):
+            raise Exception('The differential cross profile only work for two cross section!!')
+        elif cross_section2.cross_section_dem is None:
+            raise Exception('Please input the cross profiles before further process!')
+
+        # Differential the rs dem
+        self.cross_section_diff = {}
+        self.cross_section_diff_geometry = {}
+        for _ in self.cross_section_name:
+            if _ in cross_section2.cross_section_name:
+                diff_list = []
+                ref_cross_section_dem = self.cross_section_dem[_]
+                new_cross_section_dem = cross_section2.cross_section_dem[_]
+                ref_dis, ref_ele = [__[0] for __ in ref_cross_section_dem], [__[1] for __ in ref_cross_section_dem]
+                new_dis, new_ele = [__[0] for __ in new_cross_section_dem], [__[1] for __ in new_cross_section_dem]
+                dis_sta, dis_end = [max(min(ref_dis), min(new_dis)), min(max(ref_dis), max(new_dis))]
+                unique_ref_dis = copy.deepcopy(ref_dis)
+                unique_ref_dis.extend(new_dis)
+                unique_ref_dis = np.unique(np.array(unique_ref_dis)).tolist()
+                for __ in unique_ref_dis:
+                    if dis_sta <= __ <= dis_end:
+                        ref_ele_t, new_ele_t = np.nan, np.nan
+
+                        if __ in ref_dis:
+                            ref_ele_t = ref_ele[ref_dis.index(__)]
+                        else:
+                            for ___ in range(0, len(ref_dis) - 1):
+                                if (ref_dis[___] - __) * (ref_dis[___ + 1] - __) < 0:
+                                    ref_ele_t = ref_ele[___] + (ref_ele[___ + 1] - ref_ele[___]) * (__ - ref_dis[___]) / (ref_dis[___ + 1] - ref_dis[___])
+                                    break
+
+                        if __ in new_dis:
+                            new_ele_t = new_ele[new_dis.index(__)]
+                        else:
+                            for ___ in range(0, len(new_dis) - 1):
+                                if (new_dis[___] - __) * (new_dis[___ + 1] - __) < 0:
+                                    new_ele_t = new_ele[___] + (new_ele[___ + 1] - new_ele[___]) * (__ - new_dis[___]) / (new_dis[___ + 1] - new_dis[___])
+                                    break
+
+                        if ~np.isnan(ref_ele_t) and ~np.isnan(new_ele_t):
+                            diff_list.append([__, new_ele_t - ref_ele_t])
+
+                self.cross_section_diff[_] = diff_list
+
+                line_coord = []
+                bank_coord = self.cross_section_bank_coord[_]
+                dis_ = distance_between_2points(bank_coord[0], bank_coord[1])
+                ref_dis_ = ref_dis[-1] - ref_dis[0]
+                new_dis_ = new_dis[-1] - new_dis[0]
+                itr_xdim, itr_ydim = (bank_coord[1][0] - bank_coord[0][0]) / dis_, (bank_coord[1][1] - bank_coord[0][1]) / dis_
+                offset = self.cross_section_dem[_][0][0] if abs(dis_ - ref_dis_) < abs(dis_ - ref_dis[-1]) else 0
+
+                for dem_index in range(len(diff_list)):
+                    dem_dis = diff_list[dem_index][0] - offset
+                    line_coord.append((bank_coord[0][0] + dem_dis * itr_xdim, bank_coord[0][1] + dem_dis * itr_ydim, diff_list[dem_index][1]))
+                self.cross_section_diff_geometry[_] = LineString(line_coord)
+
+    def compare_inundation_frequency(self, dem_tif: str, year_range: list):
+
+        # Import dem tif
+        if isinstance(dem_tif, str):
+            if not dem_tif.endswith('.TIF') and not dem_tif.endswith('.tif'):
+                raise TypeError('The dem map should be a TIF file')
+            else:
+                try:
+                    ds_temp = gdal.Open(dem_tif)
+                    srs_temp = retrieve_srs(ds_temp)
+                    if int(srs_temp.split(':')[-1]) != int(self.crs.split(':')[-1]):
+                        gdal.Warp('/vsimem/temp1.TIF', ds_temp, )
+                        ds_temp = gdal.Open('/vsimem/temp1.TIF')
+                    [ul_x, x_res, xt, ul_y, yt, y_res] = ds_temp.GetGeoTransform()
+                    arr = ds_temp.GetRasterBand(1).ReadAsArray()
+                except:
+                    raise ValueError('The dem tif file is problematic!')
+        else:
+            raise TypeError('The dem map should be a TIF file')
+
+        # Define output path
+        output_path = self.work_env + 'output_Fig\\' + dem_tif.split('\\')[-1].split('.')[0] + '_inunfreq\\'
+        bf.create_folder(output_path)
+
+        # Define the if compare list
+        inunfreq_insitu_list = []
+        inunfreq_rs_list = []
+        section_list = []
+        dem_list = []
+        dis_list = []
+
+        # check if hydro inform is imported
+        if 'hydro_inform_dic' not in self.__dict__.keys():
+            raise ValueError('Please input the hydro inform first!')
+        else:
+            hydro_section_index = np.array(np.sort([self.cross_section_name.index(_) for _ in self.hydro_inform_dic.keys()])).tolist()
+            year_list = [_ for _ in range(year_range[0], year_range[1])]
+            for section_name in self.cross_section_name:
+                index = self.cross_section_name.index(section_name)
+                dis_start_series, dis_end_series = [None for _ in range(year_range[0], year_range[1])], [None for _ in range(year_range[0], year_range[1])]
+                wl_start_series, wl_end_series = [[] for _ in range(year_range[0], year_range[1])], [[] for _ in range(year_range[0], year_range[1])]
+                start_year_list, end_year_list = [_ for _ in range(year_range[0], year_range[1])], [_ for _ in range(year_range[0], year_range[1])]
+                wl_start_index, wl_end_index = [_ for _ in hydro_section_index if _ <= index], [_ for _ in hydro_section_index if _ >= index]
+                wl_all = []
+
+                while len(start_year_list) != 0:
+                    if len(wl_start_index) == 0:
+                        raise Exception('The boundary hydrometric station should have all the data in the year range')
+                    start_index = max(wl_start_index)
+                    wl_series = self.hydro_inform_dic[self.cross_section_name[start_index]]
+                    y_ = 0
+                    while y_ < len(start_year_list):
+                        year = start_year_list[y_]
+                        wl_series_ = wl_series[wl_series['year'] == year]
+                        if wl_series_.shape[0] != 0:
+                            wl_start_series[year_list.index(year)].extend(np.array(wl_series_['water_level/m']).tolist())
+                            dis_start_series[year_list.index(year)] = abs(self.cross_section_distance[section_name] - self.cross_section_distance[self.cross_section_name[start_index]])
+                            start_year_list.remove(year)
+                            y_ -= 1
+                        y_ += 1
+                    wl_start_index.remove(start_index)
+
+                while len(end_year_list) != 0:
+                    if len(wl_end_index) == 0:
+                        raise Exception('The boundary hydrometric station should have all the data in the year range')
+                    end_index = min(wl_end_index)
+                    wl_series = self.hydro_inform_dic[self.cross_section_name[end_index]]
+                    y_ = 0
+                    while y_ < len(end_year_list):
+                        year = end_year_list[y_]
+                        wl_series_ = wl_series[wl_series['year'] == year]
+                        if wl_series_.shape[0] != 0:
+                            dis_end_series[year_list.index(year)] = abs(self.cross_section_distance[section_name] - self.cross_section_distance[self.cross_section_name[end_index]])
+                            wl_end_series[year_list.index(year)].extend(np.array(wl_series_['water_level/m']).tolist())
+                            end_year_list.remove(year)
+                            y_ -= 1
+                        y_ += 1
+                    wl_end_index.remove(end_index)
+
+                if len(start_year_list) != 0 or len(end_year_list) != 0:
+                    raise Exception('The boundary hydrometric station should have all the data in the year range')
+
+                for _ in range(len(dis_start_series)):
+                    if dis_start_series[_] is None or dis_end_series[_] is None:
+                        raise Exception(f'The {str(section_name)} is not full!')
+                    elif len(wl_start_series[_]) != len(wl_end_series[_]):
+                        raise Exception(f'The boundary hydrometric station of {str(section_name)} has not consistent information in year {str(year_list[_])}!')
+                    else:
+                        if dis_start_series[_] + dis_end_series[_] != 0:
+                            wl_temp = np.array(wl_start_series[_]) + (np.array(wl_end_series[_]) - np.array(wl_start_series[_])) * (dis_start_series[_]) / (dis_start_series[_] + dis_end_series[_])
+                        else:
+                            wl_temp = np.array(wl_start_series[_])
+                        wl_all.extend(wl_temp.tolist())
+
+                if self.cross_section_geodf['cs_bank_coord'][index] != [(np.nan, np.nan), (np.nan, np.nan)] and self.cross_section_geodf['cs_bank_coord'][index] is not None:
+                    if len(self.cross_section_geodf['cs_dem'][index]) == len(list(self.cross_section_geodf['geometry'][index].coords)):
+                        cs_dem_ = [_[1] for _ in self.cross_section_geodf['cs_dem'][index]]
+                        cs_channel_ = [_[1] <= min(wl_all) for _ in self.cross_section_geodf['cs_dem'][index]]
+                        cs_dem_new = [None for _ in self.cross_section_geodf['cs_dem'][index]]
+                        for _ in range(len(cs_dem_)):
+                            if cs_channel_[_] is True:
+                                cs_dem_new[_] = cs_dem_[_]
+                            else:
+
+                                pos_bank, neg_bank = None, None
+                                # positive direction
+                                for __ in range(len(cs_dem_)):
+                                    if _ + __ >= len(cs_dem_):
+                                        pos_bank = None
+                                        break
+                                    elif cs_channel_[_ + __] is True:
+                                        if pos_bank is None:
+                                            pos_bank = np.nan
+                                        break
+                                    elif cs_dem_[_ + __] > cs_dem_[_]:
+                                        if pos_bank is None:
+                                            pos_bank = cs_dem_[_ + __]
+                                        else:
+                                            pos_bank = max(cs_dem_[_ + __], pos_bank)
+
+                                # negative direction
+                                for __ in range(len(cs_dem_)):
+                                    if _ - __ < 0:
+                                        neg_bank = None
+                                        break
+                                    elif cs_channel_[_ - __] is True:
+                                        if neg_bank is None:
+                                            neg_bank = np.nan
+                                        break
+                                    elif cs_dem_[_ - __] > cs_dem_[_]:
+                                        if neg_bank is None:
+                                            neg_bank = cs_dem_[_ - __]
+                                        else:
+                                            neg_bank = max(cs_dem_[_ - __], neg_bank)
+
+                                if np.nan not in [neg_bank, pos_bank]:
+                                    if neg_bank is None and pos_bank is None:
+                                        raise Exception('Code Error!')
+                                    elif neg_bank is None:
+                                        cs_dem_new[_] = pos_bank
+                                    elif pos_bank is None:
+                                        cs_dem_new[_] = neg_bank
+                                    else:
+                                        cs_dem_new[_] = min(pos_bank, neg_bank)
+                                else:
+                                    cs_dem_new[_] = cs_dem_[_]
+
+                        rs_if_list = []
+                        insitu_if_list = []
+
+                        fig_temp, ax_temp = plt.subplots(figsize=(11, 5), constrained_layout=True)
+                        ax_temp.scatter([_ for _ in range(len(cs_dem_))], cs_dem_, marker='s')
+                        ax_temp.scatter([_ for _ in range(len(cs_dem_))], cs_dem_new, marker='o')
+                        plt.savefig(output_path + self.cross_section_geodf['cs_name'][index] + '_dem.png', dpi=500)
+                        plt.close()
+
+                        for __ in range(len(cs_dem_new)):
+                            coord_x = self.cross_section_geodf['geometry'][index].coords[__][0]
+                            coord_y = self.cross_section_geodf['geometry'][index].coords[__][1]
+                            insitu_if_list.append(np.sum(np.array(wl_all) >= cs_dem_new[__]) / len(wl_all))
+                            pos_x_new = (coord_x - ul_x) / x_res
+                            pos_y_new = (coord_y - ul_y) / y_res
+                            pos_x = int(np.floor((coord_x - ul_x) / x_res))
+                            pos_y = int(np.floor((coord_y - ul_y) / y_res))
+                            if np.isnan(arr[pos_y, pos_x]):
+                                rs_if_list.append(np.nan)
+                            else:
+                                x, y, z, dis, z_dis = [], [], [], [], []
+                                for pos_y_temp in range(pos_y - 2, pos_y + 4):
+                                    for pos_x_temp in range(pos_x - 2, pos_x + 4):
+                                        if ~np.isnan(arr[pos_y_temp, pos_x_temp]):
+                                            x.append(pos_x_temp + 0.5)
+                                            y.append(pos_y_temp + 0.5)
+                                            z.append(arr[pos_y_temp, pos_x_temp])
+                                            dis.append(1 / (x_res * distance_between_2points([pos_x_new, pos_y_new], [pos_x_temp, pos_y_temp])))
+                                            z_dis.append(arr[pos_y_temp, pos_x_temp] / (x_res * distance_between_2points([pos_x_new, pos_y_new], [pos_x_temp, pos_y_temp])))
+
+                                v2 = np.sum(np.array(z_dis)) / np.sum(np.array(dis))
+                                # func = interpolate.CloughTocher2DInterpolator(list(zip(x, y)), z)
+                                # v = func(pos_x_new, pos_y_new)
+                                if pos_x < arr.shape[1] and pos_y < arr.shape[0]:
+                                    rs_if_list.append(v2)
+                                else:
+                                    rs_if_list.append(np.nan)
+
+                        # Generate FIGURE
+                        plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+                        plt.rc('font', size=22)
+                        plt.rc('axes', linewidth=2)
+
+                        if len(insitu_if_list) == len(rs_if_list) and len(insitu_if_list) == len(self.cross_section_geodf['cs_dem'][index]):
+                            fig_temp, ax_temp = plt.subplots(figsize=(12, 5), constrained_layout=True)
+                            offset = self.cross_section_geodf['cs_dem'][index][0][0]
+                            insitu_if, insitu_dis, rs_if, rs_dis = [], [], [], []
+                            for __ in range(len(self.cross_section_geodf['cs_dem'][index])):
+                                insitu_dis.append(self.cross_section_geodf['cs_dem'][index][__][0] - offset)
+                                insitu_if.append(insitu_if_list[__])
+                                if ~np.isnan(rs_if_list[__]):
+                                    inunfreq_rs_list.append(rs_if_list[__])
+                                    inunfreq_insitu_list.append(insitu_if_list[__])
+                                    section_list.append(section_name)
+                                    dis_list.append(self.cross_section_geodf['cs_dem'][index][__][0] - offset)
+                                    dem_list.append(cs_dem_[__])
+                                    rs_dis.append(self.cross_section_geodf['cs_dem'][index][__][0] - offset)
+                                    rs_if.append(rs_if_list[__])
+                            ax_temp.set_ylim(-0.05, 1.05)
+                            ax_temp.set_xlim(min(insitu_dis), (max(insitu_dis) // 100 + 1) * 100)
+                            ax_temp.set_ylabel('Inundation frequency', fontname='Times New Roman', fontsize=24, fontweight='bold')
+                            ax_temp.set_xlabel('Distance to left bank/m', fontname='Times New Roman', fontsize=24, fontweight='bold')
+                            ax_temp.scatter(insitu_dis, insitu_if, s=9 ** 2, color='none', edgecolor = (0, 0, 0), linewidth=2, marker='o', label='Cross-profile-based')
+                            ax_temp.scatter(rs_dis, rs_if, s=10 ** 2, color=(1, 127/256, 14/256),  linewidth=2, marker='.', label='Landsat-derived')
+                            ax_temp.legend(fontsize=22)
+                            ax_temp.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+                            ax_temp.set_yticklabels(['0%', '20%', '40%', '60%', '80%', '100%'], fontname='Times New Roman', fontsize=22)
+                            plt.savefig(output_path + self.cross_section_geodf['cs_name'][index] + '_inunfreq.png', dpi=500)
+                            plt.close()
+                            fig_temp = None
+                            ax_temp = None
+
+            df = pd.DataFrame({'cs_name': section_list, 'insitu_inun_freq': inunfreq_insitu_list, 'rs_inun_freq': inunfreq_rs_list, 'dem': dem_list, 'dis': dis_list})
+            rmse = np.sqrt(np.sum((np.array(inunfreq_insitu_list) - np.array(inunfreq_rs_list)) ** 2))
+            df.to_csv(output_path + f'inun_all_{str(rmse)[0:6]}.csv', encoding='GB18030')
 
     def _check_output_information_(self):
 
@@ -829,16 +1431,20 @@ class cross_section(object):
                 pass
 
         # Initiate Thalweg elevation
-        thalweg_ele = Thelwag()
+        thalweg_ele = Thalweg()
         thalweg_ele.original_cs = self
         thalweg_ele.work_env = self.work_env
-        thalweg_ele.Thelwag_cs_name = cs_list
-        thalweg_ele.Thelwag_Linestring = LineString(Thalweg_list)
-        dic = {'cs_namelist': [cs_list], 'geometry': [thalweg_ele.Thelwag_Linestring]}
-        thalweg_ele.Thelwag_geodf = gp.GeoDataFrame(dic, crs=self.cross_section_geodf.crs)
+        thalweg_ele.Thalweg_cs_name = cs_list
+        thalweg_ele.Thalweg_Linestring = LineString(Thalweg_list)
+        dic = {'cs_namelist': [cs_list], 'geometry': [thalweg_ele.Thalweg_Linestring]}
+        thalweg_ele.Thalweg_geodf = gp.GeoDataFrame(dic, crs=self.cross_section_geodf.crs)
         return thalweg_ele
 
-    def import_2d_dem(self, dem_tif: str):
+    def compare_2ddem(self, dem_tif: str, diff_ele=False, inun_freq=None):
+
+        # Check the condition
+        if diff_ele is True and (self.cross_section_diff is None or self.cross_section_diff_geometry is None):
+            raise Exception('Please calculate the difference before comparison!')
 
         # Import dem tif
         if isinstance(dem_tif, str):
@@ -858,13 +1464,142 @@ class cross_section(object):
         else:
             raise TypeError('The dem map should be a TIF file')
 
+        # Import inun_freq
+        if inun_freq is not None and isinstance(inun_freq, str):
+            if not inun_freq.endswith('.TIF') and not inun_freq.endswith('.tif'):
+                raise TypeError('The inun_freq map should be a TIF file')
+            else:
+                try:
+                    ds_temp = gdal.Open(inun_freq)
+                    srs_temp = retrieve_srs(ds_temp)
+                    if int(srs_temp.split(':')[-1]) != int(self.crs.split(':')[-1]):
+                        gdal.Warp('/vsimem/temp1.TIF', ds_temp, )
+                        ds_temp = gdal.Open('/vsimem/temp1.TIF')
+                    [ul_x, x_res, xt, ul_y, yt, y_res] = ds_temp.GetGeoTransform()
+                    inun_freq_arr = ds_temp.GetRasterBand(1).ReadAsArray()
+                    inun_freq_factor = True
+                except:
+                    raise ValueError('The inun_freq file is problematic!')
+        else:
+            raise TypeError('The inun_freq should be a TIF file')
+
+        # Generate FIGURE para
+        insitu_dem_all, rs_dem_all, section_name_all, rs_dis_all, dem_diff_all = [], [], [], [], []
+        inun_freq_all = [] if inun_freq_factor else None
+        plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+        plt.rc('font', size=24)
+        plt.rc('axes', linewidth=2)
+        output_path = self.work_env + 'output_Fig\\' + dem_tif.split('\\')[-1].split('.')[0] + '\\' if diff_ele is not True else self.work_env + 'output_Fig\\' + dem_tif.split('\\')[-1].split('.')[0] + '_diff_ele\\'
+        bf.create_folder(output_path)
+
         # Compare dem
+        RS_dem_all = {}
         for _ in range(self.cross_section_geodf.shape[0]):
+            if self.cross_section_geodf['cs_bank_coord'][_] != [(np.nan, np.nan), (np.nan, np.nan)] and self.cross_section_geodf['cs_bank_coord'][_] is not None:
+                RS_dem = []
+                RS_inun_freq = []
+                cs_name_ = self.cross_section_geodf['cs_name'][_]
+                if diff_ele:
+                    if cs_name_ in self.cross_section_diff.keys() and cs_name_ in self.cross_section_diff_geometry.keys():
+                        dem_temp = self.cross_section_diff[cs_name_]
+                        coords_temp = self.cross_section_diff_geometry[cs_name_]
+                    else:
+                        dem_temp = None
+                elif len(self.cross_section_geodf['cs_dem'][_]) == len(list(self.cross_section_geodf['geometry'][_].coords)):
+                    dem_temp = self.cross_section_geodf['cs_dem'][_]
+                    coords_temp = self.cross_section_geodf['geometry'][_]
+                else:
+                    dem_temp = None
 
-            if self.cross_section_bank_coord[_] != [(np.nan, np.nan), (np.nan, np.nan)] and self.cross_section_bank_coord[_] is not None:
-                pass
+                if dem_temp is not None:
+                    for __ in range(len(dem_temp)):
+                        coord_x = coords_temp.coords[__][0]
+                        coord_y = coords_temp.coords[__][1]
+                        pos_x_new = (coord_x - ul_x) / x_res
+                        pos_y_new = (coord_y - ul_y) / y_res
+                        pos_x = int(np.floor((coord_x - ul_x) / x_res))
+                        pos_y = int(np.floor((coord_y - ul_y) / y_res))
+                        if np.isnan(arr[pos_y, pos_x]):
+                            if inun_freq_factor:
+                                RS_dem.append([np.nan, np.nan, np.nan])
+                            else:
+                                RS_dem.append([np.nan, np.nan])
+                        else:
+                            x, y, z, dis, z_dis = [], [], [], [], []
+                            inun_freq_l = [] if inun_freq_factor else None
+                            inun_freq_dis = [] if inun_freq_factor else None
+                            for pos_y_temp in range(pos_y - 2, pos_y + 4):
+                                for pos_x_temp in range(pos_x - 2, pos_x + 4):
+                                    if ~np.isnan(arr[pos_y_temp, pos_x_temp]):
+                                        x.append(pos_x_temp + 0.5)
+                                        y.append(pos_y_temp + 0.5)
+                                        z.append(arr[pos_y_temp, pos_x_temp])
+                                        dis.append(1 / (x_res * distance_between_2points([pos_x_new, pos_y_new], [pos_x_temp, pos_y_temp])))
+                                        z_dis.append(arr[pos_y_temp, pos_x_temp] / (x_res * distance_between_2points([pos_x_new, pos_y_new], [pos_x_temp, pos_y_temp])))
+                                        if inun_freq_factor:
+                                            inun_freq_l.append(1 / (x_res * distance_between_2points([pos_x_new, pos_y_new], [pos_x_temp, pos_y_temp])))
+                                            inun_freq_dis.append(inun_freq_arr[pos_y_temp, pos_x_temp] / (x_res * distance_between_2points([pos_x_new, pos_y_new], [pos_x_temp, pos_y_temp])))
 
+                            v2 = np.sum(np.array(z_dis)) / np.sum(np.array(dis))
+                            if inun_freq_factor:
+                                v3 = np.sum(np.array(inun_freq_l)) / np.sum(np.array(inun_freq_dis))
+                            # func = interpolate.CloughTocher2DInterpolator(list(zip(x, y)), z)
+                            # v = func(pos_x_new, pos_y_new)
+                            if pos_x < arr.shape[1] and pos_y < arr.shape[0]:
+                                if inun_freq_factor:
+                                    RS_dem.append([coords_temp.coords[__], v2, v3])
+                                else:
+                                    RS_dem.append([coords_temp.coords[__], v2])
+                            else:
+                                if inun_freq_factor:
+                                    RS_dem.append([np.nan, np.nan, np.nan])
+                                else:
+                                    RS_dem.append([np.nan, np.nan])
 
+                    RS_dem_all[cs_name_] = RS_dem
+                else:
+                    RS_dem_all[cs_name_] = None
+            else:
+                RS_dem_all[cs_name_] = None
+
+            if RS_dem_all[cs_name_] is not None:
+                fig_temp, ax_temp = plt.subplots(figsize=(11, 5), constrained_layout=True)
+                offset = dem_temp[0][0]
+                insitu_dem, insitu_dis, rs_dem, rs_dis = [], [], [], []
+
+                for __ in range(len(dem_temp)):
+                    insitu_dis.append(dem_temp[__][0] - offset)
+                    insitu_dem.append(dem_temp[__][1])
+                    insitu_dem_all.append(dem_temp[__][1])
+
+                    section_name_all.append(cs_name_)
+                    rs_dis_all.append(dem_temp[__][0] - offset)
+
+                    if ~np.isnan(RS_dem_all[cs_name_][__][1]):
+                        rs_dis.append(dem_temp[__][0] - offset)
+                        rs_dem_all.append(RS_dem_all[cs_name_][__][1])
+                        rs_dem.append(RS_dem_all[cs_name_][__][1])
+                        dem_diff_all.append(RS_dem_all[cs_name_][__][1] - dem_temp[__][1])
+                    else:
+                        rs_dem_all.append(np.nan)
+                        dem_diff_all.append(np.nan)
+
+                    if inun_freq_factor:
+                        inun_freq_all.append(RS_dem_all[cs_name_][__][2])
+
+                ax_temp.scatter(insitu_dis, insitu_dem, s=12**2, color="none", edgecolor=(0, 1, 0), linewidth=3, marker='o')
+                ax_temp.scatter(rs_dis, rs_dem, s=12**2, color="none", edgecolor=(1, 0, 0), linewidth=3, marker='s')
+                plt.savefig(output_path + cs_name_ + '.png', dpi=500)
+                plt.close()
+                fig_temp = None
+                ax_temp = None
+
+        if inun_freq_factor:
+            df = pd.DataFrame({'csname': section_name_all, 'rs_dem': rs_dem_all, 'insitu_dem': insitu_dem_all, 'rs_dis': rs_dis_all, 'inun_freq': inun_freq_all, 'dem_diff': dem_diff_all})
+        else:
+            df = pd.DataFrame({'csname': section_name_all, 'rs_dem': rs_dem_all, 'insitu_dem': insitu_dem_all, 'rs_dis': rs_dis_all})
+        rmse = np.sqrt(np.sum((np.array(rs_dem_all) - np.array(insitu_dem_all)) ** 2))
+        df.to_csv(output_path + f'dem_all_{str(rmse)[0:6]}.csv', encoding='GB18030')
 
     def load_geojson(self, geodf_json: str):
 
@@ -899,7 +1634,7 @@ class cross_section(object):
         cross_section_temp = copy.deepcopy(self.cross_section_geodf)
         cross_section_temp['cs_dem'] = cross_section_temp['cs_dem'].astype(str)
         cross_section_temp['cs_bank_coord'] = cross_section_temp['cs_bank_coord'].astype(str)
-        cross_section_temp.to_file(f'{output_path}cross_section.json', driver='GeoJSON')
+        cross_section_temp.to_file(f'{output_path}CrossSection.json', driver='GeoJSON')
         print('The cross-section information is saved as geojson.')
 
     def to_csv(self, output_path: str = None):
@@ -913,7 +1648,7 @@ class cross_section(object):
             output_path = bf.Path(output_path).path_name
 
         bf.create_folder(output_path)
-        self.cross_section_geodf.to_csv(f'{output_path}cross_section.csv', encoding='GB18030')
+        self.cross_section_geodf.to_csv(f'{output_path}CrossSection.csv', encoding='GB18030')
 
     def to_shpfile(self, output_path: str = None):
 
@@ -932,44 +1667,3 @@ class cross_section(object):
         cross_section_geodata_temp['cs_bank_coord'] = cross_section_geodata_temp['cs_bank_coord'].astype(str)
         cross_section_geodata_temp['cs_tribu'] = cross_section_geodata_temp['cs_tribu'].astype(np.int16)
         cross_section_geodata_temp.to_file(f'{output_path}cs_combined.shp', encoding='utf-8')
-
-
-if __name__ == '__main__':
-
-    # Cross section construction
-    cs1 = cross_section()
-    cs1.from_standard_xlsx('G:\A_Landsat_veg\Water_level_python\\cross_section_DEM_2019_all.csv')
-    cs1.import_section_coordinates('G:\A_Landsat_veg\Water_level_python\\cross_section_coordinates_wgs84.csv', epsg_crs='epsg:32649')
-    cs1.import_section_tributary('G:\A_Landsat_veg\Water_level_python\\cross_section_tributary.xlsx')
-    cs1.to_geojson()
-    cs1.to_shpfile()
-    cs1.to_csv()
-    cs1.import_2d_dem('G:\A_Landsat_veg\Water_level_python\\ele_DT_inundation_frequency_posttgd.TIF')
-
-    # Cross section import
-    thal1 = cs1.generate_Thalweg()
-    thal1.to_shapefile()
-    thal1.to_geojson()
-    thal1 = Thelwag()
-    thal1 = thal1.load_geojson('G:\\A_Landsat_veg\\Water_level_python\\output_geojson\\thelwag.json')
-    thal1.load_smooth_Thalweg_shp('G:\\A_Landsat_veg\\Water_level_python\\output_shpfile\\thelwag_smooth.shp')
-#
-    # Water level import
-    wl1 = hydrometric_station_data()
-    file_list = bf.file_filter('G:\A_Landsat_veg\Water_level_python\original_water_level\\', ['.xls'])
-    corr_temp = pd.read_csv('G:\A_Landsat_veg\Water_level_python\original_water_level\\对应表.csv')
-    cs_list, wl_list = [], []
-    for file_ in file_list:
-        for hs_num in range(corr_temp.shape[0]):
-            hs = corr_temp[corr_temp.keys()[1]][hs_num]
-            if hs in file_:
-                cs_list.append(corr_temp[corr_temp.keys()[0]][hs_num])
-                wl_list.append(corr_temp[corr_temp.keys()[2]][hs_num])
-
-    for fn_, cs_, wl_ in zip(file_list, cs_list, wl_list):
-        wl1.import_from_standard_excel(fn_, cs_, water_level_offset=wl_)
-    wl1.to_csvs()
-#
-    thal1.merged_hydro_inform(wl1)
-    thal1.link_inundation_frequency_map('G:\A_Landsat_veg\Landsat_floodplain_2020_datacube\Inundation_DT_datacube\inun_factor\\DT_inundation_frequency_posttgd.TIF', year_range=[2004, 2019])
-    thal1.link_inundation_frequency_map('G:\A_Landsat_veg\Landsat_floodplain_2020_datacube\Inundation_DT_datacube\inun_factor\\DT_inundation_frequency_pretgd.TIF', year_range=[1986, 2004])

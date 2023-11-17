@@ -1,5 +1,6 @@
 # coding=utf-8
 import copy
+import traceback
 
 from basic_function import Path
 import concurrent.futures
@@ -387,6 +388,7 @@ class Phemetric_dc(object):
             elif self.huge_matrix and not self.sparse_matrix:
                 self.dc_filename = bf.file_filter(self.Phemetric_dc_filepath, ['sequenced_datacube', '.npy'], and_or_factor='and')
         except:
+            print(traceback.format_exc())
             raise Exception('Something went wrong when reading the Phemetric datacube!')
 
         # autotrans sparse matrix
@@ -1630,11 +1632,11 @@ class RS_dcs(object):
                     else:
                         arr_temp = inundation_dc.dc[:, :, doy_array.index(doy_index)]
 
-                    if doy_array[doy_index] < 2004000:
+                    if 1987001 <= doy_array[doy_index] < 2004000:
                         inun_arr_pre = inun_arr_pre + (arr_temp == 2).astype(np.int16)
                         all_arr_pre = all_arr_pre + (arr_temp >= 1).astype(np.int16)
 
-                    if doy_array[doy_index] >= 2004001:
+                    if 2004001 <= doy_array[doy_index] < 2021001:
                         inun_arr_post = inun_arr_post + (arr_temp == 2).astype(np.int16)
                         all_arr_post = all_arr_post + (arr_temp >= 1).astype(np.int16)
 
@@ -2990,17 +2992,21 @@ class RS_dcs(object):
             print(sec)
 
             fig, ax = plt.subplots(figsize=(23, 3.5), constrained_layout=True)
-            box = ax.boxplot(pheme_all, vert = True, labels=[str(_) for _ in year_range],  notch=True, widths=0.5, patch_artist=True, whis=(10, 90), showfliers=False, zorder=4)
+            box = ax.boxplot(pheme_all, vert = True, labels=[str(_) for _ in year_range],  notch=True, widths=0.5, patch_artist=True, whis=(15, 85), showfliers=False, zorder=4)
             p0, f0 = curve_fit(linear_f, [_ for _ in range(1, 7)], pheme_mean[0: 6])
-            p1, f1 = curve_fit(linear_f, [_ for _ in range(18, 36)], pheme_mean[17: 35])
+            p1, f1 = curve_fit(linear_f, [_ for _ in range(18, 29)], pheme_mean[17: 28])
             p2, f2 = curve_fit(linear_f, [_ for _ in range(7, 19)], pheme_mean[6: 18])
+            mean_v = np.nanmean(np.array(pheme_mean[30: 35]))
             # sns.regplot(np.linspace(0, 7, 100), linear_f(np.linspace(0, 7, 100), p0[0], p0[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
             # sns.regplot(np.linspace(19, 37, 100), linear_f(np.linspace(19, 37, 100), p1[0], p1[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
             # sns.regplot(np.linspace(8, 18, 100), linear_f(np.linspace(8, 18, 100), p2[0], p2[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
             ax.plot(np.linspace(1, 6, 100), linear_f(np.linspace(1, 6, 100), p0[0], p0[1]), lw=4, ls='--', c=(0, 0, 0.8))
-            ax.plot(np.linspace(18, 35, 100), linear_f(np.linspace(18, 35, 100), p1[0], p1[1]), lw=4, ls='--', c=(0.8, 0, 0))
+            ax.plot(np.linspace(18, 29, 100), linear_f(np.linspace(18, 29, 100), p1[0], p1[1]), lw=4, ls='--', c=(0.8, 0, 0))
+            ax.plot(np.linspace(30, 35, 100), np.linspace(mean_v, mean_v, 100), lw=4, ls='--',  c=(0.8, 0, 0))
+            # ax.plot(np.linspace(29, 35, 100), linear_f(np.linspace(29, 35, 100), p1[0], p1[1]), lw=4, ls='--', c=(0.8, 0, 0))
             ax.plot(np.linspace(7, 17, 100), linear_f(np.linspace(7, 17, 100), p2[0], p2[1]), lw=4, ls='--', c=(0, 0, 0.8))
             ax.set_xlim(0.5, 35.5)
+            ax.set_ylim(0.13, 0.55)
             print(p0[0])
             print(p0[1] - p0[0] * 1985)
             print(p2[0])
