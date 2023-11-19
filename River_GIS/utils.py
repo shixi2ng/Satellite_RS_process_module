@@ -302,7 +302,7 @@ def dis2points_via_line(point1, point2, line_temp: LineString, line_distance=Non
             return distance_between_2points([point1_x, point1_y], [point2_x, point2_y])
 
 
-def frequency_based_elevation(df: pd.DataFrame, thal, year_range, geotransform: list, cs_list: list, year_domain: list, hydro_pos: list, hydro_datacube: bool):
+def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotransform: list, cs_list: list, year_domain: list, hydro_pos: list, hydro_datacube: bool):
 
     try:
 

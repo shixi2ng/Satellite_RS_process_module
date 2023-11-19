@@ -672,7 +672,7 @@ class Thalweg(object):
                 self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
                 self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
 
-    def link_inundation_frequency_map(self, inundation_frequency_tif: str, year_range: list = [1900, 2100], hydro_datacube=True):
+    def flood_frequency_hypsometry_method(self, inundation_frequency_tif: str, year_range: list = [1900, 2100], hydro_datacube=True):
 
         # Check if the hydro inform is merged
         if 'hydro_inform_dic' not in self.__dict__.keys():
@@ -735,7 +735,7 @@ class Thalweg(object):
                 arr_pd_list.append(arr_pd[indi_size * i_size: -1])
 
         with concurrent.futures.ProcessPoolExecutor() as exe:
-            res = exe.map(frequency_based_elevation, arr_pd_list, repeat(self), repeat(year_range), repeat([ul_x, x_res, ul_y, y_res]), repeat(cs_list), repeat(year_domain), repeat(hydro_pos), repeat(hydro_datacube))
+            res = exe.map(flood_frequency_based_hypsometry, arr_pd_list, repeat(self), repeat(year_range), repeat([ul_x, x_res, ul_y, y_res]), repeat(cs_list), repeat(year_domain), repeat(hydro_pos), repeat(hydro_datacube))
 
         res_df = None
         res = list(res)
@@ -778,6 +778,8 @@ class Thalweg(object):
         #                 matrix_list[__][int(res_df['y'][_]), int(res_df['x'][_])] = wl_pos[__]
         #     year_m = ndsm(*matrix_list, SM_namelist=doy_list)
         #     year_m.save(self.work_env + f'yearly_wl\\{str(year)}\\')
+
+    def refine_annual_topography(self, elevation_map: str, inun_dc: ):
 
 
 class CrossSection(object):

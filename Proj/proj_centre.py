@@ -127,7 +127,7 @@ if __name__ == '__main__':
     thal1.load_smooth_Thalweg_shp('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\output_shpfile\\thelwag_smooth.shp')
     # # #
     thal1.merged_hydro_inform(wl1)
-    thal1.link_inundation_frequency_map(
+    thal1.flood_frequency_hypsometry_method(
         'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube\\inun_factor\\DT_inundation_frequency_posttgd.TIF',
         year_range=[2004, 2021])
 
