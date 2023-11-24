@@ -176,25 +176,25 @@ class AttU_Net(nn.Module):
         self.Conv4 = DoubleConv(filters[2], filters[3])
         self.Conv5 = DoubleConv(filters[3], filters[4])
 
-        # self.Up5 = Up(filters[4], filters[3])
-        # self.Att5 = Attention_block(F_g=filters[3], F_l=filters[3], F_int=filters[2])
-        # self.Up_conv5 = conv_block(filters[4], filters[3])
+        # thalweg_temp.Up5 = Up(filters[4], filters[3])
+        # thalweg_temp.Att5 = Attention_block(F_g=filters[3], F_l=filters[3], F_int=filters[2])
+        # thalweg_temp.Up_conv5 = conv_block(filters[4], filters[3])
         #
-        # self.Up4 = up_conv(filters[3], filters[2])
-        # self.Att4 = Attention_block(F_g=filters[2], F_l=filters[2], F_int=filters[1])
-        # self.Up_conv4 = conv_block(filters[3], filters[2])
+        # thalweg_temp.Up4 = up_conv(filters[3], filters[2])
+        # thalweg_temp.Att4 = Attention_block(F_g=filters[2], F_l=filters[2], F_int=filters[1])
+        # thalweg_temp.Up_conv4 = conv_block(filters[3], filters[2])
         #
-        # self.Up3 = up_conv(filters[2], filters[1])
-        # self.Att3 = Attention_block(F_g=filters[1], F_l=filters[1], F_int=filters[0])
-        # self.Up_conv3 = conv_block(filters[2], filters[1])
+        # thalweg_temp.Up3 = up_conv(filters[2], filters[1])
+        # thalweg_temp.Att3 = Attention_block(F_g=filters[1], F_l=filters[1], F_int=filters[0])
+        # thalweg_temp.Up_conv3 = conv_block(filters[2], filters[1])
         #
-        # self.Up2 = up_conv(filters[1], filters[0])
-        # self.Att2 = Attention_block(F_g=filters[0], F_l=filters[0], F_int=32)
-        # self.Up_conv2 = conv_block(filters[1], filters[0])
+        # thalweg_temp.Up2 = up_conv(filters[1], filters[0])
+        # thalweg_temp.Att2 = Attention_block(F_g=filters[0], F_l=filters[0], F_int=32)
+        # thalweg_temp.Up_conv2 = conv_block(filters[1], filters[0])
         #
-        # self.Conv = nn.Conv2d(filters[0], output_ch, kernel_size=1, stride=1, padding=0)
+        # thalweg_temp.Conv = nn.Conv2d(filters[0], output_ch, kernel_size=1, stride=1, padding=0)
 
-        #self.active = torch.nn.Sigmoid()
+        #thalweg_temp.active = torch.nn.Sigmoid()
 
     def forward(self, x):
 
@@ -236,5 +236,5 @@ class AttU_Net(nn.Module):
 
         out = self.Conv(d2)
 
-        #  out = self.active(out)
+        #  out = thalweg_temp.active(out)
         return

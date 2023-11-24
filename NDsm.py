@@ -194,7 +194,7 @@ class NDSparseMatrix:
         # # Remove redundant npz
         # file_list = os.listdir(input_path)
         # for _ in file_list:
-        #     if str(_.split('.npz')[0]) not in self.SM_namelist and _.split('.npz')[0] != 'SMsequence':
+        #     if str(_.split('.npz')[0]) not in thalweg_temp.SM_namelist and _.split('.npz')[0] != 'SMsequence':
         #         try:
         #             os.remove(input_path + _)
         #         except:

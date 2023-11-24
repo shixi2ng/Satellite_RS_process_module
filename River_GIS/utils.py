@@ -1,29 +1,19 @@
-import pandas as pd
+import rasterio.features
 import numpy as np
-import geopandas as gp
-import os
-from shapely import LineString, Geometry, Point
 import basic_function as bf
 import copy
-from datetime import datetime
+from shapely import LineString, Point
+import pandas as pd
 import traceback
-from osgeo import gdal
+import time
+from NDsm import NDSparseMatrix
+import geopandas as gp
+import os
+from osgeo import gdal, osr
 from tqdm.auto import tqdm
 from shapely.ops import nearest_points
-from osgeo import osr
-import time
+from datetime import datetime
 import scipy.sparse as sm
-from NDsm import NDSparseMatrix
-import rasterio.features
-from River_GIS.River_centreline import *
-
-
-def multiple_concept_model(year, thal, ):
-    hydrodc1 = HydroDatacube()
-    hydrodc1.import_from_matrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
-    hydrodc1.simplified_conceptual_inundation_model(
-        'G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\ele_pretgd4model.TIF', thal,
-        'G:\A_Landsat_veg\Water_level_python\inundation_status\\prewl_predem\\')
 
 
 def concept_inundation_model(wl_nm, wl_sm, demfile, thalweg, output_filepath):
@@ -107,26 +97,40 @@ def process_hydroinform_df(hydro_inform):
         print(traceback.format_exc())
 
 
-def generate_hydrodatacube(year, y_list, x_list, hydro_dic, hydro_inform):
+def generate_hydrodatacube(year, arr_size, hydro_dic, hydro_inform, x_list, y_list, outputfolder):
 
-    # Define the sparse matrix
-    ymax, xmax = int(np.max(y_list)) + 1, int(np.max(x_list)) + 1
-    doy_list = [year * 1000 + _ for _ in range(1, datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal() + 1)]
-    sm_list = [sm.lil_matrix((ymax, xmax)) for _ in range(len(doy_list))]
+    try:
+        # Define the sparse matrix
+        Ysize, Xsize = arr_size[0], arr_size[1]
+        doy_list = [year * 1000 + _ for _ in range(1, datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal() + 1)]
+        sm_list = [sm.lil_matrix((Ysize, Xsize)) for _ in range(len(doy_list))]
 
-    with tqdm(total=len(y_list), desc=f'Generate hydrodatcube', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-        for _ in range(len(y_list)):
-            y, x = int(y_list[_]), int(x_list[_])
-            wl_start_series = np.array(hydro_dic[hydro_inform[_][1]])
-            wl_end_series = np.array(hydro_dic[hydro_inform[_][2]])
-            wl_start_dis = hydro_inform[_][3]
-            wl_end_dis = hydro_inform[_][4]
-            wl_inter = wl_start_series + (wl_end_series - wl_start_series) * wl_start_dis / (wl_start_dis + wl_end_dis)
-            for __ in range(len(wl_inter)):
-                sm_list[__][y, x] = wl_inter[__]
-            pbar.update()
-    ND_temp = NDSparseMatrix(*sm_list, SM_namelist=doy_list)
-    ND_temp.save('G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\')
+        with tqdm(total=len(hydro_inform), desc=f'Generate hydro datacube', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            for _ in range(len(hydro_inform)):
+                y, x = int(y_list[_]), int(x_list[_])
+                # print(str(y) + str(x))
+                wl_start_series = np.array(hydro_dic[hydro_inform[_][1]])
+                wl_end_series = np.array(hydro_dic[hydro_inform[_][2]])
+                # print(str(wl_start_series))
+                wl_start_dis = hydro_inform[_][3]
+                wl_end_dis = hydro_inform[_][4]
+                wl_inter = wl_start_series + (wl_end_series - wl_start_series) * wl_start_dis / (wl_start_dis + wl_end_dis)
+                # print(str(wl_inter))
+                # print(str(wl_end_dis))
+                for __ in range(len(wl_inter)):
+                    sm_list[__][y, x] = wl_inter[__]
+                pbar.update()
+
+        print(f'Start saving the hydro datacube of year {str(year)}!')
+        st = time.time()
+        for _ in range(len(sm_list)):
+            sm_list[_] = sm.csc_matrix(sm_list[_])
+        ND_temp = NDSparseMatrix(*sm_list, SM_namelist=doy_list)
+        ND_temp.save(f'{outputfolder}{str(year)}\\')
+        print(f'Finish saving the hydro datacube of year {str(year)} in {str(time.time()-st)}!')
+    except:
+        print(traceback.format_exc())
+        raise Exception('Something error')
 
 
 def retrieve_srs(ds_temp):
@@ -310,7 +314,7 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
         all_year_list, year_doy = [], []
         for _ in cs_list:
             unne_series = None
-            for year in range(year_range[0], year_range[1]):
+            for year in year_range:
                 if unne_series is None:
                     unne_series = (thal.hydro_inform_dic[_]['year'] != year)
                 else:
@@ -320,7 +324,7 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
             year_domain[cs_list.index(_)] = np.unique(np.array(thal.hydro_inform_dic[_]['year'])).tolist()
 
         # Generate year list
-        for year_ in range(year_range[0], year_range[1]):
+        for year_ in year_range:
             all_year_list.append(year_)
             year_doy.append(datetime(year=year_ + 1, month=1, day=1).toordinal() - datetime(year=year_, month=1, day=1).toordinal())
 
@@ -334,21 +338,21 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
             for len_t in range(df.shape[0]):
                 y_temp, x_temp, if_value = int(df['y'][len_t]), int(df['x'][len_t]), df['if'][len_t]
                 if hydro_datacube:
-                    yearly_wl_temp = [[] for _ in range(year_range[0], year_range[1])]
+                    yearly_wl_temp = [[] for _ in year_range]
 
                 if ~np.isnan(if_value):
                     coord_x, coord_y = ul_x + (x_temp + 0.5) * x_res, ul_y + (y_temp + 0.5) * y_res
                     wl_all = []
                     hydro_pos_temp = copy.deepcopy(hydro_pos)
 
-                    if thal.smoothed_Thelwag is None:
-                        nearest_p = nearest_points(Point([coord_x, coord_y]), thal.Thelwag_Linestring)[1]
-                        start_vertex_index = determin_start_vertex_of_point(nearest_p, thal.Thelwag_Linestring)
+                    if thal.smoothed_Thalweg is None:
+                        nearest_p = nearest_points(Point([coord_x, coord_y]), thal.Thalweg_Linestring)[1]
+                        start_vertex_index = determin_start_vertex_of_point(nearest_p, thal.Thalweg_Linestring)
 
                         # Determine the hydrostation
                         factor = None
                         hydro_index_list, year_list = [], []
-                        for year in range(year_range[0], year_range[1]):
+                        for year in year_range:
                             start_hydro_index = copy.deepcopy(start_vertex_index)
                             end_hydro_index = copy.deepcopy(start_vertex_index + 1)
 
@@ -398,11 +402,11 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
                         for _ in hydro_unique_index_list:
                             inform_temp = []
                             # _ 0/1 coord
-                            inform_temp.append(Point([thal.Thelwag_Linestring.coords[start_hydro_index][0], thal.Thelwag_Linestring.coords[start_hydro_index][1]]))
-                            inform_temp.append(Point([thal.Thelwag_Linestring.coords[end_hydro_index][0], thal.Thelwag_Linestring.coords[end_hydro_index][1]]))
+                            inform_temp.append(Point([thal.Thalweg_Linestring.coords[start_hydro_index][0], thal.Thalweg_Linestring.coords[start_hydro_index][1]]))
+                            inform_temp.append(Point([thal.Thalweg_Linestring.coords[end_hydro_index][0], thal.Thalweg_Linestring.coords[end_hydro_index][1]]))
                             # _ 2/3 dis
-                            inform_temp.append(dis2points_via_line(nearest_p, inform_temp[0], thal.Thelwag_Linestring))
-                            inform_temp.append(dis2points_via_line(nearest_p, inform_temp[1], thal.Thelwag_Linestring))
+                            inform_temp.append(dis2points_via_line(nearest_p, inform_temp[0], thal.Thalweg_Linestring))
+                            inform_temp.append(dis2points_via_line(nearest_p, inform_temp[1], thal.Thalweg_Linestring))
                             inform_list.append(inform_temp)
 
                         for year in year_list:
@@ -432,16 +436,16 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
 
                             wl_all.extend(wl_pos.flatten().tolist())
 
-                    elif isinstance(thal.smoothed_Thelwag, LineString):
+                    elif isinstance(thal.smoothed_Thalweg, LineString):
 
-                        nearest_p = nearest_points(Point([coord_x, coord_y]), thal.smoothed_Thelwag)[1]
-                        start_vertex_index = determin_start_vertex_of_point(nearest_p, thal.smoothed_Thelwag)
+                        nearest_p = nearest_points(Point([coord_x, coord_y]), thal.smoothed_Thalweg)[1]
+                        start_vertex_index = determin_start_vertex_of_point(nearest_p, thal.smoothed_Thalweg)
 
                         # Determine the hydrostation
                         # t1 = time.time()
                         factor = None
                         hydro_index_list, year_list = [], []
-                        for year in range(year_range[0], year_range[1]):
+                        for year in year_range:
                             start_hydro_index = copy.deepcopy(start_vertex_index)
                             end_hydro_index = copy.deepcopy(start_vertex_index + 1)
 
@@ -497,8 +501,8 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
 
                             # Calculate the dis between nearest p with start and end station
                             t2 = time.time()
-                            dis_to_start_station = dis2points_via_line(nearest_p, [thal.smoothed_Thelwag.coords[start_hydro_index][0], thal.smoothed_Thelwag.coords[start_hydro_index][1]], thal.smoothed_Thelwag)
-                            dis_to_end_station = dis2points_via_line(nearest_p, [thal.smoothed_Thelwag.coords[end_hydro_index][0], thal.smoothed_Thelwag.coords[end_hydro_index][1]], thal.smoothed_Thelwag)
+                            dis_to_start_station = dis2points_via_line(nearest_p, [thal.smoothed_Thalweg.coords[start_hydro_index][0], thal.smoothed_Thalweg.coords[start_hydro_index][1]], thal.smoothed_Thalweg)
+                            dis_to_end_station = dis2points_via_line(nearest_p, [thal.smoothed_Thalweg.coords[end_hydro_index][0], thal.smoothed_Thalweg.coords[end_hydro_index][1]], thal.smoothed_Thalweg)
                             # t2_all += time.time() - t2
 
                             # Retrieve the water series of start and end stations

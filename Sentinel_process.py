@@ -575,9 +575,9 @@ class Sentinel2_ds(object):
 
         # process sparse matrix parameter
         # if 'sparsify_matrix_factor' in kwargs.keys():
-        #     self.sparsify_matrix_factor = kwargs['sparsify_matrix_factor']
+        #     thalweg_temp.sparsify_matrix_factor = kwargs['sparsify_matrix_factor']
         # else:
-        #     self.sparsify_matrix_factor = False
+        #     thalweg_temp.sparsify_matrix_factor = False
 
         # process cloud removal and clipping sequence
         if 'large_roi' in kwargs.keys():
@@ -682,27 +682,27 @@ class Sentinel2_ds(object):
                     [ulx, uly + yres * ds4bounds.RasterYSize, ulx + xres * ds4bounds.RasterXSize, uly])
                 ds4bounds = None
 
-            # if self.cloud_clip_seq and True in np.isnan(self.raw_10m_bounds[tiffile_serial_num, :]):
-            #     temp_S2file_path = self.S2_metadata.iat[tiffile_serial_num, 1]
+            # if thalweg_temp.cloud_clip_seq and True in np.isnan(thalweg_temp.raw_10m_bounds[tiffile_serial_num, :]):
+            #     temp_S2file_path = thalweg_temp.S2_metadata.iat[tiffile_serial_num, 1]
             #     zfile = ZipFile(temp_S2file_path, 'r')
             #     b2_file = [zfile_temp for zfile_temp in zfile.namelist() if 'B02_10m.jp2' in zfile_temp]
             #     if len(b2_file) != 1:
             #         print(
-            #             f'Data issue for the B2 file of all_cloud data ({str(tiffile_serial_num + 1)} of {str(self.S2_metadata.shape[0])})')
-            #         self.subset_failure_file.append([VI, tiffile_serial_num, temp_S2file_path])
+            #             f'Data issue for the B2 file of all_cloud data ({str(tiffile_serial_num + 1)} of {str(thalweg_temp.S2_metadata.shape[0])})')
+            #         thalweg_temp.subset_failure_file.append([VI, tiffile_serial_num, temp_S2file_path])
             #         return
             #     else:
             #         ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, b2_file[0]))
-            #         if self.cloud_clip_seq:
+            #         if thalweg_temp.cloud_clip_seq:
             #             ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
-            #             self.raw_10m_bounds[tiffile_serial_num, :] = np.array(
+            #             thalweg_temp.raw_10m_bounds[tiffile_serial_num, :] = np.array(
             #                 [ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize,
             #                  ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp])
         else:
             print('The output bounds has some logical issue!')
             sys.exit(-1)
         # print(
-        #     f' Generate 10m bounds of {str(self.S2_metadata[sensing_date][tiffile_serial_num])}_{str(self.S2_metadata[tile_num][tiffile_serial_num])} consume {time.time() - time1}s')
+        #     f' Generate 10m bounds of {str(thalweg_temp.S2_metadata[sensing_date][tiffile_serial_num])}_{str(thalweg_temp.S2_metadata[tile_num][tiffile_serial_num])} consume {time.time() - time1}s')
 
     def subset_tiffiles(self, processed_index_list, tiffile_serial_num, overwritten_para=False, *args, **kwargs):
         """
@@ -818,20 +818,20 @@ class Sentinel2_ds(object):
                     # Method 2
 
                     # ds_temp = gdal.Open('/vsizip/%s/%s' % (temp_S2file_path, band_temp))
-                    # if self.dst_coord is False:
+                    # if thalweg_temp.dst_coord is False:
                     #     gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10, outputBounds=output_limit, outputType=gdal.GDT_UInt16, dstNodata=0)
                     # else:
                     #     gdal.Warp('/vsimem/' + file_name + '.tif', ds_temp, xRes=10, yRes=10,
-                    #               outputBounds=output_limit, outputType=gdal.GDT_UInt16, dstNodata=0, dstSRS=self.dst_coord)
+                    #               outputBounds=output_limit, outputType=gdal.GDT_UInt16, dstNodata=0, dstSRS=thalweg_temp.dst_coord)
                     #
-                    # if self.large_roi and self.vi_clip_factor:
+                    # if thalweg_temp.large_roi and thalweg_temp.vi_clip_factor:
                     #     gdal.Warp('/vsimem/' + file_name + '2.tif', '/vsimem/' + file_name + '.tif', xRes=10, yRes=10,
-                    #               cutlineDSName=self.ROI,  dstNodata=0)
-                    # elif not self.large_roi and self.vi_clip_factor:
+                    #               cutlineDSName=thalweg_temp.ROI,  dstNodata=0)
+                    # elif not thalweg_temp.large_roi and thalweg_temp.vi_clip_factor:
                     #     gdal.Warp('/vsimem/' + file_name + '2.tif', '/vsimem/' + file_name + '.tif', xRes=10, yRes=10,
-                    #               cutlineDSName=self.ROI,
+                    #               cutlineDSName=thalweg_temp.ROI,
                     #               cropToCutline=True, dstNodata=0)
-                    # elif not self.vi_clip_factor:
+                    # elif not thalweg_temp.vi_clip_factor:
                     #     gdal.Warp('/vsimem/' + file_name + '2.tif', '/vsimem/' + file_name + '.tif', xRes=10, yRes=10,
                     #               outputType=gdal.GDT_UInt16, dstNodata=0)
                     #
@@ -2124,9 +2124,9 @@ if __name__ == '__main__':
     # Generate VIs in GEOtiff format
     i = 0
     VI_list = ['NDVI', 'NDWI']
-    # metadata_size = self.S2_metadata.shape[0]
+    # metadata_size = thalweg_temp.S2_metadata.shape[0]
     # while i < metadata_size:
-    #     generate_vi_file(VI_list, i, l2a_output_path, metadata_size, overwritten_para_vis, self.S2_metadata)
+    #     generate_vi_file(VI_list, i, l2a_output_path, metadata_size, overwritten_para_vis, thalweg_temp.S2_metadata)
     #     try:
     #         cache_output_path = 'C:\\Users\\sx199\\.snap\\var\\cache\\s2tbx\\l2a-reader\\8.0.7\\'
     #         cache_path = [cache_output_path + temp for temp in os.listdir(cache_output_path)]

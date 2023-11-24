@@ -2236,8 +2236,8 @@ class Landsat_l2_ds(object):
             self.Landsat_metadata = pandas.read_excel(self.work_env + 'Metadata.xlsx')
         self.Landsat_metadata.sort_values(by=['Date'], ascending=True)
         self.Landsat_metadata_size = self.Landsat_metadata.shape[0]
-        # self.output_bounds = np.zeros([self.S2_metadata_size, 4]) * np.nan
-        # self.raw_10m_bounds = np.zeros([self.S2_metadata_size, 4]) * np.nan
+        # thalweg_temp.output_bounds = np.zeros([thalweg_temp.S2_metadata_size, 4]) * np.nan
+        # thalweg_temp.raw_10m_bounds = np.zeros([thalweg_temp.S2_metadata_size, 4]) * np.nan
         self.date_list = self.Landsat_metadata['Date'].drop_duplicates().sort_values().tolist()
         print('----------------------- End generate Landsat Metadata -----------------------')
 

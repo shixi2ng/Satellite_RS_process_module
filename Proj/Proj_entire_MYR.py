@@ -5,33 +5,6 @@ from River_GIS.River_centreline import *
 
 if __name__ == '__main__':
 
-    # landsat_temp = Landsat_l2_ds('D:\\MID_YZR\\Landsat\\Original_zip_files\\')
-    # landsat_temp.construct_metadata(unzipped_para=False)
-    # landsat_temp.mp_construct_index(['MNDWI', 'OSAVI'], cloud_removal_para=True, size_control_factor=True, ROI='D:\\MID_YZR\\ROI\\floodplain_2020.shp', harmonising_data=True)
-    # landsat_temp.mp_ds2landsatdc(['MNDWI', 'OSAVI'], inherit_from_logfile=True)
-
-    # Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\MNDWI_datacube\\')
-    # Landsat_VI_temp.print_stacked_Zvalue()
-    #
-    # Landsat_WI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\MNDWI_datacube')
-    # Landsat_dcs = RS_dcs(Landsat_WI_temp)
-    # Landsat_dcs.inundation_detection('DT', 'MNDWI', 'Landsat')
-    #
-    # Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_datacube')
-    # Landsat_inun_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube')
-    # Landsat_dcs = RS_dcs(Landsat_inun_temp, Landsat_VI_temp)
-    # Landsat_dcs.inundation_removal('OSAVI', 'DT', 'Landsat', append_new_dc=False)
-    #
-    # Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_datacube\\')
-    # Landsat_dcs = RS_dcs(Landsat_VI_temp)
-    # Landsat_dcs.curve_fitting('OSAVI_noninun', 'Landsat')
-    #
-    # for _ in range(1986, 2023):
-    #     pheme_dc = Phemetric_dc(f'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\{str(_)}')
-    #     # pheme_dc.remove_layer(['MAVI', 'peak_vi', 'TSVI'])
-    #     pheme_dc.calculate_phemetrics(['TSVI', 'peak_vi', 'MAVI'])
-    #     pheme_dc.dc2tif()
-
     # Water level import
     wl1 = HydrometricStationData()
     file_list = bf.file_filter('G:\\A_Landsat_veg\\Water_level_python\\Original_water_level\\', ['.xls'])
@@ -50,8 +23,48 @@ if __name__ == '__main__':
 
     hc = HydroDatacube()
     hc.merge_hydro_inform(wl1)
-    hc.import_hydroinform_csv('G:\A_Landsat_veg\Water_level_python\Post_TGD\\inundation_informDT_inundation_frequency_posttgd.csv')
-    hc.import_hydroinform_csv('G:\A_Landsat_veg\Water_level_python\Post_TGD\\inundation_informDT_inundation_frequency_pretgd.csv')
+    hc.hydrodc_csv2matrix('G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\',
+                          'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\hydro_dc_X_16357_Y_4827_posttgd.csv')
+    hc.hydrodc_csv2matrix('G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\',
+                          'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\hydro_dc_X_16357_Y_4827_pretgd.csv')
+
+    # landsat_temp = Landsat_l2_ds('D:\\MID_YZR\\Landsat\\Original_zip_files\\')
+    # landsat_temp.construct_metadata(unzipped_para=False)
+    # landsat_temp.mp_construct_index(['MNDWI', 'OSAVI'], cloud_removal_para=True, size_control_factor=True, ROI='D:\\MID_YZR\\ROI\\floodplain_2020.shp', harmonising_data=True)
+    # landsat_temp.mp_ds2landsatdc(['MNDWI', 'OSAVI'], inherit_from_logfile=True)
+
+    # Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\MNDWI_datacube\\')
+    # Landsat_VI_temp.print_stacked_Zvalue()
+    #
+    # Landsat_WI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\MNDWI_datacube')
+    # Landsat_dcs = RS_dcs(Landsat_WI_temp)
+    # Landsat_dcs.inundation_detection('DT', 'MNDWI', 'Landsat')
+    #
+    # Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_datacube')
+    Landsat_inun_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube')
+    # Landsat_dcs = RS_dcs(Landsat_inun_temp, Landsat_VI_temp)
+    # Landsat_dcs.inundation_removal('OSAVI', 'DT', 'Landsat', append_new_dc=False)
+    #
+    # Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_datacube\\')
+    # Landsat_dcs = RS_dcs(Landsat_VI_temp)
+    # Landsat_dcs.curve_fitting('OSAVI_noninun', 'Landsat')
+    #
+    # for _ in range(1986, 2023):
+    #     pheme_dc = Phemetric_dc(f'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\{str(_)}')
+    #     # pheme_dc.remove_layer(['MAVI', 'peak_vi', 'TSVI'])
+    #     pheme_dc.calculate_phemetrics(['TSVI', 'peak_vi', 'MAVI'])
+    #     pheme_dc.dc2tif()
+
+    # refine dem
+    thal1 = Thalweg()
+    thal1 = thal1.load_geojson('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\output_geojson\\thelwag.json')
+    thal1.load_smooth_Thalweg_shp('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\output_shpfile\\thelwag_smooth.shp')
+
+    hc = HydroDatacube()
+    hc.from_hydromatrix('G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\2003\\')
+
+    hyspo = Flood_freq_based_hyspometry_method([2003], work_env='G:\\A_Landsat_veg\\Water_level_python\\Annual_refined_dem\\')
+    hyspo.refine_annual_topography(thal1, Landsat_inun_temp, hc, elevation_map='G:\\A_Landsat_veg\\Water_level_python\Post_TGD\\ele_DT_inundation_frequency_posttgd.TIF')
 
     # Cross section construction POST-TGD
     cs1 = CrossSection('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\')
@@ -76,10 +89,10 @@ if __name__ == '__main__':
     thal1.load_smooth_Thalweg_shp('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\output_shpfile\\thelwag_smooth.shp')
     # # #
     thal1.merged_hydro_inform(wl1)
-    thal1.flood_frequency_hypsometry_method(
+    thal1.perform_in_epoch(
         'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube\\inun_factor\\DT_inundation_frequency_posttgd.TIF',
         year_range=[2004, 2021])
-    thal1.flood_frequency_hypsometry_method(
+    thal1.perform_in_epoch(
         'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube\\inun_factor\\DT_inundation_frequency_pretgd.TIF',
         year_range=[1987, 2004])
 
@@ -122,15 +135,15 @@ if __name__ == '__main__':
     thal1 = cs1.generate_Thalweg()
     thal1.to_shapefile()
     thal1.to_geojson()
-    thal1 = Thelwag()
+    thal1 = Thalweg()
     thal1 = thal1.load_geojson('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\output_geojson\\thelwag.json')
     thal1.load_smooth_Thalweg_shp('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\output_shpfile\\thelwag_smooth.shp')
     # #
     thal1.merged_hydro_inform(wl1)
-    thal1.flood_frequency_hypsometry_method(
+    thal1.perform_in_epoch(
         'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube\\inun_factor\\DT_inundation_frequency_posttgd.TIF',
         year_range=[2004, 2021])
-    thal1.flood_frequency_hypsometry_method(
+    thal1.perform_in_epoch(
         'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube\\inun_factor\\DT_inundation_frequency_pretgd.TIF',
         year_range=[1987, 2004])
 

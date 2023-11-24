@@ -76,17 +76,17 @@ if __name__ == '__main__':
 
     for year in range(1987, 2004):
         hydrodc1 = HydroDatacube()
-        hydrodc1.import_from_matrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
+        hydrodc1.from_hydromatrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
         hydrodc1.seq_simplified_conceptual_inundation_model('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\ele_posttgd4model.TIF', thal1, 'G:\A_Landsat_veg\Water_level_python\inundation_status\\prewl_postdem\\')
 
     for year in range(2004, 2021):
         hydrodc1 = HydroDatacube()
-        hydrodc1.import_from_matrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
+        hydrodc1.from_hydromatrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
         hydrodc1.seq_simplified_conceptual_inundation_model('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\ele_pretgd4model.TIF', thal1, 'G:\A_Landsat_veg\Water_level_python\inundation_status\\postwl_predem\\')
 
     for year in range(2004, 2021):
         hydrodc1 = HydroDatacube()
-        hydrodc1.import_from_matrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
+        hydrodc1.from_hydromatrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
         hydrodc1.seq_simplified_conceptual_inundation_model('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\ele_posttgd4model.TIF', thal1, 'G:\A_Landsat_veg\Water_level_python\inundation_status\\postwl_postdem\\')
 
 
@@ -127,7 +127,7 @@ if __name__ == '__main__':
     thal1.load_smooth_Thalweg_shp('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\output_shpfile\\thelwag_smooth.shp')
     # # #
     thal1.merged_hydro_inform(wl1)
-    thal1.flood_frequency_hypsometry_method(
+    thal1.perform_in_epoch(
         'G:\\A_Landsat_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube\\inun_factor\\DT_inundation_frequency_posttgd.TIF',
         year_range=[2004, 2021])
 

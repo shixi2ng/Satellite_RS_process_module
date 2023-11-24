@@ -648,7 +648,7 @@ class Landsat_l2_ds(object):
                             raise ValueError(f'There are more than one QI file for {str(filedate)} {str(tile_num)}!')
                         else:
                             try:
-                                # qi_folder = f'{self._work_env}Landsat_constructed_index\\QI\\' if self.ROI is None else f'{self._work_env}Landsat_{str(self.ROI_name)}_index\\QI\\'
+                                # qi_folder = f'{thalweg_temp._work_env}Landsat_constructed_index\\QI\\' if thalweg_temp.ROI is None else f'{thalweg_temp._work_env}Landsat_{str(thalweg_temp.ROI_name)}_index\\QI\\'
                                 # bf.create_folder(qi_folder)
                                 QI_ds = gdal.Open(QI_filelist[0])
                                 QI_arr = QI_ds.GetRasterBand(1).ReadAsArray().astype(np.float16)
@@ -2141,30 +2141,30 @@ class Landsat_dcs(object):
 
         #     if landsat_detected_inundation_area is True:
         #         try:
-        #             confusion_dic = np.load(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_inundation_acc_dic.npy', allow_pickle=True).item()
+        #             confusion_dic = np.load(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_inundation_acc_dic.npy', allow_pickle=True).item()
         #         except:
         #             print('Please evaluate the accracy of different methods before detect the inundation area!')
         #             sys.exit(-1)
         #
         #         if confusion_dic['global_acc'] > confusion_dic['local_acc']:
         #             gl_factor = 'global'
-        #             inundation_dic = np.load(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_global_inundation_dic.npy', allow_pickle=True).item()
+        #             inundation_dic = np.load(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_global_inundation_dic.npy', allow_pickle=True).item()
         #         elif confusion_dic['global_acc'] <= confusion_dic['local_acc']:
         #             gl_factor = 'local'
-        #             inundation_dic = np.load(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_local_inundation_dic.npy', allow_pickle=True).item()
+        #             inundation_dic = np.load(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_local_inundation_dic.npy', allow_pickle=True).item()
         #         else:
         #             print('Systematic error!')
         #             sys.exit(-1)
         #
-        #         if os.path.exists(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_final_inundation_dic.npy'):
-        #             inundation_dic = np.load(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_final_inundation_dic.npy', allow_pickle=True).item()
+        #         if os.path.exists(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_final_inundation_dic.npy'):
+        #             inundation_dic = np.load(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_final_inundation_dic.npy', allow_pickle=True).item()
         #         else:
         #             inundation_dic = {}
         #
-        #         inundation_dic['final_' + self.ROI_name] = self.work_env + 'Landsat_Inundation_Condition\\' + self.ROI_name + '_final\\'
-        #         bf.create_folder(inundation_dic['final_' + self.ROI_name])
-        #         if not os.path.exists(inundation_dic['final_' + self.ROI_name] + 'inundated_dc.npy') or not os.path.exists(inundation_dic['final_' + self.ROI_name] + 'doy.npy'):
-        #             landsat_inundation_file_list = bf.file_filter(inundation_dic[gl_factor + '_' + self.ROI_name] + 'individual_tif\\', ['.TIF'])
+        #         inundation_dic['final_' + thalweg_temp.ROI_name] = thalweg_temp.work_env + 'Landsat_Inundation_Condition\\' + thalweg_temp.ROI_name + '_final\\'
+        #         bf.create_folder(inundation_dic['final_' + thalweg_temp.ROI_name])
+        #         if not os.path.exists(inundation_dic['final_' + thalweg_temp.ROI_name] + 'inundated_dc.npy') or not os.path.exists(inundation_dic['final_' + thalweg_temp.ROI_name] + 'doy.npy'):
+        #             landsat_inundation_file_list = bf.file_filter(inundation_dic[gl_factor + '_' + thalweg_temp.ROI_name] + 'individual_tif\\', ['.TIF'])
         #             date_array = np.zeros([0]).astype(np.uint32)
         #             inundation_ds = gdal.Open(landsat_inundation_file_list[0])
         #             inundation_raster = inundation_ds.GetRasterBand(1).ReadAsArray()
@@ -2176,42 +2176,42 @@ class Landsat_dcs(object):
         #                 if np.sum(inundation_raster == -2) >= (0.9 * inundation_raster.shape[0] * inundation_raster.shape[1]):
         #                     print('This is a cloud impact image (' + str(date_ff[0]) + ')')
         #                 else:
-        #                     if not os.path.exists(inundation_dic['final_' + self.ROI_name] + 'individual_tif\\' + str(date_ff[0]) + '.TIF'):
+        #                     if not os.path.exists(inundation_dic['final_' + thalweg_temp.ROI_name] + 'individual_tif\\' + str(date_ff[0]) + '.TIF'):
         #                         inundated_area_mapping = identify_all_inundated_area(inundation_raster, inundated_pixel_indicator=1, nanvalue_pixel_indicator=-2, surrounding_pixel_identification_factor=True, input_detection_method='EightP')
-        #                         inundated_area_mapping[self.sa_map == -32768] = -32768
-        #                         bf.write_raster(inundation_ds, inundated_area_mapping, inundation_dic['final_' + self.ROI_name] + 'individual_tif\\', str(date_ff[0]) + '.TIF')
+        #                         inundated_area_mapping[thalweg_temp.sa_map == -32768] = -32768
+        #                         bf.write_raster(inundation_ds, inundated_area_mapping, inundation_dic['final_' + thalweg_temp.ROI_name] + 'individual_tif\\', str(date_ff[0]) + '.TIF')
         #                     else:
-        #                         inundated_area_mapping_ds = gdal.Open(inundation_dic['final_' + self.ROI_name] + 'individual_tif\\' + str(date_ff[0]) + '.TIF')
+        #                         inundated_area_mapping_ds = gdal.Open(inundation_dic['final_' + thalweg_temp.ROI_name] + 'individual_tif\\' + str(date_ff[0]) + '.TIF')
         #                         inundated_area_mapping = inundated_area_mapping_ds.GetRasterBand(1).ReadAsArray()
         #                     date_array = np.concatenate((date_array, date_ff), axis=0)
         #                     inundated_area_cube = np.concatenate((inundated_area_cube, inundated_area_mapping.reshape([inundated_area_mapping.shape[0], inundated_area_mapping.shape[1], 1])), axis=2)
         #             date_array = date2doy(date_array)
-        #             inundation_dic['inundated_doy_file'] = inundation_dic['final_' + self.ROI_name] + 'doy.npy'
-        #             inundation_dic['inundated_dc_file'] = inundation_dic['final_' + self.ROI_name] + 'inundated_dc.npy'
+        #             inundation_dic['inundated_doy_file'] = inundation_dic['final_' + thalweg_temp.ROI_name] + 'doy.npy'
+        #             inundation_dic['inundated_dc_file'] = inundation_dic['final_' + thalweg_temp.ROI_name] + 'inundated_dc.npy'
         #             np.save(inundation_dic['inundated_dc_file'], inundated_area_cube)
         #             np.save(inundation_dic['inundated_doy_file'], date_array)
         #
         #         # Create the annual inundation map
-        #         inundation_dic['final_annual_' + self.ROI_name] = self.work_env + 'Landsat_Inundation_Condition\\' + self.ROI_name + '_final\\annual\\'
-        #         bf.create_folder(inundation_dic['final_annual_' + self.ROI_name])
+        #         inundation_dic['final_annual_' + thalweg_temp.ROI_name] = thalweg_temp.work_env + 'Landsat_Inundation_Condition\\' + thalweg_temp.ROI_name + '_final\\annual\\'
+        #         bf.create_folder(inundation_dic['final_annual_' + thalweg_temp.ROI_name])
         #         inundated_dc = np.load(inundation_dic['inundated_dc_file'])
         #         doy_array = np.load(inundation_dic['inundated_doy_file'])
         #         year_array = np.unique(doy_array // 1000)
-        #         temp_ds = gdal.Open(bf.file_filter(inundation_dic['final_' + self.ROI_name] + 'individual_tif\\', ['.TIF'])[0])
+        #         temp_ds = gdal.Open(bf.file_filter(inundation_dic['final_' + thalweg_temp.ROI_name] + 'individual_tif\\', ['.TIF'])[0])
         #         for year in year_array:
         #             annual_inundated_map = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
-        #             if not os.path.exists(inundation_dic['final_annual_' + self.ROI_name] + 'final_' + str(year) + '.TIF') or self._inundation_overwritten_factor:
+        #             if not os.path.exists(inundation_dic['final_annual_' + thalweg_temp.ROI_name] + 'final_' + str(year) + '.TIF') or thalweg_temp._inundation_overwritten_factor:
         #                 for doy_index in range(doy_array.shape[0]):
         #                     if doy_array[doy_index] // 1000 == year and 182 <= np.mod(doy_array[doy_index], 1000) <= 285:
         #                         annual_inundated_map[inundated_dc[:, :, doy_index] > 0] = 1
         #                 annual_inundated_map[sa_map == -32768] = -32768
-        #                 bf.write_raster(temp_ds, annual_inundated_map, inundation_dic['final_annual_' + self.ROI_name], 'final_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
-        #         np.save(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_final_inundation_dic.npy', inundation_dic)
+        #                 bf.write_raster(temp_ds, annual_inundated_map, inundation_dic['final_annual_' + thalweg_temp.ROI_name], 'final_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+        #         np.save(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_final_inundation_dic.npy', inundation_dic)
         #         inundation_approach_dic['approach_list'].append('final')
         #
         #         inundated_area_cube = np.load(inundation_dic['inundated_dc_file'])
         #         date_array = np.load(inundation_dic['inundated_doy_file'])
-        #         DEM_ds = gdal.Open(DEM_path + 'dem_' + self.ROI_name + '.tif')
+        #         DEM_ds = gdal.Open(DEM_path + 'dem_' + thalweg_temp.ROI_name + '.tif')
         #         DEM_array = DEM_ds.GetRasterBand(1).ReadAsArray()
         #         if dem_surveyed_date is None:
         #             dem_surveyed_year = int(date_array[0]) // 10000
@@ -2223,10 +2223,10 @@ class Landsat_dcs(object):
         #
         #         valid_pixel_num = np.sum(~np.isnan(DEM_array))
         #         # The code below execute the dem fix
-        #         inundation_dic = np.load(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_final_inundation_dic.npy', allow_pickle=True).item()
-        #         inundation_dic['DEM_fix_' + self.ROI_name] = self.work_env + 'Landsat_Inundation_Condition\\' + self.ROI_name + '_final\\' + self.ROI_name + '_dem_fixed\\'
-        #         bf.create_folder(inundation_dic['DEM_fix_' + self.ROI_name])
-        #         if not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'fixed_dem_min_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'fixed_dem_max_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'inundated_threshold_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'variation_dem_max_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'variation_dem_min_' + self.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + self.ROI_name] + 'dem_fix_num_' + self.ROI_name + '.tif'):
+        #         inundation_dic = np.load(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_final_inundation_dic.npy', allow_pickle=True).item()
+        #         inundation_dic['DEM_fix_' + thalweg_temp.ROI_name] = thalweg_temp.work_env + 'Landsat_Inundation_Condition\\' + thalweg_temp.ROI_name + '_final\\' + thalweg_temp.ROI_name + '_dem_fixed\\'
+        #         bf.create_folder(inundation_dic['DEM_fix_' + thalweg_temp.ROI_name])
+        #         if not os.path.exists(inundation_dic['DEM_fix_' + thalweg_temp.ROI_name] + 'fixed_dem_min_' + thalweg_temp.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + thalweg_temp.ROI_name] + 'fixed_dem_max_' + thalweg_temp.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + thalweg_temp.ROI_name] + 'inundated_threshold_' + thalweg_temp.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + thalweg_temp.ROI_name] + 'variation_dem_max_' + thalweg_temp.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + thalweg_temp.ROI_name] + 'variation_dem_min_' + thalweg_temp.ROI_name + '.tif') or not os.path.exists(inundation_dic['DEM_fix_' + thalweg_temp.ROI_name] + 'dem_fix_num_' + thalweg_temp.ROI_name + '.tif'):
         #             water_level_data = excel2water_level_array(water_level_data_path, Year_range, CrossSection)
         #             year_range = range(int(np.min(water_level_data[:, 0] // 10000)), int(np.max(water_level_data[:, 0] // 10000) + 1))
         #             min_dem_pos = np.argwhere(DEM_array == np.nanmin(DEM_array))
@@ -2239,7 +2239,7 @@ class Landsat_dcs(object):
         #             for i in range(date_array.shape[0]):
         #                 if date_array[i] // 10000 > 2004:
         #                     inundated_temp = inundated_area_cube[:, :, i]
-        #                     temp_tif_file = bf.file_filter(inundation_dic['local_' + self.ROI_name], [str(date2doy(date_array[i])) + '.TIF'])
+        #                     temp_tif_file = bf.file_filter(inundation_dic['local_' + thalweg_temp.ROI_name], [str(date2doy(date_array[i])) + '.TIF'])
         #                     temp_ds = gdal.Open(temp_tif_file[0])
         #                     temp_raster = temp_ds.GetRasterBand(1).ReadAsArray()
         #                     temp_raster[temp_raster != -2] = 1
@@ -2278,49 +2278,49 @@ class Landsat_dcs(object):
         #             dem_new_max = dem_new_max + dem_max_temp
         #             dem_new_min[dem_min_temp != 0] = 0
         #             dem_new_min = dem_new_min + dem_min_temp
-        #             bf.write_raster(DEM_ds, dem_new_min, inundation_dic['DEM_fix_' + self.ROI_name], 'fixed_dem_min_' + self.ROI_name + '.tif')
-        #             bf.write_raster(DEM_ds, dem_new_max, inundation_dic['DEM_fix_' + self.ROI_name], 'fixed_dem_max_' + self.ROI_name + '.tif')
-        #             bf.write_raster(DEM_ds, inundated_threshold_new, inundation_dic['DEM_fix_' + self.ROI_name], 'inundated_threshold_' + self.ROI_name + '.tif')
-        #             bf.write_raster(DEM_ds, dem_variation[:, :, 0], inundation_dic['DEM_fix_' + self.ROI_name], 'variation_dem_max_' + self.ROI_name + '.tif')
-        #             bf.write_raster(DEM_ds, dem_variation[:, :, 1], inundation_dic['DEM_fix_' + self.ROI_name], 'variation_dem_min_' + self.ROI_name + '.tif')
-        #             bf.write_raster(DEM_ds, dem_variation[:, :, 2], inundation_dic['DEM_fix_' + self.ROI_name], 'dem_fix_num_' + self.ROI_name + '.tif')
+        #             bf.write_raster(DEM_ds, dem_new_min, inundation_dic['DEM_fix_' + thalweg_temp.ROI_name], 'fixed_dem_min_' + thalweg_temp.ROI_name + '.tif')
+        #             bf.write_raster(DEM_ds, dem_new_max, inundation_dic['DEM_fix_' + thalweg_temp.ROI_name], 'fixed_dem_max_' + thalweg_temp.ROI_name + '.tif')
+        #             bf.write_raster(DEM_ds, inundated_threshold_new, inundation_dic['DEM_fix_' + thalweg_temp.ROI_name], 'inundated_threshold_' + thalweg_temp.ROI_name + '.tif')
+        #             bf.write_raster(DEM_ds, dem_variation[:, :, 0], inundation_dic['DEM_fix_' + thalweg_temp.ROI_name], 'variation_dem_max_' + thalweg_temp.ROI_name + '.tif')
+        #             bf.write_raster(DEM_ds, dem_variation[:, :, 1], inundation_dic['DEM_fix_' + thalweg_temp.ROI_name], 'variation_dem_min_' + thalweg_temp.ROI_name + '.tif')
+        #             bf.write_raster(DEM_ds, dem_variation[:, :, 2], inundation_dic['DEM_fix_' + thalweg_temp.ROI_name], 'dem_fix_num_' + thalweg_temp.ROI_name + '.tif')
         #
         #     if surveyed_inundation_detection_factor:
         #         if Year_range is None or CrossSection is None or VEG_path is None or water_level_data_path is None:
         #             print('Please input the required year range, the cross section name or the Veg distribution.')
         #             sys.exit(-1)
-        #         DEM_ds = gdal.Open(DEM_path + 'dem_' + self.ROI_name + '.tif')
+        #         DEM_ds = gdal.Open(DEM_path + 'dem_' + thalweg_temp.ROI_name + '.tif')
         #         DEM_array = DEM_ds.GetRasterBand(1).ReadAsArray()
-        #         VEG_ds = gdal.Open(VEG_path + 'veg_' + self.ROI_name + '.tif')
+        #         VEG_ds = gdal.Open(VEG_path + 'veg_' + thalweg_temp.ROI_name + '.tif')
         #         VEG_array = VEG_ds.GetRasterBand(1).ReadAsArray()
         #         water_level_data = excel2water_level_array(water_level_data_path, Year_range, CrossSection)
-        #         if os.path.exists(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_survey_inundation_dic.npy'):
-        #             survey_inundation_dic = np.load(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_survey_inundation_dic.npy', allow_pickle=True).item()
+        #         if os.path.exists(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_survey_inundation_dic.npy'):
+        #             survey_inundation_dic = np.load(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_survey_inundation_dic.npy', allow_pickle=True).item()
         #         else:
         #             survey_inundation_dic = {}
         #         survey_inundation_dic['year_range'] = Year_range,
         #         survey_inundation_dic['date_list'] = water_level_data[:, 0],
         #         survey_inundation_dic['CrossSection'] = CrossSection
-        #         survey_inundation_dic['study_area'] = self.ROI_name
-        #         survey_inundation_dic['surveyed_' + self.ROI_name] = str(self.work_env) + 'Landsat_Inundation_Condition\\' + str(self.ROI_name) + '_survey\\'
-        #         bf.create_folder(survey_inundation_dic['surveyed_' + self.ROI_name])
+        #         survey_inundation_dic['study_area'] = thalweg_temp.ROI_name
+        #         survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] = str(thalweg_temp.work_env) + 'Landsat_Inundation_Condition\\' + str(thalweg_temp.ROI_name) + '_survey\\'
+        #         bf.create_folder(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name])
         #         inundated_doy = np.array([])
         #         inundated_dc = np.array([])
-        #         if not os.path.exists(survey_inundation_dic['surveyed_' + self.ROI_name] + 'inundated_dc.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + self.ROI_name] + 'doy.npy'):
+        #         if not os.path.exists(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'inundated_dc.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'doy.npy'):
         #             for year in range(np.amin(water_level_data[:, 0].astype(np.int32) // 10000, axis=0), np.amax(water_level_data[:, 0].astype(np.int32) // 10000, axis=0) + 1):
-        #                 if not os.path.exists(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_detection_cube.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_height_cube.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_date.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\yearly_inundation_condition.TIF') or self._inundation_overwritten_factor:
+        #                 if not os.path.exists(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_detection_cube.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_height_cube.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_date.npy') or not os.path.exists(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\yearly_inundation_condition.TIF') or thalweg_temp._inundation_overwritten_factor:
         #                     inundation_detection_cube, inundation_height_cube, inundation_date_array = inundation_detection_surveyed_daily_water_level(DEM_array, water_level_data, VEG_array, year_factor=year)
-        #                     bf.create_folder(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\')
-        #                     np.save(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_height_cube.npy', inundation_height_cube)
-        #                     np.save(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_date.npy', inundation_date_array)
-        #                     np.save(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_detection_cube.npy', inundation_detection_cube)
+        #                     bf.create_folder(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\')
+        #                     np.save(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_height_cube.npy', inundation_height_cube)
+        #                     np.save(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_date.npy', inundation_date_array)
+        #                     np.save(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_detection_cube.npy', inundation_detection_cube)
         #                     yearly_inundation_condition = np.sum(inundation_detection_cube, axis=2)
         #                     yearly_inundation_condition[sa_map == -32768] = -32768
-        #                     bf.write_raster(DEM_ds, yearly_inundation_condition, survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\', 'yearly_inundation_condition.TIF', raster_datatype=gdal.GDT_UInt16)
+        #                     bf.write_raster(DEM_ds, yearly_inundation_condition, survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\', 'yearly_inundation_condition.TIF', raster_datatype=gdal.GDT_UInt16)
         #                 else:
-        #                     inundation_date_array = np.load(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_date.npy')
+        #                     inundation_date_array = np.load(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_date.npy')
         #                     inundation_date_array = np.delete(inundation_date_array, np.argwhere(inundation_date_array == 0))
-        #                     inundation_detection_cube = np.load(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_detection_cube.npy')
+        #                     inundation_detection_cube = np.load(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\inundation_detection_cube.npy')
         #                     inundation_date_array = date2doy(inundation_date_array.astype(np.int32))
         #
         #                 if inundated_doy.size == 0 or inundated_dc.size == 0:
@@ -2330,28 +2330,28 @@ class Landsat_dcs(object):
         #                 else:
         #                     inundated_dc = np.concatenate((inundated_dc, inundation_detection_cube), axis=2)
         #                     inundated_doy = np.append(inundated_doy, inundation_date_array)
-        #             survey_inundation_dic['inundated_doy_file'] = survey_inundation_dic['surveyed_' + self.ROI_name] + 'doy.npy'
-        #             survey_inundation_dic['inundated_dc_file'] = survey_inundation_dic['surveyed_' + self.ROI_name] + 'inundated_dc.npy'
+        #             survey_inundation_dic['inundated_doy_file'] = survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'doy.npy'
+        #             survey_inundation_dic['inundated_dc_file'] = survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'inundated_dc.npy'
         #             np.save(survey_inundation_dic['inundated_dc_file'], inundated_dc)
         #             np.save(survey_inundation_dic['inundated_doy_file'], inundated_doy)
         #
-        #         survey_inundation_dic['surveyed_annual_' + self.ROI_name] = self.work_env + 'Landsat_Inundation_Condition\\' + self.ROI_name + '_survey\\annual\\'
-        #         bf.create_folder(survey_inundation_dic['surveyed_annual_' + self.ROI_name])
+        #         survey_inundation_dic['surveyed_annual_' + thalweg_temp.ROI_name] = thalweg_temp.work_env + 'Landsat_Inundation_Condition\\' + thalweg_temp.ROI_name + '_survey\\annual\\'
+        #         bf.create_folder(survey_inundation_dic['surveyed_annual_' + thalweg_temp.ROI_name])
         #         doy_array = np.load(survey_inundation_dic['inundated_doy_file'])
         #         year_array = np.unique(doy_array // 1000)
         #         for year in year_array:
-        #             temp_ds = gdal.Open(bf.file_filter(survey_inundation_dic['surveyed_' + self.ROI_name] + 'annual_tif\\' + str(year) + '\\', ['.TIF'])[0])
+        #             temp_ds = gdal.Open(bf.file_filter(survey_inundation_dic['surveyed_' + thalweg_temp.ROI_name] + 'annual_tif\\' + str(year) + '\\', ['.TIF'])[0])
         #             temp_array = temp_ds.GetRasterBand(1).ReadAsArray()
         #             annual_inundated_map = np.zeros([temp_array.shape[0], temp_array.shape[1]])
-        #             if not os.path.exists(survey_inundation_dic['surveyed_annual_' + self.ROI_name] + 'survey_' + str(year) + '.TIF') or self._inundation_overwritten_factor:
+        #             if not os.path.exists(survey_inundation_dic['surveyed_annual_' + thalweg_temp.ROI_name] + 'survey_' + str(year) + '.TIF') or thalweg_temp._inundation_overwritten_factor:
         #                 annual_inundated_map[temp_array > 0] = 1
         #                 annual_inundated_map[sa_map == -32768] = -32768
-        #                 bf.write_raster(temp_ds, annual_inundated_map, survey_inundation_dic['surveyed_annual_' + self.ROI_name], 'survey_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
-        #         np.save(self.work_env + 'Landsat_key_dic\\' + self.ROI_name + '_survey_inundation_dic.npy', survey_inundation_dic)
+        #                 bf.write_raster(temp_ds, annual_inundated_map, survey_inundation_dic['surveyed_annual_' + thalweg_temp.ROI_name], 'survey_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Int16, nodatavalue=-32768)
+        #         np.save(thalweg_temp.work_env + 'Landsat_key_dic\\' + thalweg_temp.ROI_name + '_survey_inundation_dic.npy', survey_inundation_dic)
         #         inundation_approach_dic['approach_list'].append('survey')
         # inundation_list_temp = np.unique(np.array(inundation_approach_dic['approach_list']))
         # inundation_approach_dic['approach_list'] = inundation_list_temp.tolist()
-        # np.save(self.work_env + 'Landsat_key_dic\\' + str(self.ROI_name) + '_inundation_approach_list.npy', inundation_approach_dic)
+        # np.save(thalweg_temp.work_env + 'Landsat_key_dic\\' + str(thalweg_temp.ROI_name) + '_inundation_approach_list.npy', inundation_approach_dic)
 
         # Construct and append the inundated dc
         if self._construct_inundated_dc:
@@ -4398,7 +4398,7 @@ class Landsat_dcs(object):
 
     def phenology_analyse(self, **kwargs):
         pass
-#     def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, phenology_comparison_factor=True, self._inundation_overwritten_factor=False, inundated_pixel_phe_curve_factor=True, mndwi_threshold=0, VI_list_f=None, self._flood_month_list=None, pixel_limitation_f=None, curve_fitting_algorithm=None, dem_fix_inundated_factor=True, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, CrossSection=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, self._variance_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, initial_dem_fix_year_interval=1, phenology_overview_factor=False, landsat_detected_inundation_area=True, phenology_individual_factor=True, surveyed_inundation_detection_factor=False):
+#     def landsat_vi2phenology_process(root_path_f, inundation_detection_factor=True, phenology_comparison_factor=True, thalweg_temp._inundation_overwritten_factor=False, inundated_pixel_phe_curve_factor=True, mndwi_threshold=0, VI_list_f=None, thalweg_temp._flood_month_list=None, pixel_limitation_f=None, curve_fitting_algorithm=None, dem_fix_inundated_factor=True, DEM_path=None, water_level_data_path=None, study_area=None, Year_range=None, CrossSection=None, VEG_path=None, file_metadata_f=None, unzipped_file_path_f=None, ROI_mask_f=None, local_std_fig_construction=False, global_local_factor=None, thalweg_temp._variance_num=2, inundation_mapping_accuracy_evaluation_factor=True, sample_rs_link_list=None, sample_data_path=None, dem_surveyed_date=None, initial_dem_fix_year_interval=1, phenology_overview_factor=False, landsat_detected_inundation_area=True, phenology_individual_factor=True, surveyed_inundation_detection_factor=False):
 #         global phase0_time, phase1_time, phase2_time, phase3_time, phase4_time
 #         # so, this is the Curve fitting Version 1, Generally it is used to implement two basic functions:
 #         # (1) Find the inundated pixel by introducing MNDWI with an appropriate threshold and remove it.

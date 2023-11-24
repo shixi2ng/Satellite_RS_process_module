@@ -1529,14 +1529,14 @@ class RS_dcs(object):
                             inundated_arr[:, :, [_[0]]] = _[1]
 
                     # for date_num in range(doy_array.shape[0]):
-                    #     if not os.path.exists(f'{DT_inditif_path}\\DT_{str(doy_array[date_num])}.TIF') or self._inundation_overwritten_factor:
+                    #     if not os.path.exists(f'{DT_inditif_path}\\DT_{str(doy_array[date_num])}.TIF') or thalweg_temp._inundation_overwritten_factor:
                     #
-                    #         if self._sparse_matrix_list[dc_num]:
+                    #         if thalweg_temp._sparse_matrix_list[dc_num]:
                     #             WI_arr = inundated_arr.SM_group[inundated_arr.SM_namelist[date_num]]
                     #         else:
                     #             WI_arr = inundated_arr[:, :, date_num].reshape(inundated_arr.shape[0], inundated_arr.shape[1])
                     #
-                    #         WI_arr = invert_data(WI_arr, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
+                    #         WI_arr = invert_data(WI_arr, thalweg_temp._size_control_factor_list[dc_num], thalweg_temp._Zoffset_list[dc_num], thalweg_temp._Nodata_value_list[dc_num])
                     #
                     #         inundation_map = WI_arr - DT_threshold
                     #         inundation_map[inundation_map >= 0] = 2
@@ -1546,7 +1546,7 @@ class RS_dcs(object):
                     #         inundation_map = reassign_sole_pixel(inundation_map, Nan_value=0, half_size_window=2)
                     #         inundation_map = inundation_map.astype(np.byte)
                     #
-                    #         bf.write_raster(gdal.Open(self.ROI_tif), inundation_map, DT_inditif_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                    #         bf.write_raster(gdal.Open(thalweg_temp.ROI_tif), inundation_map, DT_inditif_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
                     #     else:
                     #         inundated_ds = gdal.Open(f'{DT_inditif_path}DT_{str(doy_array[date_num])}.TIF')
                     #         inundation_map = inundated_ds.GetRasterBand(1).ReadAsArray()
@@ -1716,7 +1716,7 @@ class RS_dcs(object):
                     inundation_arr[inundation_arr == 2] = 0
                     processed_dc.SM_group[processed_dc.SM_namelist[height]] = processed_dc.SM_group[processed_dc.SM_namelist[height]].multiply(inundation_arr)
 
-                # if self._remove_nan_layer or self._manually_remove_para:
+                # if thalweg_temp._remove_nan_layer or thalweg_temp._manually_remove_para:
                 #     i_temp = 0
                 #     while i_temp < len(doy_list):
                 #         if data_valid_array[i_temp]:
@@ -2025,7 +2025,7 @@ class RS_dcs(object):
                 try:
                     # Sequenced code for debug
                     # for i in range(block_amount):
-                    #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(self.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', self.size_control_factor_list[self.index_list.index(index_temp)])
+                    #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
                         result = executor.map(link_GEDI_accdenvinform, denvdc_blocked, GEDI_list_blocked,
                                               repeat(doy_list_integrated), raster_gt_list, repeat('EPSG'),
@@ -2133,7 +2133,7 @@ class RS_dcs(object):
                 try:
                     # Sequenced code for debug
                     # for i in range(block_amount):
-                    #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(self.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', self.size_control_factor_list[self.index_list.index(index_temp)])
+                    #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
                         result = executor.map(link_GEDI_pheinform, phedc_blocked, GEDI_list_blocked,
                                               repeat(year_list_temp), raster_gt_list, repeat('EPSG'),
@@ -2241,7 +2241,7 @@ class RS_dcs(object):
             try:
                 # Sequenced code for debug
                 # for i in range(block_amount):
-                #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(self.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', self.size_control_factor_list[self.index_list.index(index_temp)])
+                #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
                 with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
                     result = executor.map(link_GEDI_inform, dc_blocked, GEDI_list_blocked, doy_list_temp,
                                           raster_gt_list, repeat('EPSG'), repeat(index_temp),
@@ -4177,14 +4177,14 @@ class RS_dcs(object):
             #     date_temp = []
             #     recession_temp = []
             #     water_level_temp = []
-            #     annual_inundation_epoch = np.zeros_like(self.sa_map).astype(np.float)
-            #     annual_inundation_status = np.zeros_like(self.sa_map).astype(np.float)
-            #     annual_inundation_beg = np.zeros_like(self.sa_map).astype(np.float)
-            #     annual_inundation_end = np.zeros_like(self.sa_map).astype(np.float)
-            #     annual_inundation_status[np.isnan(self.sa_map)] = np.nan
-            #     annual_inundation_epoch[np.isnan(self.sa_map)] = np.nan
-            #     annual_inundation_beg[np.isnan(self.sa_map)] = np.nan
-            #     annual_inundation_end[np.isnan(self.sa_map)] = np.nan
+            #     annual_inundation_epoch = np.zeros_like(thalweg_temp.sa_map).astype(np.float)
+            #     annual_inundation_status = np.zeros_like(thalweg_temp.sa_map).astype(np.float)
+            #     annual_inundation_beg = np.zeros_like(thalweg_temp.sa_map).astype(np.float)
+            #     annual_inundation_end = np.zeros_like(thalweg_temp.sa_map).astype(np.float)
+            #     annual_inundation_status[np.isnan(thalweg_temp.sa_map)] = np.nan
+            #     annual_inundation_epoch[np.isnan(thalweg_temp.sa_map)] = np.nan
+            #     annual_inundation_beg[np.isnan(thalweg_temp.sa_map)] = np.nan
+            #     annual_inundation_end[np.isnan(thalweg_temp.sa_map)] = np.nan
             #     water_level_epoch = []
             #     len1 = 0
             #     while len1 < date_dc.shape[0]:
@@ -4216,7 +4216,7 @@ class RS_dcs(object):
             #
             #     for y_temp in range(annual_inundation_status.shape[0]):
             #         for x_temp in range(annual_inundation_status.shape[1]):
-            #             if self.sa_map[y_temp, x_temp] != -32768:
+            #             if thalweg_temp.sa_map[y_temp, x_temp] != -32768:
             #                 inundation_series_temp = inundation_temp[y_temp, x_temp, :].reshape(
             #                     [inundation_temp.shape[2]])
             #                 sole_series_temp = sole_area_temp[y_temp, x_temp, :].reshape([sole_area_temp.shape[2]])

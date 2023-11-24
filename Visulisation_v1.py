@@ -1,7 +1,5 @@
 import sys
 import pyqtgraph as pg
-import pyqtgraph.exporters
-from pyqtgraph.Qt import QtGui, QtCore
 import PyQt5
 from PyQt5 import QtCore, QtWidgets, QtGui
 from PyQt5.QtCore import *
@@ -14,7 +12,7 @@ import os
 import gdal
 import cv2
 import random
-import Landsat_main_v1
+from Aborted_codes import Landsat_main_v1
 from scipy.optimize import curve_fit
 import shutil
 import copy
@@ -280,7 +278,7 @@ class Visualisation_gui(QMainWindow):
         self.demo_pos_y = np.nan
 
         self.sa_demo = Demo_Viewer(self)
-        # self.demoscene = Demo_scene(self.ra_domain)
+        # thalweg_temp.demoscene = Demo_scene(thalweg_temp.ra_domain)
         self.sa_demo.setGeometry(QtCore.QRect(17, 45, 451, 381))
         self.sa_demo.setStyleSheet("QGraphicsView{\n""border-color: rgb(0, 0, 0);\n""background-color: rgb(245, 245, 245)\n""}")
         self.sa_demo.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
@@ -523,7 +521,7 @@ class Visualisation_gui(QMainWindow):
                 self.phe_dic = {}
                 if self.phenology_view_factor == 'Overview':
                     self.phe_win.setRange(pg.Qt.QtCore.QRectF(25, 15, 475, 285), disableAutoPixel=False)
-                    # self.phe_win.resize(525 * self.phe_columns, 325 * self.phe_rows)
+                    # thalweg_temp.phe_win.resize(525 * thalweg_temp.phe_columns, 325 * thalweg_temp.phe_rows)
                     self.phe_dic['plot_temp_0000'] = self.phe_win.addPlot(row=0, col=0)
                     self.phe_dic['plot_temp_0000'].setLabel('left', self.vi_current, **label_style)
                     self.phe_dic['plot_temp_0000'].setLabel('bottom', 'DOY', **label_style)
@@ -549,7 +547,7 @@ class Visualisation_gui(QMainWindow):
                                 self.phe_dic['plot_temp_' + str(year)].setLabel('left', self.vi_current, **label_style)
                                 self.phe_dic['plot_temp_' + str(year)].setLabel('bottom', 'DOY', **label_style)
                                 self.phe_dic['plot_temp_' + str(year)].setTitle(title="<font face='Times New Roman' size='15' color='black'>Annual phenology of Year " + str(year) + '</font>', **label_style)
-                                # self.phe_dic['plot_temp_' + str(year)].setTitle(title='Annual phenology of Year ' + str(year), **label_style)
+                                # thalweg_temp.phe_dic['plot_temp_' + str(year)].setTitle(title='Annual phenology of Year ' + str(year), **label_style)
                                 x_axis = self.phe_dic['plot_temp_' + str(year)].getAxis('bottom')
                                 x_axis.setTicks(self.x_tick)
                                 self.phe_dic['plot_temp_' + str(year)].getAxis('bottom').setStyle(tickFont=font)
@@ -576,14 +574,14 @@ class Visualisation_gui(QMainWindow):
             if self.vi_temp_dic.shape[2] == len(self.doy_list):
                 # Preprocess inundated data
                 if self.inundated_dic != {}:
-                    # for i in range(len(self.doy_list)):
-                    #     if len(Landsat_main_v1.file_filter(self.inundated_dic[self.inundated_para + '_' + self.sa_current], [str(self.doy_list[i]), '.TIF'], and_or_factor='and', exclude_word_list=['.xml'])) != 0:
-                    #         temp_ds = gdal.Open(Landsat_main_v1.file_filter(self.inundated_dic[self.inundated_para + '_' + self.sa_current], [str(self.doy_list[i]), '.TIF'], and_or_factor='and', exclude_word_list=['.xml'])[0])
+                    # for i in range(len(thalweg_temp.doy_list)):
+                    #     if len(Landsat_main_v1.file_filter(thalweg_temp.inundated_dic[thalweg_temp.inundated_para + '_' + thalweg_temp.sa_current], [str(thalweg_temp.doy_list[i]), '.TIF'], and_or_factor='and', exclude_word_list=['.xml'])) != 0:
+                    #         temp_ds = gdal.Open(Landsat_main_v1.file_filter(thalweg_temp.inundated_dic[thalweg_temp.inundated_para + '_' + thalweg_temp.sa_current], [str(thalweg_temp.doy_list[i]), '.TIF'], and_or_factor='and', exclude_word_list=['.xml'])[0])
                     #         temp_inundated_map = temp_ds.GetRasterBand(1).ReadAsArray()
                     #         try:
-                    #             vi_temp = self.vi_sa_array_for_phenology[:, :, i].reshape([self.vi_sa_array_for_phenology.shape[0], self.vi_sa_array_for_phenology.shape[1]])
+                    #             vi_temp = thalweg_temp.vi_sa_array_for_phenology[:, :, i].reshape([thalweg_temp.vi_sa_array_for_phenology.shape[0], thalweg_temp.vi_sa_array_for_phenology.shape[1]])
                     #             vi_temp[temp_inundated_map > 0] = np.nan
-                    #             self.vi_sa_array_for_phenology[:, :, i] = vi_temp.reshape([self.vi_sa_array_for_phenology.shape[0], self.vi_sa_array_for_phenology.shape[1], 1])
+                    #             thalweg_temp.vi_sa_array_for_phenology[:, :, i] = vi_temp.reshape([thalweg_temp.vi_sa_array_for_phenology.shape[0], thalweg_temp.vi_sa_array_for_phenology.shape[1], 1])
                     #         except:
                     #             pass
                     self.vi_sa_array_for_phenology = copy.copy(self.vi_temp_dic)
@@ -594,7 +592,7 @@ class Visualisation_gui(QMainWindow):
                             inundated_temp = self.inundated_dc[:, :, pos_index[0]].reshape([self.inundated_dc.shape[0], self.inundated_dc.shape[1]])
                             dc_temp[inundated_temp != 0] = np.nan
                             self.vi_sa_array_for_phenology[:, :, i] = dc_temp
-                    # self.inundated_process_factor = True
+                    # thalweg_temp.inundated_process_factor = True
                 elif self.inundated_dic == {}:
                     self.vi_sa_array_for_phenology = copy.copy(self.vi_temp_dic)
                 # Generate plot data
@@ -691,10 +689,10 @@ class Visualisation_gui(QMainWindow):
                 exporter = pg.exporters.ImageExporter(self.phe_win.scene())
                 Landsat_main_v1.create_folder(self.sa_demo_folder + self.phenology_view_factor + '//')
                 exporter.export(self.sa_demo_folder + self.phenology_view_factor + '//' + str(self.vi_current) + '.png')
-                # image_temp = cv2.imread(self.sa_demo_folder + self.phenology_view_factor + '//' + str(self.vi_current) + '.png')
-                # factor_min = min((self.phenology_window_height / (image_temp.shape[0] - 1)), (self.phenology_window_width / (image_temp.shape[1] - 1)))
+                # image_temp = cv2.imread(thalweg_temp.sa_demo_folder + thalweg_temp.phenology_view_factor + '//' + str(thalweg_temp.vi_current) + '.png')
+                # factor_min = min((thalweg_temp.phenology_window_height / (image_temp.shape[0] - 1)), (thalweg_temp.phenology_window_width / (image_temp.shape[1] - 1)))
                 # image_temp_t = cv2.resize(image_temp, (int(factor_min * image_temp.shape[1] - 1), int(factor_min * image_temp.shape[0] - 1)))
-                # cv2.imwrite(self.sa_demo_folder + self.phenology_view_factor + '//' + str(self.vi_current) + '_resize.png', image_temp_t)
+                # cv2.imwrite(thalweg_temp.sa_demo_folder + thalweg_temp.phenology_view_factor + '//' + str(thalweg_temp.vi_current) + '_resize.png', image_temp_t)
                 self.phenology_information_view.clear_scene()
                 self.phenology_information_view.setPhoto(QPixmap(self.sa_demo_folder + self.phenology_view_factor + '//' + str(self.vi_current) + '.png'))
                 self.output_phe_fig_path = self.sa_demo_folder + self.phenology_view_factor + '//' + str(self.vi_current) + '.png'
@@ -761,7 +759,7 @@ class Visualisation_gui(QMainWindow):
             else:
                 return np.nan, x_fail_temp, y_fail_temp
         else:
-            # self.caution_msg_box('There has no valid data!')
+            # thalweg_temp.caution_msg_box('There has no valid data!')
             return np.nan, x_fail_temp, y_fail_temp
 
     # Section 2 Update displaying vi figure
@@ -770,7 +768,8 @@ class Visualisation_gui(QMainWindow):
         if self.vi_current != 'None':
             try:
                 if len(Landsat_main_v1.file_filter(self.keydic_path, ['.npy', 'sdc', self.sa_current], and_or_factor='and')) == 1:
-                    self.sdc_dic = np.load(Landsat_main_v1.file_filter(self.keydic_path, ['.npy', 'sdc', self.sa_current], and_or_factor='and')[0], allow_pickle=True).item()
+                    self.sdc_dic = np.load(
+                        Landsat_main_v1.file_filter(self.keydic_path, ['.npy', 'sdc', self.sa_current], and_or_factor='and')[0], allow_pickle=True).item()
                     try:
                         self.vi_temp_dic = np.load(self.sdc_dic[self.vi_current + '_path'] + self.vi_current + '_sequenced_datacube.npy', allow_pickle=True)
                         self.update_vi_related_button(True)
@@ -795,7 +794,8 @@ class Visualisation_gui(QMainWindow):
         self.inundated_para = self.inundated_combobox.currentText()
         if self.inundated_para != 'None' and self.inundated_para != '':
             try:
-                self.inundated_dic = np.load(Landsat_main_v1.file_filter(self.keydic_path, ['.npy', self.inundated_para, self.sa_current], and_or_factor='and')[0], allow_pickle=True).item()
+                self.inundated_dic = np.load(
+                    Landsat_main_v1.file_filter(self.keydic_path, ['.npy', self.inundated_para, self.sa_current], and_or_factor='and')[0], allow_pickle=True).item()
                 self.inundated_dc = np.load(self.inundated_dic['inundated_dc_file'])
                 self.inundated_doy = np.load(self.inundated_dic['inundated_doy_file'])
                 if self.inundated_dc.shape[2] != self.inundated_doy.shape[0]:
@@ -858,11 +858,11 @@ class Visualisation_gui(QMainWindow):
 
             if self.inundated_para != 'None' and self.inundated_dic != {}:
                 try:
-                    # temp_ds = gdal.Open(Landsat_main_v1.file_filter(self.inundated_dic[self.inundated_para + '_' + self.sa_current], [str(self.doy)])[0])
-                    # self.inundated_map = temp_ds.GetRasterBand(1).ReadAsArray()
-                    # if self.inundated_map.shape[0] != 0:
-                    #     if self.inundated_map.shape[0] == vi_temp.shape[0] and self.inundated_map.shape[1] == vi_temp.shape[1]:
-                    #         vi_temp[self.inundated_map > 0] = np.nan
+                    # temp_ds = gdal.Open(Landsat_main_v1.file_filter(thalweg_temp.inundated_dic[thalweg_temp.inundated_para + '_' + thalweg_temp.sa_current], [str(thalweg_temp.doy)])[0])
+                    # thalweg_temp.inundated_map = temp_ds.GetRasterBand(1).ReadAsArray()
+                    # if thalweg_temp.inundated_map.shape[0] != 0:
+                    #     if thalweg_temp.inundated_map.shape[0] == vi_temp.shape[0] and thalweg_temp.inundated_map.shape[1] == vi_temp.shape[1]:
+                    #         vi_temp[thalweg_temp.inundated_map > 0] = np.nan
                     # else:
                     #     vi_temp = vi_temp
                     inundated_pos = np.argwhere(self.inundated_doy == self.doy)
@@ -978,10 +978,14 @@ class Visualisation_gui(QMainWindow):
                             self.caution_msg_box('Unkown error occurred!')
                             self.update_sa_related_button(False)
                             return
-                        r_ds = gdal.Open(Landsat_main_v1.file_filter(self.orifile_path, [self.date, self.rgb_dic['r'], '.TIF'], and_or_factor='and')[0])
-                        g_ds = gdal.Open(Landsat_main_v1.file_filter(self.orifile_path, [self.date, self.rgb_dic['g'], '.TIF'], and_or_factor='and')[0])
-                        b_ds = gdal.Open(Landsat_main_v1.file_filter(self.orifile_path, [self.date, self.rgb_dic['b'], '.TIF'], and_or_factor='and')[0])
-                        Landsat_main_v1.remove_all_file_and_folder(Landsat_main_v1.file_filter(self.sa_demo_folder, ['.']))
+                        r_ds = gdal.Open(
+                            Landsat_main_v1.file_filter(self.orifile_path, [self.date, self.rgb_dic['r'], '.TIF'], and_or_factor='and')[0])
+                        g_ds = gdal.Open(
+                            Landsat_main_v1.file_filter(self.orifile_path, [self.date, self.rgb_dic['g'], '.TIF'], and_or_factor='and')[0])
+                        b_ds = gdal.Open(
+                            Landsat_main_v1.file_filter(self.orifile_path, [self.date, self.rgb_dic['b'], '.TIF'], and_or_factor='and')[0])
+                        Landsat_main_v1.remove_all_file_and_folder(
+                            Landsat_main_v1.file_filter(self.sa_demo_folder, ['.']))
                         gdal.Warp(self.sa_demo_folder + 'r_' + self.sa_current + '.TIF', r_ds, cutlineDSName=self.shpfile, cropToCutline=True, dstNodata=65536, xRes=30, yRes=30)
                         gdal.Warp(self.sa_demo_folder + 'g_' + self.sa_current + '.TIF', g_ds, cutlineDSName=self.shpfile, cropToCutline=True, dstNodata=65536, xRes=30, yRes=30)
                         gdal.Warp(self.sa_demo_folder + 'b_' + self.sa_current + '.TIF', b_ds, cutlineDSName=self.shpfile, cropToCutline=True, dstNodata=65536, xRes=30, yRes=30)
@@ -999,8 +1003,8 @@ class Visualisation_gui(QMainWindow):
                         cv2.imwrite(self.sa_demo_folder + 'temp.png', self.demo_image)
                         self.sa_demo.clear_scene()
                         self.sa_demo.setPhoto(QPixmap(self.sa_demo_folder + 'temp.png'))
-                        # self.sa_demo._scene.addPixmap(QPixmap(self.sa_demo_folder + 'temp.png'))
-                        # self.update_pix_mode()
+                        # thalweg_temp.sa_demo._scene.addPixmap(QPixmap(thalweg_temp.sa_demo_folder + 'temp.png'))
+                        # thalweg_temp.update_pix_mode()
                         self.update_sa_related_button(True)
                 else:
                     self.caution_msg_box('Please manual input the date in YYYYMMDD format!')
@@ -1061,10 +1065,10 @@ class Visualisation_gui(QMainWindow):
         cv2.imwrite(self.sa_demo_folder + 'temp_gamma.png', self.demo_image)
         self.sa_demo.clear_scene()
         self.sa_demo.setPhoto(QPixmap(self.sa_demo_folder + 'temp_gamma.png'))
-        # self.update_pix_mode()
-        # self.demoscene.clear()
-        # self.demoscene.addPixmap(QPixmap(self.sa_demo_folder + 'temp_gamma.png'))
-        # self.sa_demo.setScene(self.demoscene)
+        # thalweg_temp.update_pix_mode()
+        # thalweg_temp.demoscene.clear()
+        # thalweg_temp.demoscene.addPixmap(QPixmap(thalweg_temp.sa_demo_folder + 'temp_gamma.png'))
+        # thalweg_temp.sa_demo.setScene(thalweg_temp.demoscene)
         self.gamma_correction_button.setEnabled(False)
 
     # Section 4 Input paths and close the programme
@@ -1173,7 +1177,7 @@ class Visualisation_gui(QMainWindow):
             self.Initialization_box.setEnabled(False)
         else:
             try:
-                # self.sa_combobox.
+                # thalweg_temp.sa_combobox.
                 sa_allitems = [self.sa_combobox.itemText(i) for i in range(self.sa_combobox.count())]
                 vi_allitems = [self.vi_combobox.itemText(i) for i in range(self.vi_combobox.count())]
                 sa_additems = [i for i in self.sa_list if i not in sa_allitems]

@@ -7,7 +7,7 @@ import scipy.stats as stats
 import matplotlib.gridspec as gridspec
 from osgeo import gdal
 import copy
-import Landsat_main_v1
+from Aborted_codes import Landsat_main_v1
 import sys
 from matplotlib.colors import LinearSegmentedColormap
 import basic_function as bf
@@ -377,8 +377,8 @@ def adjacent_values(vals, q1, q3):
 
 def fig5_func():
     # Generate npy from visulisation
-    # a = self.vi_sa_array_for_phenology[61:100, 60:80, :]
-    # b = self.doy_array_for_phenology
+    # a = thalweg_temp.vi_sa_array_for_phenology[61:100, 60:80, :]
+    # b = thalweg_temp.doy_array_for_phenology
     # c = np.array([b, np.nanmean(a, axis=(0, 1))])
     # np.save('E:\\A_Vegetation_Identification\\Paper\\Fig\\Fig5\\nyz_NDVI.npy', c)
     # Create fig5
@@ -1772,7 +1772,7 @@ def fig13_func():
                 a_phe_ds = gdal.Open(a_phe)
                 a_ori_ds = gdal.Open(a_ori)
                 inundated_ds = gdal.Open(Landsat_main_v1.file_filter(inundated_folder, [str(year)])[0])
-                pre_inundated_ds = gdal.Open(Landsat_main_v1.file_filter(inundated_folder, [str(year-1)])[0])
+                pre_inundated_ds = gdal.Open(Landsat_main_v1.file_filter(inundated_folder, [str(year - 1)])[0])
 
                 gdal.Warp(temp_folder + str(sa) + str(year) + '_phe.tif', a_phe_ds, cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)
                 gdal.Warp(temp_folder + str(sa) + str(year) + '_ori.tif', a_ori_ds, cutlineDSName=ROI_mask_f, cropToCutline=True, dstNodata=np.nan, xRes=30, yRes=30)

@@ -2,7 +2,7 @@ import sys
 import pandas as pd
 import numpy as np
 import snappy
-import Landsat_main_v1
+from Aborted_codes import Landsat_main_v1
 from Sentinel2_toolbox import Sentinel_main_V2
 import os
 import gdal
@@ -257,7 +257,7 @@ for i in Basic_function.file_filter(all_band, ['.tif']):
             all_band_raster[QI_raster >= 7] = 0
             all_band_raster[QI_raster == 3] = 0
             all_band_raster[NDWI_raster <= -0.03] = 0
-            Landsat_main_v1.write_raster(ds_ori, all_band_raster, extract_path, i[i.rindex('\\')+1:])
+            Landsat_main_v1.write_raster(ds_ori, all_band_raster, extract_path, i[i.rindex('\\') + 1:])
 
 # ndwi_ds = gdal.Open(Basic_function.file_filter(extract_path, [i[i.find('S2') + 4: i.find('S2') + 9],
 #                                                               [i[i.find('S2') + 9: i.find('S2') + 17], '.tif']])[0])

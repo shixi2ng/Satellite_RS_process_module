@@ -1,5 +1,5 @@
 import numpy as np
-import Landsat_main_v1
+from Aborted_codes import Landsat_main_v1
 import gdal
 import scipy.stats as stats
 import pandas as pd
@@ -10,7 +10,6 @@ stats.ks_2samp(a[2002][31:], a[2016][31:])
 print(stats.ks_2samp(a['2002_28'], a['2016_28']))
 
 # starting time
-import datetime
 # now = datetime.datetime.now()
 # print( now.strftime('%Y-%m-%d %H:%M:%S')  )
 #
@@ -105,13 +104,13 @@ file_metadata = Landsat_main_v1.generate_landsat_metadata(original_file_path, un
                                                           root_path, unzipped_para=False)
 
 Landsat_main_v1.generate_landsat_vi(root_path, unzipped_file_path, file_metadata, vi_construction_para=True,
-                                   construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True,
-                                   clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False,
+                                    construction_overwritten_para=False, cloud_removal_para=True, vi_clipped_para=True,
+                                    clipped_overwritten_para=False, construct_dc_para=True, dc_overwritten_para=False,
                                     construct_sdc_para=True, sdc_overwritten_para=False, VI_list=['MNDWI'],
-                                   ROI_mask_f=study_area_shp, study_area=study_area_name, main_coordinate_system=main_coordinate)
+                                    ROI_mask_f=study_area_shp, study_area=study_area_name, main_coordinate_system=main_coordinate)
 Landsat_main_v1.landsat_inundation_detection(root_path, VI_list_f=['MNDWI'], study_area=study_area_name,
-                                            file_metadata_f=file_metadata, unzipped_file_path_f=unzipped_file_path,
-                                            ROI_mask_f=study_area_shp, global_local_factor='global', global_threshold=threshold_temp, main_coordinate_system=main_coordinate)
+                                             file_metadata_f=file_metadata, unzipped_file_path_f=unzipped_file_path,
+                                             ROI_mask_f=study_area_shp, global_local_factor='global', global_threshold=threshold_temp, main_coordinate_system=main_coordinate)
 Landsat_main_v1.data_composition(root_path + 'Landsat_Inundation_Condition\\' + study_area_name + '_global\\individual_tif\\', wet_threshold, root_path + 'Metadata.xlsx', time_coverage=coverage, composition_strategy=composition_strat, file_format='.TIF', nan_value=-32768, user_defined_monsoon=[monsoon_begin_month, monsoon_end_month], inundated_indicator=[inundated_value, non_inundated_value])
 
 

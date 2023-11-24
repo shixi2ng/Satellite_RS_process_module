@@ -1,27 +1,33 @@
-import pandas as pd
+from River_GIS.utils import *
+import time
 import numpy as np
+from osgeo import gdal, osr
+import basic_function as bf
+import pandas as pd
 import geopandas as gp
 import os
-import matplotlib.pyplot as plt
-import shapely
-import scipy.sparse as sm
-from shapely import LineString, Geometry, Point
-
-import NDsm
-import basic_function as bf
-import copy
-from datetime import datetime
 import traceback
-from osgeo import gdal
-from River_GIS.utils import *
+from datetime import datetime
+import copy
+import scipy.sparse as sm
+from NDsm import NDSparseMatrix
+from Landsat_toolbox.Landsat_main_v2 import Landsat_dc
 from tqdm.auto import tqdm
-from shapely.ops import nearest_points
+import matplotlib as plt
+import shapely
+from shapely import LineString, Point
 import concurrent.futures
 from itertools import repeat
-from scipy import interpolate
-import seaborn as sns
-from NDsm import NDSparseMatrix as ndsm
 import rasterio
+import psutil
+
+
+def multiple_concept_model(year, thal, ):
+    hydrodc1 = HydroDatacube()
+    hydrodc1.from_hydromatrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
+    hydrodc1.simplified_conceptual_inundation_model(
+        'G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\ele_pretgd4model.TIF', thal,
+        'G:\A_Landsat_veg\Water_level_python\inundation_status\\prewl_predem\\')
 
 
 class RiverChannel2D():
@@ -257,11 +263,16 @@ class HydroDatacube(object):
             self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
             self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
 
-    def generate_hydrodc_from_csv(self, hydroinform_csv):
+    def hydrodc_csv2matrix(self, outputfolder, hydroinform_csv):
 
-        # Check if hydrostation data is import
+        # Check if hydro station data is import
         if self.hydro_inform_dic is None:
             raise Exception('Please input the hydro inform first')
+
+        # Check the output folder
+        if not os.path.exists(outputfolder):
+            bf.create_folder(outputfolder)
+            outputfolder = bf.Path(outputfolder).path_name
 
         # Import hydroinform_csv
         if isinstance(hydroinform_csv, str):
@@ -275,6 +286,16 @@ class HydroDatacube(object):
                 raise TypeError(f'The hydroinform_csv should be a xlsx!')
         else:
             raise TypeError(f'The {str(hydroinform_csv)} should be a str!')
+
+        # Read the header
+        if hydroinform_csv.split('\\')[-1].startswith('hydro_dc'):
+            try:
+                Xsize, Ysize = int(hydroinform_csv.split('\\')[-1].split('_X_')[1].split('_')[0]), int(hydroinform_csv.split('\\')[-1].split('_Y_')[1].split('_')[0])
+                header = hydroinform_csv.split(str(Ysize))[1].split('.')[0]
+            except:
+                raise Exception('Please make sure the file name is not manually changed')
+        else:
+            raise Exception('Please make sure the file name is not manually changed')
 
         # Get the year list
         hydroinform_df_list = []
@@ -296,15 +317,22 @@ class HydroDatacube(object):
         hydroinform_df['yearly_wl'] = yearly_hydroinform_all
 
         # Get the year list and array size
+        x_list, y_list = [], []
         year_list = [int(_[0]) for _ in yearly_hydroinform_all[0]]
-        y_list, x_list = list(hydroinform_df['y']), list(hydroinform_df['x'])
         hydro_inform = list(hydroinform_df['yearly_wl'])
         hydro_inform_list = []
         for year in year_list:
             yearly_hydro = []
-            for _ in hydro_inform:
-                yearly_hydro.append(_[year_list.index(year)])
-            hydro_inform_list.append(yearly_hydro)
+            with tqdm(total=len(hydro_inform), desc=f'Relist hydro inform of year {str(year)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for _ in hydro_inform:
+                    # xy_list = [hydroinform_df['y'][hydro_inform.index(_)], hydroinform_df['x'][hydro_inform.index(_)]]
+                    year_temp = _[year_list.index(year)]
+                    # year_list.extend(xy_list)
+                    yearly_hydro.append(year_temp)
+                    pbar.update()
+                hydro_inform_list.append(yearly_hydro)
+            x_list.append(list(hydroinform_df['x']))
+            y_list.append(list(hydroinform_df['y']))
 
         hydro_list = []
         for year in year_list:
@@ -313,34 +341,24 @@ class HydroDatacube(object):
                 hydro_temp[_] = list(self.hydro_inform_dic[_][self.hydro_inform_dic[_]['year'] == year]['water_level/m'])
             hydro_list.append(hydro_temp)
 
-        # Define the sparse matrix
-        for year, hydro_dic, hydro_inform in zip(year_list, hydro_list, hydro_inform_list):
-            ymax, xmax = int(np.max(y_list)) + 1, int(np.max(x_list)) + 1
-            doy_list = [year * 1000 + _ for _ in range(1, datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal() + 1)]
-            sm_list = [sm.lil_matrix((ymax, xmax)) for _ in range(len(doy_list))]
+        # Define the matrix
+        mem = psutil.virtual_memory().available
+        if hydroinform_df.shape[0] / (4827 * 16357) < 0.2 or Xsize * Ysize * 4 * 365 > psutil.virtual_memory().available:
+            with concurrent.futures.ProcessPoolExecutor() as exe:
+                res = exe.map(generate_hydrodatacube, year_list, repeat([Ysize, Xsize]), hydro_list, hydro_inform_list, x_list, y_list, repeat(outputfolder))
 
-            with tqdm(total=len(y_list), desc=f'Generate hydrodatcube', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                for _ in range(len(y_list)):
-                    y, x = int(y_list[_]), int(x_list[_])
-                    wl_start_series = np.array(hydro_dic[hydro_inform[_][1]])
-                    wl_end_series = np.array(hydro_dic[hydro_inform[_][2]])
-                    wl_start_dis = hydro_inform[_][3]
-                    wl_end_dis = hydro_inform[_][4]
-                    wl_inter = wl_start_series + (wl_end_series - wl_start_series) * wl_start_dis / (wl_start_dis + wl_end_dis)
-                    for __ in range(len(wl_inter)):
-                        sm_list[__][y, x] = wl_inter[__]
-                    pbar.update()
+        else:
+            for year, hydro_dic, hydro_inform in zip(year_list, hydro_list, hydro_inform_list):
+                doy_list = [year * 1000 + _ for _ in range(1, datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal() + 1)]
+                dc = np.zeros((Ysize, Xsize, len(doy_list))) * np.nan
+                np.save(f'{outputfolder}{str(year)}\\', dc)
 
-            for _ in range(len(sm_list)):
-                sm_list[_] = sm.csc_matrix(sm_list[_])
+    def from_hydromatrix(self, filepath):
 
-            ND_temp = NDSparseMatrix(*sm_list, SM_namelist=doy_list)
-            ND_temp.save(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
-
-        # with concurrent.futures.ProcessPoolExecutor(max_workers=2) as exe:
-        #     exe.map(generate_hydrodatacube, year_list, repeat(y_list), repeat(x_list), hydro_list, hydro_inform_list)
-
-    def import_from_matrix(self, filepath):
+        # Extract year inform
+        start_time = time.time()
+        self.year = int(filepath.split('\\')[-2])
+        print(f"Start loading the Hydrodatacube of \033[1;31m{str(self.year)}\033[0m")
 
         # Import datacube
         if filepath.endswith('.npy'):
@@ -354,8 +372,7 @@ class HydroDatacube(object):
             except:
                 raise TypeError('Please input correct type of hydro datacube')
 
-        # Extract year inform
-        self.year = filepath.split('\\')[-2]
+        print(f'Finish loading the Hydrodatacube of \033[1;31m{str(self.year)}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
     def simplified_conceptual_inundation_model(self, demfile, thalweg_temp, output_path):
 
@@ -511,30 +528,30 @@ class Thalweg(object):
                 if self.crs is not None:
                     self.Thalweg_geodf = self.Thalweg_geodf.set_crs(self.crs)
 
-    # def load_shapefile(self, shapefile):
+    # def load_shapefile(thalweg_temp, shapefile):
     #
     #     # Process work env
-    #     self.work_env = bf.Path(os.path.dirname(shapefile)).path_name
+    #     thalweg_temp.work_env = bf.Path(os.path.dirname(shapefile)).path_name
     #
     #     # Check the shapefile existence
     #     if isinstance(shapefile, str):
     #         if not os.path.exists(shapefile):
     #             raise ValueError(f'The {str(shapefile)} does not exist!')
     #         elif shapefile.endswith('.shp'):
-    #             self.Thalweg_geodf = gp.read_file(shapefile, encoding='utf-8')
+    #             thalweg_temp.Thalweg_geodf = gp.read_file(shapefile, encoding='utf-8')
     #         else:
     #             raise TypeError(f'The geodf json file should be a json!')
     #     else:
     #         raise TypeError(f'The {str(shapefile)} should be a str!')
     #
     #     # Extract information from geodf
-    #     cs_name_temp = self.Thalweg_geodf['cs_namelis'][0]
+    #     cs_name_temp = thalweg_temp.Thalweg_geodf['cs_namelis'][0]
     #     cs_name = []
     #     for _ in cs_name_temp.split("',"):
     #         cs_name.append(_.split("'")[-1])
     #
-    #     self._extract_Thalweg_geodf()
-    #     return self
+    #     thalweg_temp._extract_Thalweg_geodf()
+    #     return thalweg_temp
 
     def load_smooth_Thalweg_shp(self, shpfile):
 
@@ -581,7 +598,7 @@ class Thalweg(object):
                     else:
                         raise Exception('Code error!')
                     self.smoothed_Thalweg = LineString(smoothed_thalweg_list)
-            # geodf = gp.GeoDataFrame(data=[{'a': 'b'}], geometry=[self.smoothed_Thalweg])
+            # geodf = gp.GeoDataFrame(data=[{'a': 'b'}], geometry=[thalweg_temp.smoothed_Thalweg])
             # geodf.to_file('G:\A_Landsat_veg\Water_level_python\\a.shp')
 
     def load_geojson(self, geodf_json):
@@ -672,28 +689,58 @@ class Thalweg(object):
                 self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
                 self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
 
-    def flood_frequency_hypsometry_method(self, inundation_frequency_tif: str, year_range: list = [1900, 2100], hydro_datacube=True):
+
+class Flood_freq_based_hyspometry_method(object):
+
+    def __init__(self, year_list: list, work_env=None):
+
+        # Check the fitness
+        if False in [np.logical_and(isinstance(_, int), _ in range(1990, 2100)) for _ in year_list]:
+            raise Exception('Please double check the input year list for flood-frequency-based hyspometry method!')
+
+        # Define method para
+        self.year_list = year_list
+        self.ref_ele_map = None
+        self.work_env = None
+
+        # Get the work env
+        try:
+            if work_env is not None:
+                if not os.path.exists(work_env):
+                    bf.create_folder(work_env)
+                self.work_env = bf.Path(work_env).path_name
+        except:
+            print(traceback.format_exc())
+            raise Exception('Cannot read the work env ')
+
+    def perform_in_epoch(self, thalweg_temp: Thalweg, inundation_frequency_tif: str, hydro_datacube=True):
+
+        if self.work_env is None:
+            self.work_env = thalweg_temp.work_env
+
+        if len(self.year_list) <= 5:
+            print('Please mention that the Flood_freq_based_hyspometry_method might not perfrom well for data under 5 years!')
 
         # Check if the hydro inform is merged
-        if 'hydro_inform_dic' not in self.__dict__.keys():
+        if 'hydro_inform_dic' not in thalweg_temp.__dict__.keys():
             raise Exception('Please merged standard hydrometric_station_ds before linkage!')
 
         # Process cross section inform
         cs_list, year_domain, hydro_pos = [], [], []
-        if self.smoothed_Thalweg is None:
-            for _ in range(len(self.Thalweg_cs_namelist)):
-                if self.Thalweg_cs_namelist[_] in self.hydro_inform_dic.keys():
-                    year_domain.append(np.unique(np.array(self.hydro_inform_dic[self.Thalweg_cs_namelist[_]]['year'])).tolist())
+        if thalweg_temp.smoothed_Thalweg is None:
+            for _ in range(len(thalweg_temp.Thalweg_cs_namelist)):
+                if thalweg_temp.Thalweg_cs_namelist[_] in thalweg_temp.hydro_inform_dic.keys():
+                    year_domain.append(np.unique(np.array(thalweg_temp.hydro_inform_dic[thalweg_temp.Thalweg_cs_namelist[_]]['year'])).tolist())
                     hydro_pos.append(_)
-                    cs_list.append(self.Thalweg_cs_namelist[_])
+                    cs_list.append(thalweg_temp.Thalweg_cs_namelist[_])
 
-        elif isinstance(self.smoothed_Thalweg, LineString):
-            for _ in range(len(self.Thalweg_cs_namelist)):
-                pos = self.smoothed_cs_index[_]
-                if self.Thalweg_cs_namelist[_] in self.hydro_inform_dic.keys():
-                    year_domain.append(np.unique(np.array(self.hydro_inform_dic[self.Thalweg_cs_namelist[_]]['year'])).tolist())
+        elif isinstance(thalweg_temp.smoothed_Thalweg, LineString):
+            for _ in range(len(thalweg_temp.Thalweg_cs_namelist)):
+                pos = thalweg_temp.smoothed_cs_index[_]
+                if thalweg_temp.Thalweg_cs_namelist[_] in thalweg_temp.hydro_inform_dic.keys():
+                    year_domain.append(np.unique(np.array(thalweg_temp.hydro_inform_dic[thalweg_temp.Thalweg_cs_namelist[_]]['year'])).tolist())
                     hydro_pos.append(pos)
-                    cs_list.append(self.Thalweg_cs_namelist[_])
+                    cs_list.append(thalweg_temp.Thalweg_cs_namelist[_])
 
         else:
             raise TypeError('The smoothed thalweg is not under the correct type')
@@ -706,13 +753,13 @@ class Thalweg(object):
                 try:
                     ds_temp = gdal.Open(inundation_frequency_tif)
                     srs_temp = retrieve_srs(ds_temp)
-                    if int(srs_temp.split(':')[-1]) != self.crs.to_epsg():
+                    if int(srs_temp.split(':')[-1]) != thalweg_temp.crs.to_epsg():
                         gdal.Warp('/vsimem/temp1.TIF', ds_temp, )
                         ds_temp = gdal.Open('/vsimem/temp1.TIF')
                     [ul_x, x_res, xt, ul_y, yt, y_res] = ds_temp.GetGeoTransform()
                     arr = ds_temp.GetRasterBand(1).ReadAsArray()
                 except:
-                    raise ValueError('The inundation frequecy tif file is problematic!')
+                    raise ValueError('The inundation frequency tif file is problematic!')
         else:
             raise TypeError('The inundation frequency map should be a TIF file')
 
@@ -735,17 +782,17 @@ class Thalweg(object):
                 arr_pd_list.append(arr_pd[indi_size * i_size: -1])
 
         with concurrent.futures.ProcessPoolExecutor() as exe:
-            res = exe.map(flood_frequency_based_hypsometry, arr_pd_list, repeat(self), repeat(year_range), repeat([ul_x, x_res, ul_y, y_res]), repeat(cs_list), repeat(year_domain), repeat(hydro_pos), repeat(hydro_datacube))
+            res = exe.map(flood_frequency_based_hypsometry, arr_pd_list, repeat(thalweg_temp), repeat(self.year_list), repeat([ul_x, x_res, ul_y, y_res]), repeat(cs_list), repeat(year_domain), repeat(hydro_pos), repeat(hydro_datacube))
 
-        res_df = None
-        res = list(res)
-        for result_temp in res:
-            if res_df is None:
-                res_df = copy.copy(result_temp)
-            else:
-                res_df = pd.concat([res_df, result_temp])
-
-        res_df.to_csv(self.work_env + 'inundation_inform' + inundation_frequency_tif.split('\\')[-1].split('.')[0] + '.csv')
+        if hydro_datacube:
+            res_df = None
+            res = list(res)
+            for result_temp in res:
+                if res_df is None:
+                    res_df = copy.copy(result_temp)
+                else:
+                    res_df = pd.concat([res_df, result_temp])
+            res_df.to_csv(thalweg_temp.work_env + f'hydro_dc_X_{str(arr.shape[1])}_Y_{str(arr.shape[0])}_' + inundation_frequency_tif.split('\\')[-1].split('.')[0] + '.csv')
 
         # Generate ele and inundation arr
         ele_arr = np.zeros_like(arr)
@@ -756,30 +803,117 @@ class Thalweg(object):
         for _ in range(res_df.shape[0]):
             ele_arr[int(res_df['y'][_]), int(res_df['x'][_])] = res_df['wl'][_]
             inun_arr[int(res_df['y'][_]), int(res_df['x'][_])] = res_df['fr'][_]
-        bf.write_raster(ds_temp, ele_arr, self.work_env, 'ele_' + inundation_frequency_tif.split('\\')[-1], raster_datatype=gdal.GDT_Float32)
-        bf.write_raster(ds_temp, inun_arr, self.work_env, 'inun_' + inundation_frequency_tif.split('\\')[-1], raster_datatype=gdal.GDT_Float32)
+        bf.write_raster(ds_temp, ele_arr, thalweg_temp.work_env, 'ele_' + inundation_frequency_tif.split('\\')[-1], raster_datatype=gdal.GDT_Float32)
+        bf.write_raster(ds_temp, inun_arr, thalweg_temp.work_env, 'inun_' + inundation_frequency_tif.split('\\')[-1], raster_datatype=gdal.GDT_Float32)
+        self.ref_ele_map = thalweg_temp.work_env, 'ele_' + inundation_frequency_tif.split('\\')[-1]
 
         # Generate water level dc
         # all_year_list = [year_ for year_ in range(year_range[0], year_range[1])]
         # for year in range(year_range[0], year_range[1]):
         #     doy_list = [year * 1000 + date for date in range(1, 1 + datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal())]
         #     matrix_list = [sm.lil_matrix((arr.shape[0], arr.shape[1])) for date in range(1, 1 + datetime(year=year + 1, month=1, day=1).toordinal() - datetime(year=year, month=1, day=1).toordinal())]
-        #     bf.create_folder(self.work_env + f'yearly_wl\\{str(year)}\\')
+        #     bf.create_folder(thalweg_temp.work_env + f'yearly_wl\\{str(year)}\\')
         #     for _ in range(res_df.shape[0]):
         #         st_cs, ed_cs = res_df['yearly_wl'][_][int(all_year_list.index(year))][0], res_df['yearly_wl'][_][int(all_year_list.index(year))][1]
         #         st_dis, ed_dis = res_df['yearly_wl'][_][int(all_year_list.index(year))][2], res_df['yearly_wl'][_][int(all_year_list.index(year))][3]
-        #         wl_st_series = self.hydro_inform_dic[st_cs]['year'] == year
-        #         wl_end_series = self.hydro_inform_dic[ed_cs]['year'] == year
-        #         wl_start = self.hydro_inform_dic[st_cs][wl_st_series]['water_level/m'].reset_index(drop=True)
-        #         wl_end = self.hydro_inform_dic[ed_cs][wl_end_series]['water_level/m'].reset_index(drop=True)
+        #         wl_st_series = thalweg_temp.hydro_inform_dic[st_cs]['year'] == year
+        #         wl_end_series = thalweg_temp.hydro_inform_dic[ed_cs]['year'] == year
+        #         wl_start = thalweg_temp.hydro_inform_dic[st_cs][wl_st_series]['water_level/m'].reset_index(drop=True)
+        #         wl_end = thalweg_temp.hydro_inform_dic[ed_cs][wl_end_series]['water_level/m'].reset_index(drop=True)
         #         wl_pos = list(wl_start + (wl_end - wl_start) * st_dis / (st_dis + ed_dis))
         #         if len(wl_pos) == len(doy_list):
         #             for __ in range(len(wl_pos)):
         #                 matrix_list[__][int(res_df['y'][_]), int(res_df['x'][_])] = wl_pos[__]
         #     year_m = ndsm(*matrix_list, SM_namelist=doy_list)
-        #     year_m.save(self.work_env + f'yearly_wl\\{str(year)}\\')
+        #     year_m.save(thalweg_temp.work_env + f'yearly_wl\\{str(year)}\\')
 
-    def refine_annual_topography(self, elevation_map: str, inun_dc: ):
+    def refine_annual_topography(self, thalweg_temp, inun_dc: Landsat_dc, hydro_dc: HydroDatacube, elevation_map: str = None):
+
+        if self.work_env is None:
+            self.work_env = thalweg_temp.work_env
+
+        # Get the elevation map
+        if self.ref_ele_map is None and elevation_map is None:
+            raise IOError('Please input the elevation map before refinement!')
+        elif elevation_map is not None:
+            try:
+                ele_ds = gdal.Open(elevation_map)
+                ele_arr = ele_ds.GetRasterBand(1).ReadAsArray()
+            except:
+                print(traceback.format_exc())
+                raise TypeError('Please mention the elevation map is not correctly imported!')
+        else:
+            try:
+                ele_ds = gdal.Open(self.ref_ele_map)
+                ele_arr = ele_ds.GetRasterBand(1).ReadAsArray()
+            except:
+                print(traceback.format_exc())
+                raise TypeError('Please mention the elevation map is not correctly imported!')
+
+        # thalweg extraction
+        if thalweg_temp.smoothed_Thalweg is None:
+            linestr = thalweg_temp.smoothed_Thalweg
+        else:
+            linestr = thalweg_temp.Thalweg_Linestring
+
+        # Check the year
+        if hydro_dc.year not in self.year_list:
+            raise Exception('Please input the hydro datacube under right year!')
+        elif hydro_dc.year not in np.unique(np.floor(np.array(inun_dc.sdc_doylist)/10000).astype(np.int32)):
+            raise Exception('Please input the inundation dc under right year!')
+
+        boundary_temp = np.zeros_like(ele_arr)
+        for _ in inun_dc.sdc_doylist:
+            if int(np.floor(_/10000)) == hydro_dc.year:
+
+                # Retrieve the flood inundation map
+                inun_arr = inun_dc.dc[:, :, inun_dc.sdc_doylist.index(_)]
+                inun_arr_output = copy.deepcopy(inun_arr)
+                inun_arr_output[inun_arr != 2] = 0
+                inun_arr_output[inun_arr == 2] = 1
+                bf.create_folder(f'{self.work_env}inundation_temp\\')
+                bf.write_raster(ele_ds, inun_arr_output, f'{self.work_env}inundation_temp\\', str(_) + '.tif', raster_datatype=gdal.GDT_Byte)
+
+                src_temp = rasterio.open(f'{self.work_env}inundation_temp\\' + str(_) + '.tif')
+                shp_dic = ({'properties': {'raster_val': int(v)}, 'geometry': s} for i, (s, v) in
+                           enumerate(rasterio.features.shapes(inun_arr_output, connectivity=8, transform=src_temp.transform)) if
+                           ~np.isnan(v))
+                meta = src_temp.meta.copy()
+                meta.update(compress='lzw')
+
+                # Extract the flood inundation area (remove depressions)
+                shp_list = list(shp_dic)
+                nw_shp_list = []
+                shp_file = gp.GeoDataFrame.from_features(shp_list)
+                for __ in range(shp_file.shape[0]):
+                    if shp_file['raster_val'][__] == 1:
+                        if linestr.intersects(shp_file['geometry'][__]):
+                            nw_shp_list.append(shp_list[__])
+                nw_shp_file = gp.GeoDataFrame.from_features(nw_shp_list)
+
+                bf.create_folder(f'{self.work_env}inundation_final\\')
+                if os.path.exists(f'{self.work_env}inundation_final\\{str(_)}.tif'):
+                    os.remove(f'{self.work_env}inundation_final\\{str(_)}.tif')
+
+                with rasterio.open(f'{self.work_env}inundation_final\\{str(_)}.tif', 'w+', **meta) as out:
+                    out_arr = out.read(1)
+                    out_arr[inun_arr == 0] = 0
+                    # this is where we create a generator of geom, value pairs to use in rasterizing
+                    shapes = ((geom, value) for geom, value in zip(nw_shp_file.geometry, nw_shp_file.raster_val)) if nw_shp_file.shape[0] != 0 else None
+                    burned = rasterio.features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=src_temp.transform) if shapes is not None else out_arr
+                    out.write_band(1, burned)
+
+                # Get the boundary pixel
+                ds_temp = gdal.Open(f'{self.work_env}inundation_final\\{str(_)}.tif')
+                arr_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                pos = np.argwhere(arr_temp == 1)
+
+                # Get the water level map
+                doy = bf.date2doy(_)
+                if isinstance(hydro_dc.hydrodatacube, NDSparseMatrix):
+                    hydro = hydro_dc.hydrodatacube.SM_group[doy].toarray()
+                else:
+                    pass
 
 
 class CrossSection(object):
@@ -1150,7 +1284,7 @@ class CrossSection(object):
             else:
                 try:
                     ds_temp = gdal.Open(dem_tif)
-                    srs_temp = retrieve_srs(ds_temp)
+                    srs_temp = bf.retrieve_srs(ds_temp)
                     if int(srs_temp.split(':')[-1]) != int(self.crs.split(':')[-1]):
                         gdal.Warp('/vsimem/temp1.TIF', ds_temp, )
                         ds_temp = gdal.Open('/vsimem/temp1.TIF')

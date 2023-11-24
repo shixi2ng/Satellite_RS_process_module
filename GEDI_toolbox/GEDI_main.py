@@ -174,7 +174,7 @@ class GEDI_L2_ds(object):
             date_temp = self.metadata_pd['Sensed DOY'][file_itr]
             for beam_temp in beamNames:
                 # Open the SDS:
-                # print(f'Start process {beam_temp} of {file_name} ({file_itr} of {self._file_num}))')
+                # print(f'Start process {beam_temp} of {file_name} ({file_itr} of {thalweg_temp._file_num}))')
                 start_time = time.time()
                 beam_itr += 1
                 time_sta = time.time()
@@ -333,8 +333,8 @@ class GEDI_L2_ds(object):
 
             # Remove poor quality returns
             self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Quality Flag'].ne(0))
-            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Degrade Flag'] < 1)
-            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Sensitivity'] > 0.95)
+            # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Degrade Flag'] < 1)
+            # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Sensitivity'] > 0.95)
             self.GEDI_inform_DF = self.GEDI_inform_DF.dropna()
             self.GEDI_inform_DF.to_excel(f'{self.work_env}Result\\{self._shp_name}_high_quality.xlsx')
 
@@ -350,15 +350,15 @@ class GEDI_L2_ds(object):
         outName = self._shp_name + '.shp'
         self.GEDI_inform_DF.to_file(f'{self.work_env}Result\\{outName}', driver='ESRI Shapefile')
 
-    # def visualise_shots(self):
+    # def visualise_shots(thalweg_temp):
     #     vdims = []
-    #     for f in self.GEDI_inform_DF:
+    #     for f in thalweg_temp.GEDI_inform_DF:
     #         if f not in ['geometry']:
     #             vdims.append(f)
     #
-    #     visual = pointVisual(self.GEDI_inform_DF, vdims=vdims)
+    #     visual = pointVisual(thalweg_temp.GEDI_inform_DF, vdims=vdims)
     #     # Plot the basemap and geoviews Points, defining the color as the Canopy Height for each shot
-    #     (gvts.EsriImagery * gv.Points(self.GEDI_inform_DF, vdims=vdims).options(color='Canopy Height (rh100)', cmap='plasma', size=3,
+    #     (gvts.EsriImagery * gv.Points(thalweg_temp.GEDI_inform_DF, vdims=vdims).options(color='Canopy Height (rh100)', cmap='plasma', size=3,
     #                                                               tools=['hover'],
     #                                                               clim=(0, 102), colorbar=True, clabel='Meters',
     #                                                               title='GEDI Canopy Height over Redwood National Park: June 19, 2019',
@@ -367,10 +367,10 @@ class GEDI_L2_ds(object):
     #                                                                         'cticks': 10, 'title': 16,
     #                                                                         'ylabel': 16})).options(height=500,
     #                                                                                                 width=900)
-    #     (gvts.EsriImagery * gv.Points(self.GEDI_inform_DF, vdims=vdims).options(color='Elevation (m)', cmap='terrain', size=3,
+    #     (gvts.EsriImagery * gv.Points(thalweg_temp.GEDI_inform_DF, vdims=vdims).options(color='Elevation (m)', cmap='terrain', size=3,
     #                                                               tools=['hover'],
-    #                                                               clim=(min(self.GEDI_inform_DF['Elevation (m)']),
-    #                                                                     max(self.GEDI_inform_DF['Elevation (m)'])),
+    #                                                               clim=(min(thalweg_temp.GEDI_inform_DF['Elevation (m)']),
+    #                                                                     max(thalweg_temp.GEDI_inform_DF['Elevation (m)'])),
     #                                                               colorbar=True, clabel='Meters',
     #                                                               title='GEDI Elevation over Redwood National Park: June 19, 2019',
     #                                                               fontsize={'xticks': 10, 'yticks': 10, 'xlabel': 16,
@@ -577,7 +577,7 @@ class GEDI_L4_ds(object):
             date_temp = self.metadata_pd['Sensed DOY'][file_itr]
             for beam_temp in beamNames:
                 # Open the SDS:
-                # print(f'Start process {beam_temp} of {file_name} ({file_itr} of {self._file_num}))')
+                # print(f'Start process {beam_temp} of {file_name} ({file_itr} of {thalweg_temp._file_num}))')
                 start_time = time.time()
                 beam_itr += 1
                 time_sta = time.time()
@@ -673,8 +673,8 @@ class GEDI_L4_ds(object):
 
             # Remove poor quality returns
             self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['AGBD quality'].ne(0))
-            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Degrade Flag'] < 1)
-            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Sensitivity'] > 0.95)
+            # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Degrade Flag'] < 1)
+            # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Sensitivity'] > 0.95)
             self.GEDI_inform_DF = self.GEDI_inform_DF.dropna()
             self.GEDI_inform_DF.to_excel(f'{self.work_env}Result\\{self._shp_name}_high_quality.xlsx')
 
@@ -722,8 +722,8 @@ class GEDI_L4_ds(object):
 
             # Remove poor quality returns
             self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['AGBD quality'].ne(0))
-            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Degrade Flag'] < 1)
-            # self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Sensitivity'] > 0.95)
+            # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Degrade Flag'] < 1)
+            # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Sensitivity'] > 0.95)
             self.GEDI_inform_DF = self.GEDI_inform_DF.dropna()
             self.GEDI_inform_DF.to_excel(f'{self.work_env}Result\\{self._shp_name}_high_quality.xlsx')
 
@@ -739,15 +739,15 @@ class GEDI_L4_ds(object):
         outName = self._shp_name + '.shp'
         self.GEDI_inform_DF.to_file(f'{self.work_env}Result\\{outName}', driver='ESRI Shapefile')
 
-    # def visualise_shots(self):
+    # def visualise_shots(thalweg_temp):
     #     vdims = []
-    #     for f in self.GEDI_inform_DF:
+    #     for f in thalweg_temp.GEDI_inform_DF:
     #         if f not in ['geometry']:
     #             vdims.append(f)
     #
-    #     visual = pointVisual(self.GEDI_inform_DF, vdims=vdims)
+    #     visual = pointVisual(thalweg_temp.GEDI_inform_DF, vdims=vdims)
     #     # Plot the basemap and geoviews Points, defining the color as the Canopy Height for each shot
-    #     (gvts.EsriImagery * gv.Points(self.GEDI_inform_DF, vdims=vdims).options(color='Canopy Height (rh100)', cmap='plasma', size=3,
+    #     (gvts.EsriImagery * gv.Points(thalweg_temp.GEDI_inform_DF, vdims=vdims).options(color='Canopy Height (rh100)', cmap='plasma', size=3,
     #                                                               tools=['hover'],
     #                                                               clim=(0, 102), colorbar=True, clabel='Meters',
     #                                                               title='GEDI Canopy Height over Redwood National Park: June 19, 2019',
@@ -756,10 +756,10 @@ class GEDI_L4_ds(object):
     #                                                                         'cticks': 10, 'title': 16,
     #                                                                         'ylabel': 16})).options(height=500,
     #                                                                                                 width=900)
-    #     (gvts.EsriImagery * gv.Points(self.GEDI_inform_DF, vdims=vdims).options(color='Elevation (m)', cmap='terrain', size=3,
+    #     (gvts.EsriImagery * gv.Points(thalweg_temp.GEDI_inform_DF, vdims=vdims).options(color='Elevation (m)', cmap='terrain', size=3,
     #                                                               tools=['hover'],
-    #                                                               clim=(min(self.GEDI_inform_DF['Elevation (m)']),
-    #                                                                     max(self.GEDI_inform_DF['Elevation (m)'])),
+    #                                                               clim=(min(thalweg_temp.GEDI_inform_DF['Elevation (m)']),
+    #                                                                     max(thalweg_temp.GEDI_inform_DF['Elevation (m)'])),
     #                                                               colorbar=True, clabel='Meters',
     #                                                               title='GEDI Elevation over Redwood National Park: June 19, 2019',
     #                                                               fontsize={'xticks': 10, 'yticks': 10, 'xlabel': 16,

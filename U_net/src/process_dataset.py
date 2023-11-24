@@ -57,11 +57,11 @@ class DriveDataset(Dataset):
         mask_array = mask_array[y_min: y_max+1, x_min: x_max+1]
         sample_array[np.isnan(mask_array)] = 255
 
-        # img = Image.open(self.img_list[index]).convert('RGB')
-        # manual = Image.open(self.manual[index]).convert('L')
+        # img = Image.open(thalweg_temp.img_list[index]).convert('RGB')
+        # manual = Image.open(thalweg_temp.manual[index]).convert('L')
         #
         # manual = np.array(manual) / 255
-        # roi_mask = Image.open(self.roi_mask[index]).convert('L')
+        # roi_mask = Image.open(thalweg_temp.roi_mask[index]).convert('L')
         # roi_mask = 255 - np.array(roi_mask)
         # mask = np.clip(manual + roi_mask, a_min=0, a_max=255)
 

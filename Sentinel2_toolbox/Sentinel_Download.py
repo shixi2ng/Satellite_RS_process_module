@@ -98,11 +98,11 @@ class Queried_Sentinel_ds(object):
                 self.req_products_df.loc[i, 'status'] = 'Downloaded'
 
         # with concurrent.futures.ProcessPoolExecutor() as executor:
-        #     for product_info, file_ID in zip(executor.map(self.api.get_product_odata, self.req_products.keys()), self.req_products.keys()):
+        #     for product_info, file_ID in zip(executor.map(thalweg_temp.api.get_product_odata, thalweg_temp.req_products.keys()), thalweg_temp.req_products.keys()):
         #         if product_info['Online']:
-        #             self.online_file_ID_list.append(file_ID)
+        #             thalweg_temp.online_file_ID_list.append(file_ID)
         #         else:
-        #             self.offline_file_ID_list.append(file_ID)
+        #             thalweg_temp.offline_file_ID_list.append(file_ID)
 
         for i in range(self.req_products_df.shape[0]):
             if self.req_products_df.loc[i, 'status'] != 'Downloaded':
@@ -146,7 +146,7 @@ class Queried_Sentinel_ds(object):
             if timers < 4:
                 file_num = 0
                 while file_num < len(self.offline_file_ID_list) + 1 and len(self.offline_file_ID_list) != 0:
-                    # for file_ID in self.offline_file_ID_list:
+                    # for file_ID in thalweg_temp.offline_file_ID_list:
                     file_ID = self.offline_file_ID_list[file_num]
                     try:
                         print('Retrieving ' + self.req_products_df[self.req_products_df[self.req_products_df.keys()[0]] == file_ID]['title'].tolist()[0])

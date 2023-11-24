@@ -2,7 +2,7 @@
 from scipy.optimize import curve_fit
 import pandas as pd
 import numpy as np
-import Landsat_main_v1
+from Aborted_codes import Landsat_main_v1
 import os
 import gdal
 from sklearn.metrics import mean_absolute_error
@@ -128,13 +128,13 @@ class Scatterplot(fg.Figure):
         self.ax1.scatter(x_data, y_data, marker='o', s=10 ** 2, color='none', edgecolor=(196/256, 30/256, 30/256), linewidth=3)
         self.ax1.plot(np.linspace(y_axis, y_axis, 100), np.linspace(0, 50, 100), lw=4, **{'ls':':','color': (0, 0, 0)})
         self.ax1.plot(np.linspace(-10, 10, 100), np.linspace(5, 5, 100), lw=4, **{'ls':':', 'color': (0, 0, 0)})
-        # self.ax1.text(self.xlim[0] + 9*(self.xlim[1] - self.xlim[0])/10, 5 + (self.ylim[1] - self.ylim[0])/20, 'Division', fontname='Times New Roman', fontsize=14, fontweight='bold')
+        # thalweg_temp.ax1.text(thalweg_temp.xlim[0] + 9*(thalweg_temp.xlim[1] - thalweg_temp.xlim[0])/10, 5 + (thalweg_temp.ylim[1] - thalweg_temp.ylim[0])/20, 'Division', fontname='Times New Roman', fontsize=14, fontweight='bold')
         self.ax1.set_xlim(min(x_data), max(x_data))
         self.ax1.set_ylim(0, 50)
         self.ax1.set_ylabel('Chl-a concentration/ug/L', fontname='Times New Roman', fontsize=25, fontweight='bold')
         self.ax1.set_xlabel(xlabel, fontname='Times New Roman', fontsize=25, fontweight='bold')
-        # self.ax1.set_yticks([0,10,20,30,40,50])
-        # self.ax1.set_yticklabels([0,10,20,30,40,50], fontname='Times New Roman', fontsize=18)
+        # thalweg_temp.ax1.set_yticks([0,10,20,30,40,50])
+        # thalweg_temp.ax1.set_yticklabels([0,10,20,30,40,50], fontname='Times New Roman', fontsize=18)
 
 
     def save(self, fname):
@@ -154,10 +154,10 @@ class Scatterplot(fg.Figure):
         self.ax1.plot(np.linspace(self.xlim[0], self.xlim[1], 100), func(np.linspace(self.xlim[0], self.xlim[1], 100), *para), lw=4,  color=(0/256, 9/256, 200/256), **{'ls': '--'})
         R2 = R_sqaure(func(self.xdata, *para), self.ydata)
         r = RMSE(func(self.xdata, *para), self.ydata)
-        # for x_temp in np.linspace(self.xlim[0] + (self.xlim[1] - self.xlim[0])/4, self.xlim[1] - (self.xlim[1] - self.xlim[0])/4, 1000):
-        #     if self.ylim[0] + 4 * (self.ylim[1]-self.ylim[0]) / 5 < func(x_temp, *para) < self.ylim[0] + 5 * (self.ylim[1]-self.ylim[0]) / 6:
+        # for x_temp in np.linspace(thalweg_temp.xlim[0] + (thalweg_temp.xlim[1] - thalweg_temp.xlim[0])/4, thalweg_temp.xlim[1] - (thalweg_temp.xlim[1] - thalweg_temp.xlim[0])/4, 1000):
+        #     if thalweg_temp.ylim[0] + 4 * (thalweg_temp.ylim[1]-thalweg_temp.ylim[0]) / 5 < func(x_temp, *para) < thalweg_temp.ylim[0] + 5 * (thalweg_temp.ylim[1]-thalweg_temp.ylim[0]) / 6:
         #         break
-        # self.ax1.text(x_temp + (self.xlim[1]-self.xlim[0])/20, func(x_temp, *para), r'R^2 = ' + str(R2)[0:5] + "\n" + 'RMSE = ' + str(r)[0:5], fontname='Times New Roman', fontsize=16, fontweight='bold')
+        # thalweg_temp.ax1.text(x_temp + (thalweg_temp.xlim[1]-thalweg_temp.xlim[0])/20, func(x_temp, *para), r'R^2 = ' + str(R2)[0:5] + "\n" + 'RMSE = ' + str(r)[0:5], fontname='Times New Roman', fontsize=16, fontweight='bold')
         print(R2)
         print(r)
 
@@ -203,10 +203,10 @@ class Scatterplot(fg.Figure):
         self.ax1.plot(np.linspace(self.xlim[0], self.xlim[1], 100), function(np.linspace(self.xlim[0], self.xlim[1], 100), *paras), lw=4, color=(196 / 256, 30 / 256, 30 / 256), **{'ls': '--'})
         R2 = R_sqaure(function(x_temp2, *paras), y_temp2)
         r = RMSE(function(x_temp2, *paras), y_temp2)
-        # for x_t in np.linspace(self.xlim[0] + (self.xlim[1] - self.xlim[0])/5, self.xlim[1] - (self.xlim[1] - self.xlim[0])/5, 1000):
-        #     if self.ylim[0] + 4 * (self.ylim[1]-self.ylim[0]) / 5 < function(x_t, *paras) < self.ylim[0] + 5 * (self.ylim[1]-self.ylim[0]) / 6:
+        # for x_t in np.linspace(thalweg_temp.xlim[0] + (thalweg_temp.xlim[1] - thalweg_temp.xlim[0])/5, thalweg_temp.xlim[1] - (thalweg_temp.xlim[1] - thalweg_temp.xlim[0])/5, 1000):
+        #     if thalweg_temp.ylim[0] + 4 * (thalweg_temp.ylim[1]-thalweg_temp.ylim[0]) / 5 < function(x_t, *paras) < thalweg_temp.ylim[0] + 5 * (thalweg_temp.ylim[1]-thalweg_temp.ylim[0]) / 6:
         #         break
-        # self.ax1.text(x_t + (self.xlim[1] - self.xlim[0]) / 20, function(x_t, *paras),
+        # thalweg_temp.ax1.text(x_t + (thalweg_temp.xlim[1] - thalweg_temp.xlim[0]) / 20, function(x_t, *paras),
         #               r'R^2 = ' + str(R2)[0:5] + "\n" + 'RMSE = ' + str(r)[0:5], fontname='Times New Roman',
         #               fontsize=16, fontweight='bold')
         print(R2)
@@ -458,7 +458,7 @@ for date_temp in date:
                     ten_temp = torch.from_numpy(arr_temp.astype(np.float32))
                     pre_y = mlpreg(ten_temp)
                     chl_a_map[y_temp,x_temp] = pre_y.detach().numpy()
-        Landsat_main_v1.write_raster(ds_temp,chl_a_map, 'E:\\A_Chl-a\\Sample_XJB\\MLP_Sentinel\\Chl_a\\', date_temp + '_chl_a.tif', nodatavalue=np.nan, raster_datatype=gdal.GDT_Float32)
+        Landsat_main_v1.write_raster(ds_temp, chl_a_map, 'E:\\A_Chl-a\\Sample_XJB\\MLP_Sentinel\\Chl_a\\', date_temp + '_chl_a.tif', nodatavalue=np.nan, raster_datatype=gdal.GDT_Float32)
 
 
 # k_fold
