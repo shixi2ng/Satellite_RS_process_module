@@ -147,7 +147,11 @@ class NDSparseMatrix:
         with tqdm(total=len(self.SM_namelist), desc=f'Saving the N-D sparse matrix', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
             for sm_name in self.SM_namelist:
                 if not os.path.exists(output_path + str(sm_name) + '.npz') or overwritten_para:
-                    sm.save_npz(output_path + str(sm_name) + '.npz', self.SM_group[sm_name])
+                    if isinstance(self.SM_group[sm_name], sm.lil_matrix):
+                        sm_temp = sm.csr_matrix(self.SM_group[sm_name])
+                        sm.save_npz(output_path + str(sm_name) + '.npz', sm_temp)
+                    else:
+                        sm.save_npz(output_path + str(sm_name) + '.npz', self.SM_group[sm_name])
                 i += 1
                 pbar.update()
 

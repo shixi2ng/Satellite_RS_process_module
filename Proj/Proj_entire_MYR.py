@@ -7,8 +7,8 @@ if __name__ == '__main__':
 
     # Water level import
     wl1 = HydrometricStationData()
-    file_list = bf.file_filter('G:\\A_Landsat_veg\\Water_level_python\\Original_water_level\\', ['.xls'])
-    corr_temp = pd.read_csv('G:\\A_Landsat_veg\\Water_level_python\\Original_water_level\\对应表.csv')
+    file_list = bf.file_filter('D:\\Hydrodatacube\\water_level\\', ['.xls'])
+    corr_temp = pd.read_csv('D:\\Hydrodatacube\\water_level\\对应表.csv')
     cs_list, wl_list = [], []
     for file_ in file_list:
         for hs_num in range(corr_temp.shape[0]):
@@ -23,10 +23,10 @@ if __name__ == '__main__':
 
     hc = HydroDatacube()
     hc.merge_hydro_inform(wl1)
-    hc.hydrodc_csv2matrix('G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\',
-                          'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\hydro_dc_X_16357_Y_4827_posttgd.csv')
-    hc.hydrodc_csv2matrix('G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\',
-                          'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\hydro_dc_X_16357_Y_4827_pretgd.csv')
+    hc.hydrodc_csv2matrix('D:\\Hydrodatacube\\',
+                          'D:\\Hydrodatacube\\hydro_dc_X_16357_Y_4827_posttgd.csv')
+    hc.hydrodc_csv2matrix('D:\\Hydrodatacube\\',
+                          'D:\\Hydrodatacube\\hydro_dc_X_16357_Y_4827_pretgd.csv')
 
     # landsat_temp = Landsat_l2_ds('D:\\MID_YZR\\Landsat\\Original_zip_files\\')
     # landsat_temp.construct_metadata(unzipped_para=False)

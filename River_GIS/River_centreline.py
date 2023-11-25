@@ -344,8 +344,8 @@ class HydroDatacube(object):
         # Define the matrix
         mem = psutil.virtual_memory().available
         if hydroinform_df.shape[0] / (4827 * 16357) < 0.2 or Xsize * Ysize * 4 * 365 > psutil.virtual_memory().available:
-            with concurrent.futures.ProcessPoolExecutor() as exe:
-                res = exe.map(generate_hydrodatacube, year_list, repeat([Ysize, Xsize]), hydro_list, hydro_inform_list, x_list, y_list, repeat(outputfolder))
+            with concurrent.futures.ProcessPoolExecutor(max_workers=6) as exe:
+                exe.map(generate_hydrodatacube, year_list, repeat([Ysize, Xsize]), hydro_list, hydro_inform_list, x_list, y_list, repeat(outputfolder))
 
         else:
             for year, hydro_dic, hydro_inform in zip(year_list, hydro_list, hydro_inform_list):
