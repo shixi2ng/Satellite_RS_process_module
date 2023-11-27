@@ -148,7 +148,7 @@ class NDSparseMatrix:
             for sm_name in self.SM_namelist:
                 if not os.path.exists(output_path + str(sm_name) + '.npz') or overwritten_para:
                     if isinstance(self.SM_group[sm_name], sm.lil_matrix):
-                        sm_temp = sm.csr_matrix(self.SM_group[sm_name])
+                        sm_temp = sm.csc_matrix(self.SM_group[sm_name])
                         sm.save_npz(output_path + str(sm_name) + '.npz', sm_temp)
                     else:
                         sm.save_npz(output_path + str(sm_name) + '.npz', self.SM_group[sm_name])

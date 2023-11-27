@@ -121,13 +121,8 @@ def generate_hydrodatacube(year, arr_size, hydro_dic, hydro_inform, x_list, y_li
                     sm_list[__][y, x] = wl_inter[__]
                 pbar.update()
 
-        print(f'Start saving the hydro datacube of year {str(year)}!')
-        st = time.time()
-        # for _ in range(len(sm_list)):
-        #     sm_list[_] = sm_list[_].tocsr()
-        ND_temp = NDSparseMatrix(*sm_list, SM_namelist=doy_list)
-        ND_temp.save(f'{outputfolder}{str(year)}\\')
-        print(f'Finish saving the hydro datacube of year {str(year)} in {str(time.time()-st)}!')
+        return sm_list
+
     except:
         print(traceback.format_exc())
         raise Exception('Something error')
