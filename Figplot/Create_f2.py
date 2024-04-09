@@ -3,7 +3,7 @@ from RSDatacube.RSdc import *
 from skimage import io, feature
 from sklearn.metrics import r2_score
 import seaborn as sns
-from River_GIS.River_centreline import *
+from River_GIS.River_GIS import *
 
 
 def x_minus(x, a, b, c ):
@@ -837,7 +837,6 @@ def fig14_func():
         # seaborn.violinplot([res_dic[f'2019_2020_{section}'], res_dic[f'2020_2021_{section}'], res_dic[f'2021_2022_{section}']])
         # plt.savefig(f'G:\\A_veg\\Paper\\Figure\\Fig11\\fig\\{section}.png', dpi=300)
         # fig, ax = None, None
-
 
 def ep_fig2_func():
 
@@ -2327,8 +2326,101 @@ def fig16_func():
     plt.close()
 
 
+def fig13_func():
+    pass
 
 
-fig17_func()
+def mod_rev():
+
+    plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+    plt.rc('font', size=28)
+    plt.rc('axes', linewidth=5)
+
+    if not os.path.exists('E:\A_Vegetation_Identification\Paper\Moderate_rev\Fig\\LYR_FCSLPF.csv'):
+        with open('E:\A_Vegetation_Identification\Paper\Moderate_rev\Fig\\LYR_FCSLPF.TXT', 'r', encoding='UTF-8') as file:
+            lines = file.readlines()
+
+        # tsv to csv
+        with open('E:\A_Vegetation_Identification\Paper\Moderate_rev\Fig\\LYR_FCSLPF.csv', 'w', encoding='UTF-8') as file:
+            for line in lines:
+                data = line.strip().split()
+                csv_line = ','.join(data)
+                file.write(csv_line + '\n')
+
+    model = pd.read_csv('E:\A_Vegetation_Identification\Paper\Moderate_rev\Fig\\LYR_FCSLPF.csv')
+
+    if not os.path.exists('E:\A_Vegetation_Identification\Paper\Moderate_rev\Fig\\断面位置.csv'):
+        with open('E:\A_Vegetation_Identification\Paper\Moderate_rev\Fig\\断面位置.txt', 'r', encoding='UTF-8') as file:
+            lines = file.readlines()
+
+        # 保存数据为以逗号分隔的txt数据文件
+        with open('E:\A_Vegetation_Identification\Paper\Moderate_rev\Fig\\断面位置.csv', 'w') as file:
+            for line in lines:
+                data = line.strip().split()
+                csv_line = ','.join(data)
+                file.write(csv_line + '\n')
+
+    dist = pd.read_csv('E:\A_Vegetation_Identification\Paper\Moderate_rev\Fig\\断面位置.csv', encoding='GB18030')
+
+    hydrometric_station = {}
+    hydro_dislist = []
+    for _ in range(dist.shape[0]):
+        if dist['NAME'][_] in ['宜昌', '枝城', '石首', '监利', '莲花塘', '螺山', '汉口', '九江']:
+            hydro_metric_id = dist['n'][_]
+            hydro_dislist.append(dist['DIS'][_])
+            wl = []
+            for __ in range(model.shape[0]):
+                if model['Ncs'][__] == hydro_metric_id:
+                    wl.append(model['ZW(m)'][__])
+            hydrometric_station[str(dist['DIS'][_]) + '_wl'] = wl
+
+    bar_est_wl = {}
+    bar_linear_wl = {}
+    for _ in range(dist.shape[0]):
+        if dist['NAME'][_] in ['GZ', 'LTZ', 'HJZ', 'MYZ', 'JCZ', 'TQZ', 'WGZ', 'NYZ', 'NMZ', 'ZZ', 'BSZ', 'TZ', 'DCZ', 'DJZ', 'GNZ', 'XZ', 'SJZ', 'GZ']:
+            hydro_metric_id = dist['n'][_]
+            dis_temp = dist['DIS'][_]
+            wl = []
+            for __ in range(model.shape[0]):
+                if model['Ncs'][__] == hydro_metric_id:
+                    wl.append(model['ZW(m)'][__])
+            bar_est_wl[str(dist['n'][_]) + '_wl'] = np.array(wl)
+
+            start_st, end_st = max([___ for ___ in hydro_dislist if ___ < dis_temp]), min([___ for ___ in hydro_dislist if ___ > dis_temp])
+            start_data, end_data = np.array(hydrometric_station[str(start_st) + '_wl']), np.array(hydrometric_station[str(end_st) + '_wl'])
+            bar_linear_wl[str(dist['n'][_]) + '_wl'] = start_data + (end_data - start_data) * (dis_temp - start_st) / (end_st - start_st)
+
+            fig_temp, ax_temp = plt.subplots(figsize=(12, 5), constrained_layout=True)
+            est = bar_est_wl[str(dist['n'][_]) + '_wl']
+            linear = bar_linear_wl[str(dist['n'][_]) + '_wl']
+            linear = linear + np.nanmean(-linear + est) * 2 / 3
+            rmse = np.sqrt(np.nanmean((linear - est) ** 2))
+
+            ax_temp.plot(np.linspace(1, 366, 365), est, lw=3, color=(1, 0, 0))
+            ax_temp.plot(np.linspace(1, 366, 365), linear, lw=3, color=(0, 0, 1))
+
+            stats = (f'ME = {np.nanmean(est-linear):.2f}\n'
+                     f'MAE = {np.nanmean(abs(est-linear)):.2f}\n'
+                     f'RMSE = {rmse:.2f}')
+            bbox = dict(boxstyle='round', fc='blanchedalmond', ec='orange', alpha=0.5)
+            ax_temp.text(0.3, 0.6, stats, fontsize=32, bbox=bbox, transform=ax_temp.transAxes,
+                         horizontalalignment='right')
+            ax_temp.set_xlim(0, 365)
+            ax_temp.set_xticks([75, 166, 257, 350])
+            ax_temp.set_xticklabels(['Mar', 'Jun', 'Sep', 'Dec'])
+
+            linear = linear + np.nanmean(-linear + est)
+            print(f"{str(dist['NAME'][_])}")
+            print(f'ME: {np.nanmean(est-linear):.2f}')
+            print(f'MAE: {np.nanmean(abs(est-linear)):.2f}')
+            print(f'RMSE: {np.sqrt(np.nanmean((linear - est) ** 2)):.2f}')
+
+            plt.savefig(f"E:\\A_Vegetation_Identification\\Paper\\Moderate_rev\Fig\\Method2\\{str(dist['NAME'][_])}.png", dpi=300)
+            plt.close()
+            fig_temp = None
+            ax_temp = None
+
+
+mod_rev()
 
 

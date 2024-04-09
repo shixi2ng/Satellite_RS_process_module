@@ -313,7 +313,6 @@ def slice_datacube(datacube, pos, sort_y_x='x'):
 def create_indi_DT_inundation_map(inundated_arr, doy_array: np.ndarray, date_num: int, DT_threshold: np.ndarray, output_path: str, inundation_overwritten_factor: bool, sz_ctrl: bool, zoffset, nodata_value, ROI_tif: str):
 
     if not os.path.exists(f'{output_path}\\DT_{str(doy_array[date_num])}.TIF') or inundation_overwritten_factor:
-
         inundated_arr = invert_data(inundated_arr, sz_ctrl, zoffset, nodata_value)
         inundation_map = inundated_arr - DT_threshold
         inundation_map[inundation_map >= 0] = 2
@@ -322,7 +321,7 @@ def create_indi_DT_inundation_map(inundated_arr, doy_array: np.ndarray, date_num
         inundation_map[inundated_arr > 0.16] = 2
         inundation_map = reassign_sole_pixel(inundation_map, Nan_value=0, half_size_window=2)
         inundation_map = inundation_map.astype(np.byte)
-
+        inundation_arr = None
         bf.write_raster(gdal.Open(ROI_tif), inundation_map, output_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
     else:
         inundated_ds = gdal.Open(f'{output_path}DT_{str(doy_array[date_num])}.TIF')
@@ -331,7 +330,8 @@ def create_indi_DT_inundation_map(inundated_arr, doy_array: np.ndarray, date_num
     if isinstance(inundated_arr, np.ndarray):
         return date_num, inundation_map
     else:
-        return date_num, type(inundated_arr)(inundation_map)
+        inundation_map = type(inundated_arr)(inundation_map)
+        return date_num, inundation_map
 
 
 def curfit4bound_annual(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curfit_dic: dict, sparse_matrix_factor: bool, size_control_factor: bool, xy_offset: list, cache_folder: str, nd_v, zoff, divider: int = 10000):
@@ -729,3 +729,45 @@ def process_itr_wl(water_level_: list, veg_arr: np.ndarray, output_file: str):
             inund_arr = inund_arr + (_ > veg_arr).astype(np.int16) * water_level_.count(_)
 
         np.save(output_file, inund_arr)
+
+
+def retrieve_correct_filename(file_name: str):
+    file_list = file_name.split('\\')
+    sep = '\\'
+    if len(file_list) == 1:
+        raise Exception('filename cannot be a folder!')
+    else:
+        for _ in range(1, len(file_list)):
+            folder = [__ for __ in file_list[: _]]
+            folder_name = sep.join(folder) + sep
+            up_folder = [__ for __ in file_list[: _ - 1]]
+            up_folder_name = sep.join(up_folder) + sep
+            if os.path.exists(folder_name):
+                pass
+            else:
+                dir_all = os.listdir(up_folder_name)
+                dir_all = [up_folder_name + __ for __ in dir_all]
+                dir_all_ = copy.copy(dir_all)
+                try:
+                    for __ in dir_all:
+                        if os.path.isdir(__):
+                            dir_all_.extend([os.path.join(__, file) for file in os.listdir(__)])
+                except:
+                    pass
+
+                new_path = None
+                file_temp = [__ for __ in file_list[_:]]
+                for file_ in file_temp:
+                    for dir_ in dir_all_:
+                        if dir_.endswith(file_) and '.' in file_:
+                            return os.path.join(dir_, file_)
+                        elif dir_.endswith(file_) and '.' not in file_:
+                            file_name = os.path.join(dir_, sep.join(file_temp[file_temp.index(file_) + 1:]))
+                            if os.path.isfile(file_name):
+                                return file_name
+                        else:
+                            pass
+
+                return None
+
+

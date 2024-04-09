@@ -1,7 +1,7 @@
 import shutil
 from NDsm import NDSparseMatrix
 import numpy as np
-import gdal
+from osgeo import gdal
 import pandas as pd
 import basic_function as bf
 import datetime
@@ -579,10 +579,10 @@ class NCEI_ds(object):
         print(f'Finish constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name} in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
 
 
-if __name__ == '__main__':
-    ds_temp = gdal.Open('G:\A_veg\S2_all\Sentinel2_L2A_Output\ROI_map\\MYZR_FP_2020_map.TIF')
-    bounds_temp = bf.raster_ds2bounds('G:\A_veg\S2_all\Sentinel2_L2A_Output\ROI_map\\MYZR_FP_2020_map.TIF')
-    size = [ds_temp.RasterYSize, ds_temp.RasterXSize]
-    ds_temp = NCEI_ds('G:\A_veg\\NCEI_temperature\\NCEI_19_22\\download\\')
-    ds_temp.ds2raster(['TEMP'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp', raster_size=size, ds2ras_method='IDW', bounds=bounds_temp)
-    ds_temp.raster2dc(['TEMP'], temporal_division='year')
+# if __name__ == '__main__':
+#     ds_temp = gdal.Open('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')
+#     bounds_temp = bf.raster_ds2bounds('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')
+#     size = [ds_temp.RasterYSize, ds_temp.RasterXSize]
+#     ds_temp = NCEI_ds('G:\\A_Landsat_Floodplain_veg\\NCEI\\download\\')
+#     ds_temp.ds2raster(['TEMP'], ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020.shp', raster_size=size, ds2ras_method='IDW', bounds=bounds_temp)
+#     ds_temp.raster2dc(['TEMP'], temporal_division='year')

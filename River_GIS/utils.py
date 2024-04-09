@@ -14,6 +14,101 @@ from tqdm.auto import tqdm
 from shapely.ops import nearest_points
 from datetime import datetime
 import scipy.sparse as sm
+import json
+
+
+def construct_inunfac_dc(input_dic: dict, output_path, year, metadata_dic):
+
+    start_time = time.time()
+    print(f"Start constructing the {str(year)}  Inunfac datacube of {metadata_dic['ROI_name']}.")
+
+    # Create the output path
+    yearly_output_path = output_path + str(int(year)) + '\\'
+    bf.create_folder(yearly_output_path)
+
+    if not os.path.exists(output_path + f'{str(year)}\\metadata.json') or not not os.path.exists(output_path + f'{str(year)}\\paraname.npy'):
+
+        # Create the para list
+        para_list = list(input_dic.keys())
+
+        if metadata_dic['huge_matrix']:
+            if metadata_dic['ROI_name']:
+                i, data_cube = 0, NDSparseMatrix()
+                while i < len(para_list):
+                    try:
+                        t1 = time.time()
+                        array_temp = input_dic[para_list[i]]
+                        if np.isnan(metadata_dic['Nodata_value']):
+                            array_temp[np.isnan(array_temp)] = 0
+                        else:
+                            array_temp[array_temp == metadata_dic['Nodata_value']] = 0
+
+                        sm_temp = sm.csr_matrix(array_temp.astype(float))
+                        array_temp = None
+                        data_cube.append(sm_temp, name=para_list[i])
+                        print(f'Assemble the {str(para_list[i])} into the Inunfac dc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(para_list))})')
+                        i += 1
+                    except:
+                        error_inf = traceback.format_exc()
+                        print(error_inf)
+
+                # Save the sdc
+                np.save(f'{yearly_output_path}paraname.npy', para_list)
+                data_cube.save(f'{yearly_output_path}Inunfac_datacube\\')
+                nodata_value = 0
+            else:
+                pass
+        else:
+            i = 0
+            data_cube = np.zeros([input_dic[para_list[0]].shape[0], input_dic[para_list[0]].shape[1], len(para_list)])
+            while i < len(para_list):
+
+                try:
+                    t1 = time.time()
+                    array_temp = input_dic[para_list[i]]
+                    data_cube[:, :, i] = array_temp
+                    print(f'Assemble the {str(para_list[i])} into the Phemetric_datacube using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(para_list))})')
+                    i += 1
+                except:
+                    error_inf = traceback.format_exc()
+                    print(error_inf)
+
+            np.save(f'{yearly_output_path}paraname.npy', para_list)
+            np.save(f'{yearly_output_path}Phemetric_datacube.npy', data_cube)
+
+        # Save the metadata dic
+        metadata_dic['inunyear'] = year
+        with open(f'{yearly_output_path}metadata.json', 'w') as js_temp:
+            json.dump(metadata_dic, js_temp)
+
+    print(f"Finish constructing the {str(year)} Inunfac datacube of {metadata_dic['ROI_name']} in \033[1;31m{str(time.time() - start_time)} s\033[0m.")
+
+
+def generate_inundation_indicator(namelist, datacube_list, dem_arr, dem_nodata, output_path):
+
+    inun_duration = np.zeros([dem_arr.shape[0], dem_arr.shape[1]])
+    inun_mean_waterlevel = np.zeros([dem_arr.shape[0], dem_arr.shape[1]])
+    inun_max_waterlevel = np.zeros([dem_arr.shape[0], dem_arr.shape[1]])
+
+    for _ in namelist:
+        ds = gdal.Open(f'{output_path}\\inundation_dailyfile\\{str(_)}.tif')
+        arr = ds.GetRasterBand(1).ReadAsArray()
+        arr[arr == 255] = 0
+
+        inun_duration = inun_duration + arr
+        inun_mean_waterlevel = inun_mean_waterlevel + arr * (datacube_list[namelist.index(_)].toarray() - dem_arr)
+        inun_max_waterlevel = np.nanmax(np.stack([inun_max_waterlevel, arr * (datacube_list[namelist.index(_)].toarray() - dem_arr)], axis=2), axis=2)
+
+    if np.isnan(dem_nodata):
+        inun_duration[np.isnan(dem_arr)] = np.nan
+        inun_mean_waterlevel[np.isnan(dem_arr)] = np.nan
+        inun_max_waterlevel[np.isnan(dem_arr)] = np.nan
+    else:
+        inun_duration[inun_duration == dem_nodata] = np.nan
+        inun_mean_waterlevel[inun_mean_waterlevel == dem_nodata] = np.nan
+        inun_max_waterlevel[inun_max_waterlevel == dem_nodata] = np.nan
+
+    return [inun_duration, inun_mean_waterlevel, inun_max_waterlevel]
 
 
 def concept_inundation_model(wl_nm, wl_sm, demfile, thalweg, output_filepath):
@@ -27,42 +122,45 @@ def concept_inundation_model(wl_nm, wl_sm, demfile, thalweg, output_filepath):
 
     for _ in range(len(wl_nm)):
         try:
-            wl_sm_, wl_nm_ = wl_sm[_], wl_nm[_]
-            if not os.path.exists(f'{output_filepath}\\inundation_final\\{str(wl_nm_)}.tif'):
-                if wl_sm_.shape[0] != dem_file_arr.shape[0]:
-                    wl_sm_ = np.row_stack((wl_sm_.toarray(), np.zeros([dem_file_arr.shape[0] - wl_sm_.shape[0], wl_sm_.shape[1]])))
+            wl_sm_, wl_nm_ = wl_sm[_].toarray(), wl_nm[_]
+            dem_file_arr[np.logical_and(wl_sm_ != 0, np.isnan(dem_file_arr))] = -100
+            if wl_sm_.shape[0] != dem_file_arr.shape[0]:
+                wl_sm_ = np.row_stack((wl_sm_, np.zeros([dem_file_arr.shape[0] - wl_sm_.shape[0], wl_sm_.shape[1]])))
 
-                if wl_sm_.shape[1] != dem_file_arr.shape[1]:
-                    wl_sm_ = np.column_stack((wl_sm_.toarray(), np.zeros([wl_sm_.shape[0], dem_file_arr.shape[1] - wl_sm_.shape[1]])))
+            if wl_sm_.shape[1] != dem_file_arr.shape[1]:
+                wl_sm_ = np.column_stack((wl_sm_, np.zeros([wl_sm_.shape[0], dem_file_arr.shape[1] - wl_sm_.shape[1]])))
 
-                inun_arr = np.array(wl_sm_ > dem_file_arr).astype(np.uint8)
-                bf.create_folder(f'{output_filepath}\\inundation_temp\\')
-                bf.write_raster(dem_file_ds, inun_arr, f'{output_filepath}\\inundation_temp\\', str(wl_nm_) + '.tif', raster_datatype=gdal.GDT_Byte)
+            inun_arr = np.array(wl_sm_ > dem_file_arr).astype(np.uint8)
+            bf.create_folder(f'{output_filepath}\\inundation_temp\\')
+            bf.write_raster(dem_file_ds, inun_arr, f'{output_filepath}\\inundation_temp\\', str(wl_nm_) + '.tif', raster_datatype=gdal.GDT_Byte)
 
-                src_temp = rasterio.open(f'{output_filepath}\\inundation_temp\\{str(wl_nm_)}.tif')
-                shp_dic = ({'properties': {'raster_val': int(v)}, 'geometry': s} for i, (s, v) in
-                           enumerate(rasterio.features.shapes(inun_arr, connectivity=8, transform=src_temp.transform)) if
-                           ~np.isnan(v))
-                meta = src_temp.meta.copy()
-                meta.update(compress='lzw')
+            src_temp = rasterio.open(f'{output_filepath}\\inundation_temp\\{str(wl_nm_)}.tif')
+            shp_dic = ({'properties': {'raster_val': int(v)}, 'geometry': s} for i, (s, v) in
+                       enumerate(rasterio.features.shapes(inun_arr, connectivity=8, transform=src_temp.transform)) if
+                       ~np.isnan(v))
+            meta = src_temp.meta.copy()
+            meta.update(compress='lzw')
 
-                shp_list = list(shp_dic)
-                nw_shp_list = []
-                shp_file = gp.GeoDataFrame.from_features(shp_list)
-                for __ in range(shp_file.shape[0]):
-                    if shp_file['raster_val'][__] == 1:
-                        if thalweg.intersects(shp_file['geometry'][__]):
-                            nw_shp_list.append(shp_list[__])
-                nw_shp_file = gp.GeoDataFrame.from_features(nw_shp_list)
+            shp_list = list(shp_dic)
+            nw_shp_list = []
+            shp_file = gp.GeoDataFrame.from_features(shp_list)
+            for __ in range(shp_file.shape[0]):
+                if shp_file['raster_val'][__] == 1:
+                    if thalweg.intersects(shp_file['geometry'][__]):
+                        nw_shp_list.append(shp_list[__])
+            nw_shp_file = gp.GeoDataFrame.from_features(nw_shp_list)
 
-                bf.create_folder(f'{output_filepath}\\inundation_final\\')
-                with rasterio.open(f'{output_filepath}\\inundation_final\\{str(wl_nm_)}.tif', 'w+', **meta) as out:
-                    out_arr = out.read(1)
+            bf.create_folder(f'{output_filepath}\\inundation_dailyfile\\')
+            if os.path.exists(f'{output_filepath}\\inundation_dailyfile\\{str(wl_nm_)}.tif'):
+                os.remove(f'{output_filepath}\\inundation_dailyfile\\{str(wl_nm_)}.tif')
 
-                    # this is where we create a generator of geom, value pairs to use in rasterizing
-                    shapes = ((geom, value) for geom, value in zip(nw_shp_file.geometry, nw_shp_file.raster_val))
+            with rasterio.open(f'{output_filepath}\\inundation_dailyfile\\{str(wl_nm_)}.tif', 'w+', **meta) as out:
+                out_arr = out.read(1)
 
-                    burned = rasterio.features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=src_temp.transform)
+                # this is where we create a generator of geom, value pairs to use in rasterizing
+                shapes = ((geom, value) for geom, value in zip(nw_shp_file.geometry, nw_shp_file.raster_val))
+
+                burned = rasterio.features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=src_temp.transform)
                 out.write_band(1, burned)
             print(f'The {str(wl_nm_)} is generated!')
         except:
@@ -126,6 +224,51 @@ def generate_hydrodatacube(year, arr_size, hydro_dic, hydro_inform, x_list, y_li
     except:
         print(traceback.format_exc())
         raise Exception('Something error')
+
+
+def cubic_interpolate(p, x):
+    """
+    Cubic interpolation using the cubic polynomial
+    p: array of 4 pixel values
+    x: the fractional part of the desired position
+    """
+    return p[1] + 0.5 * x * (p[2] - p[0] + x * (2.0 * p[0] - 5.0 * p[1] + 4.0 * p[2] - p[3] + x * (3.0 * (p[1] - p[2]) + p[3] - p[0])))
+
+
+def bicubic_interpolate(image, new_width, new_height):
+    """
+    Perform bicubic interpolation on an image
+    image: input image as a 2D numpy array
+    new_width, new_height: dimensions of the output image
+    """
+    src_height, src_width = image.shape
+    scaled_image = np.zeros((new_height, new_width))
+
+    x_ratio = src_width / new_width
+    y_ratio = src_height / new_height
+
+    for i in range(new_height):
+        for j in range(new_width):
+            x, y = j * x_ratio, i * y_ratio
+            x_int, y_int = int(x), int(y)
+            x_frac, y_frac = x - x_int, y - y_int
+
+            # Get pixels in four corners
+            pixels = np.zeros((4, 4))
+            for dy in range(-1, 3):
+                for dx in range(-1, 3):
+                    x_src, y_src = min(src_width - 1, max(0, x_int + dx)), min(src_height - 1, max(0, y_int + dy))
+                    pixels[dy + 1, dx + 1] = image[y_src, x_src]
+
+            # Interpolate rows
+            rows = np.zeros(4)
+            for k in range(4):
+                rows[k] = cubic_interpolate(pixels[k, :], x_frac)
+
+            # Interpolate column
+            scaled_image[i, j] = cubic_interpolate(rows, y_frac)
+
+    return scaled_image
 
 
 def retrieve_srs(ds_temp):
@@ -603,3 +746,177 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
         return df
     except:
         print(traceback.format_exc())
+
+
+def retrieve_correct_filename(file_name: str):
+    file_list = file_name.split('\\')
+    sep = '\\'
+    if len(file_list) == 1:
+        raise Exception('filename cannot be a folder!')
+    else:
+        for _ in range(1, len(file_list)):
+            folder = [__ for __ in file_list[: _]]
+            folder_name = sep.join(folder) + sep
+            up_folder = [__ for __ in file_list[: _ - 1]]
+            up_folder_name = sep.join(up_folder) + sep
+            if os.path.exists(folder_name):
+                pass
+            else:
+                dir_all = os.listdir(up_folder_name)
+                dir_all = [up_folder_name + __ for __ in dir_all]
+                dir_all_ = copy.copy(dir_all)
+                try:
+                    for __ in dir_all:
+                        if os.path.isdir(__):
+                            dir_all_.extend([os.path.join(__, file) for file in os.listdir(__)])
+                except:
+                    pass
+
+                new_path = None
+                file_temp = [__ for __ in file_list[_:]]
+                for file_ in file_temp:
+                    for dir_ in dir_all_:
+                        if dir_.endswith(file_) and '.' in file_:
+                            return os.path.join(dir_, file_)
+                        elif dir_.endswith(file_) and '.' not in file_:
+                            file_name = os.path.join(dir_, sep.join(file_temp[file_temp.index(file_) + 1:]))
+                            if os.path.isfile(file_name):
+                                return file_name
+                        else:
+                            pass
+
+                return None
+
+
+def get_value_through_river_crosssection(num, coord, slope, nodata, itr, tiffile, length):
+
+    gdal.SetConfigOption('CHECK_DISK_FREE_SPACE', 'NO')
+
+    # print(str(num))
+    left_value, right_value = [], []
+    slope_sta_left_x, slope_sta_left_y = -slope[0][1], slope[0][0]
+    slope_end_left_x, slope_end_left_y = -slope[1][1], slope[1][0]
+    slope_sta_right_x, slope_sta_right_y = slope[0][1], -slope[0][0]
+    slope_end_right_x, slope_end_right_y = slope[1][1], -slope[1][0]
+    sta_coord_, end_coord_ = coord[0], coord[1]
+    # print(str(sta_coord_), str(end_coord_))
+    in_left_floodplain, in_right_floodplain = True, True
+    left_pix, right_pix = 0, 0
+    ds_temp = gdal.Open(tiffile)
+    [ul_x, x_res, xt, ul_y, yt, y_res] = ds_temp.GetGeoTransform()
+
+    while in_left_floodplain:
+
+        try:
+            bounds = [[sta_coord_[0] + slope_sta_left_x * left_pix * itr, sta_coord_[1] + slope_sta_left_y * left_pix * itr],
+                      [sta_coord_[0] + slope_sta_left_x * (left_pix + 1) * itr, sta_coord_[1] + slope_sta_left_y * (left_pix + 1) * itr],
+                      [end_coord_[0] + slope_end_left_x * (left_pix + 1) * itr, end_coord_[1] + slope_end_left_y * (left_pix + 1) * itr],
+                      [end_coord_[0] + slope_end_left_x * left_pix * itr, end_coord_[1] + slope_end_left_y * left_pix * itr]]
+            bounds_arr = np.array(bounds)
+            minx, miny, maxx, maxy = np.min(bounds_arr[:, 0]), np.min(bounds_arr[:, 1]), np.max(bounds_arr[:, 0]), np.max(bounds_arr[:, 1])
+
+            gdal.Warp(f'/vsimem/l{str(num)}_{str(left_pix)}.vrt', tiffile, outputBounds=(minx, miny, maxx, maxy), targetAlignedPixels=False)
+            ds = gdal.Open(f'/vsimem/l{str(num)}_{str(left_pix)}.vrt')
+
+            [ul_x, x_res, xt, ul_y, yt, y_res] = ds.GetGeoTransform()
+            arr_ = ds.GetRasterBand(1).ReadAsArray()
+            for y_ in range(ds.RasterYSize):
+                for x_ in range(ds.RasterXSize):
+                    coord_ = (ul_x + x_res * x_, ul_y + y_ * y_res)
+                    if not is_point_in_polygon(coord_, bounds):
+                        arr_[y_, x_] = nodata
+
+            if np.isnan(nodata):
+                if np.isnan(arr_).all():
+                    in_left_floodplain = False
+                else:
+                    arr_[arr_ == -200] = nodata
+                    if np.isnan(arr_).all():
+                        left_value.append(np.nan)
+                    else:
+                        left_value.append(np.nanmean(arr_))
+            else:
+                if (arr_ == nodata).all():
+                    in_left_floodplain = False
+                else:
+                    arr_[arr_ == -200] = nodata
+                    if (arr_ == nodata).all():
+                        left_value.append(np.nan)
+                    else:
+                        left_value.append(np.nanmean(arr_))
+            ds = None
+            gdal.Unlink(f'/vsimem/l{str(num)}_{str(left_pix)}.vrt')
+            left_pix += 1
+        except:
+            print((minx, miny, maxx, maxy, left_pix))
+            print(traceback.format_exc())
+            return
+
+    while in_right_floodplain:
+
+        bounds = [[sta_coord_[0] + slope_sta_right_x * right_pix * itr, sta_coord_[1] + slope_sta_right_y * right_pix * itr],
+                  [sta_coord_[0] + slope_sta_right_x * (right_pix + 1) * itr, sta_coord_[1] + slope_sta_right_y * (right_pix + 1) * itr],
+                  [end_coord_[0] + slope_end_right_x * (right_pix + 1) * itr, end_coord_[1] + slope_end_right_y * (right_pix + 1) * itr],
+                  [end_coord_[0] + slope_end_right_x * right_pix * itr, end_coord_[1] + slope_end_right_y * right_pix * itr]]
+        bounds_arr = np.array(bounds)
+        minx, miny, maxx, maxy = np.min(bounds_arr[:, 0]), np.min(bounds_arr[:, 1]), np.max(bounds_arr[:, 0]), np.max(bounds_arr[:, 1])
+
+        gdal.Warp(f'/vsimem/l{str(num)}_{str(right_pix)}.vrt', tiffile, outputBounds=(minx, miny, maxx, maxy), targetAlignedPixels=False)
+        ds = gdal.Open(f'/vsimem/l{str(num)}_{str(right_pix)}.vrt')
+        # print((minx, miny, maxx, maxy))
+
+        [ul_x, x_res, xt, ul_y, yt, y_res] = ds.GetGeoTransform()
+        arr_ = ds.GetRasterBand(1).ReadAsArray()
+        for y_ in range(ds.RasterYSize):
+            for x_ in range(ds.RasterXSize):
+                coord_ = (ul_x + x_res * x_, ul_y + y_ * y_res)
+                if not is_point_in_polygon(coord_, bounds):
+                    arr_[y_, x_] = nodata
+
+        if np.isnan(nodata):
+            if np.isnan(arr_).all():
+                in_right_floodplain = False
+            else:
+                arr_[arr_ == -200] = nodata
+                if np.isnan(arr_).all():
+                    right_value.append(np.nan)
+                else:
+                    right_value.append(np.nanmean(arr_))
+        else:
+            if (arr_ == nodata).all():
+                in_right_floodplain = False
+            else:
+                arr_[arr_ == -200] = nodata
+                if (arr_ == nodata).all():
+                    right_value.append(np.nan)
+                else:
+                    right_value.append(np.nanmean(arr_))
+        ds = None
+        gdal.Unlink(f'/vsimem/l{str(num)}_{str(right_pix)}.vrt')
+        right_pix += 1
+
+    # gdal.Unlink(f'/vsimem/resized_{str(int(num % 32))}.vrt')
+    print(f'{str(num)}/{str(length)} Complete')
+    return [left_value, right_value]
+
+
+def is_point_in_polygon(p, polygon):
+    # p is the point (x, y)
+    # polygon is a list of tuples [(x1, y1), (x2, y2), (x3, y3), (x4, y4)] defining the vertices of the polygon
+    count = 0
+    x_intercept = p[0]
+    y_intercept = p[1]
+    n = len(polygon)
+
+    for i in range(n):
+        v1 = polygon[i]
+        v2 = polygon[(i + 1) % n]
+        # Check if point aligns horizontally with vertex
+        if y_intercept >= min(v1[1], v2[1]) and y_intercept <= max(v1[1], v2[1]):
+            # Calculate the x coordinate of the intersecting point
+            if v1[1] != v2[1]:  # Avoid division by zero
+                x_intersect = (y_intercept - v1[1]) * (v2[0] - v1[0]) / (v2[1] - v1[1]) + v1[0]
+                if x_intersect > x_intercept:
+                    count += 1
+
+    return count % 2 != 0

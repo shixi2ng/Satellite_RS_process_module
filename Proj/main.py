@@ -29,7 +29,7 @@ if __name__ == '__main__':
     filepath = 'G:\A_veg\S2_all\\Original_file\\'
     s2_ds_temp = Sentinel2_ds(filepath)
     s2_ds_temp.construct_metadata()
-    # s2_ds_temp.mp_subset(['all_band', 'OSAVI_20m', 'NDVI_20m', 'MNDWI'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp',
+    # s2_ds_temp.mp_subset(['all_band', 'OSAVI_20m', 'NDVI_20m', 'MNDWI'], ROI='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplawwwin_Devised\\floodplain_2020.shp',
     #                      ROI_name='MYZR_FP_2020', cloud_removal_strategy='QI_all_cloud', size_control_factor=True, combine_band_factor=False)
     # s2_ds_temp.seq_ds2sdc(['OSAVI_20m', 'NDVI_20m', 'MNDWI'],
     #                      inherit_from_logfile=True, remove_nan_layer=True)
