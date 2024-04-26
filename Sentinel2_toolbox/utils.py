@@ -21,6 +21,116 @@ import pandas as pd
 from tqdm.auto import tqdm
 from osgeo import osr, gdal
 from rasterio import features
+import requests
+
+
+def bulk_download_sentinel_files(sentinel_odata_df, access_token, download_path):
+
+    try:
+        failure_file, offline_file = [], []
+        for _ in range(sentinel_odata_df.shape[0]):
+            if bool(sentinel_odata_df['Online'][_]) is False:
+                try:
+                    headers = {"Authorization": f"Bearer {access_token}"}
+                    session = requests.Session()
+                    session.headers.update(headers)
+
+                    session = requests.Session()
+                    session.headers.update(headers)
+                    response = session.get(
+                        f"https://download.dataspace.copernicus.eu/odata/v1/Products({sentinel_odata_df['Id'][_]})/$value",
+                        headers=headers, stream=True)
+
+                    if response.text == '{"detail":"Product not found in catalogue"}':
+                        offline_file.append(_)
+                    else:
+                        failure_file.append(_)
+                except:
+                    failure_file.append(_)
+
+    except:
+        print(traceback.format_exc())
+        raise Exception('Process the offline file code error')
+
+    try:
+        for _ in range(sentinel_odata_df.shape[0]):
+            if _ not in failure_file and _ not in offline_file:
+                print(sentinel_odata_df['Id'][_] + 'is online')
+                print('File name is ：' + sentinel_odata_df['Id'][_])
+                print('Add to request: ' + sentinel_odata_df['Name'][_])
+                print('---------------------Start to download-----------------------')
+                if bool(sentinel_odata_df['Online'][_]) is True:
+                    try:
+                        headers = {"Authorization": f"Bearer {access_token}"}
+                        session = requests.Session()
+                        session.headers.update(headers)
+                        response = session.get(
+                            f"https://download.dataspace.copernicus.eu/odata/v1/Products({sentinel_odata_df['Id'][_]})/$value",
+                            headers=headers, stream=True)
+
+                        print(f'Status: {str(response.content)}')
+                        while True:
+                            if response.content == b'{"detail":"Max session number 4 exceeded."}':
+                                time.sleep(60)
+                                headers = {"Authorization": f"Bearer {access_token}"}
+                                session = requests.Session()
+                                session.headers.update(headers)
+                                response = session.get(
+                                    f"https://download.dataspace.copernicus.eu/odata/v1/Products({sentinel_odata_df['Id'][_]})/$value",
+                                    headers=headers, stream=True)
+                            else:
+                                break
+                        with open(f"{download_path}{sentinel_odata_df['Name'][_].split('.')[0]}.zip", "wb") as file:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if chunk:
+                                    file.write(chunk)
+                    except:
+                        failure_file.append(_)
+                else:
+                    raise Exception('Code Error')
+    except:
+        print(traceback.format_exc())
+        raise Exception('Process the online file code error')
+
+    try:
+        for _ in offline_file:
+            if bool(sentinel_odata_df['Online'][_]) is True:
+                try:
+                    headers = {"Authorization": f"Bearer {access_token}"}
+                    session = requests.Session()
+                    session.headers.update(headers)
+
+                    session = requests.Session()
+                    session.headers.update(headers)
+                    response = session.get(
+                        f"https://download.dataspace.copernicus.eu/odata/v1/Products({sentinel_odata_df['Id'][_]})/$value",
+                        headers=headers, stream=True)
+
+                    if response.text == '{"detail":"Product not found in catalogue"}':
+                        failure_file.append(_)
+                    else:
+                        print(sentinel_odata_df['Id'][_] + 'is online')
+                        print('File name is ：' + sentinel_odata_df['Id'][_])
+                        print('Add to IDM: ' + sentinel_odata_df['Name'][_])
+                        print('---------------------Start to download-----------------------')
+                        print(f'Status: {str(response.content)}')
+                        while True:
+                            if response.content == b'{"detail":"Max session number 4 exceeded."}':
+                                time.sleep(60)
+                            else:
+                                break
+                        with open(f"{download_path}{sentinel_odata_df['Name'][_].split('.')[0]}.zip", "wb") as file:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if chunk:
+                                    file.write(chunk)
+                except:
+                    failure_file.append(_)
+            else:
+                raise Exception('Code Error')
+    except:
+        print(traceback.format_exc())
+        raise Exception('Process the offline file code error')
+    return [sentinel_odata_df['Id'][_] for _ in failure_file]
 
 
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):

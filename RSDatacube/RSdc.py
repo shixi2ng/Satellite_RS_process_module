@@ -1816,8 +1816,7 @@ class RS_dcs(object):
             inunfactor_path = oa_output_path + 'inun_factor\\'
             bf.create_folder(inunfactor_path)
 
-            if not os.path.exists(
-                    f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency.TIF') or self._inundation_overwritten_factor:
+            if not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency.TIF') or self._inundation_overwritten_factor:
                 doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
                 temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
                 roi_temp = np.load(self.ROI_array)
@@ -3698,6 +3697,7 @@ class RS_dcs(object):
 
     def indi_timelapse_gif(self, timeunit):
         pass
+
 
     def est_inunduration(self, inundated_index: str, output_path: str, water_level_data,
                          nan_value=0, inundated_value=2, generate_inundation_status_factor: bool = True,

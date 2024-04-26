@@ -1043,7 +1043,7 @@ class Sentinel2_ds(object):
                                 band_file = bf.file_filter(subset_output_path, containing_word_list=[f'{str(sensing_date)}_{str(tile_num)}_{band_name_temp}'])
                                 ds_temp = gdal.Open(band_file[0])
                                 array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                                array_temp = ((array_temp / 10000) ** (1/gamma_coef) * 255).astype(np.int)
+                                array_temp = ((array_temp / 10000) ** (1/gamma_coef) * 255).astype(np.int8)
                                 array_temp[array_temp > 255] = 0
                                 RGB_array[band_name_temp] = array_temp
 

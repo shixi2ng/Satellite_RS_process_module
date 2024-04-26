@@ -788,9 +788,10 @@ def retrieve_correct_filename(file_name: str):
                 return None
 
 
-def get_value_through_river_crosssection(num, coord, slope, nodata, itr, tiffile, length):
+def get_value_through_river_crosssection(num, coord, slope, nodata, itr, tiffile, length, outputfolder, limit=10000):
 
     gdal.SetConfigOption('CHECK_DISK_FREE_SPACE', 'NO')
+    time1, time2, time3, time4 = 0, 0, 0, 0
 
     # print(str(num))
     left_value, right_value = [], []
@@ -804,100 +805,136 @@ def get_value_through_river_crosssection(num, coord, slope, nodata, itr, tiffile
     left_pix, right_pix = 0, 0
     ds_temp = gdal.Open(tiffile)
     [ul_x, x_res, xt, ul_y, yt, y_res] = ds_temp.GetGeoTransform()
+    xmax, xmin, ymax, ymin = ul_x + x_res * ds_temp.RasterXSize, ul_x, ul_y, ul_y + y_res * ds_temp.RasterYSize
 
     while in_left_floodplain:
 
         try:
+            st = time.time()
             bounds = [[sta_coord_[0] + slope_sta_left_x * left_pix * itr, sta_coord_[1] + slope_sta_left_y * left_pix * itr],
                       [sta_coord_[0] + slope_sta_left_x * (left_pix + 1) * itr, sta_coord_[1] + slope_sta_left_y * (left_pix + 1) * itr],
                       [end_coord_[0] + slope_end_left_x * (left_pix + 1) * itr, end_coord_[1] + slope_end_left_y * (left_pix + 1) * itr],
                       [end_coord_[0] + slope_end_left_x * left_pix * itr, end_coord_[1] + slope_end_left_y * left_pix * itr]]
             bounds_arr = np.array(bounds)
             minx, miny, maxx, maxy = np.min(bounds_arr[:, 0]), np.min(bounds_arr[:, 1]), np.max(bounds_arr[:, 0]), np.max(bounds_arr[:, 1])
+            time1 += time.time() - st
 
-            gdal.Warp(f'/vsimem/l{str(num)}_{str(left_pix)}.vrt', tiffile, outputBounds=(minx, miny, maxx, maxy), targetAlignedPixels=False)
-            ds = gdal.Open(f'/vsimem/l{str(num)}_{str(left_pix)}.vrt')
-
-            [ul_x, x_res, xt, ul_y, yt, y_res] = ds.GetGeoTransform()
-            arr_ = ds.GetRasterBand(1).ReadAsArray()
-            for y_ in range(ds.RasterYSize):
-                for x_ in range(ds.RasterXSize):
-                    coord_ = (ul_x + x_res * x_, ul_y + y_ * y_res)
-                    if not is_point_in_polygon(coord_, bounds):
-                        arr_[y_, x_] = nodata
-
-            if np.isnan(nodata):
-                if np.isnan(arr_).all():
-                    in_left_floodplain = False
-                else:
-                    arr_[arr_ == -200] = nodata
-                    if np.isnan(arr_).all():
-                        left_value.append(np.nan)
-                    else:
-                        left_value.append(np.nanmean(arr_))
+            if minx < xmin or miny < ymin or maxx > xmax or maxy > ymax or left_pix > limit/itr:
+                in_left_floodplain = False
             else:
-                if (arr_ == nodata).all():
-                    in_left_floodplain = False
-                else:
-                    arr_[arr_ == -200] = nodata
-                    if (arr_ == nodata).all():
-                        left_value.append(np.nan)
+
+                st = time.time()
+                gdal.Warp(f'/vsimem/l{str(num)}_{str(left_pix)}.vrt', tiffile, outputBounds=(minx, miny, maxx, maxy), targetAlignedPixels=False, multithread=True)
+                ds = gdal.Open(f'/vsimem/l{str(num)}_{str(left_pix)}.vrt')
+                # gdal.Warp(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\temp\\l{str(num)}_{str(left_pix)}.vrt', tiffile, outputBounds=(minx, miny, maxx, maxy), targetAlignedPixels=False)
+                # ds = gdal.Open(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\temp\\l{str(num)}_{str(left_pix)}.vrt')
+                [ul_x, x_res, xt, ul_y, yt, y_res] = ds.GetGeoTransform()
+                arr_ = ds.GetRasterBand(1).ReadAsArray()
+                time2 += time.time() - st
+
+                st = time.time()
+                for y_ in range(ds.RasterYSize):
+                    for x_ in range(ds.RasterXSize):
+                        coord_ = (ul_x + x_res * x_, ul_y + y_ * y_res)
+                        if not is_point_in_polygon(coord_, bounds):
+                            arr_[y_, x_] = nodata
+
+                if np.isnan(nodata):
+                    if np.isnan(arr_).all():
+                        in_left_floodplain = False
                     else:
-                        left_value.append(np.nanmean(arr_))
-            ds = None
-            gdal.Unlink(f'/vsimem/l{str(num)}_{str(left_pix)}.vrt')
-            left_pix += 1
+                        arr_[arr_ == -200] = nodata
+                        if np.isnan(arr_).all():
+                            left_value.append(np.nan)
+                        else:
+                            left_value.append(np.nanmean(arr_))
+                else:
+                    if (arr_ == nodata).all():
+                        in_left_floodplain = False
+                    else:
+                        arr_[arr_ == -200] = nodata
+                        if (arr_ == nodata).all():
+                            left_value.append(np.nan)
+                        else:
+                            left_value.append(np.nanmean(arr_))
+                ds = None
+                gdal.Unlink(f'/vsimem/l{str(num)}_{str(left_pix)}.vrt')
+                left_pix += 1
+                time3 += time.time() - st
+                print(str(left_pix))
         except:
             print((minx, miny, maxx, maxy, left_pix))
             print(traceback.format_exc())
-            return
+            raise Exception('-1')
 
     while in_right_floodplain:
 
-        bounds = [[sta_coord_[0] + slope_sta_right_x * right_pix * itr, sta_coord_[1] + slope_sta_right_y * right_pix * itr],
-                  [sta_coord_[0] + slope_sta_right_x * (right_pix + 1) * itr, sta_coord_[1] + slope_sta_right_y * (right_pix + 1) * itr],
-                  [end_coord_[0] + slope_end_right_x * (right_pix + 1) * itr, end_coord_[1] + slope_end_right_y * (right_pix + 1) * itr],
-                  [end_coord_[0] + slope_end_right_x * right_pix * itr, end_coord_[1] + slope_end_right_y * right_pix * itr]]
-        bounds_arr = np.array(bounds)
-        minx, miny, maxx, maxy = np.min(bounds_arr[:, 0]), np.min(bounds_arr[:, 1]), np.max(bounds_arr[:, 0]), np.max(bounds_arr[:, 1])
+        try:
+            st = time.time()
+            bounds = [[sta_coord_[0] + slope_sta_right_x * right_pix * itr, sta_coord_[1] + slope_sta_right_y * right_pix * itr],
+                      [sta_coord_[0] + slope_sta_right_x * (right_pix + 1) * itr, sta_coord_[1] + slope_sta_right_y * (right_pix + 1) * itr],
+                      [end_coord_[0] + slope_end_right_x * (right_pix + 1) * itr, end_coord_[1] + slope_end_right_y * (right_pix + 1) * itr],
+                      [end_coord_[0] + slope_end_right_x * right_pix * itr, end_coord_[1] + slope_end_right_y * right_pix * itr]]
+            bounds_arr = np.array(bounds)
+            minx, miny, maxx, maxy = np.min(bounds_arr[:, 0]), np.min(bounds_arr[:, 1]), np.max(bounds_arr[:, 0]), np.max(bounds_arr[:, 1])
+            time1 += time.time() - st
 
-        gdal.Warp(f'/vsimem/l{str(num)}_{str(right_pix)}.vrt', tiffile, outputBounds=(minx, miny, maxx, maxy), targetAlignedPixels=False)
-        ds = gdal.Open(f'/vsimem/l{str(num)}_{str(right_pix)}.vrt')
-        # print((minx, miny, maxx, maxy))
-
-        [ul_x, x_res, xt, ul_y, yt, y_res] = ds.GetGeoTransform()
-        arr_ = ds.GetRasterBand(1).ReadAsArray()
-        for y_ in range(ds.RasterYSize):
-            for x_ in range(ds.RasterXSize):
-                coord_ = (ul_x + x_res * x_, ul_y + y_ * y_res)
-                if not is_point_in_polygon(coord_, bounds):
-                    arr_[y_, x_] = nodata
-
-        if np.isnan(nodata):
-            if np.isnan(arr_).all():
+            if minx < xmin or miny < ymin or maxx > xmax or maxy > ymax or right_pix > limit/itr:
                 in_right_floodplain = False
             else:
-                arr_[arr_ == -200] = nodata
-                if np.isnan(arr_).all():
-                    right_value.append(np.nan)
+                st = time.time()
+                gdal.Warp(f'/vsimem/l{str(num)}_{str(right_pix)}.vrt', tiffile, outputBounds=(minx, miny, maxx, maxy), targetAlignedPixels=False, multithread=True)
+                ds = gdal.Open(f'/vsimem/l{str(num)}_{str(right_pix)}.vrt')
+                # gdal.Warp(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\temp\\l{str(num)}_{str(right_pix)}.vrt', tiffile, outputBounds=(minx, miny, maxx, maxy), targetAlignedPixels=False)
+                # ds = gdal.Open(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\temp\\l{str(num)}_{str(right_pix)}.vrt')
+                [ul_x, x_res, xt, ul_y, yt, y_res] = ds.GetGeoTransform()
+                arr_ = ds.GetRasterBand(1).ReadAsArray()
+                time2 += time.time() - st
+
+                st = time.time()
+                for y_ in range(ds.RasterYSize):
+                    for x_ in range(ds.RasterXSize):
+                        coord_ = (ul_x + x_res * x_, ul_y + y_ * y_res)
+                        if not is_point_in_polygon(coord_, bounds):
+                            arr_[y_, x_] = nodata
+
+                if np.isnan(nodata):
+                    if np.isnan(arr_).all():
+                        in_right_floodplain = False
+                    else:
+                        arr_[arr_ == -200] = nodata
+                        if np.isnan(arr_).all():
+                            right_value.append(np.nan)
+                        else:
+                            right_value.append(np.nanmean(arr_))
                 else:
-                    right_value.append(np.nanmean(arr_))
-        else:
-            if (arr_ == nodata).all():
-                in_right_floodplain = False
-            else:
-                arr_[arr_ == -200] = nodata
-                if (arr_ == nodata).all():
-                    right_value.append(np.nan)
-                else:
-                    right_value.append(np.nanmean(arr_))
-        ds = None
-        gdal.Unlink(f'/vsimem/l{str(num)}_{str(right_pix)}.vrt')
-        right_pix += 1
+                    if (arr_ == nodata).all():
+                        in_right_floodplain = False
+                    else:
+                        arr_[arr_ == -200] = nodata
+                        if (arr_ == nodata).all():
+                            right_value.append(np.nan)
+                        else:
+                            right_value.append(np.nanmean(arr_))
+                ds = None
+                gdal.Unlink(f'/vsimem/l{str(num)}_{str(right_pix)}.vrt')
+                right_pix += 1
+                time3 += time.time() - st
+                print(str(right_pix))
+        except:
+            print((minx, miny, maxx, maxy, right_pix))
+            print(traceback.format_exc())
+            raise Exception('-1')
 
     # gdal.Unlink(f'/vsimem/resized_{str(int(num % 32))}.vrt')
-    print(f'{str(num)}/{str(length)} Complete')
-    return [left_value, right_value]
+    st = time.time()
+    new_arr = np.zeros([2, len(left_value) + len(right_value)])
+    new_arr[0, :] = np.linspace(-len(left_value) + 1, len(right_value),  len(left_value) + len(right_value))
+    new_arr[1, 0: len(left_value)] = np.array(left_value)[::-1]
+    new_arr[1, len(left_value):] = np.array(right_value)
+    np.save(f'{outputfolder}line_{str(num)}.npy', new_arr)
+    time4 += time.time() - st
+    print(f'{str(num)}/{str(length)} Complete! S1: {str(time1)}s; S2: {str(time2)}s; S3: {str(time3)}s; S4: {str(time4)}s;')
 
 
 def is_point_in_polygon(p, polygon):

@@ -1099,7 +1099,7 @@ class Thalweg(object):
                 if self.crs is not None:
                     self.Thalweg_geodf = self.Thalweg_geodf.set_crs(self.crs)
 
-    def straighten_river_through_thalweg(self, tiffile, itr=1, river_value=-200, resize_factor=5):
+    def straighten_river_through_thalweg(self, tiffile, itr=1, resize_factor=5):
 
         gdal.SetConfigOption('CHECK_DISK_FREE_SPACE', 'NO')
 
@@ -1112,6 +1112,10 @@ class Thalweg(object):
         [ul_x, x_res, xt, ul_y, yt, y_res] = ds_temp.GetGeoTransform()
         arr = ds_temp.GetRasterBand(1).ReadAsArray()
         nodata = ds_temp.GetRasterBand(1).GetNoDataValue()
+
+        # Generate cache folder
+        cache_folder = os.path.dirname(tiffile) + '\\cache\\'
+        bf.create_folder(cache_folder)
 
         # Process into the designed pixel
         tiffile_resize = tiffile.split('.TIF')[0] + f'_resized_{str(itr / resize_factor)}.TIF'
@@ -1144,7 +1148,6 @@ class Thalweg(object):
 
         # For each itr
         # Strategies I and II
-
         online_factor, num = True, 0
         end_coord, mid_coord, end_slope, mid_slope = [(thalweg_line.coords[0][0], thalweg_line.coords[0][1])],[(thalweg_line.coords[0][0], thalweg_line.coords[0][1])], [slope_[0]], [slope_[0]]
         with tqdm(total=itr_num, desc=f'Get the slope and coord for each itr', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
@@ -1244,41 +1247,50 @@ class Thalweg(object):
         bf.create_folder('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\temp\\')
         ds_temp, arr = None, None
 
-        line_slope, line_coord, line_itr = [], [], []
+        line_slope, line_coord, line_itr, itr_all = [], [], [], []
+        npyfiles = bf.file_filter(cache_folder, ['.npy'])
+        npynum = [int(npyfile.split('.npy')[0].split('line_')[-1]) for npyfile in npyfiles]
         for __ in range(len(mid_coord)):
-            line_coord.append([[end_coord[__][0], end_coord[__][1]], [end_coord[__ + 1][0], end_coord[__ + 1][1]]])
-            line_slope.append([[end_slope[__][0], end_slope[__][1]], [end_slope[__ + 1][0], end_slope[__ + 1][1]]])
-            line_itr.append(__)
+            if __ not in npynum:
+                line_coord.append([[end_coord[__][0], end_coord[__][1]], [end_coord[__ + 1][0], end_coord[__ + 1][1]]])
+                line_slope.append([[end_slope[__][0], end_slope[__][1]], [end_slope[__ + 1][0], end_slope[__ + 1][1]]])
+                line_itr.append(__)
+            itr_all.append(__)
 
-        with concurrent.futures.ProcessPoolExecutor() as exe:
-            res = exe.map(get_value_through_river_crosssection, line_itr, line_coord, line_slope, repeat(nodata), repeat(itr), repeat(tiffile_resize), repeat(len(mid_coord)))
+        # MP CONCURRENT
+        # with concurrent.futures.ProcessPoolExecutor() as exe:
+        #     exe.map(get_value_through_river_crosssection, line_itr, line_coord, line_slope, repeat(nodata), repeat(itr), repeat(tiffile_resize), repeat(len(mid_coord)), repeat(cache_folder))
+        print('MP Succeed!')
 
-        res = list(res)
-        left_bank_v = [_[0] for _ in res]
-        right_bank_v = [_[1] for _ in res]
+        # Generate the standard npy
+        standard_npy = []
+        for _ in itr_all:
+            if os.path.exists(f'{cache_folder}line_{str(_)}.npy'):
+                arr_ = np.load(f'{cache_folder}line_{str(_)}.npy')
+                standard_npy.append(arr_)
+            else:
+                print(f'The itr {str(_)} is not generated!')
 
-        left_size, right_size = 0, 0
-        for _ in left_bank_v:
-            left_size = max(left_size, len(_))
+        size_min_list = [np.min(_[0, :]) for _ in standard_npy]
+        size_max_list = [np.max(_[0, :]) for _ in standard_npy]
+        arr_len = np.max(size_max_list) - np.min(size_min_list) + 1
+        new_arr = np.zeros([int(arr_len), len(standard_npy)]) * np.nan
+        zero_num = standard_npy[size_min_list.index(min(size_min_list))]
+        zero_num = np.argwhere(zero_num[0, :] == 0)[0][0]
+        x_num = 0
+        for _ in standard_npy:
+            try:
+                zero_temp = np.argwhere(_[0, :] == 0)[0][0]
+                new_arr[zero_num - zero_temp: zero_num - zero_temp + _.shape[1], x_num] = _[1, :].transpose()
+                x_num += 1
+            except:
+                raise Exception('Code Error')
 
-        for _ in right_bank_v:
-            right_size = max(right_size, len(_))
-
-        new_arr = np.zeros([left_size + right_size - 1, len(left_bank_v)]) * np.nan
-        for q in range(len(left_bank_v)):
-            _ = left_bank_v[q]
-            for __ in range(len(_)):
-                new_arr[left_size - __, q] = _[__]
-
-        for q in range(len(right_bank_v)):
-            _ = right_bank_v[q]
-            for __ in range(len(_)):
-                new_arr[left_size + __ - 1, q] = _[__]
-
-        np.save(f'G:\A_Landsat_Floodplain_veg\Paper\Fig11_nc\\arr_{str(left_size)}_{str(itr)}.npy', new_arr)
+        print('Start saving the npy')
+        np.save(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\arr_{str(itr)}.npy', new_arr)
         fig, ax = plt.subplots(figsize=(60, 3))
         cax = ax.imshow(new_arr)
-        plt.savefig(f'G:\A_Landsat_Floodplain_veg\Paper\Fig11_nc\\fig11_nc_{str(left_size)}_{str(itr)}.png', dpi=600)
+        plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\fig11_nc_{str(itr)}.png', dpi=600)
 
     # def load_shapefile(thalweg_temp, shapefile):
     #
