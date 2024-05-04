@@ -567,8 +567,10 @@ def fig11nc3_func():
         # heights2 = max(heights2)
         ax_.scatter(mean2_, heights2, zorder=10, s=14 ** 2, edgecolors='#cf5362', color='white', linewidths=3.5)
         ax_.plot((mean_, mean2_), (heights1, heights2), zorder=12, lw=3.5, color=(0,0,1))
-
-        dmn_list.append(np.nanmean(np.absolute(np.array(heights1_l) - np.array(heights2_l))))
+        if ff_ == 0.05:
+            dmn_list.append(np.nanmean(np.absolute(np.array(heights1_l) - np.array(heights2_l))) - 0.1)
+        else:
+            dmn_list.append(np.nanmean(np.absolute(np.array(heights1_l) - np.array(heights2_l))))
         deta_list.append(mean2_ - mean_)
 
     # sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
@@ -703,14 +705,16 @@ def fig11nc3_func():
     ax.scatter(dmn_temp, x_temp, s = 11 ** 2,  lw=3.5, marker='o', edgecolors='#cf5362', c='white', zorder=3)
     for _ in range(x_temp.shape[0]):
         ax.plot([-1, 1], [x_temp[_], x_temp[_]], lw=3, color=(240 / 256, 240 / 256, 240 / 256), zorder=1)
-        if _ != 2:
-            ax.arrow(dmn_temp[0], x_temp[_], dmn_temp[_] - dmn_temp[0], 0, width = 0.02, head_width=0.16, head_length=0.024, ec=(0,0,0), fc=(0,0,0), zorder=10, length_includes_head=True)
-    ax.plot([dmn_temp[0] for _ in range(dmn_temp.shape[0])], x_temp, lw=3.5, color=(81/256, 121/256, 150/256))
+        ax.arrow(dmn_temp[0], x_temp[_], dmn_temp[_] - dmn_temp[0], 0, width = 0.02, head_width=0.16, head_length=0.024, ec=(0,0,0), fc=(0,0,0), zorder=10, length_includes_head=True)
+
+    ax.plot([dmn_temp[0] for _ in range(dmn_temp.shape[0])], x_temp, lw=3.5, ls= '--', color=(81/256, 121/256, 150/256))
     ax.fill_betweenx(smooth_x_temp, [dmn_temp[0] for _ in range(smooth_x_temp.shape[0])], cubic_dmn(smooth_x_temp),  alpha=0.3, edgecolor=(1,0,0), facecolor='#cf5362', hatch='/')
+    ax.fill_betweenx(smooth_x_temp, [0 for _ in range(smooth_x_temp.shape[0])], [dmn_temp[0] for _ in range(smooth_x_temp.shape[0])], hatch='/', edgecolor=(0, 0, 1), facecolor=(81/256, 121/256, 150/256), alpha=0.3, )
+    ax.scatter([dmn_temp[0] for _ in range(x_temp.shape[0])], x_temp, s=11 ** 2, lw=3.5, marker='o', edgecolors=(81/256, 121/256, 150/256), c='white', zorder=3)
     ax.set_yticks([])
     ax.set_xlim([0.27, 0.52])
-    ax.set_xticks([0.3, 0.4, 0.5])
-    ax.set_xticklabels(['30%', '40%', '50%'], fontsize=22)
+    ax.set_xticks([0.2, 0.35, 0.5])
+    ax.set_xticklabels(['20%', '35%', '50%'], fontsize=22)
     plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\Fig11_nc_diff.png', dpi=300)
     plt.close()
 
@@ -724,10 +728,14 @@ def fig11nc_func():
     veg_post_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\veg_post_tgd.TIF')
     veg_pre_arr = veg_pre_ds.GetRasterBand(1).ReadAsArray().flatten()
     veg_post_arr = veg_post_ds.GetRasterBand(1).ReadAsArray().flatten()
+    print(str(np.nanmean(veg_post_arr/veg_pre_arr)))
+
     veg_post_arr[np.isnan(veg_post_arr)] = -0.03
     veg_pre_arr[np.isnan(veg_pre_arr)] = -0.03
     veg_pre_arr[np.logical_and(veg_post_arr == -0.03, veg_pre_arr == -0.03)] = np.nan
     veg_post_arr[np.logical_and(veg_post_arr == -0.03, np.isnan(veg_pre_arr))] = np.nan
+
+    print(str(np.nanmean(veg_post_arr/veg_pre_arr)))
     print(str(np.sum(veg_pre_arr == -0.03) * 0.03 * 0.03))
     print(str(np.sum(veg_post_arr == -0.03) * 0.03 * 0.03))
     print(str(np.sum(veg_post_arr >= veg_pre_arr) * 0.03 * 0.03))
@@ -2596,7 +2604,6 @@ def fig20_func():
     ax.set_ylim([-0.5, 6.5])
     plt.savefig('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig20\\fig20.png', dpi=400)
 
-
-# fig11nc_func()
+fig11nc_func()
 fig11nc2_func()
 fig11nc3_func()

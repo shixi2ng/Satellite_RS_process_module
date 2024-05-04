@@ -603,14 +603,14 @@ class CMA_ds(object):
 
         # Valid index
         self._valid_index = ['EVP', 'PRS', 'WIN', 'TEM', 'GST', 'RHU', 'PRE', 'SSD']
-        self._index_dic = {'EVP': [(7, 0.1, 'Minor EVP'), (8, 0.1, 'Major EVP')],
-                           'PRS': [(7, 0.1, 'Daily average air pressure'), (8, 0.1, 'Daily max air pressure'), (9, 0.1, 'Daily min air pressure')],
-                           'WIN': [(7, 0.1, 'Daily average wind speed'), (8, 0.1, 'Daily max wind speed'), (10, 0.1, 'Daily extreme wind speed')],
-                           'TEM': [(7, 0.1, 'Daily average air temperature'), (8, 0.1, 'Daily max air temperature'), (9, 0.1, 'Daily min air temperature')],
-                           'GST': [(7, 0.1, 'Daily average land surface temperature'), (8, 0.1, 'Daily max land surface temperature'), (9, 0.1, 'Daily min land surface temperature')],
-                           'RHU': [(7, 0.01, 'Daily average humidity'), (8, 0.01, 'Daily min humidity')],
-                           'PRE': [(7, 0.1, '20-8 precipitation'), (8, 0.1, '8-20 precipitation'), (9, 0.1, 'Accumulated precipitation')],
-                           'SSD': [(7, 0.1, 'Sunshine hour')]}
+        self._index_dic = {'EVP': [(7, 0.1, 'Minor EVP', 32766), (8, 0.1, 'Major EVP', 32766)],
+                           'PRS': [(7, 0.1, 'Daily average air pressure', 32766), (8, 0.1, 'Daily max air pressure', 32766), (9, 0.1, 'Daily min air pressure', 32766)],
+                           'WIN': [(7, 0.1, 'Daily average wind speed', 32766), (8, 0.1, 'Daily max wind speed', 32766), (10, 0.1, 'Daily extreme wind speed', 32766)],
+                           'TEM': [(7, 0.1, 'Daily average air temperature', 32766), (8, 0.1, 'Daily max air temperature', 32766), (9, 0.1, 'Daily min air temperature', 32766)],
+                           'GST': [(7, 0.1, 'Daily average land surface temperature', 32766), (8, 0.1, 'Daily max land surface temperature', 32766), (9, 0.1, 'Daily min land surface temperature', 32766)],
+                           'RHU': [(7, 0.01, 'Daily average humidity', 32766), (8, 0.01, 'Daily min humidity', 32766)],
+                           'PRE': [(7, 0.1, '20-8 precipitation', 32766), (8, 0.1, '8-20 precipitation', 32766), (9, 0.1, 'Accumulated precipitation', 32766)],
+                           'SSD': [(7, 0.1, 'Sunshine hour', 32766)]}
         self.index = list(set([_.split('SURF_CLI_CHN_MUL_DAY-')[1].split('-')[0] for _ in csv_files]))
         for _ in self.index:
             if _ not in self._valid_index:
@@ -619,15 +619,50 @@ class CMA_ds(object):
                         csv_files.remove(__)
                 print(f'The {str(_)} is not supported!')
 
-        # Get the combined df
-        self.station_inform = pd.DataFrame(columns=['Station_id', 'Lon', 'Lat', 'Alt', 'DOY'])
+        # Get the index month and
+        self.index_month, self.index_station = {}, {}
         for index_ in self.index:
-            self.__dict__[f'{index_}_']
+            df_name_list = ['Station_id', 'Lon', 'Lat', 'Alt', 'DOY']
+            df_name_list.extend([__[2] for __ in self._index_dic[index_]])
+            self.index_df[index_] = pd.DataFrame(columns=df_name_list)
+            header_ = ['Station_id', 'Lon', 'Lat', 'Alt', 'YYYY', 'MM', 'DD']
             for csv_ in csv_files:
                 if index_ in csv_:
-                    df_temp = pd.read_table(_, delim_whitespace=True, header=None)
-                    station_inform = df_temp[[0, 1, 2, 3]].drop_duplicates()
-                    station_inform.columns = ['station_id', 'lon', 'lat', 'alt']
+                    df_temp = pd.read_table(csv_, delim_whitespace=True, header=None)
+                    column_name_all = [_[2] for _ in self._index_dic[index_]]
+                    column_name_list = ['None' for _ in range(len(df_temp.columns))]
+                    for column_ in range(len(df_temp.columns)):
+                        if column_ < len(header_):
+                            column_name_list[column_] = header_[column_]
+                        elif column_ in [_[0] for _ in self._index_dic[index_]]:
+                            pos = [_[0] for _ in self._index_dic[index_]].index(column_)
+                            column_name_list[column_] = self._index_dic[index_][pos][2]
+                        else:
+                            column_name_list[column_] = 'None'
+                    df_temp.columns = column_name_list
+
+                    # Process DOY
+                    doy_list = []
+                    for row in range(df_temp.shape[0]):
+                        doy_list.append(df_temp['YYYY'][row] * 1000 + datetime.date(year=df_temp['YYYY'][row], month=df_temp['MM'][row], day=df_temp['DD'][row]).toordinal() - datetime.date(year=df_temp['YYYY'][row], month=1, day=1).toordinal() + 1)
+
+                    df_temp['DOY'] = doy_list
+
+                    for column_ in df_temp.columns:
+                        if column_ == 'Lon' or column_ == 'Lat' or column_ == 'Alt':
+                            df_temp[column_].astype(np.float32)
+                            df_temp[column_] = df_temp[column_] / 100
+                        elif column_ in column_name_all:
+                            df_temp[column_].astype(np.float32)
+                            pos_ = column_name_all.index(column_)
+                            df_temp[column_] = df_temp[column_].replace(self._index_dic[index_][pos_][3], np.nan)
+                            df_temp[column_] = df_temp[column_] * self._index_dic[index_][pos_][1]
+
+                    self.index_df[index_] = pd.concat([self.index_df[index_], df_temp[self.index_df[index_].columns]], axis=0, ignore_index=True)
+
+        for index_ in self.index:
+            self.__dict__[f'{index_}_']
+
 
         self.date_list = [int(_.split('.txt')[0].split('-')[-1]) if '.txt' in _ else int(_.split('.TXT')[0].split('-')[-1]) for _ in csv_files]
         self.year_range = list(set([int(np.floor(_ / 100)) for _ in self.date_list]))
@@ -1175,6 +1210,6 @@ if __name__ == '__main__':
     # ds_temp = gdal.Open('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')
     # bounds_temp = bf.raster_ds2bounds('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')
     # size = [ds_temp.RasterYSize, ds_temp.RasterXSize]
-    ds_temp = CMA_ds('G:\\A_Landsat_Floodplain_veg\\Data_cma\\10004\\')
+    ds_temp = CMA_ds('G:\\A_Landsat_Floodplain_veg\\Data_cma\\')
     # ds_temp.ds2raster(['TEMP'], ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020.shp', raster_size=size, ds2ras_method='IDW', bounds=bounds_temp)
     # ds_temp.raster2dc(['TEMP'], temporal_division='year')
