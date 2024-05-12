@@ -12,12 +12,9 @@ import shapely.geometry
 from osgeo import ogr
 import time
 from NDsm import NDSparseMatrix
-import json
-import psutil
 import scipy.sparse as sm
 import traceback
 import os
-import pandas as pd
 from tqdm.auto import tqdm
 from osgeo import osr, gdal
 from rasterio import features
@@ -81,17 +78,22 @@ def download_sentinel_files(sentinel_odata_df, account, download_path):
                             if response.status_code == 200:
                                 print('Add to request: ' + sentinel_odata_df['Name'][_])
                                 print('---------------------Start to download-----------------------')
-                                st = time.time()
-                                with open(f"{download_path}{sentinel_odata_df['Name'][_].split('.')[0]}.zip", "wb") as file:
-                                    for chunk in response.iter_content(chunk_size=8192):
-                                        if chunk:
-                                            file.write(chunk)
-                                time_consume = time.time() - st
-                                time_consume_str = str(time_consume / 60)[0: 5]
-                                speed = sentinel_odata_df['ContentLength'][_] / (time_consume * 1024 * 1024)
-                                print(
-                                    f'---------------------End download in {time_consume_str}min, average speed {str(speed)[0:5]}mb/s -----------------------')
-                                break
+
+                                try:
+                                    st = time.time()
+                                    with open(f"{download_path}{sentinel_odata_df['Name'][_].split('.')[0]}.zip", "wb") as file:
+                                        for chunk in response.iter_content(chunk_size=8192):
+                                            if chunk:
+                                                file.write(chunk)
+                                    time_consume = time.time() - st
+                                    time_consume_str = str(time_consume / 60)[0: 5]
+                                    speed = sentinel_odata_df['ContentLength'][_] / (time_consume * 1024 * 1024)
+                                    print(f'---------------------End download in {time_consume_str}min, average speed {str(speed)[0:5]}mb/s -----------------------')
+                                    break
+                                except:
+                                    print('Connection error for ' + sentinel_odata_df['Name'][_])
+                                    print('---------------------Restart to download-----------------------')
+
                             elif response.status_code == 401:
                                 access_token = get_access_token(account[0], account[1])
                             elif response.text == '{"detail":"Product not found in catalogue"}':

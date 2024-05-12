@@ -620,12 +620,33 @@ class CMA_ds(object):
                 print(f'The {str(_)} is not supported!')
 
         # Get the index month and
-        self.index_month, self.index_station = {}, {}
+        self._station_inform_list_ = {'Station': [], 'Lon': [], 'Lat': [], 'Alt': []}
+        header_ = ['Station_id', 'Lon', 'Lat', 'Alt', 'YYYY', 'MM', 'DD']
+        self.index_month_station = {}
+        for index_ in self.index:
+            for csv_ in csv_files:
+                if index_ in csv_:
+                    month = str(csv_.split('-')[-1].split('.')[0])
+                    self.index_month_station[f'{index_}_{month}'] = []
+                    df_temp = pd.read_table(csv_, delim_whitespace=True, header=None)
+                    station_all = df_temp[0]
+                    # column_name_list = ['None' for _ in range(len(df_temp.columns))]
+                    # for column_ in range(len(df_temp.columns)):
+                    #     if column_ < len(header_):
+                    #         column_name_list[column_] = header_[column_]
+                    #     elif column_ in [_[0] for _ in self._index_dic[index_]]:
+                    #         pos = [_[0] for _ in self._index_dic[index_]].index(column_)
+                    #         column_name_list[column_] = self._index_dic[index_][pos][2]
+                    #     else:
+                    #         column_name_list[column_] = 'None'
+                    # df_temp.columns = column_name_list
+                    df_temp
+        # Generate
         for index_ in self.index:
             df_name_list = ['Station_id', 'Lon', 'Lat', 'Alt', 'DOY']
             df_name_list.extend([__[2] for __ in self._index_dic[index_]])
             self.index_df[index_] = pd.DataFrame(columns=df_name_list)
-            header_ = ['Station_id', 'Lon', 'Lat', 'Alt', 'YYYY', 'MM', 'DD']
+
             for csv_ in csv_files:
                 if index_ in csv_:
                     df_temp = pd.read_table(csv_, delim_whitespace=True, header=None)
@@ -662,7 +683,6 @@ class CMA_ds(object):
 
         for index_ in self.index:
             self.__dict__[f'{index_}_']
-
 
         self.date_list = [int(_.split('.txt')[0].split('-')[-1]) if '.txt' in _ else int(_.split('.TXT')[0].split('-')[-1]) for _ in csv_files]
         self.year_range = list(set([int(np.floor(_ / 100)) for _ in self.date_list]))

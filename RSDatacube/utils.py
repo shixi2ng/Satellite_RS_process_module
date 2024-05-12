@@ -164,13 +164,13 @@ def invert_data(data, size_control, offset_value, nodata_value, original_dtype: 
 
     # Convert nodata value to np.nan
     if ~np.isnan(nodata_value):
-        data = data.astype(float)
+        data = data.astype(np.float32)
         data[data == nodata_value] = np.nan
     else:
-        data = data.astype(float)
+        data = data.astype(np.float32)
 
     # Data inversion
-    if offset_value is not None and ~np.isnan(offset_value) and isinstance(offset_value, (float, int)):
+    if offset_value is not None and ~np.isnan(offset_value) and isinstance(offset_value, (np.float32, int)):
         data = data - offset_value
 
     if isinstance(size_control, bool) and size_control:

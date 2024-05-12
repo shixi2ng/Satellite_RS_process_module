@@ -852,7 +852,8 @@ class RS_dcs(object):
         # Generate the datacubes list
         self.dcs = []
         self._dcs_backup_, self._doys_backup_, self._dc_typelist = [], [], []
-        self._index_list = []
+        self._dc_XSize_list, self._dc_YSize_list, self._dc_ZSize_list = [], [], []
+        self._index_list, self._tiles_list = [], []
         self._size_control_factor_list, self.oritif_folder_list = [], []
         self._Zoffset_list, self._Nodata_value_list = [], []
         self._space_optimised = space_optimised
@@ -895,6 +896,8 @@ class RS_dcs(object):
             for args_temp in args:
                 factor_all.extend(list(args_temp._fund_factor))
             factor_all = list(set(factor_all))
+            for factor_temp in factor_all:
+                self.__dict__[f'_{factor_temp}_list'] = []
 
             for args_temp in args:
                 for factor_temp in factor_all:
@@ -986,7 +989,7 @@ class RS_dcs(object):
         if self._withS2dc_:
             s2dc_pos = [i for i, v in enumerate(self._dc_typelist) if v == Sentinel2_dc]
             if len(s2dc_pos) != 1:
-                for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'ROI_tif', 'coordinate_system',
+                for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'ROI_tif', 'coordinate_system',
                                     'sparse_matrix', 'huge_matrix', 'sdc_factor', 'dc_group_list', 'tiles']:
                     if False in [self.__dict__[f'_{factor_temp}_list'][s2dc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos] for pos in s2dc_pos]:
                         raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
@@ -1475,6 +1478,38 @@ class RS_dcs(object):
         else:
             self._DEM_path = None
 
+    def custom_composition(self, index, **kwargs):
+
+        # process inundation detection method
+        self._process_inundation_para(**kwargs)
+
+        # proces args*
+        if index not in self._index_list:
+            raise ValueError(f'The {index} is not imported')
+
+        # if dc_type == 'Sentinel2':
+        #     dc_type = Sentinel2_dc
+        #     doy_list = self.s2dc_doy_list
+        #     output_path = self._s2dc_work_env
+        # elif dc_type == 'Landsat':
+        #     dc_type = Landsat_dc
+        #     doy_list = self.Landsatdc_doy_list
+        #     output_path = self._Landsatdc_work_env
+        # else:
+        #     raise ValueError('Only Sentinel-2 and Landsat dc is supported for inundation detection!')
+
+        dc_num = []
+        for _ in range(len(self._index_list)):
+            if self._index_list[_] == index and self._dc_typelist[_] == dc_type:
+                dc_num.append(_)
+
+        if len(dc_num) > 1:
+            raise ValueError(f'There are more than one {str(dc_type)} dc of {str(dc_type)}')
+        elif len(dc_num) == 0:
+            raise ValueError(f'The {str(dc_type)} dc of {str(dc_type)} has not been imported')
+        else:
+            dc_num = dc_num[0]
+
     def inundation_detection(self, inundation_mapping_method: str, index: str, dc_type, **kwargs):
 
         # Several method to identify the inundation area including:
@@ -1528,7 +1563,9 @@ class RS_dcs(object):
 
                 # Define static thr output
                 static_output = output_path + 'inundation_static_wi_thr_datacube\\'
+                static_inditif_path = static_output + 'Individual_tif\\'
                 bf.create_folder(static_output)
+                bf.create_folder(static_inditif_path)
 
                 if not os.path.exists(static_output + 'metadata.json'):
 
@@ -1549,11 +1586,9 @@ class RS_dcs(object):
                                     inundation_dc.extract_matrix((['all'], ['all'], [_ * range_, (_ + 1) * range_])))
 
                         inundation_dc = None
-                        sz, zoff, nd, thr = self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], \
-                        self._Nodata_value_list[dc_num], self._static_wi_threshold
+                        sz, zoff, nd, thr = self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num], self._static_wi_threshold
                         with concurrent.futures.ProcessPoolExecutor(max_workers=worker) as executor:
-                            res = executor.map(mp_static_wi_detection, inundation_dc_list, repeat(sz), repeat(zoff),
-                                               repeat(nd), repeat(thr))
+                            res = executor.map(mp_static_wi_detection, inundation_dc_list, repeat(sz), repeat(zoff),  repeat(nd), repeat(thr))
 
                         res = list(res)
                         for _ in res:
@@ -1561,13 +1596,21 @@ class RS_dcs(object):
                                 inundation_array.append(_[0][__], name=_[1][__])
 
                     else:
-                        inundation_array = copy.deepcopy(self.dcs[dc_num])
-                        inundation_array = invert_data(inundation_array, self._size_control_factor_list[dc_num],
-                                                       self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
-                        inundation_array = inundation_array >= self._static_wi_threshold
-                        inundation_array = inundation_array + 1
-                        inundation_array[np.isnan(inundation_array)] = 0
-                        inundation_array = inundation_array.astype(np.byte)
+                        inundation_arr_list = []
+                        for doy_ in doy_list:
+                            st = time.time()
+                            mndwi_arr = self.dcs[dc_num][:, :, doy_list.index(doy_)].reshape([self.dcs[dc_num].shape[0], self.dcs[dc_num].shape[1]])
+                            inundation_array = invert_data(mndwi_arr, self._size_control_factor_list[dc_num],
+                                                           self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
+                            inundation_array = inundation_array >= self._static_wi_threshold
+                            inundation_array = inundation_array + 1
+                            inundation_array[np.isnan(inundation_array)] = 0
+                            inundation_array = inundation_array.astype(np.byte)
+                            inundation_arr_list.append(inundation_array)
+                            bf.write_raster(gdal.Open(self.ROI_tif), inundation_array, static_inditif_path, f'Static_{str(doy_)}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                            print(f'Identify the inundation area in {str(doy_)} using {str(time.time()-st)[0:6]}s')
+
+                        inundation_array = np.stack(inundation_arr_list, axis=2)
 
                     inundation_dc = copy.deepcopy(self._dcs_backup_[dc_num])
                     inundation_dc.dc = inundation_array
@@ -1585,8 +1628,6 @@ class RS_dcs(object):
 
                 else:
                     inundation_dc = dc_type(static_output)
-                    self.append(inundation_dc)
-                    self.remove(self._index_list[dc_num])
 
                 oa_output_path = copy.deepcopy(static_output)
 
@@ -1787,16 +1828,18 @@ class RS_dcs(object):
             # Create annual inundation map
             inditif_path = oa_output_path + 'Individual_tif\\'
             annualtif_path = oa_output_path + 'Annual_tif\\'
+            annualshp_path = oa_output_path + 'Annual_shp\\'
             bf.create_folder(annualtif_path)
+            bf.create_folder(annualshp_path)
 
             doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
             year_array = np.unique(doy_array // 1000)
             temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
             for year in year_array:
-                if not os.path.exists(f'{annualtif_path}DT_{str(year)}.TIF') or self._inundation_overwritten_factor:
+                if not os.path.exists(f'{annualtif_path}{inundation_mapping_method}_{str(year)}.TIF') or not os.path.exists(f'{annualshp_path}{inundation_mapping_method}_{str(year)}.shp') or self._inundation_overwritten_factor:
                     annual_vi_list = []
                     for doy_index in range(doy_array.shape[0]):
-                        if doy_array[doy_index] // 1000 == year and 120 <= np.mod(doy_array[doy_index], 1000) <= 300:
+                        if doy_array[doy_index] // 1000 == year and 90 <= np.mod(doy_array[doy_index], 1000) <= 300:
                             if isinstance(inundation_dc.dc, NDSparseMatrix):
                                 arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
                                 annual_vi_list.append(arr_temp.toarray())
@@ -1804,13 +1847,54 @@ class RS_dcs(object):
                                 annual_vi_list.append(inundation_dc.dc[:, :, doy_index])
 
                     if annual_vi_list == []:
-                        annual_inundated_map = np.zeros([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]],
-                                                        dtype=np.byte)
+                        annual_inundated_map = np.zeros([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]], dtype=np.byte)
                     else:
                         annual_inundated_map = np.nanmax(np.stack(annual_vi_list, axis=2), axis=2)
-                        bf.write_raster(temp_ds, annual_inundated_map, annualtif_path,
-                                        f'{inundation_mapping_method}_' + str(year) + '.TIF',
-                                        raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                    bf.write_raster(temp_ds, annual_inundated_map, annualtif_path, f'{inundation_mapping_method}_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                    annual_ds = gdal.Open(annualtif_path + f'{inundation_mapping_method}_' + str(year) + '.TIF')
+
+                    # Create shp driver
+                    drv = ogr.GetDriverByName("ESRI Shapefile")
+                    if os.path.exists(annualshp_path + f'{inundation_mapping_method}_{str(year)}.shp'):
+                        drv.DeleteDataSource(annualshp_path + f'{inundation_mapping_method}_{str(year)}.shp')
+
+                    # polygonize the raster
+                    proj = osr.SpatialReference(wkt=annual_ds.GetProjection())
+                    target = osr.SpatialReference()
+                    target.ImportFromEPSG(int(proj.GetAttrValue('AUTHORITY', 1)))
+
+                    dst_ds = drv.CreateDataSource(f'{annualshp_path}{inundation_mapping_method}_{str(year)}.shp')
+                    dst_layer = dst_ds.CreateLayer(f'{inundation_mapping_method}_{str(year)}', srs=target)
+
+                    fld = ogr.FieldDefn("inundation", ogr.OFTInteger)
+                    dst_layer.CreateField(fld)
+                    dst_field = dst_layer.GetLayerDefn().GetFieldIndex("inundation")
+                    gdal.Polygonize(annual_ds.GetRasterBand(1), None, dst_layer, dst_field, [])
+
+                    layer = dst_ds.GetLayer()
+                    new_field = ogr.FieldDefn("area", ogr.OFTReal)
+                    new_field.SetWidth(32)
+                    layer.CreateField(new_field)
+
+                    # Fix the sole pixel
+                    for feature in layer:
+                        geom = feature.GetGeometryRef()
+                        area = geom.GetArea()
+                        if area < 5000 and feature.GetField('inundation') == 2:
+                            feature.SetField("inundation", 1)
+
+                        feature.SetField("area", area)
+                        layer.SetFeature(feature)
+
+                    layer.ResetReading()
+                    for feature in layer:
+                        if feature['inundation'] == 1:
+                            if layer.DeleteFeature(feature.GetFID()) != 0:
+                                print(f"Error: Failed to delete feature with FID {feature.GetFID()}.")
+                            else:
+                                print(f"Feature with FID {feature.GetFID()} deleted successfully.")
+
+                    del dst_ds
 
             # Create inundation frequency map
             inunfactor_path = oa_output_path + 'inun_factor\\'
@@ -1829,7 +1913,7 @@ class RS_dcs(object):
                     if isinstance(inundation_dc.dc, NDSparseMatrix):
                         arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
                     else:
-                        arr_temp = inundation_dc.dc[:, :, doy_array.index(doy_index)]
+                        arr_temp = inundation_dc.dc[:, :, doy_index].reshape([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]])
 
                     inun_arr = inun_arr + (arr_temp == 2).astype(np.int16)
                     all_arr = all_arr + (arr_temp >= 1).astype(np.int16)
@@ -1839,43 +1923,44 @@ class RS_dcs(object):
                                 f'{inundation_mapping_method}_inundation_frequency.TIF',
                                 raster_datatype=gdal.GDT_Float32, nodatavalue=0)
 
-            if not os.path.exists(
-                    f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_pretgd.TIF') or not os.path.exists(
-                    f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_posttgd.TIF'):
-                doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
-                temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
-                roi_temp = np.load(self.ROI_array)
-                inun_arr_pre, all_arr_pre = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(
-                    np.float32)
-                inun_arr_post, all_arr_post = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(
-                    roi_temp).astype(np.float32)
-                inun_arr_pre[roi_temp == -32768] = np.nan
-                all_arr_pre[roi_temp == -32768] = np.nan
-                inun_arr_post[roi_temp == -32768] = np.nan
-                all_arr_post[roi_temp == -32768] = np.nan
+            if 'YZR' in self.ROI_name:
+                if not os.path.exists(
+                        f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_pretgd.TIF') or not os.path.exists(
+                        f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_posttgd.TIF'):
+                    doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
+                    temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
+                    roi_temp = np.load(self.ROI_array)
+                    inun_arr_pre, all_arr_pre = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(
+                        np.float32)
+                    inun_arr_post, all_arr_post = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(
+                        roi_temp).astype(np.float32)
+                    inun_arr_pre[roi_temp == -32768] = np.nan
+                    all_arr_pre[roi_temp == -32768] = np.nan
+                    inun_arr_post[roi_temp == -32768] = np.nan
+                    all_arr_post[roi_temp == -32768] = np.nan
 
-                for doy_index in range(doy_array.shape[0]):
-                    if isinstance(inundation_dc.dc, NDSparseMatrix):
-                        arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
-                    else:
-                        arr_temp = inundation_dc.dc[:, :, doy_array.index(doy_index)]
+                    for doy_index in range(doy_array.shape[0]):
+                        if isinstance(inundation_dc.dc, NDSparseMatrix):
+                            arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
+                        else:
+                            arr_temp = inundation_dc.dc[:, :, doy_array.index(doy_index)]
 
-                    if 1987001 <= doy_array[doy_index] < 2004000:
-                        inun_arr_pre = inun_arr_pre + (arr_temp == 2).astype(np.int16)
-                        all_arr_pre = all_arr_pre + (arr_temp >= 1).astype(np.int16)
+                        if 1987001 <= doy_array[doy_index] < 2004000:
+                            inun_arr_pre = inun_arr_pre + (arr_temp == 2).astype(np.int16)
+                            all_arr_pre = all_arr_pre + (arr_temp >= 1).astype(np.int16)
 
-                    if 2004001 <= doy_array[doy_index] < 2021001:
-                        inun_arr_post = inun_arr_post + (arr_temp == 2).astype(np.int16)
-                        all_arr_post = all_arr_post + (arr_temp >= 1).astype(np.int16)
+                        if 2004001 <= doy_array[doy_index] < 2021001:
+                            inun_arr_post = inun_arr_post + (arr_temp == 2).astype(np.int16)
+                            all_arr_post = all_arr_post + (arr_temp >= 1).astype(np.int16)
 
-                inundation_freq_pretgd = inun_arr_pre.astype(np.float32) / all_arr_pre.astype(np.float32)
-                inundation_freq_posttgd = inun_arr_post.astype(np.float32) / all_arr_post.astype(np.float32)
-                bf.write_raster(temp_ds, inundation_freq_pretgd, inunfactor_path,
-                                f'{inundation_mapping_method}_inundation_frequency_pretgd.TIF',
-                                raster_datatype=gdal.GDT_Float32, nodatavalue=0)
-                bf.write_raster(temp_ds, inundation_freq_posttgd, inunfactor_path,
-                                f'{inundation_mapping_method}_inundation_frequency_posttgd.TIF',
-                                raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                    inundation_freq_pretgd = inun_arr_pre.astype(np.float32) / all_arr_pre.astype(np.float32)
+                    inundation_freq_posttgd = inun_arr_post.astype(np.float32) / all_arr_post.astype(np.float32)
+                    bf.write_raster(temp_ds, inundation_freq_pretgd, inunfactor_path,
+                                    f'{inundation_mapping_method}_inundation_frequency_pretgd.TIF',
+                                    raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                    bf.write_raster(temp_ds, inundation_freq_posttgd, inunfactor_path,
+                                    f'{inundation_mapping_method}_inundation_frequency_posttgd.TIF',
+                                    raster_datatype=gdal.GDT_Float32, nodatavalue=0)
 
             if not os.path.exists(
                     f'{inunfactor_path}{inundation_mapping_method}_inundation_recurrence.TIF') or self._inundation_overwritten_factor:
