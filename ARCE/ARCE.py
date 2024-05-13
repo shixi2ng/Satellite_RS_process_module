@@ -33,7 +33,7 @@ class GEE_ds(object):
         self._support_satellite = ['LC08', 'LC09', 'LE05', 'LE07']
         self._built_in_index = built_in_index()
 
-    def download_index_GEE(self, satellite, date_range, index, ROI, outputpath):
+    def download_index_GEE(self, satellite, date_range, index, ROI, outputpath, export_QA_file=True):
 
         # Initialize the Earth Engine module
         ee.Initialize()
@@ -123,6 +123,20 @@ class GEE_ds(object):
             with open(path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=4096):
                     f.write(chunk)
+
+            if export_QA_file:
+                url = image.select('QA_PIXEL').getDownloadURL({
+                    'scale': 30,
+                    'region': roi,
+                    'crs': 'EPSG:4326',
+                    'fileFormat': 'GeoTIFF'
+                })
+                print(f"Downloading {file_name}...")
+                st = time.time()
+                response = requests.get(url, stream=True)
+                with open(path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=4096):
+                        f.write(chunk)
             print(f'Finish download {file_name} in {str(time.time() - st)[0:5]} s!')
 
         # Iterate through each image in the collection
@@ -148,6 +162,9 @@ class River_centreline(object):
         pass
 
     def _extract_centreline_thr_(self):
+        pass
+
+    def _generate_centreline_thr_(self):
         pass
 
 
