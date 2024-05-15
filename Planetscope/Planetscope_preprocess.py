@@ -138,10 +138,6 @@ def generate_fake_natural():
 
 
 if __name__ == "__main__":
-    roi = 'G:\\A_HH_upper\\Planetscope_upper\\HR_boundary\\hh_upper_jimai.shp'
-    tiffile = bf.file_filter('G:\\A_HH_upper\\Sentinel-2-HHupper\\Sentinel2_L2A_Output\\Sentinel2_HH_upper_index\\MNDWI_seq\\', ['TIF'], exclude_word_list=['ovr', 'xml'])
-    for _ in tiffile:
-        gdal.Warp('G:\\A_HH_upper\\Sentinel-2-HHupper\\Sentinel2_L2A_Output\\Sentinel2_HH_upper_index\\MNDWI_seq\\jimai\\' + _.split('\\')[-1], _,  cutlineDSName=roi, cropToCutline=True, xRes=3, yRes=3, outputType=gdal.GDT_Int32)
 
     pstiffile = bf.file_filter('G:\\A_HH_upper\\Planetscope_upper\\Planetscope_3m_2017_2023_compli_v2\\', ['TIF'], exclude_word_list=['ovr', 'xml'])
     for _ in pstiffile:
