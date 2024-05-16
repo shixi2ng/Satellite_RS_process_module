@@ -1,6 +1,5 @@
 import copy
 import traceback
-
 import ee
 import os
 import requests
@@ -14,10 +13,13 @@ import geopandas as gp
 from osgeo import gdal
 from scipy.signal import convolve2d
 import cv2
+from heapq import heappop, heappush
 from shapely.geometry import LineString
 import rasterio
 import delineate
 import singularity_index
+import sys
+
 
 #######################################################################################################################
 # For how to activate the GEE python-api of your personal account, please follow the guide show in
@@ -241,108 +243,248 @@ class built_in_index(object):
                 self.index_dic[i] = [var, func]
 
 
-def line_connection(width_arr, nodata_value):
+def find_mainstream(centreline_arr, width_arr):
+
+    # Define all the centrelines
+    contours, _ = cv2.findContours(centreline_arr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    linestrings = [contour.reshape(-1, 2) for contour in contours]
+
+    # Sort linestrings from longest to shortest
+    linestrings_sorted = []
+    linwidthmax = max([len(_) for _ in linestrings])
+    while len(linestrings_sorted) != len(linestrings):
+        pass
+
+
+def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
 
     # Check if the width array meet the requirement
     if np.sum(width_arr[np.logical_and(width_arr < 0, width_arr != nodata_value)]) > 1:
-        raise ('The width arr should not have negative value')
+        raise Exception ('The width arr should not have negative value!')
+    # Check if three arrays are consistent or nor
+    if centreline_arr.shape[0] != width_arr.shape[0] or centreline_arr.shape[1] != width_arr.shape[1] or psi_arr.shape[0] != width_arr.shape[0] or psi_arr.shape[1] != width_arr.shape[1]:
+        raise Exception ('The input arr is not consistent in size!')
+
+    psi_arr = np.max(psi) - psi_arr
+    centreline_arr = centreline_arr.astype(np.uint8)
     width_arr_connected = copy.deepcopy(width_arr)
+    centerline_arr_connected = copy.deepcopy(centreline_arr)
+    width_arr_connected[centerline_arr_connected == 0] = 0
 
     # Find all lines
-    arr = width_arr != nodata_value
-    contours, _ = cv2.findContours(arr.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    kernel = np.array([[1,1,1], [1,0,1], [1,1,1]])
+    kernely = np.array([[1,1,1], [0,0,0], [-1,-1,-1]])
+    kernelx = np.array([[1,0,-1], [1,0,-1], [1,0,-1]])
+
+    node_sum = convolve2d(centreline_arr, kernel, mode='same', boundary='fill', fillvalue=0)
+    node_x = convolve2d(centreline_arr, kernelx, mode='same', boundary='fill', fillvalue=0)
+    node_y = convolve2d(centreline_arr, kernely, mode='same', boundary='fill', fillvalue=0)
+    node_x_y = np.abs(node_x) + np.abs(node_y)
+    node_arr = np.zeros_like(centreline_arr)
+    node_arr[np.logical_or(node_sum==1, np.logical_and(node_sum==2, node_x_y == 3))] = 1
+
+    contours, _ = cv2.findContours(centreline_arr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # Convert contours to linestrings
-    linestrings = [contour.reshape(-1, 2) for contour in contours if len(contour) != 1]
+    linestrings = [contour.reshape(-1, 2) for contour in contours]
 
-    # Sort linestrings from shortest to longest
-    linestrings_sorted = []
-    sta_len = max([len(_) for _ in linestrings])
-    while len(linestrings_sorted) != len(linestrings):
-        for _ in linestrings:
-            if len(_) == sta_len:
-                linestrings_sorted.append(_)
-        sta_len -= 1
+    # Sort linestrings from widest to thinnest
+    width_average_list = []
+    for line_ in linestrings:
+        width_all = 0
+        for pix_ in line_:
+            width_all += width_arr[pix_[1], pix_[0]]
+        width_average_list.append(width_all / len(line_))
+
+    width_average_list_sort = np.sort(np.array(width_average_list))[::-1].tolist()
+    linestrings_sorted = [linestrings[width_average_list.index(_)] for _ in width_average_list_sort]
 
     # Generate the buffer
     try:
         linepos = 1
-        line_all = np.zeros_like(arr, dtype=np.int32)
-        buffer_all = np.zeros_like(arr, dtype=np.int32)
+        line_all = np.zeros_like(centreline_arr, dtype=np.int32)
+        buffer_all = np.zeros_like(centreline_arr, dtype=np.int32)
         for linestring in linestrings_sorted:
-            buffer_temp = np.zeros_like(arr, dtype=np.int32)
-            for point_ in linestring:
-                point_ = list(np.flip(point_))
-                line_all[point_[0], point_[1]] = linepos
-                rwidth = int(np.ceil(width_arr[point_[0], point_[1]]))
-                dis_arr = distance_matrix(rwidth)
-                dis_arr = (dis_arr < width_arr[point_[0], point_[1]]).astype(np.int32)
+            if len(linestring) == 1:
+                width_arr_connected[linestring[0][1], linestring[0][0]] = 0
+            else:
+                buffer_temp = np.zeros_like(centreline_arr, dtype=np.int32)
+                for point_ in linestring:
+                    point_ = list(np.flip(point_))
+                    line_all[point_[0], point_[1]] = linepos
+                    rwidth = int(np.ceil(width_arr[point_[0], point_[1]]))
+                    dis_arr = distance_matrix(rwidth)
+                    dis_arr = (dis_arr < width_arr[point_[0], point_[1]]).astype(np.int32)
 
-                if point_[0] - rwidth < 0:
-                    buff_xstart = 0
-                    dis_xstart = int(rwidth - point_[0])
+                    if point_[0] - rwidth < 0:
+                        buff_xstart = 0
+                        dis_xstart = int(rwidth - point_[0])
+                    else:
+                        buff_xstart = int(point_[0] - rwidth)
+                        dis_xstart = 0
+
+                    if point_[1] - rwidth < 0:
+                        buff_ystart = 0
+                        dis_ystart = int(rwidth - point_[1])
+                    else:
+                        buff_ystart = int(point_[1] - rwidth)
+                        dis_ystart = 0
+
+                    if point_[0] + rwidth > buffer_temp.shape[0] - 1:
+                        buff_xend = buffer_temp.shape[0]
+                        dis_xend = int(rwidth + 1 + buffer_temp.shape[0] - 1 - point_[0])
+                    else:
+                        buff_xend = int(point_[0] + rwidth) + 1
+                        dis_xend = 2 * int(rwidth) + 1
+
+                    if point_[1] + rwidth > buffer_temp.shape[1] - 1:
+                        buff_yend = buffer_temp.shape[1]
+                        dis_yend = int(rwidth + 1 + buffer_temp.shape[1] - 1 - point_[1])
+                    else:
+                        buff_yend = int(point_[1] + rwidth) + 1
+                        dis_yend = 2 * int(rwidth) + 1
+
+                    buffer_temp[buff_xstart: buff_xend, buff_ystart: buff_yend] = buffer_temp[buff_xstart: buff_xend, buff_ystart: buff_yend] + dis_arr[dis_xstart: dis_xend, dis_ystart: dis_yend]
+
+                buffer_temp[buffer_temp > 1] = 1
+                buffer_temp[buffer_temp == 1] = linepos
+                if np.sum(np.logical_and(buffer_temp != 0, buffer_all != 0)) != 0:
+                    cut_area = np.sum(buffer_temp != 0)
+                    union_area = np.sum(np.logical_and(buffer_temp != 0, buffer_all != 0))
+                    ratio = union_area / cut_area
+                    if ratio < 0.5:
+                        unique_r = np.sort(np.unique(buffer_all[np.logical_and(buffer_temp != 0, buffer_all != 0)]))
+                        point_list_all = []
+                        width_ave_all = []
+                        for r_ in unique_r:
+                            pos = np.argwhere(np.logical_and(buffer_temp == linepos, buffer_all == r_))
+                            pos = [list(_) for _ in pos]
+                            # Connected point
+                            connected_point = []
+
+                            # Isolate the intersect area
+                            intersect_area = []
+                            visited_pos = []
+                            while len(visited_pos) != len(pos):
+                                area_, all_adjenct = [], False
+                                while not all_adjenct:
+                                    pos_left = [_ for _ in pos if _ not in visited_pos]
+                                    if len(area_) == 0:
+                                        area_.append(pos_left[0])
+                                    else:
+                                        adjenct_status = [adjent(_, area_) for _ in pos_left]
+                                        area_append = [pos_left[_] for _ in range(len(adjenct_status)) if adjenct_status[_]]
+
+                                        if len(area_append) == 0:
+                                            all_adjenct = True
+                                        else:
+                                            area_.extend(area_append)
+
+                                intersect_area.append(area_)
+                                visited_pos.extend(area_)
+
+                            for pos_area in intersect_area:
+                                pos_area_ = np.round(np.nanmean(pos_area, axis=0)).astype(np.uint32)
+                                curr_pix = np.argwhere(np.logical_and(line_all == linepos, node_arr == 1))
+                                connect_pix = np.argwhere(np.logical_and(line_all == r_, node_arr == 1))
+
+                                dis2curr = [np.sqrt((_[0] - pos_area_[0]) ** 2 + (_[1] - pos_area_[1]) ** 2) for _ in curr_pix]
+                                dis2connect = [np.sqrt((_[0] - pos_area_[0]) ** 2 + (_[1] - pos_area_[1]) ** 2) for _ in connect_pix]
+
+                                if min(dis2curr) < min(dis2connect):
+                                    start_node = curr_pix[dis2curr.index(min(dis2curr))]
+                                    connect_line = np.argwhere(line_all == r_)
+                                else:
+                                    start_node = connect_pix[dis2connect.index(min(dis2connect))]
+                                    connect_line = np.argwhere(line_all == linepos)
+
+                                path = find_path(start_node, connect_line, psi_arr)
+                                width_temp = [width_arr[path_[0], path_[1]] for path_ in path]
+                                nms_min = np.nanmean(np.array(width_temp[width_temp != 0]))
+                                for path_ in path:
+                                    centerline_arr_connected[path_[0], path_[1]] = 1
+                                    width_arr_connected[path_[0], path_[1]] = nms_min if width_arr_connected[path_[0], path_[1]] != 0 else 0
+
+                                connected_point.extend(path)
+
+                                # dis2connect = [np.sqrt((_[0] - pos[0]) ** 2 + (_[1] - pos[1]) ** 2) for _ in connect_pix]
+                                # nearest_connect_pix = connect_pix[dis2connect.index(min(dis2connect)), :]
+                                #
+                                # point_list = bresenham_line(nearest_curr_pix, nearest_connect_pix)
+                                # point_list_all.append(point_list)
+                                # width_ave_all.append((width_arr[nearest_connect_pix[0], nearest_connect_pix[1]] + width_arr[nearest_curr_pix[0], nearest_curr_pix[1]]) / 2)
+
+                        for r in unique_r:
+                            # for point_ in point_list_all[index_]:
+                            #     line_all[point_[0], point_[1]] = linepos
+                            #     if width_arr_connected[point_[0], point_[1]] == nodata_value:
+                            #         width_arr_connected[point_[0], point_[1]] = width_ave_all[index_]
+                            # buffer_all[buffer_all == unique_r[index_]] = linepos
+                            # line_all[line_all == unique_r[index_]] = linepos
+                            buffer_all[buffer_all == r] = linepos
+                            line_all[line_all == r] = linepos
+                        buffer_all[buffer_temp == linepos] = linepos
+                    else:
+                        for point_ in linestring:
+                            width_arr_connected[point_[1], point_[0]] = 0
+                            centerline_arr_connected[point_[1], point_[0]] = 0
                 else:
-                    buff_xstart = int(point_[0] - rwidth)
-                    dis_xstart = 0
-
-                if point_[1] - rwidth < 0:
-                    buff_ystart = 0
-                    dis_ystart = int(rwidth - point_[1])
-                else:
-                    buff_ystart = int(point_[1] - rwidth)
-                    dis_ystart = 0
-
-                if point_[0] + rwidth > buffer_temp.shape[0] - 1:
-                    buff_xend = buffer_temp.shape[0]
-                    dis_xend = int(rwidth + 1 + buffer_temp.shape[0] - 1 - point_[0])
-                else:
-                    buff_xend = int(point_[0] + rwidth) + 1
-                    dis_xend = 2 * int(rwidth) + 1
-
-                if point_[1] + rwidth > buffer_temp.shape[1] - 1:
-                    buff_yend = buffer_temp.shape[1]
-                    dis_yend = int(rwidth + 1 + buffer_temp.shape[1] - 1 - point_[1])
-                else:
-                    buff_yend = int(point_[1] + rwidth) + 1
-                    dis_yend = 2 * int(rwidth) + 1
-
-                buffer_temp[buff_xstart: buff_xend, buff_ystart: buff_yend] = buffer_temp[buff_xstart: buff_xend, buff_ystart: buff_yend] + dis_arr[dis_xstart: dis_xend, dis_ystart: dis_yend]
-
-            buffer_temp[buffer_temp > 1] = 1
-            buffer_temp[buffer_temp == 1] = linepos
-            if np.sum(np.logical_and(buffer_temp != 0, buffer_all != 0)) != 0:
-                unique_r = np.unique(buffer_all[np.logical_and(buffer_temp != 0, buffer_all != 0)])
-                point_list_all = []
-                width_ave_all = []
-                for r_ in unique_r:
-                    pos = np.argwhere(np.logical_and(buffer_temp == linepos, buffer_all == r_))
-                    pos = np.round(np.mean(pos, axis=0)).astype(np.int32)
-                    connect_pix = np.argwhere(line_all == r_)
-                    dis2connect = [np.sqrt((_[0] - pos[0]) ** 2 + (_[1] - pos[1]) ** 2) for _ in connect_pix]
-                    nearest_connect_pix = connect_pix[dis2connect.index(min(dis2connect)), :]
-                    curr_pix = np.argwhere(line_all == linepos)
-                    dis2curr = [np.sqrt((_[0] - pos[0]) ** 2 + (_[1] - pos[1]) ** 2) for _ in curr_pix]
-                    nearest_curr_pix = curr_pix[dis2curr.index(min(dis2curr)), :]
-                    point_list = bresenham_line(nearest_curr_pix, nearest_connect_pix)
-                    point_list_all.append(point_list)
-                    width_ave_all.append((width_arr[nearest_connect_pix[0], nearest_connect_pix[1]] + width_arr[nearest_curr_pix[0], nearest_curr_pix[1]]) / 2)
-
-                for index_ in range(unique_r.shape[0]):
-                    for point_ in point_list_all[index_]:
-                        line_all[point_[0], point_[1]] = linepos
-                        if width_arr_connected[point_[0], point_[1]] == nodata_value:
-                            width_arr_connected[point_[0], point_[1]] = width_ave_all[index_]
-                    buffer_all[buffer_all == unique_r[index_]] = linepos
-                    line_all[line_all == unique_r[index_]] = linepos
-
-            buffer_all[buffer_temp == linepos] = linepos
+                    buffer_all[buffer_temp == linepos] = linepos
             linepos += 1
     except:
         print(traceback.format_exc())
-        a = 1
 
-    cv2.imwrite('G:\A_HH_upper\Bank_centreline\\new_width.tif',width_arr_connected)
-    a = 1
+    return centerline_arr_connected, width_arr_connected
+
+
+def find_path(A, B, values_matrix):
+    # A 是起点坐标 (x, y)
+    # B 是线段上的点的坐标集合，一个N*2的数组
+    # values_matrix 是有值的矩阵，其中 values_matrix[x][y] 表示点 (x, y) 的值
+
+    def is_valid(x, y):
+        # 检查点 (x, y) 是否在矩阵范围内
+        return 0 <= x < values_matrix.shape[0] and 0 <= y < values_matrix.shape[1]
+
+    # 使用优先队列存储节点，优先级为路径的总值
+    queue = []
+    initial_value = values_matrix[A[0], A[1]]
+    initial_path = [(A[0], A[1])]  # 初始化路径列表
+    heappush(queue, (initial_value, 0, A[0], A[1], initial_path))  # (总值, 距离, x, y, 路径)
+    visited = set()
+
+    while queue:
+        total_value, dist, x, y, path = heappop(queue)
+        if (x, y) in visited:
+            continue
+        visited.add((x, y))
+
+        # 检查是否到达线段B的任一点
+        if any((x == bx and y == by) for bx, by in B):
+            return path  # 返回路径上经过的点的坐标
+
+        # 探索四个方向
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, 1), (1, -1), (-1, -1), (1, 1)]:
+            nx, ny = x + dx, y + dy
+            if is_valid(nx, ny):
+                new_value = values_matrix[nx, ny]
+                new_total_value = total_value + new_value
+                new_path = path + [(nx, ny)]  # 将新坐标添加到路径列表
+                heappush(queue, (new_total_value, dist + 1, nx, ny, new_path))
+
+    return None
+
+
+def adjent(pix, list_pix):
+    pix = list(pix)
+    list_pix = [list(_) for _ in list_pix]
+    if pix in list_pix:
+        return False
+
+    for pix_ in list_pix:
+        if abs(pix_[0] - pix[0]) <= 1 and abs(pix_[1] - pix[1]) <= 1:
+            return True
+    return False
 
 
 def convert_index_func(expr: str):
@@ -353,38 +495,6 @@ def convert_index_func(expr: str):
         return dep_list, num_f
     except:
         raise ValueError(f'The {expr} is not valid!')
-
-
-def bresenham_line(point1, point2):
-    x2, y2 = point2[0], point2[1]
-    x1, y1 = point1[0], point1[1]
-    # Bresenham method to create line of two point in arr
-    points = []
-    dx = abs(x2 - x1)
-    dy = abs(y2 - y1)
-    x, y = x1, y1
-    sx = -1 if x1 > x2 else 1
-    sy = -1 if y1 > y2 else 1
-    if dx > dy:
-        err = dx / 2.0
-        while x != x2:
-            points.append((x, y))
-            err -= dy
-            if err < 0:
-                y += sy
-                err += dx
-            x += sx
-    else:
-        err = dy / 2.0
-        while y != y2:
-            points.append((x, y))
-            err -= dx
-            if err < 0:
-                x += sx
-                err += dy
-            y += sy
-    points.append((x, y))
-    return points
 
 
 def distance_matrix(n):
@@ -444,10 +554,10 @@ def write_raster(ori_ds: gdal.Dataset, new_array: np.ndarray, file_path_f: str, 
 
 
 if __name__ == '__main__':
-    gee_api = GEE_ds()
-    gee_api.download_index_GEE('LT05', (20060101, 20211231), 'MNDWI',
-                               [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.73681471587109],
-                               'G:\\A_HH_upper\\GEE\\')
+    # gee_api = GEE_ds()
+    # gee_api.download_index_GEE('LT05', (20060101, 20211231), 'MNDWI',
+    #                            [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.73681471587109],
+    #                            'G:\\A_HH_upper\\GEE\\')
 
     mndwi_file = 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\LC08_133037_20131009.MNDWI.tif'
     ds_ = gdal.Open(mndwi_file)
@@ -463,16 +573,26 @@ if __name__ == '__main__':
 
     # Extract channel centerlines
     nms = delineate.extractCenterlines(orient, psi)
-    centerlines = delineate.thresholdCenterlines(nms)
+    # write_raster(ds_, nms, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'nms.tif')
+    #
+    centerlines, centreline_can, strong_centreline, nms2 = delineate.thresholdCenterlines(nms)
+    # # write_raster(ds_, centerlines, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'centreline.tif')
+    # # write_raster(ds_, centreline_can, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'centreline_can.tif')
+    # # write_raster(ds_, strong_centreline, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'centreline_strong.tif')
+    # write_raster(ds_, nms2, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'nms2.tif')
 
+    # write_raster(ds_, psi, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'psi.tif')
     file = 'G:\A_HH_upper\Bank_centreline\\nms_2013.tif'
     ds_ = gdal.Open(file)
     array = ds_.GetRasterBand(1).ReadAsArray()
     trans = ds_.GetGeoTransform()
     array = array / 30
-    line_connection(array, 0,)
+    centre_new, width_new = line_connection(centerlines, array, psi, nodata_value=0)
+    write_raster(ds_, centre_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'new_centereline_v3.tif')
+    write_raster(ds_, width_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'new_width_v3.tif')
+
     gee_api = GEE_ds()
-    gee_api.download_index_GEE('LC08', (20060101, 20211231), 'MNDWI', [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.73681471587109], 'G:\\A_HH_upper\\GEE\\')
+    gee_api.download_index_GEE('LC08', (20060101, 20211231), 'MNDWI', [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.13681471587109], 'G:\\A_HH_upper\\GEE\\')
     pass
 
 

@@ -60,11 +60,11 @@ def thresholdCenterlines(nms, tLow=0.012, tHigh=0.12, bimodal=True):
     centerlines -- a binary matrix that indicates centerline locations
     """
 
-    fig2, ax1 = plt.subplots(figsize=(6, 6), constrained_layout=True)
-    nms
-    nms[nms==0] = np.nan
-    ax1.hist(nms.flatten())
-    plt.show()
+    # fig2, ax1 = plt.subplots(figsize=(6, 6), constrained_layout=True)
+    # nms_fla = nms.flatten()
+    # nms_fla = nms_fla[nms_fla != 0]
+    # ax1.hist(nms)
+    # plt.show()
 
     if bimodal:
         #Otsu's algorithm
@@ -82,4 +82,5 @@ def thresholdCenterlines(nms, tLow=0.012, tHigh=0.12, bimodal=True):
     centerlines = np.hstack((0, sumstrong > 0)).astype('bool')
     centerlines = centerlines[cclabels]
 
-    return centerlines
+    # plt.imshow(centerlines)
+    return centerlines, centerlineCandidate, strongCenterline, nms
