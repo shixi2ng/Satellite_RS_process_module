@@ -121,35 +121,38 @@ class GEE_ds(object):
 
         # Function to handle the export of each image as a zip
         def export_image(image, zip_folder, file_name):
-            path = os.path.join(zip_folder, f"{file_name}.zip")
-            url = image.select(index).getDownloadURL({
-                'scale': 30,
-                'region': roi,
-                'crs': 'EPSG:4326',
-                'fileFormat': 'GeoTIFF'
-            })
-            print(f"Downloading {file_name}...")
-            st = time.time()
-            response = requests.get(url, stream=True)
-            with open(path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=4096):
-                    f.write(chunk)
-
-            if export_QA_file:
-                path = os.path.join(zip_folder, f"{file_name}_QA.zip")
-                url = image.select('QA_PIXEL').getDownloadURL({
+            try:
+                path = os.path.join(zip_folder, f"{file_name}.zip")
+                url = image.select(index).getDownloadURL({
                     'scale': 30,
                     'region': roi,
                     'crs': 'EPSG:4326',
                     'fileFormat': 'GeoTIFF'
                 })
-                print(f"Downloading {file_name}_QA...")
+                print(f"Downloading {file_name}...")
                 st = time.time()
                 response = requests.get(url, stream=True)
                 with open(path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=4096):
                         f.write(chunk)
-            print(f'Finish download {file_name} in {str(time.time() - st)[0:5]} s!')
+
+                if export_QA_file:
+                    path = os.path.join(zip_folder, f"{file_name}_QA.zip")
+                    url = image.select('QA_PIXEL').getDownloadURL({
+                        'scale': 30,
+                        'region': roi,
+                        'crs': 'EPSG:4326',
+                        'fileFormat': 'GeoTIFF'
+                    })
+                    print(f"Downloading {file_name}_QA...")
+                    st = time.time()
+                    response = requests.get(url, stream=True)
+                    with open(path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=4096):
+                            f.write(chunk)
+                print(f'Finish download {file_name} in {str(time.time() - st)[0:5]} s!')
+            except Exception as e:
+                print(f"Failed to download image for {file_name}: {str(e)}")
 
         # Iterate through each image in the collection
         image_list = index_images.toList(index_images.size())
@@ -159,7 +162,9 @@ class GEE_ds(object):
 
         for i in range(image_list.size().getInfo()):
             image = ee.Image(image_list.get(i))
-            date = image.date().format('YYYYMMdd').getInfo()
+            info = image.getInfo()
+            date = info['properties']['system:time_start'] / 1000
+            date = datetime.datetime.fromtimestamp(date, tz=datetime.timezone.utc).strftime('%Y%m%d')
             export_image(image, zip_folder, f"{index}_{date}")
             with zipfile.ZipFile(os.path.join(zip_folder, f"{index}_{date}.zip"), 'r') as zip_ref:
                 zip_ref.extractall(f'{project_folder}{index}\\')
@@ -551,6 +556,30 @@ def write_raster(ori_ds: gdal.Dataset, new_array: np.ndarray, file_path_f: str, 
     outband.FlushCache()
     outband = None
     outds = None
+
+
+def CLoudFreeComposite(index_images):
+
+    reference = gdal.Open(index_images[0])
+    geo_transform = reference.GetGeoTransform()
+    projection = reference.GetProjection()
+    x_size, y_size = reference.RasterXSize, reference.RasterYSize
+
+    max_composite = np.zeros((y_size, x_size), dtype=np.float32)
+
+    for image_file in index_images:
+        ds = gdal.Open(image_file)
+        band_data = ds.GetRasterBand(1).ReadAsArray()
+        max_composite = np.maximum(max_composite, band_data)
+
+    driver = gdal.GetDriverByName('GTiff')
+    output = driver.Create('cloud_free_composite.TIF', x_size, y_size, 1, gdal.GDT_Float32)
+    output.SetGeoTransform(geo_transform)
+    output.SetProjection(projection)
+
+    output_band = output.GetRasterBand(1)
+    output_band.WriteArray(max_composite)
+    output.FlushCache()
 
 
 if __name__ == '__main__':

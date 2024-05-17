@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from Aborted_codes import Landsat_main_v1
 import os
-import gdal
+from osgeo import gdal
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import train_test_split
 import torch
