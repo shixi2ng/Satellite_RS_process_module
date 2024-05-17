@@ -1,6 +1,6 @@
 from Landsat_toolbox.Landsat_main_v2 import *
 from RSDatacube.RSdc import *
-from River_GIS.River_centreline import *
+from River_GIS.River_GIS import *
 
 
 if __name__ == '__main__':

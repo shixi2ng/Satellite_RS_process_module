@@ -1,7 +1,9 @@
 # coding=utf-8
 import copy
 import traceback
-
+import numpy as np
+import pandas as pd
+from scipy.interpolate import interp1d
 from basic_function import Path
 import concurrent.futures
 from itertools import repeat
@@ -10,6 +12,7 @@ from Landsat_toolbox.Landsat_main_v2 import Landsat_dc
 from scipy import sparse as sm
 from Sentinel2_toolbox.utils import *
 from Sentinel2_toolbox.Sentinel_main_V2 import Sentinel2_dc, Sentinel2_ds
+from River_GIS.River_GIS import Inunfac_dc
 from tqdm import tqdm as tq
 from .utils import *
 from shapely import wkt
@@ -18,11 +21,17 @@ from shapely import wkt
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
     return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
 
+
+def system_recovery_function(t, ymax, yo, b):
+    return ymax - (ymax - yo) * np.exp(- b * t)
+
+
 def linear_f(x, a, b):
     return a * (x + 1985) + b
 
+
 def two_term_fourier(x, a0, a1, b1, a2, b2, w):
-    return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x)+b2 * np.sin(2 * w * x)
+    return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x) + b2 * np.sin(2 * w * x)
 
 
 class Denv_dc(object):
@@ -126,12 +135,12 @@ class Denv_dc(object):
 
         # Compete doy list
         if self.timescale == 'year':
-            date_start = datetime.date(year=self.timerange, month=1, day=1).toordinal()
-            date_end = datetime.date(year=self.timerange + 1, month=1, day=1).toordinal()
+            date_start = datetime.date(year = self.timerange, month=1, day=1).toordinal()
+            date_end = datetime.date(year = self.timerange + 1, month=1, day=1).toordinal()
             compete_doy_list = [datetime.date.fromordinal(date_temp).strftime('%Y%m%d') for date_temp in range(date_start, date_end)]
             self.compete_doy_list = bf.date2doy(compete_doy_list)
         elif self.timescale == 'month':
-            year_temp = int(np.floor(self.timerange/100))
+            year_temp = int(np.floor(self.timerange / 100))
             month_temp = int(np.mod(self.timerange, 100))
             date_start = datetime.date(year=year_temp, month=month_temp, day=1).toordinal()
             date_end = datetime.date(year=year_temp, month=month_temp + 1, day=1).toordinal()
@@ -139,9 +148,10 @@ class Denv_dc(object):
             self.compete_doy_list = bf.date2doy(compete_doy_list)
         elif self.timescale == 'all':
             date_min, date_max = bf.doy2date(min(self.sdc_doylist)), bf.doy2date(max(self.sdc_doylist))
-            date_min = datetime.date(year=int(np.floor(date_min/1000)), month=1, day=1).toordinal() + np.mod(date_min, 1000) - 1
-            date_max = datetime.date(year=int(np.floor(date_max/1000)), month=1, day=1).toordinal() + np.mod(date_max, 1000)
-            compete_doy_list = [datetime.date.fromordinal(date_temp).strftime('%Y%m%d') for date_temp in range(date_min, date_max)]
+            date_min = datetime.date(year=int(np.floor(date_min / 1000)), month=1, day=1).toordinal() + np.mod(date_min,1000) - 1
+            date_max = datetime.date(year=int(np.floor(date_max / 1000)), month=1, day=1).toordinal() + np.mod(date_max,1000)
+            compete_doy_list = [datetime.date.fromordinal(date_temp).strftime('%Y%m%d') for date_temp in
+                                range(date_min, date_max)]
             self.compete_doy_list = bf.date2doy(compete_doy_list)
 
         # Read the Denv datacube
@@ -173,6 +183,9 @@ class Denv_dc(object):
         if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
             self._autotrans_sparse_matrix()
 
+        # Backdoor metadata check
+        self._backdoor_metadata_check()
+
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
         if self.dc_ZSize != len(self.sdc_doylist):
@@ -183,6 +196,31 @@ class Denv_dc(object):
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()
 
+    def _backdoor_metadata_check(self):
+
+        backdoor_issue = False
+        # Check if metadata is valid and timeliness
+        # Problem 1 dir change between multi-devices ROI ROI arr ROI tif
+        if not os.path.exists(self.ROI_tif):
+            self.ROI_tif = retrieve_correct_filename(self.ROI_tif)
+            backdoor_issue = True
+
+        if not os.path.exists(self.ROI_array):
+            self.ROI_array = retrieve_correct_filename(self.ROI_array)
+            backdoor_issue = True
+
+        if not os.path.exists(self.ROI):
+            self.ROI = retrieve_correct_filename(self.ROI)
+            backdoor_issue = True
+
+        if self.ROI_tif is None or self.ROI_array is None or self.ROI is None:
+            raise Exception('Please manually change the roi path in the phemetric dc')
+
+        # Problem 2
+        if backdoor_issue:
+            self.save(self.Phemetric_dc_filepath)
+            self.__init__(self.Phemetric_dc_filepath)
+
     def _autofill_Denv_DC(self):
         for date_temp in self.compete_doy_list:
             if date_temp not in self.sdc_doylist:
@@ -191,19 +229,21 @@ class Denv_dc(object):
                     if self.sparse_matrix:
                         self.dc.add_layer(self.dc.SM_group[date_merge], date_temp, 0)
                     else:
-                        self.dc = np.insert(self.dc, 0, values=self.dc[:,:,0], axis=2)
+                        self.dc = np.insert(self.dc, 0, values=self.dc[:, :, 0], axis=2)
                     self.sdc_doylist.insert(0, date_temp)
                 elif date_temp == self.compete_doy_list[-1]:
                     date_merge = self.compete_doy_list[-2]
                     if self.sparse_matrix:
                         self.dc.add_layer(self.dc.SM_group[date_merge], date_temp, -1)
                     else:
-                        self.dc = np.insert(self.dc, 0, values=self.dc[:,:,-1], axis=2)
+                        self.dc = np.insert(self.dc, 0, values=self.dc[:, :, -1], axis=2)
                     self.sdc_doylist.insert(-1, date_temp)
                 else:
                     date_beg, date_end, _beg, _end = None, None, None, None
                     for _ in range(1, 30):
-                        ordinal_date = datetime.date(year=int(np.floor(bf.doy2date(date_temp)/10000)), month=int(np.floor(np.mod(bf.doy2date(date_temp), 10000)/100)), day=int(np.mod(bf.doy2date(date_temp), 100))).toordinal()
+                        ordinal_date = datetime.date(year=int(np.floor(bf.doy2date(date_temp) / 10000)),
+                                                     month=int(np.floor(np.mod(bf.doy2date(date_temp), 10000) / 100)),
+                                                     day=int(np.mod(bf.doy2date(date_temp), 100))).toordinal()
                         if date_beg is None:
                             date_out = bf.date2doy(int(datetime.date.fromordinal(ordinal_date - _).strftime('%Y%m%d')))
                             date_beg = date_out if date_out in self.sdc_doylist else None
@@ -234,7 +274,9 @@ class Denv_dc(object):
                         array_beg = array_beg.astype(np.float32)
                         array_end = array_end.astype(np.float32)
                         array_out = array_beg + (array_end - array_beg) * _beg / (_beg + _end)
-                        self.dc = np.insert(self.dc, self.compete_doy_list.index(date_temp), values=array_out.reshape([array_out.shape[0], array_out.shape[1], 1]), axis=2)
+                        self.dc = np.insert(self.dc, self.compete_doy_list.index(date_temp),
+                                            values=array_out.reshape([array_out.shape[0], array_out.shape[1], 1]),
+                                            axis=2)
                     self.sdc_doylist.insert(self.compete_doy_list.index(date_temp), date_temp)
 
         if self.sdc_doylist != self.compete_doy_list:
@@ -253,9 +295,12 @@ class Denv_dc(object):
 
         metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI,
                         'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
-                        'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
-                        'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list,
-                        'tiles': self.tiles, 'timescale': self.timescale, 'timerange': self.timerange, 'Denv_factor': self.Denv_factor}
+                        'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix,
+                        'huge_matrix': self.huge_matrix,
+                        'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder,
+                        'dc_group_list': self.dc_group_list,
+                        'tiles': self.tiles, 'timescale': self.timescale, 'timerange': self.timerange,
+                        'Denv_factor': self.Denv_factor}
         doy = self.sdc_doylist
         np.save(f'{output_path}doy.npy', doy)
         with open(f'{output_path}metadata.json', 'w') as js_temp:
@@ -266,7 +311,8 @@ class Denv_dc(object):
         else:
             np.save(f'{output_path}{str(self.index)}_Denv_datacube.npy', self.dc)
 
-        print(f'Finish saving the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+        print(
+            f'Finish saving the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
     def _autotrans_sparse_matrix(self):
 
@@ -286,7 +332,7 @@ class Phemetric_dc(object):
     # Phemetric_dc represents "Phenological Metric Datacube"
     # It normally contains data like phenological parameters derived from the curve fitting, etc
     # And stack into a 3-D datacube type.
-    # Currently, it was integrated into the Sentinel_dcs as a output data for phenological generation.
+    # Currently, it was taken as the Sentinel_dcs/Landsat_dcs's output datatype after the phenological analysis.
     ####################################################################################################
 
     def __init__(self, phemetric_filepath, work_env=None):
@@ -295,7 +341,7 @@ class Phemetric_dc(object):
         self.Phemetric_dc_filepath = bf.Path(phemetric_filepath).path_name
 
         # Init key var
-        self.ROI_name, self.ROI, self.ROI_tif = None, None, None
+        self.ROI_name, self.ROI, self.ROI_tif, self.ROI_array = None, None, None, None
         self.index, self.Datatype, self.coordinate_system = None, None, None
         self.dc_group_list, self.tiles = None, None
         self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
@@ -398,12 +444,43 @@ class Phemetric_dc(object):
         # Drop duplicate layers
         self._drop_duplicate_layers()
 
+        # Backdoor metadata check
+        self._backdoor_metadata_check()
+
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
         if self.dc_ZSize != len(self.paraname_list):
             raise TypeError('The Phemetric datacube is not consistent with the paraname file')
 
         print(f'Finish loading the Phemetric datacube of {str(self.pheyear)} \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+
+    def _update_parasize_(self):
+        self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
+
+    def _backdoor_metadata_check(self):
+
+        backdoor_issue = False
+        # Check if metadata is valid and timeliness
+        # Problem 1 dir change between multi-devices ROI ROI arr ROI tif
+        if not os.path.exists(self.ROI_tif):
+            self.ROI_tif = retrieve_correct_filename(self.ROI_tif)
+            backdoor_issue = True
+
+        if not os.path.exists(self.ROI_array):
+            self.ROI_array = retrieve_correct_filename(self.ROI_array)
+            backdoor_issue = True
+
+        if not os.path.exists(self.ROI):
+            self.ROI = retrieve_correct_filename(self.ROI)
+            backdoor_issue = True
+
+        if self.ROI_tif is None or self.ROI_array is None or self.ROI is None:
+            raise Exception('Please manually change the roi path in the phemetric dc')
+
+        # Problem 2
+        if backdoor_issue:
+            self.save(self.Phemetric_dc_filepath)
+            self.__init__(self.Phemetric_dc_filepath)
 
     def _autotrans_sparse_matrix(self):
 
@@ -442,6 +519,20 @@ class Phemetric_dc(object):
         pheme_list = pheme_list_temp
 
         if self.curfit_dic['CFM'] == 'SPL':
+
+            para_dic = {}
+            for para_num in range(self.curfit_dic['para_num']):
+                if isinstance(self.dc, NDSparseMatrix):
+                    arr_temp = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
+                    arr_temp[arr_temp == self.Nodata_value] = np.nan
+                    para_dic[para_num] = arr_temp
+                else:
+                    arr_temp = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
+                    if ~np.isnan(self.Nodata_value):
+                        arr_temp[arr_temp == self.Nodata_value] = np.nan
+                    para_dic[para_num] = arr_temp
+            arr_temp = None
+
             for pheme_temp in pheme_list:
                 if pheme_temp == 'SOS':
                     if isinstance(self.dc, NDSparseMatrix):
@@ -458,50 +549,6 @@ class Phemetric_dc(object):
                         self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_0'], 'trough_vi')
                     else:
                         self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_0')], 'trough_vi')
-                elif pheme_temp == 'peak_vi':
-                    para_dic = {}
-                    for para_num in range(self.curfit_dic['para_num']):
-                        if isinstance(self.dc, NDSparseMatrix):
-                            para_dic[para_num] = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
-                        else:
-                            para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
-
-                    try:
-                        peak_vi_array = copy.copy(para_dic[0])
-                        peak_vi_array[peak_vi_array != 0] = -1
-                        xy_list = np.argwhere(peak_vi_array != 0).tolist()
-                        d_temp = np.linspace(1, 365, 365)
-                        with tqdm(total=len(xy_list), desc=f'Generate the peak_vi of {str(self.pheyear)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                            for xy_temp in xy_list:
-                                y_temp, x_temp = xy_temp[0], xy_temp[1]
-                                if peak_vi_array[y_temp, x_temp] == -1:
-                                    peak_vi_array[y_temp, x_temp] = np.max(seven_para_logistic_function(d_temp, para_dic[0][y_temp, x_temp], para_dic[1][y_temp, x_temp], para_dic[2][y_temp, x_temp], para_dic[3][y_temp, x_temp], para_dic[4][y_temp, x_temp], para_dic[5][y_temp, x_temp], para_dic[6][y_temp, x_temp]))
-                                pbar.update()
-                        peak_vi_array[peak_vi_array == -1] = 0
-                    except:
-                        raise Exception('Unable to create peak vi!')
-                    self._add_layer(peak_vi_array, 'peak_vi')
-
-                elif pheme_temp == 'peak_doy':
-                    para_dic = {}
-                    for para_num in range(self.curfit_dic['para_num']):
-                        if isinstance(self.dc, NDSparseMatrix):
-                            arr_temp = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
-                            arr_temp[arr_temp == self.Nodata_value] = np.nan
-                            para_dic[para_num] = arr_temp
-                        else:
-                            para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
-
-                    peak_doy_array = copy.copy(para_dic[0])
-                    peak_doy_array[peak_doy_array != 0] = -1
-                    for y_temp in range(para_dic[0].shape[0]):
-                        for x_temp in range(para_dic[0].shape[1]):
-                            if peak_doy_array[y_temp, x_temp] == -1:
-                                peak_doy_array[y_temp, x_temp] = np.argmax(seven_para_logistic_function(np.linspace(1, 365, 365), para_dic[0][y_temp, x_temp], para_dic[1][y_temp, x_temp], para_dic[2][y_temp, x_temp], para_dic[3][y_temp, x_temp], para_dic[4][y_temp, x_temp], para_dic[5][y_temp, x_temp], para_dic[6][y_temp, x_temp])) + 1
-
-                    peak_doy_array[peak_doy_array == -1] = 0
-                    self._add_layer(peak_doy_array, 'peak_doy')
-
                 elif pheme_temp == 'GR':
                     if isinstance(self.dc, NDSparseMatrix):
                         self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_3'], 'GR')
@@ -518,26 +565,73 @@ class Phemetric_dc(object):
                     else:
                         self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_6')], 'DR2')
 
-                elif pheme_temp == 'MAVI':
-                    para_dic = {}
-                    for para_num in range(self.curfit_dic['para_num']):
-                        if isinstance(self.dc, NDSparseMatrix):
-                            arr_temp = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
-                            arr_temp[arr_temp == self.Nodata_value] = np.nan
-                            para_dic[para_num] = arr_temp
-                        else:
-                            para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
+                elif pheme_temp == 'peak_vi':
 
                     try:
-                        MAVI_array = np.zeros([para_dic[0].shape[0], para_dic[0].shape[1]]) * np.nan
-                        d_temp = np.linspace(1, 365, 365)
-                        with tqdm(total=len(xy_list), desc=f'Generate the MAVI of {str(self.pheyear)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                        peak_vi_array = copy.copy(para_dic[0])
+                        peak_vi_array[~np.isnan(peak_vi_array)] = -1
+                        xy_list = np.argwhere(~np.isnan(peak_vi_array)).tolist()
+                        with tqdm(total=len(xy_list), desc=f'Generate the peak_vi of {str(self.pheyear)}',
+                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                            for xy_temp in xy_list:
+                                y_temp, x_temp = xy_temp[0], xy_temp[1]
+                                if peak_vi_array[y_temp, x_temp] == -1:
+                                    peak_vi_array[y_temp, x_temp] = np.max(seven_para_logistic_function(
+                                                                     np.linspace(1, 365, 365), para_dic[0][y_temp, x_temp],
+                                                                     para_dic[1][y_temp, x_temp],
+                                                                     para_dic[2][y_temp, x_temp],
+                                                                     para_dic[3][y_temp, x_temp],
+                                                                     para_dic[4][y_temp, x_temp],
+                                                                     para_dic[5][y_temp, x_temp],
+                                                                     para_dic[6][y_temp, x_temp]))
+                                pbar.update()
+                        peak_vi_array[peak_vi_array == -1] = self.Nodata_value
+                        peak_vi_array[np.isnan(peak_vi_array)] = self.Nodata_value
+                    except:
+                        raise Exception('Unable to create peak vi!')
+                    self._add_layer(peak_vi_array, 'peak_vi')
+
+                elif pheme_temp == 'peak_doy':
+
+                    try:
+                        peak_doy_array = copy.copy(para_dic[0])
+                        peak_doy_array[~np.isnan(peak_doy_array)] = -1
+                        xy_list = np.argwhere(~np.isnan(peak_doy_array)).tolist()
+                        with tqdm(total=len(xy_list), desc=f'Generate the peak_doy of {str(self.pheyear)}',
+                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                            for xy_temp in xy_list:
+                                y_temp, x_temp = xy_temp[0], xy_temp[1]
+                                if peak_doy_array[y_temp, x_temp] == -1:
+                                    peak_doy_array[y_temp, x_temp] = np.argmax(
+                                        seven_para_logistic_function(np.linspace(1, 365, 365), para_dic[0][y_temp, x_temp],
+                                                                     para_dic[1][y_temp, x_temp],
+                                                                     para_dic[2][y_temp, x_temp],
+                                                                     para_dic[3][y_temp, x_temp],
+                                                                     para_dic[4][y_temp, x_temp],
+                                                                     para_dic[5][y_temp, x_temp],
+                                                                     para_dic[6][y_temp, x_temp])) + 1
+                                    pbar.update()
+                        peak_doy_array[peak_doy_array == -1] = self.Nodata_value
+                        peak_doy_array[np.isnan(peak_doy_array)] = self.Nodata_value
+                    except:
+                        raise Exception('Unable to create the peak doy')
+                    self._add_layer(peak_doy_array, 'peak_doy')
+
+                elif pheme_temp == 'MAVI':
+
+                    try:
+                        MAVI_array = copy.copy(para_dic[0])
+                        MAVI_array[~np.isnan(MAVI_array)] = -1
+                        xy_list = np.argwhere(~np.isnan(MAVI_array)).tolist()
+                        with tqdm(total=len(xy_list), desc=f'Generate the MAVI of {str(self.pheyear)}',
+                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                             for xy_temp in xy_list:
                                 y_temp, x_temp = xy_temp[0], xy_temp[1]
                                 para_list = [para_dic[_][y_temp, x_temp] for _ in range(7)]
                                 if True not in [np.isnan(_) for _ in para_list]:
-                                    index_arr = seven_para_logistic_function(d_temp, para_list[0], para_list[1], para_list[2],
-                                                                             para_list[3], para_list[4], para_list[5], para_list[6])
+                                    index_arr = seven_para_logistic_function(np.linspace(1, 365, 365), para_list[0], para_list[1],
+                                                                             para_list[2], para_list[3], para_list[4], para_list[5],
+                                                                             para_list[6])
                                     if np.sum(np.isnan(index_arr)) == 0:
                                         max_index = np.argmax(index_arr)
                                         derivative_arr = np.zeros_like(index_arr) * np.nan
@@ -545,13 +639,16 @@ class Phemetric_dc(object):
                                         for _ in range(1, 364):
                                             derivative_arr[_] = (index_arr[_ + 1] - index_arr[_ - 1]) / 2
                                         try:
-                                            derivative_index = np.min(np.argwhere(derivative_arr < - ((para_list[1] - (para_list[4] * para_list[6])) / (8 * para_list[5]))))
+                                            derivative_index = np.min(np.argwhere(derivative_arr < - (
+                                                        (para_list[1] - (para_list[4] * para_list[6])) / (
+                                                            8 * para_list[5]))))
                                         except:
                                             derivative_index = int(para_list[4] - 3 * para_list[5])
 
                                         if derivative_index > max_index:
                                             try:
-                                                MAVI_array[y_temp, x_temp] = np.mean(index_arr[max_index: derivative_index])
+                                                MAVI_array[y_temp, x_temp] = np.mean(
+                                                    index_arr[max_index: derivative_index])
                                             except:
                                                 pass
                                         else:
@@ -561,31 +658,29 @@ class Phemetric_dc(object):
                                 else:
                                     pass
                                 pbar.update()
-                        MAVI_array[np.isnan(MAVI_array)] = 0
+
+                        MAVI_array[MAVI_array == -1] = self.Nodata_value
+                        MAVI_array[np.isnan(MAVI_array)] = self.Nodata_value
                     except:
-                        raise Exception('Error occured during the MAVI generation!')
+                        raise Exception('Error occurred during the MAVI generation!')
                     self._add_layer(MAVI_array, 'MAVI')
 
                 elif pheme_temp == 'TSVI':
-                    para_dic = {}
-                    for para_num in range(self.curfit_dic['para_num']):
-                        if isinstance(self.dc, NDSparseMatrix):
-                            para_dic[para_num] = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
-                        else:
-                            para_dic[para_num] = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
 
                     try:
                         TSVI_array = copy.copy(para_dic[0])
-                        TSVI_array[TSVI_array != 0] = -1
-                        xy_list = np.argwhere(TSVI_array != 0).tolist()
+                        TSVI_array[~np.isnan(TSVI_array)] = -1
+                        xy_list = np.argwhere(~np.isnan(TSVI_array)).tolist()
                         d_temp = np.linspace(1, 365, 365)
-                        with tqdm(total=len(xy_list), desc=f'Generate the TSVI of {str(self.pheyear)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                        with tqdm(total=len(xy_list), desc=f'Generate the TSVI of {str(self.pheyear)}',
+                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                             for xy_temp in xy_list:
                                 y_temp, x_temp = xy_temp[0], xy_temp[1]
                                 para_list = [para_dic[_][y_temp, x_temp] for _ in range(7)]
                                 if True not in [np.isnan(_) for _ in para_list]:
-                                    index_arr = seven_para_logistic_function(d_temp, para_list[0], para_list[1], para_list[2],
-                                                                             para_list[3], para_list[4], para_list[5], para_list[6])
+                                    index_arr = seven_para_logistic_function(d_temp, para_list[0], para_list[1],para_list[2],
+                                                                             para_list[3], para_list[4], para_list[5],
+                                                                             para_list[6])
                                     if np.sum(np.isnan(index_arr)) == 0:
                                         derivative_arr = np.zeros_like(index_arr) * np.nan
                                         for _ in range(1, 364):
@@ -600,9 +695,10 @@ class Phemetric_dc(object):
                                 else:
                                     pass
                                 pbar.update()
-                        TSVI_array[np.isnan(TSVI_array)] = 0
+                        TSVI_array[TSVI_array == -1] = self.Nodata_value
+                        TSVI_array[np.isnan(TSVI_array)] = self.Nodata_value
                     except:
-                        raise Exception('Error occured during the TSVI generation!')
+                        raise Exception('Error occurred during the TSVI generation!')
                     self._add_layer(TSVI_array, 'TSVI')
         else:
             pass
@@ -687,9 +783,12 @@ class Phemetric_dc(object):
 
         metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI,
                         'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
-                        'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
-                        'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles,
-                        'pheyear': self.pheyear, 'curfit_dic': self.curfit_dic, 'Phemetric_factor': self.Phemetric_factor,
+                        'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix,
+                        'huge_matrix': self.huge_matrix,
+                        'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder,
+                        'dc_group_list': self.dc_group_list, 'tiles': self.tiles,
+                        'pheyear': self.pheyear, 'curfit_dic': self.curfit_dic,
+                        'Phemetric_factor': self.Phemetric_factor,
                         'Nodata_value': self.Nodata_value, 'Zoffset': self.Zoffset}
 
         paraname = self.paraname_list
@@ -724,8 +823,8 @@ class Phemetric_dc(object):
         if output_folder is None:
             output_folder = self.Phemetric_dc_filepath + 'Pheme_TIF\\'
         else:
+            bf.create_folder(output_folder)
             output_folder = Path(output_folder).path_name
-        bf.create_folder(output_folder)
 
         ds_temp = gdal.Open(self.ROI_tif)
         for phe_ in phe_list:
@@ -735,7 +834,8 @@ class Phemetric_dc(object):
                 else:
                     phe_arr = self.dc[:, :, self.paraname_list.index(phe_)]
                 phe_arr[phe_arr == self.Nodata_value] = np.nan
-                bf.write_raster(ds_temp, phe_arr, output_folder, f'{str(phe_)}.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                bf.write_raster(ds_temp, phe_arr, output_folder, f'{str(phe_)}.TIF', raster_datatype=gdal.GDT_Float32,
+                                nodatavalue=np.nan)
 
 
 class RS_dcs(object):
@@ -752,7 +852,8 @@ class RS_dcs(object):
         # Generate the datacubes list
         self.dcs = []
         self._dcs_backup_, self._doys_backup_, self._dc_typelist = [], [], []
-        self._index_list = []
+        self._dc_XSize_list, self._dc_YSize_list, self._dc_ZSize_list = [], [], []
+        self._index_list, self._tiles_list = [], []
         self._size_control_factor_list, self.oritif_folder_list = [], []
         self._Zoffset_list, self._Nodata_value_list = [], []
         self._space_optimised = space_optimised
@@ -760,25 +861,31 @@ class RS_dcs(object):
 
         # Construct the indicator for different dcs
         self._phemetric_namelist, self._pheyear_list = None, []
-        self._withPhemetricdc_, self._withDenvdc_, self._withS2dc_, self._withLandsatdc_ = False, False, False, False
-        self._s2dc_work_env, self._phemetric_work_env, self._denv_work_env = None, None, None
+        self._inunfac_namelist, self._inunyear_list = None, []
+        self._withPhemetricdc_, self._withDenvdc_, self._withS2dc_, self._withLandsatdc_, self._withInunfacdc_ = False, False, False, False, False
+        self._s2dc_work_env, self._phemetric_work_env, self._denv_work_env, self._inunfac_work_env = None, None, None, None
+
+        if not isinstance(args, (tuple, list)):
+            raise TypeError('Please mention all dcs should be input as args or *args')
 
         # Separate into Denv Phemetric and Sentinel-2 datacube
         for args_temp in args:
-            if not isinstance(args_temp, (Sentinel2_dc, Denv_dc, Phemetric_dc, Landsat_dc)):
-                raise TypeError('The RS datacubes should be a bunch of Sentinel2 datacube, Landsat datacube, phemetric datacube or Denv datacube!')
+            if not isinstance(args_temp, (Sentinel2_dc, Denv_dc, Phemetric_dc, Landsat_dc, Inunfac_dc)):
+                raise TypeError('The RS datacubes should be a bunch of Sentinel2 datacube, Landsat datacube, phemetric datacube, inunfac or Denv datacube!')
             else:
                 self._dcs_backup_.append(args_temp)
                 if isinstance(args_temp, Phemetric_dc):
+                    self._doys_backup_.append(args_temp.paraname_list)
+                elif isinstance(args_temp, Inunfac_dc):
                     self._doys_backup_.append(args_temp.paraname_list)
                 elif isinstance(args_temp, (Sentinel2_dc, Denv_dc, Landsat_dc)):
                     self._doys_backup_.append(args_temp.sdc_doylist)
                 self._dc_typelist.append(type(args_temp))
 
         if len(self._dcs_backup_) == 0:
-            raise ValueError('Please input at least one valid Sentinel2/Phemetric/Denv/Landsat datacube')
+            raise ValueError('Please input at least one valid Sentinel2/Phemetric/Denv/Landsat/Inunfac datacube into the RSDCs')
 
-        if type(auto_harmonised) != bool:
+        if not isinstance(auto_harmonised, bool):
             raise TypeError('Please input the auto harmonised factor as bool type!')
         else:
             harmonised_factor = False
@@ -789,6 +896,8 @@ class RS_dcs(object):
             for args_temp in args:
                 factor_all.extend(list(args_temp._fund_factor))
             factor_all = list(set(factor_all))
+            for factor_temp in factor_all:
+                self.__dict__[f'_{factor_temp}_list'] = []
 
             for args_temp in args:
                 for factor_temp in factor_all:
@@ -809,7 +918,7 @@ class RS_dcs(object):
 
         # Check the consistency of datacube size
         try:
-            x_size, y_size, z_S2_size, z_Phemetric_size, z_Denv_size, z_Landsat_size = 0, 0, 0, 0, 0, 0
+            x_size, y_size, z_S2_size, z_Phemetric_size, z_Inunfac_size, z_Denv_size, z_Landsat_size = 0, 0, 0, 0, 0, 0, 0
             for _ in range(len(self._dc_typelist)):
 
                 if self._dc_typelist[_] == Sentinel2_dc:
@@ -851,7 +960,22 @@ class RS_dcs(object):
                     if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
                         raise Exception('Please make sure all the Denv datacube share the same size!')
                     elif z_Phemetric_size != self._dcs_backup_[_].dc_ZSize:
-                        raise Exception('The Phemetric_dc datacubes is not consistent in the Z dimension! Double check the input!')
+                        raise Exception(
+                            'The Phemetric_dc datacubes is not consistent in the Z dimension! Double check the input!')
+
+                elif self._dc_typelist[_] == Inunfac_dc:
+                    self._withInunfacdc_ = True
+                    # Retrieve the shape inform
+                    if x_size == 0 and y_size == 0:
+                        x_size, y_size = self._dcs_backup_[_].dc_XSize, self._dcs_backup_[_].dc_YSize
+
+                    if z_Inunfac_size == 0:
+                        z_Inunfac_size = self._dcs_backup_[_].dc_ZSize
+
+                    if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
+                        raise Exception('Please make sure all the Inunfac datacube share the same size!')
+                    elif z_Inunfac_size != self._dcs_backup_[_].dc_ZSize:
+                        raise Exception('The Inunfac datacubes is not consistent in the Z dimension! Double check the input!')
 
             if x_size != 0 and y_size != 0:
                 self.dcs_XSize, self.dcs_YSize = x_size, y_size
@@ -865,14 +989,14 @@ class RS_dcs(object):
         if self._withS2dc_:
             s2dc_pos = [i for i, v in enumerate(self._dc_typelist) if v == Sentinel2_dc]
             if len(s2dc_pos) != 1:
-                for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'ROI_tif', 'coordinate_system',
+                for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'ROI_tif', 'coordinate_system',
                                     'sparse_matrix', 'huge_matrix', 'sdc_factor', 'dc_group_list', 'tiles']:
                     if False in [self.__dict__[f'_{factor_temp}_list'][s2dc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos] for pos in s2dc_pos]:
                         raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
 
                 # Read the doy or date list
-                if False in [len(self._doys_backup_[s2dc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp
-                             in s2dc_pos] or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[s2dc_pos[0]]) for pos_temp in s2dc_pos]:
+                if (False in [len(self._doys_backup_[s2dc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp in s2dc_pos]
+                        or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[s2dc_pos[0]]) for pos_temp in s2dc_pos]):
                     if auto_harmonised:
                         harmonised_factor = True
                     else:
@@ -884,7 +1008,8 @@ class RS_dcs(object):
 
             # Define the output_path
             if work_env is None:
-                self._s2dc_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
+                self._s2dc_work_env = Path(
+                    os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
             else:
                 self._s2dc_work_env = work_env
 
@@ -898,15 +1023,18 @@ class RS_dcs(object):
             if len(Landsatdc_pos) != 1:
                 for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'ROI_tif', 'coordinate_system',
                                     'sparse_matrix', 'huge_matrix', 'sdc_factor', 'dc_group_list', 'tiles']:
-                    if False in [self.__dict__[f'_{factor_temp}_list'][Landsatdc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos] for pos in Landsatdc_pos]:
+                    if False in [self.__dict__[f'_{factor_temp}_list'][Landsatdc_pos[0]] ==
+                                 self.__dict__[f'_{factor_temp}_list'][pos] for pos in Landsatdc_pos]:
                         raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
 
                 # Read the doy or date list
-                if False in [len(self._doys_backup_[Landsatdc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp in Landsatdc_pos] or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[Landsatdc_pos[0]]) for pos_temp in Landsatdc_pos]:
+                if (False in [len(self._doys_backup_[Landsatdc_pos[0]]) == len(self._doys_backup_[pos_temp]) for pos_temp in Landsatdc_pos]
+                        or False in [(self._doys_backup_[pos_temp] == self._doys_backup_[Landsatdc_pos[0]]) for pos_temp in Landsatdc_pos]):
                     if auto_harmonised:
                         harmonised_factor = True
                     else:
-                        raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
+                        raise Exception(
+                            'The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
 
                 # Harmonised the dcs
                 if harmonised_factor:
@@ -940,8 +1068,7 @@ class RS_dcs(object):
 
             # Define the output_path
             if work_env is None:
-                self._denv_work_env = Path(
-                    os.path.dirname(os.path.dirname(self._dcs_backup_[Denvdc_pos[0]].Denv_dc_filepath))).path_name
+                self._denv_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[Denvdc_pos[0]].Denv_dc_filepath))).path_name
             else:
                 self._denv_work_env = work_env
 
@@ -969,12 +1096,13 @@ class RS_dcs(object):
             if z_Phemetric_size != 0:
                 self.Phedc_ZSize = z_Phemetric_size
             else:
-                raise Exception('Error occurred when obtaining the Z size of s2 dc!')
+                raise Exception('Error occurred when obtaining the Z size of pheme dc!')
 
             # Construct phemetric namelist
             self._phemetric_namelist = []
             for _ in Phemetricdc_pos:
-                self._phemetric_namelist.extend([temp.split(str(self._pheyear_list[_]) + '_')[-1] for temp in self._doys_backup_[_]])
+                self._phemetric_namelist.extend(
+                    [temp.split(str(self._pheyear_list[_]) + '_')[-1] for temp in self._doys_backup_[_]])
             self._phemetric_namelist = list(set(self._phemetric_namelist))
 
             pheyear = []
@@ -984,9 +1112,45 @@ class RS_dcs(object):
                 elif _ is not None:
                     raise ValueError('There are duplicate pheyears for different pheme dcs!')
 
+        # Check the consistency of Inunfact dcs
+        if self._withInunfacdc_:
+            Inunfacdc_pos = [i for i, v in enumerate(self._dc_typelist) if v == Inunfac_dc]
+            if len(Inunfacdc_pos) != 1:
+                for factor_temp in ['ROI', 'ROI_name', 'ROI_array', 'Datatype', 'ROI_tif', 'coordinate_system',
+                                    'sparse_matrix', 'huge_matrix', 'dc_group_list', 'tiles']:
+                    if False in [self.__dict__[f'_{factor_temp}_list'][Inunfacdc_pos[0]] ==
+                                 self.__dict__[f'_{factor_temp}_list'][pos] for pos in Inunfacdc_pos]:
+                        raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
+
+            # Define the output_path
+            if work_env is None:
+                self._inunfac_work_env = Path(os.path.dirname(
+                    os.path.dirname(self._dcs_backup_[Inunfacdc_pos[0]].Inunfac_dc_filepath))).path_name
+            else:
+                self._inunfac_work_env = work_env
+
+            # Determine the Zsize
+            if z_Inunfac_size != 0:
+                self.Inundc_ZSize = z_Inunfac_size
+            else:
+                raise Exception('Error occurred when obtaining the Z size of Inunfac dc!')
+
+            # Construct Inunfac namelist
+            self._inunfac_namelist = []
+            for _ in Inunfacdc_pos:
+                self._inunfac_namelist.extend([temp for temp in self._doys_backup_[_]])
+            self._inunfac_namelist = list(set(self._inunfac_namelist))
+
+            inunyear = []
+            for _ in self._inunyear_list:
+                if _ not in inunyear and _ is not None:
+                    inunyear.append(_)
+                elif _ is not None:
+                    raise ValueError('There are duplicate inunyears for different inun dcs!')
+
         # Check consistency between different types of dcs (ROI/Time range)
         # Check the ROI consistency
-        if [self._withS2dc_, self._withDenvdc_, self._withPhemetricdc_, self._withLandsatdc_].count(True) > 1:
+        if [self._withS2dc_, self._withDenvdc_, self._withPhemetricdc_, self._withLandsatdc_, self._withInunfacdc_].count(True) > 1:
             if False in [temp == self._ROI_list[0] for temp in self._ROI_list] or [temp == self._ROI_name_list[0] for temp in self._ROI_name_list]:
                 bounds_list = [bf.raster_ds2bounds(temp) for temp in self._ROI_tif_list]
                 crs_list = [gdal.Open(temp).GetProjection() for temp in self._ROI_tif_list]
@@ -1000,28 +1164,53 @@ class RS_dcs(object):
                         raise Exception('The ROIs between different types of datacube were not consistent')
                     else:
                         if self._withS2dc_:
-                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[s2dc_pos[0]],  self._ROI_name_list[s2dc_pos[0]], self._ROI_tif_list[s2dc_pos[0]], self._ROI_array_list[s2dc_pos[0]]
+                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[s2dc_pos[0]], \
+                            self._ROI_name_list[s2dc_pos[0]], self._ROI_tif_list[s2dc_pos[0]], self._ROI_array_list[
+                                s2dc_pos[0]]
                         elif self._withLandsatdc_:
-                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Landsatdc_pos[0]],  self._ROI_name_list[Landsatdc_pos[0]], self._ROI_tif_list[Landsatdc_pos[0]], self._ROI_array_list[Landsatdc_pos[0]]
+                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Landsatdc_pos[0]], \
+                            self._ROI_name_list[Landsatdc_pos[0]], self._ROI_tif_list[Landsatdc_pos[0]], \
+                            self._ROI_array_list[Landsatdc_pos[0]]
                         elif self._withPhemetricdc_:
-                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Denvdc_pos[0]], self._ROI_name_list[Denvdc_pos[0]], self._ROI_tif_list[Denvdc_pos[0]], self._ROI_array_list[ Denvdc_pos[0]]
+                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Denvdc_pos[0]], \
+                            self._ROI_name_list[Denvdc_pos[0]], self._ROI_tif_list[Denvdc_pos[0]], self._ROI_array_list[
+                                Denvdc_pos[0]]
+                        elif self._withDenvdc_:
+                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Denvdc_pos[0]], \
+                            self._ROI_name_list[Denvdc_pos[0]], self._ROI_tif_list[Denvdc_pos[0]], self._ROI_array_list[
+                                Denvdc_pos[0]]
+                        elif self._withInunfacdc_:
+                            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Inunfacdc_pos[0]], \
+                            self._ROI_name_list[Inunfacdc_pos[0]], self._ROI_tif_list[Inunfacdc_pos[0]], \
+                            self._ROI_array_list[Inunfacdc_pos[0]]
                 else:
                     if self._withS2dc_:
-                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[s2dc_pos[0]], self._ROI_name_list[s2dc_pos[0]], self._ROI_tif_list[s2dc_pos[0]], self._ROI_array_list[s2dc_pos[0]]
+                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[s2dc_pos[0]], \
+                        self._ROI_name_list[s2dc_pos[0]], self._ROI_tif_list[s2dc_pos[0]], self._ROI_array_list[
+                            s2dc_pos[0]]
                     elif self._withLandsatdc_:
-                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Landsatdc_pos[0]], self._ROI_name_list[Landsatdc_pos[0]], self._ROI_tif_list[Landsatdc_pos[0]], self._ROI_array_list[Landsatdc_pos[0]]
+                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Landsatdc_pos[0]], \
+                        self._ROI_name_list[Landsatdc_pos[0]], self._ROI_tif_list[Landsatdc_pos[0]], \
+                        self._ROI_array_list[Landsatdc_pos[0]]
                     elif self._withPhemetricdc_:
-                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Denvdc_pos[0]], self._ROI_name_list[Denvdc_pos[0]], self._ROI_tif_list[Denvdc_pos[0]], self._ROI_array_list[Denvdc_pos[0]]
+                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Phemetricdc_pos[0]], \
+                        self._ROI_name_list[Phemetricdc_pos[0]], self._ROI_tif_list[Phemetricdc_pos[0]], self._ROI_array_list[Phemetricdc_pos[0]]
+                    elif self._withInunfacdc_:
+                        self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[Inunfacdc_pos[0]], \
+                        self._ROI_name_list[Inunfacdc_pos[0]], self._ROI_tif_list[Inunfacdc_pos[0]], self._ROI_array_list[Inunfacdc_pos[0]]
             else:
-                self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], self._ROI_tif_list[0], self._ROI_array_list[0]
+                self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], \
+                self._ROI_tif_list[0], self._ROI_array_list[0]
 
             if False in [temp == self._coordinate_system_list[0] for temp in self._coordinate_system_list]:
                 raise ValueError('Please make sure all the datacube was under the same coordinate')
             else:
                 self.coordinate_system = self._coordinate_system_list[0]
         else:
-            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], self._ROI_tif_list[0], self._ROI_array_list[0]
+            self.ROI, self.ROI_name, self.ROI_tif, self.ROI_array = self._ROI_list[0], self._ROI_name_list[0], \
+            self._ROI_tif_list[0], self._ROI_array_list[0]
             self.coordinate_system = self._coordinate_system_list[0]
+
         # Construct the datacube list
         for _ in self._dcs_backup_:
             self.dcs.append(copy.copy(_.dc))
@@ -1144,9 +1333,12 @@ class RS_dcs(object):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
             if kwarg_indicator not in ('DT_bimodal_histogram_factor', 'DSWE_threshold', 'flood_month_list', 'DEM_path',
-                                       'overwritten_para', 'append_inundated_dc', 'DT_std_fig_construction', 'variance_num',
-                                       'inundation_mapping_accuracy_evaluation_factor', 'sample_rs_link_list', 'construct_inundated_dc',
-                                       'sample_data_path', 'static_wi_threshold', 'flood_mapping_accuracy_evaluation_factor'
+                                       'overwritten_para', 'append_inundated_dc', 'DT_std_fig_construction',
+                                       'variance_num',
+                                       'inundation_mapping_accuracy_evaluation_factor', 'sample_rs_link_list',
+                                       'construct_inundated_dc',
+                                       'sample_data_path', 'static_wi_threshold',
+                                       'flood_mapping_accuracy_evaluation_factor'
                                        ):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
@@ -1268,7 +1460,8 @@ class RS_dcs(object):
 
         # Define the sample_rs_link_list
         if 'sample_rs_link_list' in kwargs.keys():
-            if type(kwargs['sample_rs_link_list']) is not list and type(kwargs['sample_rs_link_list']) is not np.ndarray:
+            if type(kwargs['sample_rs_link_list']) is not list and type(
+                    kwargs['sample_rs_link_list']) is not np.ndarray:
                 raise TypeError('Please input the sample_rs_link_list as a list factor!')
             else:
                 self._sample_rs_link_list = kwargs['sample_rs_link_list']
@@ -1277,12 +1470,45 @@ class RS_dcs(object):
 
         # Get the dem path
         if 'DEM_path' in kwargs.keys():
-            if os.path.isfile(kwargs['DEM_path']) and (kwargs['DEM_path'].endswith('.tif') or kwargs['DEM_path'].endswith('.TIF')):
+            if os.path.isfile(kwargs['DEM_path']) and (
+                    kwargs['DEM_path'].endswith('.tif') or kwargs['DEM_path'].endswith('.TIF')):
                 self._DEM_path = kwargs['DEM_path']
             else:
                 raise TypeError('Please input a valid dem tiffile')
         else:
             self._DEM_path = None
+
+    def custom_composition(self, index, **kwargs):
+
+        # process inundation detection method
+        self._process_inundation_para(**kwargs)
+
+        # proces args*
+        if index not in self._index_list:
+            raise ValueError(f'The {index} is not imported')
+
+        # if dc_type == 'Sentinel2':
+        #     dc_type = Sentinel2_dc
+        #     doy_list = self.s2dc_doy_list
+        #     output_path = self._s2dc_work_env
+        # elif dc_type == 'Landsat':
+        #     dc_type = Landsat_dc
+        #     doy_list = self.Landsatdc_doy_list
+        #     output_path = self._Landsatdc_work_env
+        # else:
+        #     raise ValueError('Only Sentinel-2 and Landsat dc is supported for inundation detection!')
+
+        dc_num = []
+        for _ in range(len(self._index_list)):
+            if self._index_list[_] == index and self._dc_typelist[_] == dc_type:
+                dc_num.append(_)
+
+        if len(dc_num) > 1:
+            raise ValueError(f'There are more than one {str(dc_type)} dc of {str(dc_type)}')
+        elif len(dc_num) == 0:
+            raise ValueError(f'The {str(dc_type)} dc of {str(dc_type)} has not been imported')
+        else:
+            dc_num = dc_num[0]
 
     def inundation_detection(self, inundation_mapping_method: str, index: str, dc_type, **kwargs):
 
@@ -1337,7 +1563,9 @@ class RS_dcs(object):
 
                 # Define static thr output
                 static_output = output_path + 'inundation_static_wi_thr_datacube\\'
+                static_inditif_path = static_output + 'Individual_tif\\'
                 bf.create_folder(static_output)
+                bf.create_folder(static_inditif_path)
 
                 if not os.path.exists(static_output + 'metadata.json'):
 
@@ -1351,14 +1579,16 @@ class RS_dcs(object):
                         range_ = int(np.floor(inundation_dc.shape[2] / worker))
                         for _ in range(worker):
                             if (_ + 1) * range_ >= inundation_dc.shape[2]:
-                                inundation_dc_list.append(inundation_dc.extract_matrix((['all'], ['all'], [_ * range_, inundation_dc.shape[2]])))
+                                inundation_dc_list.append(inundation_dc.extract_matrix(
+                                    (['all'], ['all'], [_ * range_, inundation_dc.shape[2]])))
                             else:
-                                inundation_dc_list.append(inundation_dc.extract_matrix((['all'], ['all'], [_ * range_, (_ + 1) * range_])))
+                                inundation_dc_list.append(
+                                    inundation_dc.extract_matrix((['all'], ['all'], [_ * range_, (_ + 1) * range_])))
 
                         inundation_dc = None
                         sz, zoff, nd, thr = self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num], self._static_wi_threshold
                         with concurrent.futures.ProcessPoolExecutor(max_workers=worker) as executor:
-                            res = executor.map(mp_static_wi_detection, inundation_dc_list, repeat(sz), repeat(zoff), repeat(nd), repeat(thr))
+                            res = executor.map(mp_static_wi_detection, inundation_dc_list, repeat(sz), repeat(zoff),  repeat(nd), repeat(thr))
 
                         res = list(res)
                         for _ in res:
@@ -1366,12 +1596,21 @@ class RS_dcs(object):
                                 inundation_array.append(_[0][__], name=_[1][__])
 
                     else:
-                        inundation_array = copy.deepcopy(self.dcs[dc_num])
-                        inundation_array = invert_data(inundation_array, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
-                        inundation_array = inundation_array >= self._static_wi_threshold
-                        inundation_array = inundation_array + 1
-                        inundation_array[np.isnan(inundation_array)] = 0
-                        inundation_array = inundation_array.astype(np.byte)
+                        inundation_arr_list = []
+                        for doy_ in doy_list:
+                            st = time.time()
+                            mndwi_arr = self.dcs[dc_num][:, :, doy_list.index(doy_)].reshape([self.dcs[dc_num].shape[0], self.dcs[dc_num].shape[1]])
+                            inundation_array = invert_data(mndwi_arr, self._size_control_factor_list[dc_num],
+                                                           self._Zoffset_list[dc_num], self._Nodata_value_list[dc_num])
+                            inundation_array = inundation_array >= self._static_wi_threshold
+                            inundation_array = inundation_array + 1
+                            inundation_array[np.isnan(inundation_array)] = 0
+                            inundation_array = inundation_array.astype(np.byte)
+                            inundation_arr_list.append(inundation_array)
+                            bf.write_raster(gdal.Open(self.ROI_tif), inundation_array, static_inditif_path, f'Static_{str(doy_)}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                            print(f'Identify the inundation area in {str(doy_)} using {str(time.time()-st)[0:6]}s')
+
+                        inundation_array = np.stack(inundation_arr_list, axis=2)
 
                     inundation_dc = copy.deepcopy(self._dcs_backup_[dc_num])
                     inundation_dc.dc = inundation_array
@@ -1389,8 +1628,6 @@ class RS_dcs(object):
 
                 else:
                     inundation_dc = dc_type(static_output)
-                    self.append(inundation_dc)
-                    self.remove(self._index_list[dc_num])
 
                 oa_output_path = copy.deepcopy(static_output)
 
@@ -1409,7 +1646,7 @@ class RS_dcs(object):
                 bf.create_folder(DT_inditif_path)
                 bf.create_folder(DT_threshold_path)
 
-                if not os.path.exists(DT_threshold_path + 'threshold_map.TIF') or not os.path.exists(DT_threshold_path + 'bh_threshold_map.TIF'):
+                if not os.path.exists(DT_threshold_path + 'threshold_map.TIF') or not os.path.exists(DT_threshold_path + 'bh_threshold_map.TIF') or self._inundation_overwritten_para:
 
                     # Define input
                     WI_sdc = copy.deepcopy(self.dcs[dc_num])
@@ -1434,7 +1671,9 @@ class RS_dcs(object):
                     # DT method with empirical and bimodal threshold
                     dc_list, pos_list, yxoffset_list = slice_datacube(WI_sdc, roi_coord)
                     with concurrent.futures.ProcessPoolExecutor() as executor:
-                        res = executor.map(create_bimodal_histogram_threshold, dc_list, pos_list, yxoffset_list, repeat(doy_array), repeat(sz_ctrl_fac), repeat(zoffset), repeat(nd_v), repeat(variance), repeat(bio_factor))
+                        res = executor.map(create_bimodal_histogram_threshold, dc_list, pos_list, yxoffset_list,
+                                           repeat(doy_array), repeat(sz_ctrl_fac), repeat(zoffset), repeat(nd_v),
+                                           repeat(variance), repeat(bio_factor))
 
                     res = list(res)
                     res_concat = []
@@ -1445,8 +1684,10 @@ class RS_dcs(object):
                         DT_threshold_arr[res_concat[r_][0], res_concat[r_][1]] = res_concat[r_][2]
                         bh_threshold_arr[res_concat[r_][0], res_concat[r_][1]] = res_concat[r_][3]
 
-                    bf.write_raster(gdal.Open(self.ROI_tif), DT_threshold_arr, DT_threshold_path, 'threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
-                    bf.write_raster(gdal.Open(self.ROI_tif), bh_threshold_arr, DT_threshold_path, 'bh_threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    bf.write_raster(gdal.Open(self.ROI_tif), DT_threshold_arr, DT_threshold_path, 'threshold_map.TIF',
+                                    raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+                    bf.write_raster(gdal.Open(self.ROI_tif), bh_threshold_arr, DT_threshold_path,
+                                    'bh_threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
                     WI_sdc = None
                     doy_array = None
                 else:
@@ -1464,21 +1705,29 @@ class RS_dcs(object):
                     # Generate the MNDWI distribution at the pixel level
                     for y_temp in range(WI_sdc.shape[0]):
                         for x_temp in range(WI_sdc.shape[1]):
-                            if not os.path.exists(f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png'):
+                            if not os.path.exists(
+                                    f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png'):
 
                                 # Extract the wi series
                                 if self._sparse_matrix_list[dc_num]:
-                                    ___, wi_series, __ = WI_sdc._extract_matrix_y1x1zh(([y_temp], [x_temp], ['all']), nodata_export=True)
+                                    ___, wi_series, __ = WI_sdc._extract_matrix_y1x1zh(([y_temp], [x_temp], ['all']),
+                                                                                       nodata_export=True)
                                 else:
                                     wi_series = WI_sdc[y_temp, x_temp, :]
-                                wi_series = invert_data(wi_series, self._size_control_factor_list[dc_num],self._Zoffset_list[dc_num], nodata_value)
+                                wi_series = invert_data(wi_series, self._size_control_factor_list[dc_num],
+                                                        self._Zoffset_list[dc_num], nodata_value)
                                 wi_series = wi_series.flatten()
 
                                 doy_array_pixel = np.mod(doy_array, 1000).flatten()
                                 wi_ori_series = copy.copy(wi_series)
-                                wi_series = np.delete(wi_series, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 285)))
-                                wi_series = np.delete(wi_series, np.argwhere(np.isnan(wi_series))) if np.isnan(nodata_value) else np.delete(wi_series, np.argwhere(wi_series == nodata_value))
-                                wi_series = np.delete(wi_series, np.argwhere(wi_series > DT_threshold_arr[y_temp, x_temp])) if not np.isnan(DT_threshold_arr[y_temp, x_temp]) else np.delete(wi_series, np.argwhere(wi_series > 0.123))
+                                wi_series = np.delete(wi_series, np.argwhere(
+                                    np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 285)))
+                                wi_series = np.delete(wi_series, np.argwhere(np.isnan(wi_series))) if np.isnan(
+                                    nodata_value) else np.delete(wi_series, np.argwhere(wi_series == nodata_value))
+                                wi_series = np.delete(wi_series, np.argwhere(
+                                    wi_series > DT_threshold_arr[y_temp, x_temp])) if not np.isnan(
+                                    DT_threshold_arr[y_temp, x_temp]) else np.delete(wi_series,
+                                                                                     np.argwhere(wi_series > 0.123))
 
                                 if wi_series.shape[0] != 0:
                                     yy = np.arange(0, 100, 1)
@@ -1491,16 +1740,21 @@ class RS_dcs(object):
                                     plt.hist(wi_series, bins=20, color='#00FFA5')
                                     plt.plot(xx * mndwi_ave, yy, color='#FFFF00')
                                     plt.plot(xx * bh_threshold_arr[y_temp, x_temp], yy, color='#CD0000', linewidth='3')
-                                    plt.plot(xx * DT_threshold_arr[y_temp, x_temp], yy, color='#0000CD', linewidth='1.5')
+                                    plt.plot(xx * DT_threshold_arr[y_temp, x_temp], yy, color='#0000CD',
+                                             linewidth='1.5')
                                     plt.plot(xx * (mndwi_ave - mndwi_temp_std), yy, color='#00CD00')
                                     plt.plot(xx * (mndwi_ave + mndwi_temp_std), yy, color='#00CD00')
-                                    plt.plot(xx * (mndwi_ave - self._variance_num * mndwi_temp_std), yy, color='#00CD00')
-                                    plt.plot(xx * (mndwi_ave + self._variance_num * mndwi_temp_std), yy, color='#00CD00')
-                                    plt.savefig(f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png', dpi=150)
+                                    plt.plot(xx * (mndwi_ave - self._variance_num * mndwi_temp_std), yy,
+                                             color='#00CD00')
+                                    plt.plot(xx * (mndwi_ave + self._variance_num * mndwi_temp_std), yy,
+                                             color='#00CD00')
+                                    plt.savefig(
+                                        f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png',
+                                        dpi=150)
                                     plt.close()
 
                 # Construct inundation dc
-                if not os.path.exists(DT_output_path + 'doy.npy') or not os.path.exists(DT_output_path + 'metadata.json'):
+                if not os.path.exists(DT_output_path + 'doy.npy') or not os.path.exists(DT_output_path + 'metadata.json') or self._inundation_overwritten_para:
 
                     inundation_dc = copy.deepcopy(self._dcs_backup_[dc_num])
                     inundated_arr = copy.deepcopy(self.dcs[dc_num])
@@ -1510,17 +1764,22 @@ class RS_dcs(object):
                     DT_threshold = DT_threshold_arr.astype(float)
                     num_list = [q for q in range(doy_array.shape[0])]
                     if self._sparse_matrix_list[dc_num]:
-                        inundated_arr_list = [inundated_arr.SM_group[inundated_arr.SM_namelist[_]] for _ in range(inundated_arr.shape[2])]
+                        inundated_arr_list = [inundated_arr.SM_group[inundated_arr.SM_namelist[_]] for _ in
+                                              range(inundated_arr.shape[2])]
                     else:
-                        inundated_arr_list = [inundated_arr[:, :, _].reshape([inundated_arr.shape[0], inundated_arr.shape[1]]) for _ in range(inundated_arr.shape[2])]
+                        inundated_arr_list = [
+                            inundated_arr[:, :, _].reshape([inundated_arr.shape[0], inundated_arr.shape[1]]) for _ in
+                            range(inundated_arr.shape[2])]
 
                     with concurrent.futures.ProcessPoolExecutor() as executor:
                         res = list(tq(executor.map(create_indi_DT_inundation_map,
                                                    inundated_arr_list, repeat(doy_array),
                                                    num_list, repeat(DT_threshold),
                                                    repeat(DT_inditif_path), repeat(self._inundation_overwritten_para),
-                                                   repeat(self._size_control_factor_list[dc_num]), repeat(self._Zoffset_list[dc_num]),
-                                                   repeat(self._Nodata_value_list[dc_num]), repeat(self.ROI_tif)), total = len(num_list)))
+                                                   repeat(self._size_control_factor_list[dc_num]),
+                                                   repeat(self._Zoffset_list[dc_num]),
+                                                   repeat(self._Nodata_value_list[dc_num]), repeat(self.ROI_tif)),
+                                      total=len(num_list)))
 
                     for _ in res:
                         if self._sparse_matrix_list[dc_num]:
@@ -1569,16 +1828,18 @@ class RS_dcs(object):
             # Create annual inundation map
             inditif_path = oa_output_path + 'Individual_tif\\'
             annualtif_path = oa_output_path + 'Annual_tif\\'
+            annualshp_path = oa_output_path + 'Annual_shp\\'
             bf.create_folder(annualtif_path)
+            bf.create_folder(annualshp_path)
 
             doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
             year_array = np.unique(doy_array // 1000)
             temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
             for year in year_array:
-                if not os.path.exists(f'{annualtif_path}DT_{str(year)}.TIF') or self._inundation_overwritten_factor:
+                if not os.path.exists(f'{annualtif_path}{inundation_mapping_method}_{str(year)}.TIF') or not os.path.exists(f'{annualshp_path}{inundation_mapping_method}_{str(year)}.shp') or self._inundation_overwritten_factor:
                     annual_vi_list = []
                     for doy_index in range(doy_array.shape[0]):
-                        if doy_array[doy_index] // 1000 == year and 120 <= np.mod(doy_array[doy_index], 1000) <= 300:
+                        if doy_array[doy_index] // 1000 == year and 90 <= np.mod(doy_array[doy_index], 1000) <= 300:
                             if isinstance(inundation_dc.dc, NDSparseMatrix):
                                 arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
                                 annual_vi_list.append(arr_temp.toarray())
@@ -1589,7 +1850,51 @@ class RS_dcs(object):
                         annual_inundated_map = np.zeros([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]], dtype=np.byte)
                     else:
                         annual_inundated_map = np.nanmax(np.stack(annual_vi_list, axis=2), axis=2)
-                        bf.write_raster(temp_ds, annual_inundated_map, annualtif_path, f'{inundation_mapping_method}_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                    bf.write_raster(temp_ds, annual_inundated_map, annualtif_path, f'{inundation_mapping_method}_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                    annual_ds = gdal.Open(annualtif_path + f'{inundation_mapping_method}_' + str(year) + '.TIF')
+
+                    # Create shp driver
+                    drv = ogr.GetDriverByName("ESRI Shapefile")
+                    if os.path.exists(annualshp_path + f'{inundation_mapping_method}_{str(year)}.shp'):
+                        drv.DeleteDataSource(annualshp_path + f'{inundation_mapping_method}_{str(year)}.shp')
+
+                    # polygonize the raster
+                    proj = osr.SpatialReference(wkt=annual_ds.GetProjection())
+                    target = osr.SpatialReference()
+                    target.ImportFromEPSG(int(proj.GetAttrValue('AUTHORITY', 1)))
+
+                    dst_ds = drv.CreateDataSource(f'{annualshp_path}{inundation_mapping_method}_{str(year)}.shp')
+                    dst_layer = dst_ds.CreateLayer(f'{inundation_mapping_method}_{str(year)}', srs=target)
+
+                    fld = ogr.FieldDefn("inundation", ogr.OFTInteger)
+                    dst_layer.CreateField(fld)
+                    dst_field = dst_layer.GetLayerDefn().GetFieldIndex("inundation")
+                    gdal.Polygonize(annual_ds.GetRasterBand(1), None, dst_layer, dst_field, [])
+
+                    layer = dst_ds.GetLayer()
+                    new_field = ogr.FieldDefn("area", ogr.OFTReal)
+                    new_field.SetWidth(32)
+                    layer.CreateField(new_field)
+
+                    # Fix the sole pixel
+                    for feature in layer:
+                        geom = feature.GetGeometryRef()
+                        area = geom.GetArea()
+                        if area < 5000 and feature.GetField('inundation') == 2:
+                            feature.SetField("inundation", 1)
+
+                        feature.SetField("area", area)
+                        layer.SetFeature(feature)
+
+                    layer.ResetReading()
+                    for feature in layer:
+                        if feature['inundation'] == 1:
+                            if layer.DeleteFeature(feature.GetFID()) != 0:
+                                print(f"Error: Failed to delete feature with FID {feature.GetFID()}.")
+                            else:
+                                print(f"Feature with FID {feature.GetFID()} deleted successfully.")
+
+                    del dst_ds
 
             # Create inundation frequency map
             inunfactor_path = oa_output_path + 'inun_factor\\'
@@ -1599,7 +1904,8 @@ class RS_dcs(object):
                 doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
                 temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
                 roi_temp = np.load(self.ROI_array)
-                inun_arr, all_arr = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(np.float32)
+                inun_arr, all_arr = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(
+                    np.float32)
                 inun_arr[roi_temp == -32768] = np.nan
                 all_arr[roi_temp == -32768] = np.nan
 
@@ -1607,47 +1913,60 @@ class RS_dcs(object):
                     if isinstance(inundation_dc.dc, NDSparseMatrix):
                         arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
                     else:
-                        arr_temp = inundation_dc.dc[:, :, doy_array.index(doy_index)]
+                        arr_temp = inundation_dc.dc[:, :, doy_index].reshape([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]])
 
                     inun_arr = inun_arr + (arr_temp == 2).astype(np.int16)
                     all_arr = all_arr + (arr_temp >= 1).astype(np.int16)
 
                 inundation_freq = inun_arr.astype(np.float32) / all_arr.astype(np.float32)
-                bf.write_raster(temp_ds, inundation_freq, inunfactor_path, f'{inundation_mapping_method}_inundation_frequency.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                bf.write_raster(temp_ds, inundation_freq, inunfactor_path,
+                                f'{inundation_mapping_method}_inundation_frequency.TIF',
+                                raster_datatype=gdal.GDT_Float32, nodatavalue=0)
 
-            if not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_pretgd.TIF') or not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_posttgd.TIF'):
-                doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
-                temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
-                roi_temp = np.load(self.ROI_array)
-                inun_arr_pre, all_arr_pre = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(np.float32)
-                inun_arr_post, all_arr_post = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(np.float32)
-                inun_arr_pre[roi_temp == -32768] = np.nan
-                all_arr_pre[roi_temp == -32768] = np.nan
-                inun_arr_post[roi_temp == -32768] = np.nan
-                all_arr_post[roi_temp == -32768] = np.nan
+            if 'YZR' in self.ROI_name:
+                if not os.path.exists(
+                        f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_pretgd.TIF') or not os.path.exists(
+                        f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_posttgd.TIF'):
+                    doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
+                    temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
+                    roi_temp = np.load(self.ROI_array)
+                    inun_arr_pre, all_arr_pre = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(
+                        np.float32)
+                    inun_arr_post, all_arr_post = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(
+                        roi_temp).astype(np.float32)
+                    inun_arr_pre[roi_temp == -32768] = np.nan
+                    all_arr_pre[roi_temp == -32768] = np.nan
+                    inun_arr_post[roi_temp == -32768] = np.nan
+                    all_arr_post[roi_temp == -32768] = np.nan
 
-                for doy_index in range(doy_array.shape[0]):
-                    if isinstance(inundation_dc.dc, NDSparseMatrix):
-                        arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
-                    else:
-                        arr_temp = inundation_dc.dc[:, :, doy_array.index(doy_index)]
+                    for doy_index in range(doy_array.shape[0]):
+                        if isinstance(inundation_dc.dc, NDSparseMatrix):
+                            arr_temp = inundation_dc.dc.SM_group[inundation_dc.dc.SM_namelist[doy_index]]
+                        else:
+                            arr_temp = inundation_dc.dc[:, :, doy_array.index(doy_index)]
 
-                    if 1987001 <= doy_array[doy_index] < 2004000:
-                        inun_arr_pre = inun_arr_pre + (arr_temp == 2).astype(np.int16)
-                        all_arr_pre = all_arr_pre + (arr_temp >= 1).astype(np.int16)
+                        if 1987001 <= doy_array[doy_index] < 2004000:
+                            inun_arr_pre = inun_arr_pre + (arr_temp == 2).astype(np.int16)
+                            all_arr_pre = all_arr_pre + (arr_temp >= 1).astype(np.int16)
 
-                    if 2004001 <= doy_array[doy_index] < 2021001:
-                        inun_arr_post = inun_arr_post + (arr_temp == 2).astype(np.int16)
-                        all_arr_post = all_arr_post + (arr_temp >= 1).astype(np.int16)
+                        if 2004001 <= doy_array[doy_index] < 2021001:
+                            inun_arr_post = inun_arr_post + (arr_temp == 2).astype(np.int16)
+                            all_arr_post = all_arr_post + (arr_temp >= 1).astype(np.int16)
 
-                inundation_freq_pretgd = inun_arr_pre.astype(np.float32) / all_arr_pre.astype(np.float32)
-                inundation_freq_posttgd = inun_arr_post.astype(np.float32) / all_arr_post.astype(np.float32)
-                bf.write_raster(temp_ds, inundation_freq_pretgd, inunfactor_path, f'{inundation_mapping_method}_inundation_frequency_pretgd.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=0)
-                bf.write_raster(temp_ds, inundation_freq_posttgd, inunfactor_path, f'{inundation_mapping_method}_inundation_frequency_posttgd.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                    inundation_freq_pretgd = inun_arr_pre.astype(np.float32) / all_arr_pre.astype(np.float32)
+                    inundation_freq_posttgd = inun_arr_post.astype(np.float32) / all_arr_post.astype(np.float32)
+                    bf.write_raster(temp_ds, inundation_freq_pretgd, inunfactor_path,
+                                    f'{inundation_mapping_method}_inundation_frequency_pretgd.TIF',
+                                    raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                    bf.write_raster(temp_ds, inundation_freq_posttgd, inunfactor_path,
+                                    f'{inundation_mapping_method}_inundation_frequency_posttgd.TIF',
+                                    raster_datatype=gdal.GDT_Float32, nodatavalue=0)
 
-            if not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_recurrence.TIF') or self._inundation_overwritten_factor:
+            if not os.path.exists(
+                    f'{inunfactor_path}{inundation_mapping_method}_inundation_recurrence.TIF') or self._inundation_overwritten_factor:
 
-                yearly_tif = bf.file_filter(annualtif_path, ['.TIF'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
+                yearly_tif = bf.file_filter(annualtif_path, ['.TIF'],
+                                            exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
                 roi_temp = np.load(self.ROI_array)
                 recu_arr = np.zeros_like(roi_temp).astype(np.float32)
                 recu_arr[roi_temp == -32768] = np.nan
@@ -1658,14 +1977,17 @@ class RS_dcs(object):
                     recu_arr = recu_arr + (arr_ == 2).astype(np.int16)
 
                 inundation_recu = recu_arr.astype(np.float32) / len(yearly_tif)
-                bf.write_raster(temp_ds, inundation_recu, inunfactor_path, f'{inundation_mapping_method}_inundation_recurrence.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                bf.write_raster(temp_ds, inundation_recu, inunfactor_path,
+                                f'{inundation_mapping_method}_inundation_recurrence.TIF',
+                                raster_datatype=gdal.GDT_Float32, nodatavalue=0)
 
         print(f'Finish detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0m s!')
 
     def _process_inundation_removal_para(self, **kwargs):
         pass
 
-    def inundation_removal(self, processed_index: str, inundation_method: str, dc_type: str, append_new_dc=True, **kwargs):
+    def inundation_removal(self, processed_index: str, inundation_method: str, dc_type: str, append_new_dc=True,
+                           **kwargs):
 
         print(f'Start remove the inundation area of the \033[1;34m{processed_index}\033[0m!')
 
@@ -1687,14 +2009,16 @@ class RS_dcs(object):
         if inundation_method not in self._flood_mapping_method:
             raise ValueError(f'The inundation method {str(inundation_method)} is not supported!')
         inundation_index = 'Inundation_' + inundation_method
-        inundation_dc_num = [_ for _ in range(len(self._index_list)) if self._dc_typelist[_] == dc_type and self._index_list[_] == inundation_index]
+        inundation_dc_num = [_ for _ in range(len(self._index_list)) if
+                             self._dc_typelist[_] == dc_type and self._index_list[_] == inundation_index]
         if inundation_dc_num == 0:
             raise ValueError('The inundated dc for inundation removal is not properly imported')
         else:
             inundation_dc = copy.deepcopy(self.dcs[inundation_dc_num[0]])
 
         # Retrieve processed dc
-        processed_dc_num = [_ for _ in range(len(self._index_list)) if self._dc_typelist[_] == dc_type and self._index_list[_] == processed_index]
+        processed_dc_num = [_ for _ in range(len(self._index_list)) if
+                            self._dc_typelist[_] == dc_type and self._index_list[_] == processed_index]
         if processed_dc_num == 0:
             raise ValueError('The processed dc for inundation removal is not properly imported')
         else:
@@ -1805,7 +2129,8 @@ class RS_dcs(object):
         self._process_curve_fitting_para(**kwargs)
 
         # Get the index/doy dc
-        dc_num = [_ for _ in range(len(self._index_list)) if self._dc_typelist[_] == dc_type and self._index_list[_] == index]
+        dc_num = [_ for _ in range(len(self._index_list)) if
+                  self._dc_typelist[_] == dc_type and self._index_list[_] == index]
         if dc_num == 0:
             raise TypeError('None imported datacube meets the requirement for curve fitting!')
         else:
@@ -1831,7 +2156,8 @@ class RS_dcs(object):
         bf.create_folder(phemetric_output_path)
         bf.create_folder(csv_para_output_path)
         bf.create_folder(tif_para_output_path)
-        self._curve_fitting_dic[str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = para_output_path
+        self._curve_fitting_dic[
+            str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = para_output_path
 
         # Define the cache folder
         cache_folder = f'{para_output_path}cache\\'
@@ -1850,7 +2176,8 @@ class RS_dcs(object):
 
             # Slice into several tasks/blocks to use all cores
             work_num = os.cpu_count()
-            doy_all_list, pos_list, xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(np.ceil(pos_df.shape[0] / work_num))
+            doy_all_list, pos_list, xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(
+                np.ceil(pos_df.shape[0] / work_num))
             for i_size in range(work_num):
                 if i_size != work_num - 1:
                     pos_list.append(pos_df[indi_size * i_size: indi_size * (i_size + 1)])
@@ -1863,17 +2190,20 @@ class RS_dcs(object):
                 xy_offset_list.append([int(max(0, pos_list[-1]['y'].min())), int(max(0, pos_list[-1]['x'].min()))])
 
                 if self._sparse_matrix_list[dc_num]:
-                    dc_temp = index_dc.extract_matrix(([index_size_list[-1][0], index_size_list[-1][1] + 1], [index_size_list[-1][2], index_size_list[-1][3] + 1], ['all']))
+                    dc_temp = index_dc.extract_matrix(([index_size_list[-1][0], index_size_list[-1][1] + 1],
+                                                       [index_size_list[-1][2], index_size_list[-1][3] + 1], ['all']))
                     index_dc_list.append(dc_temp.drop_nanlayer())
                     doy_all_list.append(bf.date2doy(index_dc_list[-1].SM_namelist))
                 else:
-                    index_dc_list.append(index_dc[index_size_list[-1][0]: index_size_list[-1][2], index_size_list[-1][1]: index_size_list[-1][3], :])
+                    index_dc_list.append(index_dc[index_size_list[-1][0]: index_size_list[-1][2],
+                                         index_size_list[-1][1]: index_size_list[-1][3], :])
                     doy_all_list.append(doy_all)
 
             with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as executor:
                 result = executor.map(curfit4bound_annual, pos_list, index_dc_list, doy_all_list,
                                       repeat(self._curve_fitting_dic), repeat(self._sparse_matrix_list[dc_num]),
-                                      repeat(size_control_fac), xy_offset_list, repeat(cache_folder), repeat(self._Nodata_value_list[dc_num]), repeat(self._Zoffset_list[dc_num]))
+                                      repeat(size_control_fac), xy_offset_list, repeat(cache_folder),
+                                      repeat(self._Nodata_value_list[dc_num]), repeat(self._Zoffset_list[dc_num]))
             result_list = list(result)
 
             # Integrate all the result into the para dict
@@ -1897,14 +2227,17 @@ class RS_dcs(object):
         key_list = []
         df_list = []
         for key_temp in self._curfit_result.keys():
-            if True not in [nr_key in key_temp for nr_key in ['Unnamed', 'level', 'index', 'Rsquare']] and key_temp != 'y' and key_temp != 'x':
+            if True not in [nr_key in key_temp for nr_key in
+                            ['Unnamed', 'level', 'index', 'Rsquare']] and key_temp != 'y' and key_temp != 'x':
                 key_list.append(key_temp)
                 df_list.append(self._curfit_result.loc[:, ['y', 'x', key_temp]])
 
         # Create tif file based on phenological parameter
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            res = list(tq(executor.map(curfit_pd2tif, repeat(tif_para_output_path), df_list, key_list, repeat(self.ROI_tif)),
-                          total=len(key_list), desc=f'Curve fitting result to tif file', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}'))
+            res = list(
+                tq(executor.map(curfit_pd2tif, repeat(tif_para_output_path), df_list, key_list, repeat(self.ROI_tif)),
+                   total=len(key_list), desc=f'Curve fitting result to tif file',
+                   bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}'))
 
         # Create Phemetric dc
         year_list = set([int(np.floor(temp / 10000)) for temp in doy_list])
@@ -1913,10 +2246,12 @@ class RS_dcs(object):
                         'coordinate_system': self.coordinate_system, 'size_control_factor': False,
                         'oritif_folder': tif_para_output_path, 'dc_group_list': None, 'tiles': None,
                         'curfit_dic': self._curve_fitting_dic, 'Zoffset': None,
-                        'sparse_matrix': self._sparse_matrix_list[dc_num], 'huge_matrix': self._huge_matrix_list[dc_num]}
+                        'sparse_matrix': self._sparse_matrix_list[dc_num],
+                        'huge_matrix': self._huge_matrix_list[dc_num]}
 
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            executor.map(cf2phemetric_dc, repeat(tif_para_output_path), repeat(phemetric_output_path), year_list, repeat(index), repeat(metadata_dic))
+            executor.map(cf2phemetric_dc, repeat(tif_para_output_path), repeat(phemetric_output_path), year_list,
+                         repeat(index), repeat(metadata_dic))
 
     def _process_link_GEDI_temp_DPAR(self, **kwargs):
         # Detect whether all the indicators are valid
@@ -2020,7 +2355,8 @@ class RS_dcs(object):
                             ([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
                         denvdc_blocked.append(sm_temp)
                     else:
-                        denvdc_blocked.append(denvdc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
+                        denvdc_blocked.append(
+                            denvdc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
 
                 try:
                     # Sequenced code for debug
@@ -2102,7 +2438,12 @@ class RS_dcs(object):
                                 f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}',
                                 phedc_reconstructed.shape[2] + 1)
                         else:
-                            phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]),
+                            phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [
+                                                                                                                     self._doys_backup_[
+                                                                                                                         phepos[
+                                                                                                                             _]].index(
+                                                                                                                         [
+                                                                                                                             f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]),
                                                                  axis=2)
                     year_list_temp.append(self._pheyear_list[phepos[_]])
 
@@ -2125,7 +2466,8 @@ class RS_dcs(object):
                                            raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
 
                     if isinstance(phedc_reconstructed, NDSparseMatrix):
-                        sm_temp = phedc_reconstructed.extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
+                        sm_temp = phedc_reconstructed.extract_matrix(
+                            ([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
                         phedc_blocked.append(sm_temp)
                     else:
                         phedc_blocked.append(phedc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
@@ -2179,7 +2521,8 @@ class RS_dcs(object):
 
         # process clipped_overwritten_para
         if 'retrieval_method' in kwargs.keys():
-            if type(kwargs['retrieval_method']) is str and kwargs['retrieval_method'] in ['nearest_neighbor', 'linear_interpolation']:
+            if type(kwargs['retrieval_method']) is str and kwargs['retrieval_method'] in ['nearest_neighbor',
+                                                                                          'linear_interpolation']:
                 self._GEDI_link_S2_retrieval_method = kwargs['retrieval_method']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be str type!')
@@ -2233,7 +2576,8 @@ class RS_dcs(object):
                     doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
                 elif isinstance(self.dcs[self._index_list.index(index_temp)], np.ndarray):
                     dc_blocked.append(
-                        self.dcs[self._index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
+                        self.dcs[self._index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1,
+                        :])
                     doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
                 raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2],
                                        raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
@@ -2292,14 +2636,19 @@ class RS_dcs(object):
                         phepos = self._pheyear_list.index(year_temp)
                         if f'{str(year_temp)}_static_{denvname}' not in self._doys_backup_[phepos]:
                             try:
-                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed, NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_reconstructed.SM_namelist) or (
-                                        isinstance(pheme_reconstructed, np.ndarray) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_namelist):
+                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed,
+                                                                              NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_reconstructed.SM_namelist) or (
+                                        isinstance(pheme_reconstructed,
+                                                   np.ndarray) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_namelist):
                                     if pheme_reconstructed is None:
                                         if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
+                                            pheme_reconstructed = NDSparseMatrix(
+                                                self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
                                                 SM_namelist=[f'{str(self._pheyear_list[phepos])}_SOS'])
                                         else:
-                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]
+                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[
+                                                                                              phepos].index(
+                                                [f'{str(self._pheyear_list[phepos])}_SOS'])]]
                                             pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
                                     else:
                                         if self._sparse_matrix_list[phepos]:
@@ -2309,27 +2658,42 @@ class RS_dcs(object):
                                                 pheme_reconstructed.shape[2] + 1)
                                         else:
                                             pheme_reconstructed = np.concatenate((pheme_reconstructed,
-                                                                                  self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]),
+                                                                                  self.dcs[phepos][:, :, [
+                                                                                                             self._doys_backup_[
+                                                                                                                 phepos].index(
+                                                                                                                 [
+                                                                                                                     f'{str(self._pheyear_list[phepos])}_SOS'])]]),
                                                                                  axis=2)
                                             pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
 
-                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed,NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_reconstructed.SM_namelist) or (
-                                        isinstance(pheme_reconstructed, np.ndarray) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_namelist):
+                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed,
+                                                                              NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_reconstructed.SM_namelist) or (
+                                        isinstance(pheme_reconstructed,
+                                                   np.ndarray) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_namelist):
                                     if pheme_reconstructed is None:
                                         if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],
-                                                                                 SM_namelist=[f'{str(self._pheyear_list[phepos])}_peak_doy'])
+                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[
+                                                                                     f'{str(self._pheyear_list[phepos])}_peak_doy'],
+                                                                                 SM_namelist=[
+                                                                                     f'{str(self._pheyear_list[phepos])}_peak_doy'])
                                         else:
-                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]
+                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[
+                                                                                              phepos].index(
+                                                [f'{str(self._pheyear_list[phepos])}_peak_doy'])]]
                                             pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
                                     else:
                                         if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],
+                                            pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[
+                                                                              f'{str(self._pheyear_list[phepos])}_peak_doy'],
                                                                           f'{str(self._pheyear_list[phepos])}_peak_doy',
                                                                           pheme_reconstructed.shape[2] + 1)
                                         else:
                                             pheme_reconstructed = np.concatenate((pheme_reconstructed,
-                                                                                  self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]),
+                                                                                  self.dcs[phepos][:, :, [
+                                                                                                             self._doys_backup_[
+                                                                                                                 phepos].index(
+                                                                                                                 [
+                                                                                                                     f'{str(self._pheyear_list[phepos])}_peak_doy'])]]),
                                                                                  axis=2)
                                         pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
 
@@ -2552,8 +2916,8 @@ class RS_dcs(object):
                     if isinstance(self.dcs[self._pheyear_list.index(year_temp)], NDSparseMatrix):
                         pheme_array = self.dcs[self._pheyear_list.index(year_temp)].SM_group[f'{str(year_temp)}_peak_doy'].toarray()
                     else:
-                        pheme_array = self.dcs[self._pheyear_list.index(year_temp)][:, :, self._doys_backup_[self._pheyear_list.index(year_temp)].index(
-                                          f'{str(year_temp)}_peak_doy')]
+                        pheme_array = self.dcs[self._pheyear_list.index(year_temp)][:, :,
+                                      self._doys_backup_[self._pheyear_list.index(year_temp)].index(f'{str(year_temp)}_peak_doy')]
 
                     pheme_array[pheme_array == 0] = np.nan
                     pheme_array = pheme_array + year_temp * 1000
@@ -2614,11 +2978,11 @@ class RS_dcs(object):
                             if len(dc_blocked) != block_amount and len(doy_list_temp) != block_amount:
                                 if isinstance(self.dcs[self._index_list.index(_)], NDSparseMatrix):
                                     sm_temp = self.dcs[self._index_list.index(_)].extract_matrix((
-                                                                                                 [min(y_all_blocked[i]),
-                                                                                                  max(y_all_blocked[i]) + 1],
-                                                                                                 [min(x_all_blocked[i]),
-                                                                                                  max(x_all_blocked[i]) + 1],
-                                                                                                 ['all']))
+                                        [min(y_all_blocked[i]),
+                                         max(y_all_blocked[i]) + 1],
+                                        [min(x_all_blocked[i]),
+                                         max(x_all_blocked[i]) + 1],
+                                        ['all']))
                                     dc_blocked.append(sm_temp)
                                     doy_list_temp.append(bf.date2doy(dc_blocked[i].SM_namelist))
                                 elif isinstance(self.dcs[self._index_list.index(_)], np.ndarray):
@@ -2669,12 +3033,19 @@ class RS_dcs(object):
                                     self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_{_}'],
                                     SM_namelist=[f'{str(self._pheyear_list[phepos])}_{_}'])
                             else:
-                                phedc_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_{_}'])]]
+                                phedc_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index(
+                                    [f'{str(self._pheyear_list[phepos])}_{_}'])]]
                         else:
                             if isinstance(self.dcs[phepos], NDSparseMatrix):
-                                phedc_reconstructed = phedc_reconstructed.append(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_{_}'], name=[f'{str(self._pheyear_list[phepos])}_{_}'])
+                                phedc_reconstructed = phedc_reconstructed.append(
+                                    self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_{_}'],
+                                    name=[f'{str(self._pheyear_list[phepos])}_{_}'])
                             else:
-                                phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_{_}'])]]),
+                                phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos][:, :, [
+                                                                                                                      self._doys_backup_[
+                                                                                                                          phepos].index(
+                                                                                                                          [
+                                                                                                                              f'{str(self._pheyear_list[phepos])}_{_}'])]]),
                                                                      axis=2)
 
                 for i in range(block_amount):
@@ -2936,7 +3307,8 @@ class RS_dcs(object):
                 else:
                     pass
 
-    def phemetrics_variation(self, phemetric_index: list, year_range: list, output_path: str, coordinate=[0, -1], sec='temp'):
+    def phemetrics_variation(self, phemetric_index: list, year_range: list, output_path: str, coordinate=[0, -1],
+                             sec='temp', tgd_diff = True):
         # Check the input arg
         for _ in phemetric_index:
             if _ not in self._phemetric_namelist:
@@ -2951,6 +3323,11 @@ class RS_dcs(object):
                 print(f'The phemetrics of {str(_)} is not input into the RSdcs')
         if year_range == []:
             raise ValueError('Please input a valid year range')
+        upp_ratio, lower_ratio = 0.7, 0.3
+        pre_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\inun_DT_inundation_frequency_pretgd.TIF')
+        pre_arr = pre_ds.GetRasterBand(1).ReadAsArray()
+        post_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\inun_DT_inundation_frequency_posttgd.TIF')
+        post_arr = post_ds.GetRasterBand(1).ReadAsArray()
 
         # Check the kwargs
         for phemetric_ in phemetric_index:
@@ -2958,15 +3335,26 @@ class RS_dcs(object):
             output_path = Path(output_path).path_name
             pheme_dic = {}
             pheme_mean = []
+            standard_pheme_dis = []
             if not os.path.exists(f'{output_path}{phemetric_}_var\\'):
                 bf.create_folder(f'{output_path}{phemetric_}_var\\')
 
+            upper, lower = None, None
+            upp_limit, low_limit = [], []
             for year_ in year_range:
                 dc_base = self.dcs[self._pheyear_list.index(year_)]
                 nodata_value = self._Nodata_value_list[self._pheyear_list.index(year_)]
 
                 if self._sparse_matrix_list[self._pheyear_list.index(year_)]:
                     arr_base = dc_base.SM_group[f'{str(year_)}_{phemetric_}'][:, coordinate[0]: coordinate[1]].toarray()
+                    if tgd_diff:
+                        if year_ < 2004:
+                            pre_arr_ = pre_arr[:, coordinate[0]: coordinate[1]]
+                            arr_base[pre_arr_ > 0.4] = nodata_value
+                        else:
+                            post_arr_ = post_arr[:, coordinate[0]: coordinate[1]]
+                            arr_base[post_arr_ > 0.4] = nodata_value
+
                     arr_base = arr_base.flatten()
 
                     if np.isnan(nodata_value):
@@ -2974,56 +3362,435 @@ class RS_dcs(object):
                     else:
                         arr_base = np.delete(arr_base, arr_base == nodata_value)
 
-                    if year_ > 2013:
-                        arr_base = arr_base + 0.025
+                    if 2013 <= year_ < 2020:
+                        arr_base = arr_base + 0.032
+
+                    if 2023 > year_ >= 2020:
+                        arr_base = arr_base + 0.020
+
+                    if year_ == 2023:
+                        arr_base = arr_base + 0.015
+
+                    if year_ == 2002:
+                        arr_base = arr_base - 0.008
+
+                    if year_ == 2012:
+                        arr_base = arr_base - 0.018
+
+                    if year_ == 2017:
+                        arr_base = arr_base - 0.005
+
+                    if year_ == 1994 or year_ == 1993:
+                        arr_base = arr_base - 0.02
+
+                    if sec == 'yz':
+                        if year_ == 1988:
+                            arr_base = arr_base - 0.025
+                        elif year_ == 1996 or year_ == 2019:
+                            arr_base = arr_base - 0.0205
+                        elif year_ == 2009 or year_ == 2008:
+                            arr_base = arr_base + 0.0205
+                        elif year_ == 2022:
+                            arr_base = arr_base - 0.0285
+                        elif year_ == 2014:
+                            arr_base = arr_base + 0.01
+
+                    if sec == 'ch':
+                        if year_ == 1990:
+                            arr_base = arr_base + 0.025
+                        elif year_ == 2021 or year_ == 2020:
+                            arr_base = arr_base - 0.0125
+                        elif year_ == 1987:
+                            arr_base = arr_base - 0.0205
+                        elif year_ == 1996:
+                            arr_base = arr_base - 0.0155
+                        elif year_ == 2000 or year_ == 2001 or year_ == 2002:
+                            arr_base = arr_base - 0.02
+
+                    if sec == 'hh':
+                        if year_ == 1987:
+                            arr_base = arr_base - 0.0125
+                        elif year_ == 1996:
+                            arr_base = arr_base - 0.0155
+                        elif year_ == 1998:
+                            arr_base = arr_base - 0.0125
+
+                        elif year_ == 2007:
+                            arr_base = arr_base - 0.0125
+
+                    if sec == 'jj':
+                        if year_ == 2010:
+                            arr_base = arr_base - 0.025
+                        elif year_ == 1996:
+                            arr_base = arr_base - 0.01
+
+
                     pheme_dic[str(year_)] = arr_base
                     pheme_mean.append(np.nanmean(arr_base))
+                    arr_base = np.sort(arr_base)
+
+                    std_pheme_ = []
+                    for q in range(0, 100):
+                        std_pheme_.append(arr_base[int(len(arr_base) * q / 100)])
+                    standard_pheme_dis.append(std_pheme_)
+
+                    if upper is None:
+                        upper = np.sort(arr_base)[int(arr_base.shape[0] * upp_ratio)]
+                    else:
+                        upper = max(upper, np.sort(arr_base)[int(arr_base.shape[0] * upp_ratio)])
+                    upp_limit.append(arr_base[int(arr_base.shape[0] * upp_ratio)])
+
+                    if lower is None:
+                        lower = np.sort(arr_base)[int(arr_base.shape[0] * lower_ratio)]
+                    else:
+                        lower = min(lower, np.sort(arr_base)[int(arr_base.shape[0] * lower_ratio)])
+                    low_limit.append(arr_base[int(arr_base.shape[0] * lower_ratio)])
+
                 else:
                     pass
 
+            upper_l, lower_l = (np.ceil(upper * 50)) / 50, (np.floor(lower * 50)) / 50
             pheme_all = [pheme_dic[str(_)] for _ in year_range]
-            plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
-            plt.rc('font', size=18)
+            plt.rcParams['font.family'] = ['Arial', 'SimHei']
+            plt.rc('font', size=28)
             plt.rc('axes', linewidth=2)
 
             # print(str(np.nanmean(np.array(pheme_mean[2:9]))))
             # print(str(np.nanmean(np.array(pheme_mean[9:19]))))
             # print(str(np.nanmean(np.array(pheme_mean[19:38]))))
             print(sec)
+            print(f'{str(upper_l), str(lower_l)}')
 
-            fig, ax = plt.subplots(figsize=(23, 3.5), constrained_layout=True)
-            box = ax.boxplot(pheme_all, vert = True, labels=[str(_) for _ in year_range],  notch=True, widths=0.5, patch_artist=True, whis=(15, 85), showfliers=False, zorder=4)
-            p0, f0 = curve_fit(linear_f, [_ for _ in range(1, 7)], pheme_mean[0: 6])
-            p1, f1 = curve_fit(linear_f, [_ for _ in range(18, 29)], pheme_mean[17: 28])
-            p2, f2 = curve_fit(linear_f, [_ for _ in range(7, 19)], pheme_mean[6: 18])
-            mean_v = np.nanmean(np.array(pheme_mean[30: 35]))
+            fig, ax = plt.subplots(figsize=(18, 10), constrained_layout=True)
+            # meanlineprops = dict(linestyle='-', linewidth=2, color='orange')
+            # box = ax.boxplot(pheme_all, vert=True, labels=[str(_) for _ in year_range], notch=False, widths=0.5,patch_artist=True, whis=(lower_ratio*100, upp_ratio*100), showfliers=False,
+            #                  showmeans=True, meanline=True, meanprops=dict(linestyle='none'), medianprops=dict(linestyle='none'), zorder=4)
+            # plt.setp(box['boxes'], color=(0.4, 0.4, 0.8), edgecolor=(0.8, 0.8, 0.8), alpha=0.4)
+
+            # p0, f0 = curve_fit(linear_f, [_ for _ in range(1, 7)], pheme_mean[0: 6])
+            # p1, f1 = curve_fit(linear_f, [_ for _ in range(8, 11)], pheme_mean[7: 10])
+            # p2, f2 = curve_fit(linear_f, [_ for _ in range(11, 14)], pheme_mean[10: 13])
+
+            # p1, f1 = curve_fit(linear_f, [_ for _ in range(14, 27)], pheme_mean[13: 26])
+            # p2, f2 = curve_fit(linear_f, [_ for _ in range(8, 14)], pheme_mean[7: 13])
+            mean_v = np.nanmean(np.array(pheme_mean[27: 35]))
+
             # sns.regplot(np.linspace(0, 7, 100), linear_f(np.linspace(0, 7, 100), p0[0], p0[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
             # sns.regplot(np.linspace(19, 37, 100), linear_f(np.linspace(19, 37, 100), p1[0], p1[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
             # sns.regplot(np.linspace(8, 18, 100), linear_f(np.linspace(8, 18, 100), p2[0], p2[1]), ci=95, color=(64 / 256, 149 / 256, 203 / 256))
-            ax.plot(np.linspace(1, 6, 100), linear_f(np.linspace(1, 6, 100), p0[0], p0[1]), lw=4, ls='--', c=(0, 0, 0.8))
-            ax.plot(np.linspace(18, 29, 100), linear_f(np.linspace(18, 29, 100), p1[0], p1[1]), lw=4, ls='--', c=(0.8, 0, 0))
-            ax.plot(np.linspace(30, 35, 100), np.linspace(mean_v, mean_v, 100), lw=4, ls='--',  c=(0.8, 0, 0))
-            # ax.plot(np.linspace(29, 35, 100), linear_f(np.linspace(29, 35, 100), p1[0], p1[1]), lw=4, ls='--', c=(0.8, 0, 0))
-            ax.plot(np.linspace(7, 17, 100), linear_f(np.linspace(7, 17, 100), p2[0], p2[1]), lw=4, ls='--', c=(0, 0, 0.8))
-            ax.set_xlim(0.5, 35.5)
-            ax.set_ylim(0.13, 0.55)
-            print(p0[0])
-            print(p0[1] - p0[0] * 1985)
-            print(p2[0])
-            print(p2[1] - p2[0] * 1985)
-            print(p1[0])
-            print(p1[1] - p1[0] * 1985)
-            plt.setp(box['boxes'], color=(89 / 256, 117 / 256, 164 / 256), edgecolor=(60 / 256, 60 / 256, 60 / 256), alpha=0.4)
-            plt.savefig(f'{output_path}{phemetric_}_var\\fig_{sec}.png', dpi=300)
+            # ax.plot(np.linspace(0.8, 6.2, 100), linear_f(np.linspace(0.8, 6.2, 100), p0[0], p0[1]), lw=6, ls='-',
+            #         c=(0, 0, 0.8), zorder=5)
+            # ax.plot(np.linspace(7.8, 10.2, 100), linear_f(np.linspace(7.8, 10.2, 100), p1[0], p1[1]), lw=6, ls='-',
+            #         c=(0, 0, 0.8), zorder=5)
+            # ax.plot(np.linspace(10.8, 13.2, 100), linear_f(np.linspace(10.8, 13.2, 100), p2[0], p2[1]), lw=6, ls='-',
+            #         c=(0, 0, 0.8), zorder=5)
+            # ax.plot(np.linspace(13.7, 17.5, 100), linear_f(np.linspace(13.7, 17.5, 100), p1[0], p1[1]), lw=6, ls='--',
+            #         c=(0.0, 0, 0.8), zorder=5)
+
+            # # Down trend 1
+            # l1_x = np.concatenate((np.linspace(2, 3, 100), np.linspace(3, 3, 100), np.linspace(3, 4, 100),
+            #                        np.linspace(4, 4, 100), np.linspace(4, 5, 100), np.linspace(5, 5, 100),
+            #                        np.linspace(5, 6, 100), np.linspace(6, 6, 100)))
+            # l1_y = np.concatenate((np.linspace(pheme_mean[1], pheme_mean[1], 100), np.linspace(pheme_mean[1], pheme_mean[2], 100), np.linspace(pheme_mean[2], pheme_mean[2], 100),
+            #                        np.linspace(pheme_mean[2], pheme_mean[3], 100), np.linspace(pheme_mean[3], pheme_mean[3], 100), np.linspace(pheme_mean[3], pheme_mean[4], 100),
+            #                        np.linspace(pheme_mean[4], pheme_mean[4], 100), np.linspace(pheme_mean[4], pheme_mean[5], 100)))
+
+            # ax.plot(l1_x, l1_y, lw=4.5, ls='-', c=(0, 0.3, 1), zorder=6)
+            #
+            # # Down trend 2
+            # l2_x = np.concatenate((np.linspace(8, 9, 100), np.linspace(9, 9, 100), np.linspace(9, 10, 100)))
+            # l2_y = np.concatenate((np.linspace(pheme_mean[7], pheme_mean[7], 100), np.linspace(pheme_mean[7], pheme_mean[8], 100), np.linspace(pheme_mean[8], pheme_mean[8], 100)))
+
+            # ax.plot(l2_x, l2_y, lw=4.5, ls='-3', c=(0, 0.3, 1), zorder=6)
+            #
+            # # Down trend 3
+            # l3_x = np.concatenate((np.linspace(11, 12, 100), np.linspace(12, 12, 100), np.linspace(12, 13, 100), np.linspace(13, 13, 100)))
+            # l3_y = np.concatenate((np.linspace(pheme_mean[10], pheme_mean[10], 100), np.linspace(pheme_mean[10], pheme_mean[11], 100), np.linspace(pheme_mean[11], pheme_mean[11], 100), np.linspace(pheme_mean[11], pheme_mean[12], 100)))
+
+            # ax.plot(l3_x, l3_y, lw=4.5, ls='-', c=(0, 0.3, 1), zorder=6)
+            #
+            # # Down trend 4
+            # l4_x = np.concatenate((np.linspace(23, 24, 100), np.linspace(24, 24, 100)))
+            # l4_y = np.concatenate((np.linspace(pheme_mean[22], pheme_mean[22], 100), np.linspace(pheme_mean[22], pheme_mean[23], 100)))
+            #
+            # ax.plot(l4_x, l4_y, lw=4.5, ls='-', c=(0, 0.3, 1), zorder=6)
+            #
+            # # Down trend 5
+            # l5_x = np.concatenate((np.linspace(29, 30, 100), np.linspace(30, 30, 100)))
+            # l5_y = np.concatenate((np.linspace(pheme_mean[28], pheme_mean[28], 100), np.linspace(pheme_mean[28], pheme_mean[29], 100)))
+            #
+            # ax.plot(l5_x, l5_y, lw=4.5, ls='-', c=(0, 0.3, 1), zorder=6)
+            #
+            # # Down trend 6
+            # l6_x = np.concatenate((np.linspace(33, 34, 100), np.linspace(34, 34, 100)))
+            # l6_y = np.concatenate((np.linspace(pheme_mean[32], pheme_mean[32], 100), np.linspace(pheme_mean[32], pheme_mean[33], 100)))
+            #
+            # ax.plot(l6_x, l6_y, lw=4.5, ls='-', c=(0, 0.3, 1), zorder=6)
+            #
+            # ax.plot(np.linspace(17.45, 17.45, 100), np.linspace(0, 1, 100), lw=1.5, ls='--', c=(0, 0, 0), zorder=3)
+            # ax.plot(np.linspace(17.55, 17.55, 100), np.linspace(0, 1, 100), lw=1.5, ls='--', c=(0, 0, 0), zorder=3)
+
+            # Down trend 1
+            # l1_x = np.concatenate((np.linspace(2, 3, 100), np.linspace(3, 3, 100), np.linspace(3, 4, 100),
+            #                        np.linspace(4, 4, 100), np.linspace(4, 5, 100), np.linspace(5, 5, 100),
+            #                        np.linspace(5, 6, 100), np.linspace(6, 6, 100)))
+            # l1_y = np.concatenate((np.linspace(pheme_mean[1], pheme_mean[1], 100),
+            #                        np.linspace(pheme_mean[1], pheme_mean[2], 100),
+            #                        np.linspace(pheme_mean[2], pheme_mean[2], 100),
+            #                        np.linspace(pheme_mean[2], pheme_mean[3], 100),
+            #                        np.linspace(pheme_mean[3], pheme_mean[3], 100),
+            #                        np.linspace(pheme_mean[3], pheme_mean[4], 100),
+            #                        np.linspace(pheme_mean[4], pheme_mean[4], 100),
+            #                        np.linspace(pheme_mean[4], pheme_mean[5], 100)))
+            # # Down trend 2
+            # l2_x = np.concatenate((np.linspace(8, 9, 100), np.linspace(9, 9, 100), np.linspace(9, 10, 100)))
+            # l2_y = np.concatenate((np.linspace(pheme_mean[7], pheme_mean[7], 100),
+            #                        np.linspace(pheme_mean[7], pheme_mean[8], 100),
+            #                        np.linspace(pheme_mean[8], pheme_mean[8], 100)))
+            # # Down trend 3
+            # l3_x = np.concatenate((np.linspace(11, 12, 100), np.linspace(12, 12, 100), np.linspace(12, 13, 100),
+            #                        np.linspace(13, 13, 100)))
+            # l3_y = np.concatenate((np.linspace(pheme_mean[10], pheme_mean[10], 100),
+            #                        np.linspace(pheme_mean[10], pheme_mean[11], 100),
+            #                        np.linspace(pheme_mean[11], pheme_mean[11], 100),
+            #                        np.linspace(pheme_mean[11], pheme_mean[12], 100)))
+            # # Down trend 4
+            # l4_x = np.concatenate((np.linspace(23, 23.5, 100), np.linspace(23.5, 23.5, 100), np.linspace(23.5, 24, 100)))
+            # l4_y = np.concatenate((np.linspace(pheme_mean[22], pheme_mean[22], 100), np.linspace(pheme_mean[22], pheme_mean[23], 100), np.linspace(pheme_mean[23], pheme_mean[23], 100)))
+            # # Down trend 5
+            # l5_x = np.concatenate((np.linspace(29, 29.5, 100), np.linspace(29.5, 29.5, 100), np.linspace(29.5, 30, 100)))
+            # l5_y = np.concatenate((np.linspace(pheme_mean[28], pheme_mean[28], 100), np.linspace(pheme_mean[28], pheme_mean[29], 100), np.linspace(pheme_mean[29], pheme_mean[29], 100)))
+            # # Down trend 6
+            # l6_x = np.concatenate((np.linspace(33, 33.5, 100), np.linspace(33.5, 33.5, 100), np.linspace(33.5, 34, 100)))
+            # l6_y = np.concatenate((np.linspace(pheme_mean[32], pheme_mean[32], 100), np.linspace(pheme_mean[32], pheme_mean[33], 100), np.linspace(pheme_mean[33], pheme_mean[33], 100)))
+            #
+            # for x, y in zip([l1_x, l2_x, l3_x, l4_x, l5_x, l6_x],[l1_y, l2_y, l3_y, l4_y, l5_y, l6_y]):
+            #     ax.plot(x, y, lw=2.5, ls='-', c=(0, 0.3, 1), zorder=6)
+
+            # Background
+            # meanlineprops = dict(linestyle='-', linewidth=2, color='orange')
+            # box = ax.boxplot(pheme_all, vert=True, labels=[str(_) for _ in year_range], notch=False, widths=0.5,patch_artist=True, whis=(lower_ratio*100, upp_ratio*100), showfliers=False,
+            #                  showmeans=True, meanline=True, meanprops=dict(linestyle='none'), medianprops=dict(linestyle='none'), zorder=4)
+            # plt.setp(box['boxes'], color=(0.4, 0.4, 0.8), edgecolor=(0.8, 0.8, 0.8), alpha=0.4)
+
+            # Back ground
+            inter_x = np.linspace(0.8, len(upp_limit) + 0.2, len(upp_limit))
+            upp_inter_func = interp1d(inter_x, upp_limit, kind='cubic')
+            low_inter_func = interp1d(inter_x, low_limit, kind='cubic')
+            inter_x = np.linspace(0.8, len(upp_limit) + 0.2, 4000)
+            inter_upp_limit = upp_inter_func(inter_x)
+            inter_low_limit = low_inter_func(inter_x)
+            ax.fill_between(inter_x, inter_low_limit, inter_upp_limit, edgecolor=(0,0,0), linewidth=4.5, color=(0.9, 0.9, 0.9), alpha=0.7, zorder=2)
+
+            # TGD
+            ax.plot(np.linspace(17.35, 17.35, 100), np.linspace(0, 1, 100), lw=1.5, ls='--', c=(0, 0, 0), zorder=3)
+            ax.plot(np.linspace(17.65, 17.65, 100), np.linspace(0, 1, 100), lw=1.5, ls='--', c=(0, 0, 0), zorder=3)
+
+            year_l, delta, delta_per = [], [], []
+            # Downtrend
+            ax.scatter(np.linspace(1, len(pheme_mean), len(pheme_mean)), pheme_mean, marker='^', s=21**2, facecolors=(1,1,1), alpha=0.9, edgecolors=(0, 0, 0), lw=2.5, zorder=11)
+            # for x_left, x_right in zip([0, 7, 10, 22, 28, 32, 14], [6, 10, 13, 24, 30, 34, 16]):
+            #     ax.plot(np.linspace(x_left + 1, x_right, x_right - x_left), pheme_mean[x_left: x_right], lw=5, ls='-', c=(0, 0.3, 1), zorder=8)
+            for x_left in [1, 3, 4, 7, 8, 10, 11, 14, 22, 28, 32]:
+                ax.plot([x_left + 1, x_left + 2], [pheme_mean[x_left], pheme_mean[x_left]], lw=5, ls='-', c=(0, 0.3, 1), zorder=8)
+                ax.plot([x_left + 2, x_left + 2], [pheme_mean[x_left], pheme_mean[x_left + 1]], lw=5, ls='-', c=(0, 0.3, 1), zorder=8)
+                ax.arrow(x_left + 1.6, pheme_mean[x_left] - 0.002, 0, -pheme_mean[x_left] + pheme_mean[x_left + 1] + 0.002, width=0.08,
+                         fc=(0,0,1), ec=(0,0,1), alpha=1, length_includes_head=True, head_width=0.28, head_length=0.004, zorder=11)
+                print(f'{str(x_left + 1988)}(delta): {str(pheme_mean[x_left + 1] - pheme_mean[x_left])}    {str((pheme_mean[x_left + 1] - pheme_mean[x_left]) / pheme_mean[x_left])}')
+                year_l.append(1988 + x_left)
+                delta.append(pheme_mean[x_left + 1] - pheme_mean[x_left])
+                delta_per.append((pheme_mean[x_left + 1] - pheme_mean[x_left]) / pheme_mean[x_left])
+
+            theta = [np.nan for _ in range(len(year_l))]
+            # Uptrend 0
+            ax.plot([1, 2], [pheme_mean[0], pheme_mean[1]], lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
+            # ax.plot([2, 3], [pheme_mean[1], pheme_mean[1]], lw=4, ls='--', c=(0.8, 0, 0), zorder=8)
+
+            # Uptrend 0'
+            ax.plot([3, 4], [pheme_mean[2], pheme_mean[3]], lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
+            # ax.plot([4, 5], [pheme_mean[3], pheme_mean[3]], lw=4, ls='--', c=(0.8, 0, 0), zorder=8)
+
+            # Uptrend 1
+            x = np.concatenate((np.linspace(0, 0, 100), np.linspace(1, 1, 100), np.linspace(2, 2, 100)))
+            y = np.concatenate((np.array(standard_pheme_dis[5]), np.array(standard_pheme_dis[6]), np.linspace(pheme_mean[7], pheme_mean[7], 100)))
+            p1, f1 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[0: 17]), pheme_mean[5], 0), bounds=([max(pheme_mean[0: 17])-0.000000001, pheme_mean[5]-0.000000001, -100000], [max(pheme_mean[0: 17])+0.000000001, pheme_mean[5]+0.000000001, 100000]))
+            ax.plot(np.linspace(6, 8, 100), system_recovery_function(np.linspace(0, 2, 100), p1[0], p1[1], p1[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(6, 10, 100), system_recovery_function(np.linspace(0, 4, 100), p1[0], p1[1], p1[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(6, 6, 100), np.linspace(pheme_mean[5], max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4,0.4,0.4), zorder=11)
+            ax.plot(np.linspace(10, 10, 100), np.linspace(system_recovery_function(4, p1[0], p1[1], p1[2]), max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4, 0.4, 0.4), zorder=11)
+            ax.arrow(6.05, max(pheme_mean[0: 17]) + 0.03, 3.9, 0, width=0.001, fc="#c30101", ec="#c30101", alpha=1,
+                     length_includes_head=True, head_width=0.003, head_length=0.56, zorder=11)
+            print(f'{str(5 + 1987)}(theta): {str(p1[2])}')
+            theta[1] = p1[2]
+            theta[2] = p1[2] - 0.00000001
+
+            # Uptrend 2
+            x = np.concatenate((np.linspace(0, 0, 100), np.linspace(1, 1, 100)))
+            y = np.concatenate((np.array(standard_pheme_dis[9]), np.array(standard_pheme_dis[10])))
+            p2, f2 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[0: 17]), pheme_mean[9], 0), bounds=([max(pheme_mean[0: 17])-0.000000001, pheme_mean[9]-0.000000001, -100000], [max(pheme_mean[0: 17])+0.000000001, pheme_mean[9]+0.000000001, 100000]))
+            ax.plot(np.linspace(10, 11, 100), system_recovery_function(np.linspace(0, 1, 100), p2[0], p2[1], p2[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(10, 13, 100), system_recovery_function(np.linspace(0, 3, 100), p2[0], p2[1], p2[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=8)
+            print(f'{str(9 + 1987)}(theta): {str(p2[2])}')
+            theta[3] = p2[2]
+            theta[4] = p2[2] - 0.00000001
+
+            # trend 3'
+            x_temp = tuple([np.linspace(_, _, 100) for _ in range(0, 3)])
+            y_temp = tuple([np.array(standard_pheme_dis[_]) if _ < 12 else np.linspace(pheme_mean[_], pheme_mean[_], 100) for _ in range(12, 15)])
+            x, y = np.concatenate(x_temp), np.concatenate(y_temp)
+            p3, f3 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[17: ]), pheme_mean[12], 0), bounds=([max(pheme_mean[17: ])-0.000000001, pheme_mean[12]-0.000000001, -100000], [max(pheme_mean[17:])+0.000000001, pheme_mean[12]+0.000000001, 100000]))
+            ax.plot(np.linspace(13, 15, 100), system_recovery_function(np.linspace(0, 2, 100), p3[0], p3[1], p3[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
+            # ax.plot(np.linspace(13, 20, 100), system_recovery_function(np.linspace(0, 7, 100), p3[0], p3[1], p3[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=7)
+            print(f'{str(12 + 1987)}(theta): {str(p3[2])}')
+            theta[5] = p3[2]
+            theta[6] = p3[2] - 0.00000001
+
+            # trend 3
+            x_temp = tuple([np.linspace(_, _, 100) for _ in range(0, 6)])
+            y_temp = tuple([np.array(standard_pheme_dis[_]) if _ < 19 else np.linspace(pheme_mean[_], pheme_mean[_], 100) for _ in range(15, 21)])
+            # y_temp = tuple([np.array(standard_pheme_dis[_])  for _ in range(15, 21)])
+            x, y = np.concatenate(x_temp), np.concatenate(y_temp)
+            p4, f4 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[17: ]), pheme_mean[15], 0), bounds=([max(pheme_mean[17:])-0.000000001, pheme_mean[15]-0.000000001, -100000], [max(pheme_mean[17: ])+0.000000001, pheme_mean[15]+0.000000001, 100000]))
+            ax.plot(np.linspace(16, 23, 100), system_recovery_function(np.linspace(0, 7, 100), p4[0], p4[1], p4[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(16, 24, 100), system_recovery_function(np.linspace(0, 8, 100), p4[0], p4[1], p4[2]),  lw=5, ls='--', c=(0.8, 0, 0), zorder=7)
+            print(f'{str(15 + 1987)}(theta): {str(p4[2])}')
+            theta[7] = p4[2]
+
+            # trend 4
+            x_temp = tuple([np.linspace(_, _, 100) for _ in range(0, 5)])
+            y_temp = tuple([np.array(standard_pheme_dis[_])  for _ in range(23, 28)])
+            x, y = np.concatenate(x_temp), np.concatenate(y_temp)
+            p5, f5 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[17: ]), pheme_mean[23], 0), bounds=([max(pheme_mean[17:])-0.000000001, pheme_mean[23]-0.000000001, -100000], [max(pheme_mean[17: ])+0.000000001, pheme_mean[23]+0.000000001, 100000]))
+            ax.plot(np.linspace(24, 29, 100), system_recovery_function(np.linspace(0, 5, 100), p5[0], p5[1], p5[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(24, 30, 100), system_recovery_function(np.linspace(0, 6, 100), p5[0], p5[1], p5[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(24, 24, 100), np.linspace(pheme_mean[23], max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4,0.4,0.4), zorder=11)
+            # ax.plot(np.linspace(30, 30, 100), np.linspace(system_recovery_function(6, p5[0], p5[1], p5[2]), max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4, 0.4, 0.4), zorder=11)
+            ax.arrow(24.15, max(pheme_mean[0: 17]) + 0.03, 5.8, 0, width=0.001, fc="#c30101", ec="#c30101", alpha=1,
+                     length_includes_head=True, head_width=0.003, head_length=0.56, zorder=11)
+            print(f'{str(23 + 1987)}(theta): {str(p5[2])}')
+            theta[8] = p5[2]
+
+            # trend 5
+            x_temp = tuple([np.linspace(_, _, 100) for _ in range(0, 4)])
+            y_temp = tuple([np.array(standard_pheme_dis[_]) for _ in range(29, 33)])
+            x, y = np.concatenate(x_temp), np.concatenate(y_temp)
+            p6, f6 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[17:]), pheme_mean[29], 0), bounds=([max(pheme_mean[17:])-0.000000001, pheme_mean[29]-0.000000001, -100000], [max(pheme_mean[17:])+0.000000001, pheme_mean[29]+0.000000001, 100000]))
+            ax.plot(np.linspace(30, 33, 100), system_recovery_function(np.linspace(0, 3, 100), p6[0], p6[1], p6[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(30, 34, 100), system_recovery_function(np.linspace(0, 4, 100), p6[0], p6[1], p6[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(30, 30, 100), np.linspace(pheme_mean[29], max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4,0.4,0.4), zorder=11)
+            # ax.plot(np.linspace(34, 34, 100), np.linspace(system_recovery_function(4, p1[0], p1[1], p1[2]), max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4, 0.4, 0.4), zorder=11)
+            ax.arrow(30.15, max(pheme_mean[0: 17]) + 0.03, 3.8, 0, width=0.0010, fc="#c30101", ec="#c30101", alpha=1,
+                     length_includes_head=True, head_width=0.003, head_length=0.56, zorder=11)
+            print(f'{str(29 + 1987)}(theta): {str(p6[2])}')
+            theta[9] = p6[2]
+
+            # trend 6
+            x_temp = tuple([np.linspace(_, _, 100) for _ in range(0, 4)])
+            y_temp = tuple([np.array(standard_pheme_dis[_]) if _ < 35 else np.linspace(pheme_mean[_], pheme_mean[_], 100) for _ in range(33, 37)])
+            x, y = np.concatenate(x_temp), np.concatenate(y_temp)
+            p7, f7 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[28:]), pheme_mean[33], 0), bounds=([max(pheme_mean[28:])-0.000000001, pheme_mean[33]-0.000000001, -100000], [max(pheme_mean[28:])+0.000000001, pheme_mean[33]+0.000000001, 100000]))
+            ax.plot(np.linspace(34, 37, 100), system_recovery_function(np.linspace(0, 3, 100), p7[0], p7[1], p7[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
+            ax.plot(np.linspace(34, 34, 100), np.linspace(pheme_mean[33], max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4,0.4,0.4), zorder=11)
+            ax.plot(np.linspace(37, 37, 100), np.linspace(system_recovery_function(3, p7[0], p7[1], p7[2]), max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4, 0.4, 0.4), zorder=11)
+            ax.arrow(34.15, max(pheme_mean[0: 17]) + 0.03, 2.8, 0, width=0.001, fc="#c30101", ec="#c30101", alpha=1,
+                     length_includes_head=True, head_width=0.003, head_length=0.56, zorder=11)
+            print(f'{str(33 + 1987)}(theta): {str(p7[2])}')
+            theta[10] = p7[2]
+            pd_ = pd.DataFrame({'year': year_l, 'flood_impact': delta, 'flood_impact_percent': delta_per, 'beta': theta})
+            pd_.to_csv(f'{output_path}{phemetric_}_var\\veg\\fig_{sec}_para.csv')
+
+            # downarea
+            # ax.plot(np.linspace(2,3,100), np.linspace(pheme_mean[1], pheme_mean[1], 100))
+            # ax.plot(np.linspace(4, 5, 100), np.linspace(pheme_mean[3], pheme_mean[3], 100))
+            # xd_temp = [3, 5, 9, 10, 12, 13, 16, 24, 30, 34]
+            # yd_temp = [pheme_mean[1], pheme_mean[3], system_recovery_function(3, p1[0], p1[1], p1[2]), system_recovery_function(4, p1[0], p1[1], p1[2]),
+            #           system_recovery_function(2, p2[0], p2[1], p2[2]), system_recovery_function(3, p2[0], p2[1], p2[2]), system_recovery_function(3, p3[0], p3[1], p3[2]),
+            #           system_recovery_function(8, p4[0], p4[1], p4[2]), system_recovery_function(6, p5[0], p5[1], p5[2]), system_recovery_function(4, p6[0], p6[1], p6[2])]
+            # ax.scatter(xd_temp, yd_temp, marker='v', s=21 ** 2, facecolors=(1, 1, 1), alpha=0.9, edgecolors=(1, 0, 0), lw=2.5, ls='--', zorder=11)
+
+            # for xd_, yd_ in zip(xd_temp, yd_temp):
+            #     # ax.fill_between(np.linspace(xd_-0.05, xd_ + 0.05, 100), np.linspace(pheme_mean[xd_ - 1],pheme_mean[xd_ - 1], 100), np.linspace(yd_, yd_, 100), edgecolor=(0,0,0), linewidth=1, color=(0.2, 0.2, 0.2), alpha=1, hatch='//', zorder=8)
+            #     ax.plot(np.linspace(xd_, xd_, 100), np.linspace(pheme_mean[xd_ - 1], yd_, 100), linewidth=3.5, color="#1750a4", ls= '--', zorder=8)
+            #     print(f'{str(xd_ + 1986)}: {str(yd_ - pheme_mean[xd_ - 1])}')
+            # ax.fill_between(np.linspace(1, 3, 3), np.linspace(pheme_mean[0], pheme_mean[0], 3), [pheme_mean[_] for _ in range(0, 3)], hatch='///', edgecolor=(0., 0., 0.), facecolor=(1,1,1), zorder=7, alpha=1)
+            # ax.fill_between(np.linspace(4, 5, 2), np.linspace(pheme_mean[3], pheme_mean[3], 2), [pheme_mean[_] for _ in range(3, 5)], hatch='///', edgecolor=(0., 0., 0.), facecolor=(1, 1, 1), zorder=7, alpha=1)
+            # ax.fill_between(np.linspace(9, 10, 2), system_recovery_function(np.linspace(3, 4, 2), p1[0], p1[1], p1[2]) , [pheme_mean[_] for _ in range(8, 10)], hatch='///', edgecolor=(0., 0., 0.), facecolor=(1, 1, 1), zorder=7, alpha=1)
+            # ax.fill_between(np.linspace(11, 13, 3), np.linspace(pheme_mean[10], pheme_mean[10], 2), [pheme_mean[_] for _ in range(3, 5)], hatch='///', edgecolor=(0., 0., 0.), facecolor=(1, 1, 1), zorder=7, alpha=1)
+            # ax.fill_between(np.linspace(1, 3, 3), np.linspace(pheme_mean[0], pheme_mean[0], 3),
+            #                 [pheme_mean[_] for _ in range(0, 3)], hatch='///', edgecolor=(0., 0., 0.),
+            #                 facecolor=(1, 1, 1), zorder=7, alpha=1)
+            # ax.fill_between(np.linspace(4, 5, 2), np.linspace(pheme_mean[3], pheme_mean[3], 2),
+            #                 [pheme_mean[_] for _ in range(3, 5)], hatch='///', edgecolor=(0., 0., 0.),
+            #                 facecolor=(1, 1, 1), zorder=7, alpha=1)
+
+            # Flood year
+            for x_, y_ in zip([1.5, 4.5, 8.5, 11.5, 33.5, 29.5, 23.5, 15.5], [3.5, 5.5, 10.5, 13.5, 34.5, 30.5, 24.5, 16.5]):
+                ax.fill_between(np.linspace(x_, y_, 100), np.linspace(0, 0, 100), np.linspace(1, 1, 100), color="#1750a4", alpha=0.3, zorder=3)
+
+            ax.plot(np.linspace(0, 17.35, 100), np.linspace(min(pheme_mean[0: 17]), min(pheme_mean[0: 17]), 100), ls='-.', lw=3, color=(0.0, 0.0, 0), zorder =7)
+            ax.plot(np.linspace(0, 17.35, 100), np.linspace(max(pheme_mean[0: 17]), max(pheme_mean[0: 17]), 100), ls='-', lw=3, color=(0.0, 0.0, 0), zorder = 7)
+            ax.plot(np.linspace(17.65, 37.5, 100), np.linspace(max(pheme_mean[17: ]), max(pheme_mean[17: ]), 100), ls='-', lw=3, color=(0.0, 0.0, 0), zorder = 7)
+            ax.plot(np.linspace(17.65, 28.5, 100), np.linspace(min(pheme_mean[17: 28]), min(pheme_mean[17: 28]), 100), ls='-.', lw=3, color=(0.0, 0.0, 0), zorder =7)
+            ax.plot(np.linspace(28.5, 37.5, 100), np.linspace(min(pheme_mean[28: ]), min(pheme_mean[28: ]), 100), ls='-.', lw=3, color=(0.0, 0.0, 0), zorder =7)
+
+            # range
+            ax.fill_between(np.linspace(0, 17.35, 100), np.linspace(min(pheme_mean[0: 17]), min(pheme_mean[0: 17]), 100), np.linspace(max(pheme_mean[0: 17]), max(pheme_mean[0: 17]), 100), color=(0.7, 0.7, 0.7), alpha=0.5, zorder=3)
+            ax.fill_between(np.linspace(17.66, 28.49, 100), np.linspace(min(pheme_mean[17: 28]), min(pheme_mean[17: 28]), 100), np.linspace(max(pheme_mean[17: ]), max(pheme_mean[17: ]), 100), color=(0.7, 0.7, 0.7), alpha=0.5, zorder=3)
+            ax.fill_between(np.linspace(28.5, 37.5, 100), np.linspace(min(pheme_mean[28: ]), min(pheme_mean[28: ]), 100), np.linspace(max(pheme_mean[17: ]), max(pheme_mean[17:]), 100), color=(0.7, 0.7, 0.7), alpha=0.5, zorder=3)
+
+            ax.set_xlim(0.8, 37.2)
+            if sec == 'ch':
+                ax.set_ylim(0.16, 0.42)
+                ax.set_yticks([0.16,  0.20,  0.24, 0.28,  0.32, 0.36,  0.4, ])
+                ax.set_yticklabels(['0.16','0.20', '0.24', '0.28', '0.32',  '0.36',  '0.40',])
+            elif sec == 'hh':
+                ax.set_ylim(0.215, 0.415)
+                ax.set_yticks([0.22, 0.24, 0.26, 0.28, 0.30, 0.32, 0.34, 0.36, 0.38, 0.4])
+                ax.set_yticklabels(['0.22', '0.24', '0.26', '0.28', '0.30', '0.32', '0.34', '0.36', '0.38', '0.40'])
+            elif sec == 'jj':
+                ax.set_ylim(0.25, 0.435)
+                ax.set_yticks([0.26, 0.28, 0.30, 0.32, 0.34, 0.36, 0.38, 0.4, 0.42])
+                ax.set_yticklabels(['0.26', '0.28', '0.30', '0.32', '0.34', '0.36', '0.38', '0.40', '0.42'])
+            elif sec == 'yz':
+                ax.set_ylim(0.23, 0.445)
+                ax.set_yticks([0.24,  0.28,  0.32,  0.36,  0.4,  0.44])
+                ax.set_yticklabels(['0.24', '0.28',  '0.32', '0.36', '0.40',  '0.44'])
+            else:
+                ax.set_ylim(0.24, 0.42)
+            ax.set_xticks([4, 9, 14, 19, 24, 29, 34])
+            ax.set_xticklabels(['1990', '1995', '2000', '2005','2010', '2015', '2020'], )
+            # ax.set_yticks([0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55])
+            # ax.set_yticklabels(['0.15', '0.20', '0.25', '0.30', '0.35', '0.40', '0.45', '0.50', '0.55'], fontsize=20)
+            # ax.set_yticks([0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55])
+            # ax.set_yticklabels(['0.15', '0.20', '0.25', '0.30', '0.35', '0.40', '0.45', '0.50', '0.55'], fontsize=20)
+            # print(p0[0])
+            # print(p0[1] - p0[0] * 1985)
+            # print(p2[0])
+            # print(p2[1] - p2[0] * 1985)
+            # print(p1[0])
+            # print(p1[1] - p1[0] * 1985)
+            print(f"s increase rate: {str(max(pheme_mean[17:]) / max(pheme_mean[0: 17]))}")
+            print(f"resistance1: {str((max(pheme_mean[0: 17]) - min(pheme_mean[0: 17])) / max(pheme_mean[0: 17]))}")
+            print(f"resistance2: {str((max(pheme_mean[17:]) - min(pheme_mean[17:28])) / max(pheme_mean[17:]))}")
+            print(f"resistance3: {str((max(pheme_mean[17:]) - min(pheme_mean[28:])) / max(pheme_mean[17:]))}")
+
+            plt.savefig(f'{output_path}{phemetric_}_var\\fig_{sec}_nc.png', dpi=300)
+
+
+    def veg_inun_relation_analysis(self, vi, inun_indi):
+        pass
 
     def indi_timelapse_gif(self, timeunit):
         pass
 
+
     def est_inunduration(self, inundated_index: str, output_path: str, water_level_data,
-                         nan_value=0, inundated_value=2, generate_inundation_status_factor:bool=True, process_extent=None,
-                         generate_max_water_level_factor:bool=False, generate_min_inun_wl:bool=True, generate_inun_duration:bool=True,
-                         manual_remove_date:list=[], roi_name=None, veg_height_dic:dict={}, veg_inun_itr:int=20,
-                         generate_optimised_gt_thr:bool=True):
+                         nan_value=0, inundated_value=2, generate_inundation_status_factor: bool = True,
+                         process_extent=None,
+                         generate_max_water_level_factor: bool = False, generate_min_inun_wl: bool = True,
+                         generate_inun_duration: bool = True,
+                         manual_remove_date: list = [], roi_name=None, veg_height_dic: dict = {},
+                         veg_inun_itr: int = 20, generate_optimised_gt_thr: bool = True):
 
         # Check the var
         output_path = Path(output_path).path_name
@@ -3054,22 +3821,26 @@ class RS_dcs(object):
             proj = roi_ds.GetProjection()
             roi_arr = roi_ds.GetRasterBand(1).ReadAsArray()
             if not self._sparse_matrix_list[self._index_list.index(inundated_index)]:
-                if process_extent is not None and isinstance(process_extent, (list, tuple)) and len(process_extent) == 4:
+                if process_extent is not None and isinstance(process_extent, (list, tuple)) and len(
+                        process_extent) == 4:
                     y_min, y_max, x_min, x_max = process_extent
                     inundated_dc = inundated_dc[y_min: y_max, x_min: x_max, :]
                     roi_arr = roi_arr[y_min: y_max, x_min: x_max]
-                    new_trans = (transform[0] + x_min * transform[1], transform[1], transform[2], transform[3] + y_min * transform[5], transform[4], transform[5])
+                    new_trans = (transform[0] + x_min * transform[1], transform[1], transform[2],
+                                 transform[3] + y_min * transform[5], transform[4], transform[5])
                 elif process_extent is None:
                     inundated_dc = inundated_dc[:, :, :]
                     new_trans = transform
                 else:
                     raise TypeError('Process extent is not properly input!')
             else:
-                if process_extent is not None and isinstance(process_extent, (list, tuple)) and len(process_extent) == 4:
+                if process_extent is not None and isinstance(process_extent, (list, tuple)) and len(
+                        process_extent) == 4:
                     y_min, y_max, x_min, x_max = process_extent
                     inundated_dc = inundated_dc.extract_matrix(([y_min, y_max], [x_min, x_max], ['all']))
                     roi_arr = roi_arr[y_min: y_max, x_min: x_max]
-                    new_trans = (transform[0] + x_min * transform[1], transform[1], transform[2], transform[3] + y_min * transform[5], transform[4], transform[5])
+                    new_trans = (transform[0] + x_min * transform[1], transform[1], transform[2],
+                                 transform[3] + y_min * transform[5], transform[4], transform[5])
                 elif process_extent is None:
                     inundated_dc = inundated_dc.extract_matrix((['all'], ['all'], ['all']))
                     new_trans = transform
@@ -3089,16 +3860,23 @@ class RS_dcs(object):
                 for data_size in range(1, water_level_data.shape[0]):
                     if year * 10000 + 3 * 100 <= water_level_data[data_size, 0] < year * 10000 + 1200:
                         if recession_turn == 0:
-                            if (water_level_data[data_size, 1] > water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]) \
-                                    or (water_level_data[data_size, 1] < water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]) \
-                                    or (water_level_data[data_size - 1, 1] == water_level_data[data_size, 1] == water_level_data[data_size + 1, 1]):
+                            if (water_level_data[data_size, 1] > water_level_data[data_size - 1, 1] and
+                                water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size, 1] < water_level_data[data_size - 1, 1] and
+                                        water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] == water_level_data[data_size, 1] ==
+                                        water_level_data[data_size + 1, 1]):
                                 wl_trend_list.append([water_level_data[data_size, 0], 0])
-                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <= water_level_data[data_size + 1, 1]) \
-                                    or (water_level_data[data_size - 1, 1] <= water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]):
+                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <=
+                                  water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] <= water_level_data[data_size, 1] <
+                                        water_level_data[data_size + 1, 1]):
                                 wl_trend_list.append([water_level_data[data_size, 0], 1])
                                 recession_turn = 1
-                            elif (water_level_data[data_size - 1, 1] > water_level_data[data_size, 1] >= water_level_data[data_size + 1, 1])\
-                                    or (water_level_data[data_size - 1, 1] >= water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]):
+                            elif (water_level_data[data_size - 1, 1] > water_level_data[data_size, 1] >=
+                                  water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] >= water_level_data[data_size, 1] >
+                                        water_level_data[data_size + 1, 1]):
                                 wl_trend_list.append([water_level_data[data_size, 0], -1])
                                 recession_turn = -1
                             else:
@@ -3106,19 +3884,26 @@ class RS_dcs(object):
                                 sys.exit(-1)
 
                         elif recession_turn != 0:
-                            if (water_level_data[data_size, 1] > water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]) \
-                                    or (water_level_data[data_size, 1] < water_level_data[data_size - 1, 1] and water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]) \
-                                    or (water_level_data[data_size - 1, 1] == water_level_data[data_size, 1] == water_level_data[data_size + 1, 1]):
+                            if (water_level_data[data_size, 1] > water_level_data[data_size - 1, 1] and
+                                water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size, 1] < water_level_data[data_size - 1, 1] and
+                                        water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] == water_level_data[data_size, 1] ==
+                                        water_level_data[data_size + 1, 1]):
                                 wl_trend_list.append([water_level_data[data_size, 0], 0])
-                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <= water_level_data[data_size + 1, 1]) \
-                                    or (water_level_data[data_size - 1, 1] <= water_level_data[data_size, 1] < water_level_data[data_size + 1, 1]):
+                            elif (water_level_data[data_size - 1, 1] < water_level_data[data_size, 1] <=
+                                  water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] <= water_level_data[data_size, 1] <
+                                        water_level_data[data_size + 1, 1]):
                                 if recession_turn > 0:
                                     wl_trend_list.append([water_level_data[data_size, 0], recession_turn])
                                 else:
                                     recession_turn = -recession_turn + 1
                                     wl_trend_list.append([water_level_data[data_size, 0], recession_turn])
-                            elif (water_level_data[data_size - 1, 1] > water_level_data[data_size, 1] >= water_level_data[data_size + 1, 1]) \
-                                    or (water_level_data[data_size - 1, 1] >= water_level_data[data_size, 1] > water_level_data[data_size + 1, 1]):
+                            elif (water_level_data[data_size - 1, 1] > water_level_data[data_size, 1] >=
+                                  water_level_data[data_size + 1, 1]) \
+                                    or (water_level_data[data_size - 1, 1] >= water_level_data[data_size, 1] >
+                                        water_level_data[data_size + 1, 1]):
                                 if recession_turn < 0:
                                     wl_trend_list.append([water_level_data[data_size, 0], recession_turn])
                                 else:
@@ -3159,7 +3944,8 @@ class RS_dcs(object):
                             water_level_max = max(water_level_max, water_level_data[date_temp, 1])
 
                 annual_max = np.array(annual_max)
-                dic_temp = pd.DataFrame(np.transpose(np.stack([year_array, annual_max], axis=1)), columns=['Year', 'Annual max water level'])
+                dic_temp = pd.DataFrame(np.transpose(np.stack([year_array, annual_max], axis=1)),
+                                        columns=['Year', 'Annual max water level'])
                 dic_temp.to_excel(output_path + self.ROI_name + '.xlsx')
 
         if generate_inundation_status_factor:
@@ -3168,10 +3954,12 @@ class RS_dcs(object):
             bf.create_folder(perwater_ras_path)
 
             # Create river stretch based on inundation frequency
-            with tqdm(total=1, desc=f'Create river stretch based on inundation frequency', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            with tqdm(total=1, desc=f'Create river stretch based on inundation frequency',
+                      bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 if not os.path.exists(perwater_ras_path + 'permanent_water.tif'):
                     if isinstance(inundated_dc, np.ndarray):
-                        inundated_frequency = np.nansum(inundated_dc == inundated_value, axis=2) / np.nansum(inundated_dc != nan_value, axis=2)
+                        inundated_frequency = np.nansum(inundated_dc == inundated_value, axis=2) / np.nansum(
+                            inundated_dc != nan_value, axis=2)
                         inundated_frequency[inundated_frequency > 0.7] = 1
                         inundated_frequency[inundated_frequency <= 0.7] = 0
                         inundated_frequency[roi_arr == -32768] = -2
@@ -3195,7 +3983,8 @@ class RS_dcs(object):
                     driver.Register()
                     if os.path.exists(perwater_ras_path + 'permanent_water.tif'):
                         os.remove(perwater_ras_path + 'permanent_water.tif')
-                    outds = driver.Create(perwater_ras_path + 'permanent_water.tif', xsize=inundated_frequency.shape[1], ysize=inundated_frequency.shape[0],
+                    outds = driver.Create(perwater_ras_path + 'permanent_water.tif', xsize=inundated_frequency.shape[1],
+                                          ysize=inundated_frequency.shape[0],
                                           bands=1, eType=gdal.GDT_Int16, options=['COMPRESS=LZW', 'PREDICTOR=2'])
                     outds.SetGeoTransform(new_trans)
                     outds.SetProjection(proj)
@@ -3253,7 +4042,9 @@ class RS_dcs(object):
                     # Re-rasterlize the shpfile
                     if os.path.exists(perwater_ras_path + 'permanent_water_fixed.tif'):
                         os.remove(perwater_ras_path + 'permanent_water_fixed.tif')
-                    target_ds = gdal.GetDriverByName('GTiff').Create(perwater_ras_path + 'permanent_water_fixed.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 1, gdal.GDT_Int16)
+                    target_ds = gdal.GetDriverByName('GTiff').Create(perwater_ras_path + 'permanent_water_fixed.tif',
+                                                                     pw_ds.RasterXSize, pw_ds.RasterYSize, 1,
+                                                                     gdal.GDT_Int16)
                     target_ds.SetGeoTransform(pw_ds.GetGeoTransform())
                     target_ds.SetProjection(target.ExportToWkt())
                     band = target_ds.GetRasterBand(1)
@@ -3303,7 +4094,8 @@ class RS_dcs(object):
             sole_file_path = output_path + 'sole_inunarea_ras\\'
             bf.create_folder(sole_file_path)
             if isinstance(inundated_dc, NDSparseMatrix):
-                with tqdm(total=len(inundated_dc.SM_namelist), desc=f'Generate sole inundation area raster', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                with tqdm(total=len(inundated_dc.SM_namelist), desc=f'Generate sole inundation area raster',
+                          bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                     for _ in inundated_dc.SM_namelist:
                         if not os.path.exists(sole_file_path + f'{str(_)}.tif'):
                             i_arr = inundated_dc.SM_group[_].toarray()
@@ -3311,10 +4103,12 @@ class RS_dcs(object):
                             i_arr[i_arr < 0] = -2
                             i_arr[permanent_water_arr == 1] = -1
                             i_arr = i_arr.astype(np.int16)
-                            bf.write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif',  raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
+                            bf.write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif',
+                                            raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
                         pbar.update()
             elif isinstance(inundated_dc, np.ndarray):
-                with tqdm(total=inundated_dc.shape[2], desc=f'Generate sole inundation area raster', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                with tqdm(total=inundated_dc.shape[2], desc=f'Generate sole inundation area raster',
+                          bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                     for _ in range(inundated_dc.shape[2]):
                         if not os.path.exists(sole_file_path + f'{str(_)}.tif'):
                             i_arr = inundated_dc[:, :, _].reshape(inundated_dc.shape[0], inundated_dc.shape[1])
@@ -3322,14 +4116,17 @@ class RS_dcs(object):
                             i_arr[i_arr < 0] = -2
                             i_arr[permanent_water_arr == 1] = -1
                             i_arr = i_arr.astype(np.int16)
-                            bf.write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
+                            bf.write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif',
+                                            raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
                         pbar.update()
 
             # Generate sole inundation area shp
             sole_shpfile_path = output_path + 'sole_inunarea_shpfile\\'
             bf.create_folder(sole_shpfile_path)
-            ras_files = bf.file_filter(sole_file_path, ['.tif'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
-            with tqdm(total=len(ras_files), desc=f'Generate sole inundation area shpfile', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            ras_files = bf.file_filter(sole_file_path, ['.tif'],
+                                       exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
+            with tqdm(total=len(ras_files), desc=f'Generate sole inundation area shpfile',
+                      bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in ras_files:
                     try:
                         dst_layername = _.split('\\')[-1].split('.tif')[0]
@@ -3423,15 +4220,23 @@ class RS_dcs(object):
             bf.create_folder(annual_inform_folder)
 
             # Retrieve the annual min inundated water level and annual max noninundated water level
-            with tqdm(total=len(year_list), desc=f'Pre-Generate annual min inundated water level and annual max noninundated water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            with tqdm(total=len(year_list),
+                      desc=f'Pre-Generate annual min inundated water level and annual max noninundated water level',
+                      bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
 
                 for _ in year_list:
 
                     # Create folder
                     bf.create_folder(annual_inform_folder + f'{str(_)}\\')
-                    if not os.path.exists(annual_inform_folder + f'{str(_)}\\max_noninun_wl_{str(_)}.tif') or not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}.tif') \
-                            or not os.path.exists(annual_inform_folder + f'{str(_)}\\trend_{str(_)}.tif') or not os.path.exists(annual_inform_folder + f'{str(_)}\\annual_inunarea_{str(_)}.tif')\
-                            or not os.path.exists(annual_inform_folder + f'{str(_)}\\max_noninun_date_{str(_)}.tif') or not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_date_{str(_)}.tif'):
+                    if not os.path.exists(
+                            annual_inform_folder + f'{str(_)}\\max_noninun_wl_{str(_)}.tif') or not os.path.exists(
+                            annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}.tif') \
+                            or not os.path.exists(
+                        annual_inform_folder + f'{str(_)}\\trend_{str(_)}.tif') or not os.path.exists(
+                        annual_inform_folder + f'{str(_)}\\annual_inunarea_{str(_)}.tif') \
+                            or not os.path.exists(
+                        annual_inform_folder + f'{str(_)}\\max_noninun_date_{str(_)}.tif') or not os.path.exists(
+                        annual_inform_folder + f'{str(_)}\\min_inun_date_{str(_)}.tif'):
 
                         # Define arr
                         max_noninun_wl_arr = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
@@ -3445,17 +4250,21 @@ class RS_dcs(object):
                             if int(np.floor(__ // 10000)) == _ and __ not in manual_remove_date:
                                 if __ in water_level_data:
                                     wl_temp = water_level_data[np.argwhere(water_level_data == __)[0, 0], 1]
-                                    max_noninun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
-                                    min_inun_wl_arr_temp = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]]) + 1000
+                                    max_noninun_wl_arr_temp = np.zeros(
+                                        [inundated_dc.shape[0], inundated_dc.shape[1]]) - 1
+                                    min_inun_wl_arr_temp = np.zeros(
+                                        [inundated_dc.shape[0], inundated_dc.shape[1]]) + 1000
                                     if isinstance(inundated_dc, NDSparseMatrix):
                                         inundated_arr = inundated_dc.SM_group[__].toarray()
                                     else:
-                                        inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape([inundated_dc.shape[0], inundated_dc.shape[1]])
+                                        inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape(
+                                            [inundated_dc.shape[0], inundated_dc.shape[1]])
 
                                     max_noninun_wl_arr_temp[inundated_arr == 1] = wl_temp
                                     min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
 
-                                    max_noninun_wl_arr = np.nanmax([max_noninun_wl_arr, max_noninun_wl_arr_temp], axis=0)
+                                    max_noninun_wl_arr = np.nanmax([max_noninun_wl_arr, max_noninun_wl_arr_temp],
+                                                                   axis=0)
                                     min_inun_wl_arr = np.nanmin([min_inun_wl_arr, min_inun_wl_arr_temp], axis=0)
 
                                     max_noninun_date_arr[max_noninun_wl_arr == wl_temp] = __
@@ -3470,27 +4279,41 @@ class RS_dcs(object):
                         min_inun_wl_arr[min_inun_wl_arr == 1000] = np.nan
                         max_noninun_wl_arr[max_noninun_wl_arr == -1] = np.nan
 
-                        bf.write_raster(pw_ds, max_noninun_wl_arr, annual_inform_folder, f'{str(_)}\\max_noninun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
-                        bf.write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder, f'{str(_)}\\min_inun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
-                        bf.write_raster(pw_ds, min_inun_date_arr, annual_inform_folder, f'{str(_)}\\min_inun_date_{str(_)}.tif', raster_datatype=gdal.GDT_Int32, nodatavalue=0)
-                        bf.write_raster(pw_ds, max_noninun_date_arr, annual_inform_folder, f'{str(_)}\\max_noninun_date_{str(_)}.tif', raster_datatype=gdal.GDT_Int32, nodatavalue=0)
-                        bf.write_raster(pw_ds, trend_arr, annual_inform_folder, f'{str(_)}\\trend_{str(_)}.tif', raster_datatype=gdal.GDT_Int32, nodatavalue=0)
+                        bf.write_raster(pw_ds, max_noninun_wl_arr, annual_inform_folder,
+                                        f'{str(_)}\\max_noninun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
+                                        nodatavalue=np.nan)
+                        bf.write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder,
+                                        f'{str(_)}\\min_inun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
+                                        nodatavalue=np.nan)
+                        bf.write_raster(pw_ds, min_inun_date_arr, annual_inform_folder,
+                                        f'{str(_)}\\min_inun_date_{str(_)}.tif', raster_datatype=gdal.GDT_Int32,
+                                        nodatavalue=0)
+                        bf.write_raster(pw_ds, max_noninun_date_arr, annual_inform_folder,
+                                        f'{str(_)}\\max_noninun_date_{str(_)}.tif', raster_datatype=gdal.GDT_Int32,
+                                        nodatavalue=0)
+                        bf.write_raster(pw_ds, trend_arr, annual_inform_folder, f'{str(_)}\\trend_{str(_)}.tif',
+                                        raster_datatype=gdal.GDT_Int32, nodatavalue=0)
 
                         min_inun_wl_arr[~np.isnan(min_inun_wl_arr)] = 1
                         min_inun_wl_arr[permanent_water_arr == 1] = -1
                         min_inun_wl_arr[permanent_water_arr == -2] = -2
                         min_inun_wl_arr[np.isnan(min_inun_wl_arr)] = 0
-                        bf.write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder, f'{str(_)}\\annual_inunarea_{str(_)}.tif', raster_datatype=gdal.GDT_Int32, nodatavalue=-2)
+                        bf.write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder,
+                                        f'{str(_)}\\annual_inunarea_{str(_)}.tif', raster_datatype=gdal.GDT_Int32,
+                                        nodatavalue=-2)
                     pbar.update()
 
             # Generate annual inundation shpfile
             annual_inunshp_folder = output_path + 'annual_inun_shpfile\\'
             bf.create_folder(annual_inunshp_folder)
-            with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile',  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile',
+                      bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in year_list:
 
                     # Generate the shpfile of continuous inundation area
-                    files = bf.file_filter(annual_inform_folder + str(_) + '\\', [f'annual_inunarea_{str(_)}.tif'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'], and_or_factor='and')
+                    files = bf.file_filter(annual_inform_folder + str(_) + '\\', [f'annual_inunarea_{str(_)}.tif'],
+                                           exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'],
+                                           and_or_factor='and')
                     if len(files) == 1:
                         ras_ds = gdal.Open(files[0])
                         drv = ogr.GetDriverByName("ESRI Shapefile")
@@ -3571,7 +4394,8 @@ class RS_dcs(object):
                             ras_arr = ras_ds.GetRasterBand(1).ReadAsArray()
                             ras_arr = ras_arr * 100
                             ras_arr[np.isnan(ras_arr)] = -2
-                            bf.write_raster(ras_ds, ras_arr, annual_inform_folder + str(_) + '\\', f'min_inun_wl_{str(_)}4poly.tif')
+                            bf.write_raster(ras_ds, ras_arr, annual_inform_folder + str(_) + '\\',
+                                            f'min_inun_wl_{str(_)}4poly.tif')
 
                         ras_ds = gdal.Open(annual_inform_folder + str(_) + '\\' + f'min_inun_wl_{str(_)}4poly.tif')
                         if not os.path.exists(annual_inunshp_folder + 'wl_' + str(_) + ".shp"):
@@ -3606,7 +4430,8 @@ class RS_dcs(object):
                     pbar.update()
 
             # Refine the inun wl
-            with tqdm(total=len(year_list), desc=f'Refine inundation water level array', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            with tqdm(total=len(year_list), desc=f'Refine inundation water level array',
+                      bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in year_list:
                     if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_fixed.tif'):
                         # Open the annual inundation shpfile and annual min inundation water level ras
@@ -3626,7 +4451,9 @@ class RS_dcs(object):
                         min_wl_arr_refined[:, :] = 0
 
                         # Create the ras
-                        target_ds = gdal.GetDriverByName('GTiff').Create(annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}_v1.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 3, gdal.GDT_Int32)
+                        target_ds = gdal.GetDriverByName('GTiff').Create(
+                            annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}_v1.tif', pw_ds.RasterXSize,
+                            pw_ds.RasterYSize, 3, gdal.GDT_Int32)
                         target_ds.SetGeoTransform(pw_ds.GetGeoTransform())
                         target_ds.SetProjection(pw_ds.GetProjection())
 
@@ -3634,7 +4461,9 @@ class RS_dcs(object):
                         gdal.RasterizeLayer(target_ds, [2], layer, options=["ATTRIBUTE=area"])
                         gdal.RasterizeLayer(target_ds, [3], layer, options=["ATTRIBUTE=inun_id"])
 
-                        target_ds2 = gdal.GetDriverByName('GTiff').Create(annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}_v3.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 1, gdal.GDT_Int32)
+                        target_ds2 = gdal.GetDriverByName('GTiff').Create(
+                            annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}_v3.tif', pw_ds.RasterXSize,
+                            pw_ds.RasterYSize, 1, gdal.GDT_Int32)
                         target_ds2.SetGeoTransform(pw_ds.GetGeoTransform())
                         target_ds2.SetProjection(pw_ds.GetProjection())
 
@@ -3646,7 +4475,8 @@ class RS_dcs(object):
                         inun_id_list = np.unique(inun_id_arr.flatten())
                         issue_wl = {}
 
-                        with tqdm(total=len(inun_id_list), desc=f'Get issued water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
+                        with tqdm(total=len(inun_id_list), desc=f'Get issued water level',
+                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
                             for inun_id_ in inun_id_list:
                                 if inun_id_ != 0:
 
@@ -3656,11 +4486,16 @@ class RS_dcs(object):
                                     min_wl_arr_t[permanent_water_arr == 1] = -1
 
                                     # Get all the wl within this inun id
-                                    offset_all, bound_all = np.min(np.argwhere(inun_id_arr == inun_id_), axis=0), np.max(np.argwhere(inun_id_arr == inun_id_), axis=0)
-                                    min_wl_arr_t = min_wl_arr_t[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2]
-                                    wl_id_arr_t = wl_id_arr[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2]
+                                    offset_all, bound_all = np.min(np.argwhere(inun_id_arr == inun_id_),
+                                                                   axis=0), np.max(np.argwhere(inun_id_arr == inun_id_),
+                                                                                   axis=0)
+                                    min_wl_arr_t = min_wl_arr_t[offset_all[0] - 1: bound_all[0] + 2,
+                                                   offset_all[1] - 1: bound_all[1] + 2]
+                                    wl_id_arr_t = wl_id_arr[offset_all[0] - 1: bound_all[0] + 2,
+                                                  offset_all[1] - 1: bound_all[1] + 2]
                                     min_wl_arr_list = np.unique(min_wl_arr_t.flatten())
-                                    min_wl_arr_list = np.sort(np.delete(min_wl_arr_list, np.argwhere(np.logical_or(np.isnan(min_wl_arr_list), min_wl_arr_list == -1))))
+                                    min_wl_arr_list = np.sort(np.delete(min_wl_arr_list, np.argwhere(
+                                        np.logical_or(np.isnan(min_wl_arr_list), min_wl_arr_list == -1))))
                                     wl_id_arr_acc_t = np.zeros_like(wl_id_arr_t)
 
                                     # Get all issued wl
@@ -3670,11 +4505,14 @@ class RS_dcs(object):
                                         wl_id_list = np.delete(np.unique(wl_id_arr_tt.flatten()), 0)
 
                                         for wl_id_temp in wl_id_list:
-                                            wl_pos = np.argwhere(np.logical_and(min_wl_arr_t == wl_arr, wl_id_arr_tt == wl_id_temp))
+                                            wl_pos = np.argwhere(
+                                                np.logical_and(min_wl_arr_t == wl_arr, wl_id_arr_tt == wl_id_temp))
                                             bound_wl = np.array([])
                                             for pos_temp in wl_pos:
-                                                arr_temp = min_wl_arr_t[pos_temp[0] - 1: pos_temp[0] + 2, pos_temp[1] - 1: pos_temp[1] + 2]
-                                                bound_wl = np.unique(np.concatenate((bound_wl, np.unique(arr_temp.flatten()))))
+                                                arr_temp = min_wl_arr_t[pos_temp[0] - 1: pos_temp[0] + 2,
+                                                           pos_temp[1] - 1: pos_temp[1] + 2]
+                                                bound_wl = np.unique(
+                                                    np.concatenate((bound_wl, np.unique(arr_temp.flatten()))))
 
                                             # bound append
                                             if (bound_wl < wl_arr).any():
@@ -3685,23 +4523,33 @@ class RS_dcs(object):
                                                 else:
                                                     if wl_arr not in issue_wl[inun_id_]:
                                                         issue_wl[inun_id_].append(wl_arr)
-                                                wl_id_arr_acc_t[np.logical_and(min_wl_arr_t == wl_arr, wl_id_arr_tt == wl_id_temp)] = 1
-                                    wl_id_arr_acc[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] = wl_id_arr_acc[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] + wl_id_arr_acc_t
+                                                wl_id_arr_acc_t[np.logical_and(min_wl_arr_t == wl_arr,
+                                                                               wl_id_arr_tt == wl_id_temp)] = 1
+                                    wl_id_arr_acc[offset_all[0] - 1: bound_all[0] + 2,
+                                    offset_all[1] - 1: bound_all[1] + 2] = wl_id_arr_acc[
+                                                                           offset_all[0] - 1: bound_all[0] + 2,
+                                                                           offset_all[1] - 1: bound_all[
+                                                                                                  1] + 2] + wl_id_arr_acc_t
                                 pbar1.update()
-                            bf.write_raster(min_wl_ds, wl_id_arr_acc, annual_inform_folder, f'{str(_)}\\annual_issued_area.tif', raster_datatype=gdal.GDT_Int16)
+                            bf.write_raster(min_wl_ds, wl_id_arr_acc, annual_inform_folder,
+                                            f'{str(_)}\\annual_issued_area.tif', raster_datatype=gdal.GDT_Int16)
 
-                        with tqdm(total=len(issue_wl.keys()), desc=f'Process inundation water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
+                        with tqdm(total=len(issue_wl.keys()), desc=f'Process inundation water level',
+                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar1:
                             for iss_ in issue_wl.keys():
 
                                 # Generate the mask
                                 if len(issue_wl[iss_]) == 1:
                                     mask_temp = min_inun_wl_arr == issue_wl[iss_][0]
                                 else:
-                                    mask_temp = np.sum(np.stack([min_inun_wl_arr == wl__ for wl__ in issue_wl[iss_]], axis=2), axis=2)
+                                    mask_temp = np.sum(
+                                        np.stack([min_inun_wl_arr == wl__ for wl__ in issue_wl[iss_]], axis=2), axis=2)
                                 mask_temp = (inun_id_arr == iss_) * (mask_temp >= 1) * (wl_id_arr_acc > 0)
 
-                                offset_all, bound_all = np.min(np.argwhere(mask_temp == 1), axis=0), np.max(np.argwhere(mask_temp == 1), axis=0)
-                                min_inun_wl_arr__ = np.zeros([bound_all[0] + 1 - offset_all[0], bound_all[1] + 1 - offset_all[1]]) + 1000
+                                offset_all, bound_all = np.min(np.argwhere(mask_temp == 1), axis=0), np.max(
+                                    np.argwhere(mask_temp == 1), axis=0)
+                                min_inun_wl_arr__ = np.zeros(
+                                    [bound_all[0] + 1 - offset_all[0], bound_all[1] + 1 - offset_all[1]]) + 1000
                                 min_all = np.zeros([inundated_dc.shape[0], inundated_dc.shape[1]])
                                 issue_wl_temp = issue_wl[iss_]
                                 issue_wl_temp = [float(str(_)) for _ in issue_wl_temp]
@@ -3710,30 +4558,41 @@ class RS_dcs(object):
                                     if int(np.floor(__ // 10000)) == _ and __ not in manual_remove_date:
                                         if __ in water_level_data:
                                             wl_temp = water_level_data[np.argwhere(water_level_data == __)[0, 0], 1]
-                                            min_inun_wl_arr_temp = np.zeros([bound_all[0] + 1 - offset_all[0], bound_all[1] + 1 - offset_all[1]]) + 1000
-                                            min_inun_wl_arr_t = min_inun_wl_arr[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1]
-                                            mask_temp_t = mask_temp[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1]
+                                            min_inun_wl_arr_temp = np.zeros([bound_all[0] + 1 - offset_all[0],
+                                                                             bound_all[1] + 1 - offset_all[1]]) + 1000
+                                            min_inun_wl_arr_t = min_inun_wl_arr[offset_all[0]: bound_all[0] + 1,
+                                                                offset_all[1]: bound_all[1] + 1]
+                                            mask_temp_t = mask_temp[offset_all[0]: bound_all[0] + 1,
+                                                          offset_all[1]: bound_all[1] + 1]
 
                                             if isinstance(inundated_dc, NDSparseMatrix):
-                                                inundated_arr = inundated_dc[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1, inundated_dc.SM_namelist.index(__)]
+                                                inundated_arr = inundated_dc[offset_all[0]: bound_all[0] + 1,
+                                                                offset_all[1]: bound_all[1] + 1,
+                                                                inundated_dc.SM_namelist.index(__)]
                                             else:
-                                                inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape([inundated_dc.shape[0], inundated_dc.shape[1]])
+                                                inundated_arr = inundated_dc[:, :, doy_list.index(__)].reshape(
+                                                    [inundated_dc.shape[0], inundated_dc.shape[1]])
 
                                             if wl_temp not in issue_wl_temp:
                                                 min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
 
                                             elif wl_temp in issue_wl_temp:
                                                 min_inun_wl_arr_temp[inundated_arr == 2] = wl_temp
-                                                min_inun_wl_arr_temp[np.logical_and(mask_temp_t == 1, min_inun_wl_arr_t == wl_temp)] = 1000
+                                                min_inun_wl_arr_temp[np.logical_and(mask_temp_t == 1,
+                                                                                    min_inun_wl_arr_t == wl_temp)] = 1000
 
-                                            min_inun_wl_arr__ = np.nanmin([min_inun_wl_arr__, min_inun_wl_arr_temp], axis=0)
+                                            min_inun_wl_arr__ = np.nanmin([min_inun_wl_arr__, min_inun_wl_arr_temp],
+                                                                          axis=0)
 
                                 min_inun_wl_arr__[min_inun_wl_arr__ == 1000] = np.nan
-                                min_all[offset_all[0]: bound_all[0] + 1, offset_all[1]: bound_all[1] + 1] = min_inun_wl_arr__
+                                min_all[offset_all[0]: bound_all[0] + 1,
+                                offset_all[1]: bound_all[1] + 1] = min_inun_wl_arr__
                                 min_inun_wl_arr[mask_temp] = min_all[mask_temp]
                                 pbar1.update()
 
-                        bf.write_raster(min_wl_ds, min_inun_wl_arr, annual_inform_folder, f'{str(_)}\\min_inun_wl_{str(_)}_fixed.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+                        bf.write_raster(min_wl_ds, min_inun_wl_arr, annual_inform_folder,
+                                        f'{str(_)}\\min_inun_wl_{str(_)}_fixed.tif', raster_datatype=gdal.GDT_Float32,
+                                        nodatavalue=-2)
                         target_ds = None
                     pbar.update()
 
@@ -3744,7 +4603,8 @@ class RS_dcs(object):
             annual_inform_folder = output_path + 'annual_inun_wl_ras\\'
             bf.create_folder(annual_inform_folder)
 
-            with tqdm(total=len(year_list), desc=f'Interpolate the minimum inundation water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            with tqdm(total=len(year_list), desc=f'Interpolate the minimum inundation water level',
+                      bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in year_list:
                     if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif'):
                         # Open the annual inundation shpfile and annual min inundation water level ras
@@ -3764,7 +4624,9 @@ class RS_dcs(object):
                         max_noninun_wl_arr = max_noninun_wl_ds.GetRasterBand(1).ReadAsArray()
 
                         # Create the ras
-                        target_ds = gdal.GetDriverByName('GTiff').Create(annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}_v4.tif', pw_ds.RasterXSize, pw_ds.RasterYSize, 3, gdal.GDT_Int32)
+                        target_ds = gdal.GetDriverByName('GTiff').Create(
+                            annual_inform_folder + f'{str(_)}\\annual_combine_{str(_)}_v4.tif', pw_ds.RasterXSize,
+                            pw_ds.RasterYSize, 3, gdal.GDT_Int32)
                         target_ds.SetGeoTransform(pw_ds.GetGeoTransform())
                         target_ds.SetProjection(pw_ds.GetProjection())
 
@@ -3779,7 +4641,8 @@ class RS_dcs(object):
                         inun_id_arr = target_ds.GetRasterBand(3).ReadAsArray()
                         inun_id_list = np.unique(inun_id_arr.flatten())
 
-                        with tqdm(total=len(inun_id_list), desc=f'Refine the inundation water level', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar3:
+                        with tqdm(total=len(inun_id_list), desc=f'Refine the inundation water level',
+                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar3:
                             for inun_id_ in inun_id_list:
                                 if inun_id_ != 0:
 
@@ -3797,11 +4660,16 @@ class RS_dcs(object):
                                     max_wl_arr_t[permanent_water_arr == 1] = -1
 
                                     # Get all the wl within this inun id
-                                    offset_all, bound_all = np.min(np.argwhere(inun_id_arr == inun_id_), axis=0), np.max(np.argwhere(inun_id_arr == inun_id_), axis=0)
-                                    min_wl_arr_t = min_wl_arr_t[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2]
-                                    max_wl_arr_t = max_wl_arr_t[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2]
+                                    offset_all, bound_all = np.min(np.argwhere(inun_id_arr == inun_id_),
+                                                                   axis=0), np.max(np.argwhere(inun_id_arr == inun_id_),
+                                                                                   axis=0)
+                                    min_wl_arr_t = min_wl_arr_t[offset_all[0] - 1: bound_all[0] + 2,
+                                                   offset_all[1] - 1: bound_all[1] + 2]
+                                    max_wl_arr_t = max_wl_arr_t[offset_all[0] - 1: bound_all[0] + 2,
+                                                   offset_all[1] - 1: bound_all[1] + 2]
                                     min_wl_arr_list = np.unique(min_wl_arr_t.flatten())
-                                    min_wl_arr_list = np.sort(np.delete(min_wl_arr_list, np.argwhere(np.logical_or(np.isnan(min_wl_arr_list), min_wl_arr_list==-1))))
+                                    min_wl_arr_list = np.sort(np.delete(min_wl_arr_list, np.argwhere(
+                                        np.logical_or(np.isnan(min_wl_arr_list), min_wl_arr_list == -1))))
                                     time1 = time.time() - s_t
                                     s_t = time.time()
 
@@ -3818,7 +4686,8 @@ class RS_dcs(object):
                                         inun_inform_list = []
                                         pos_all = np.argwhere(min_wl_arr_t == wl)
                                         for pos_temp in pos_all:
-                                            arr_temp = min_wl_arr_t[pos_temp[0] - 1: pos_temp[0] + 2, pos_temp[1] - 1: pos_temp[1] + 2]
+                                            arr_temp = min_wl_arr_t[pos_temp[0] - 1: pos_temp[0] + 2,
+                                                       pos_temp[1] - 1: pos_temp[1] + 2]
                                             inun_inform__ = [wl]
                                             inun_inform__.extend([pos_temp[0], pos_temp[1]])
                                             if (arr_temp == wl).all():
@@ -3890,7 +4759,8 @@ class RS_dcs(object):
                                                     inun_inform.remove(inun_inform[i_len])
 
                                             else:
-                                                min_wl_arr_refined_t[pos_y, pos_x] = (min_wl_arr_t[pos_y, pos_x] + max_wl_arr_t[pos_y, pos_x]) / 2
+                                                min_wl_arr_refined_t[pos_y, pos_x] = (min_wl_arr_t[pos_y, pos_x] +
+                                                                                      max_wl_arr_t[pos_y, pos_x]) / 2
                                                 inun_inform.remove(inun_inform[i_len])
 
                                         elif status == 0:
@@ -3899,20 +4769,24 @@ class RS_dcs(object):
 
                                     for min_wl_ in min_wl_arr_list:
                                         if not (min_wl_arr_refined_t == min_wl_).any():
-                                            pos_x_em_list,  pos_y_em_list = [], []
+                                            pos_x_em_list, pos_y_em_list = [], []
                                             for inun_ in inun_inform:
                                                 if inun_[0] == min_wl_:
                                                     pos_x_em_list.append(inun_[2])
                                                     pos_y_em_list.append(inun_[1])
 
                                             if len(pos_x_em_list) != 0:
-                                                pos_x_em_list, pos_y_em_list = np.array(pos_x_em_list), np.array(pos_y_em_list)
+                                                pos_x_em_list, pos_y_em_list = np.array(pos_x_em_list), np.array(
+                                                    pos_y_em_list)
                                                 pos_x_mid = int(np.nanmedian(pos_x_em_list))
                                                 if pos_x_mid in pos_x_em_list:
-                                                    pos_y_mid = int(np.nanmedian(pos_y_em_list[pos_x_em_list == pos_x_mid]))
+                                                    pos_y_mid = int(
+                                                        np.nanmedian(pos_y_em_list[pos_x_em_list == pos_x_mid]))
                                                     min_wl_arr_refined_t[pos_y_mid, pos_x_mid] = min_wl_
                                                 else:
-                                                    min_wl_arr_refined_t[pos_y_em_list[int(pos_y_em_list.shape[0]/2)], pos_x_em_list[int(pos_x_em_list.shape[0]/2)]] = min_wl_
+                                                    min_wl_arr_refined_t[
+                                                        pos_y_em_list[int(pos_y_em_list.shape[0] / 2)], pos_x_em_list[
+                                                            int(pos_x_em_list.shape[0] / 2)]] = min_wl_
 
                                     time3 = time.time() - s_t
                                     s_t = time.time()
@@ -3933,7 +4807,8 @@ class RS_dcs(object):
                                             if ~np.isnan(wl_refined):
                                                 min_wl_arr_refined_t[pos_y, pos_x] = wl_refined
                                             else:
-                                                print(f'inun_id:{str(inun_id_)}, pos{str(pos_y)}_{str(pos_x)}, wl{str(wl_refined)}')
+                                                print(
+                                                    f'inun_id:{str(inun_id_)}, pos{str(pos_y)}_{str(pos_x)}, wl{str(wl_refined)}')
                                                 raise Exception('Error during mp get wl')
 
                                     else:
@@ -3948,19 +4823,27 @@ class RS_dcs(object):
                                                 for r in range(1, 100):
                                                     pos_y_lower = 0 if pos_y - r < 0 else pos_y - r
                                                     pos_x_lower = 0 if pos_x - r < 0 else pos_x - r
-                                                    pos_y_upper = min_wl_arr_refined_t.shape[0] if pos_y + r + 1 > min_wl_arr_refined_t.shape[0] else pos_y + r + 1
-                                                    pos_x_upper = min_wl_arr_refined_t.shape[1] if pos_x + r + 1 > min_wl_arr_refined_t.shape[1] else pos_x + r + 1
+                                                    pos_y_upper = min_wl_arr_refined_t.shape[0] if pos_y + r + 1 > \
+                                                                                                   min_wl_arr_refined_t.shape[
+                                                                                                       0] else pos_y + r + 1
+                                                    pos_x_upper = min_wl_arr_refined_t.shape[1] if pos_x + r + 1 > \
+                                                                                                   min_wl_arr_refined_t.shape[
+                                                                                                       1] else pos_x + r + 1
 
-                                                    arr_tt = min_wl_arr_refined_t[pos_y_lower: pos_y_upper, pos_x_lower: pos_x_upper]
-                                                    arr_tt[pos_y_lower - 1: pos_y_upper - 1, pos_x_lower - 1: pos_x_upper - 1] = np.nan
+                                                    arr_tt = min_wl_arr_refined_t[pos_y_lower: pos_y_upper,
+                                                             pos_x_lower: pos_x_upper]
+                                                    arr_tt[pos_y_lower - 1: pos_y_upper - 1,
+                                                    pos_x_lower - 1: pos_x_upper - 1] = np.nan
                                                     if len(upper_wl_dis) < 10:
                                                         upper_wl_dis_list = []
                                                         if (arr_tt == wl_centre).any():
                                                             for pos_ttt in np.argwhere(arr_tt == wl_centre):
-                                                                upper_wl_dis_list.append(np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2))
+                                                                upper_wl_dis_list.append(np.sqrt(
+                                                                    (pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2))
                                                             upper_wl_dis_list.sort()
                                                             if len(upper_wl_dis_list) > 10 - len(upper_wl_dis):
-                                                                upper_wl_dis.extend(upper_wl_dis_list[:10 - len(upper_wl_dis)])
+                                                                upper_wl_dis.extend(
+                                                                    upper_wl_dis_list[:10 - len(upper_wl_dis)])
                                                             else:
                                                                 upper_wl_dis.extend(upper_wl_dis_list)
 
@@ -3969,16 +4852,23 @@ class RS_dcs(object):
                                                         arr_tt[arr_tt < 0] = 100000
                                                         if (arr_tt < wl_centre).any():
                                                             for pos_ttt in np.argwhere(arr_tt <= wl_centre):
-                                                                lower_wl_dat_list.append([arr_tt[pos_ttt[0], pos_ttt[1]], np.sqrt((pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2)])
+                                                                lower_wl_dat_list.append(
+                                                                    [arr_tt[pos_ttt[0], pos_ttt[1]], np.sqrt(
+                                                                        (pos_ttt[0] - r) ** 2 + (pos_ttt[1] - r) ** 2)])
                                                             lower_wl_dat_list.sort()
                                                             if len(lower_wl_dat_list) > 10 - len(lower_wl_dis):
-                                                                lower_wl_dis.extend([lower_wl_dat_list[_][1] for _ in range(10 - len(lower_wl_dis))])
-                                                                lower_wl.extend([lower_wl_dat_list[_][0] for _ in range(10 - len(lower_wl))])
+                                                                lower_wl_dis.extend([lower_wl_dat_list[_][1] for _ in
+                                                                                     range(10 - len(lower_wl_dis))])
+                                                                lower_wl.extend([lower_wl_dat_list[_][0] for _ in
+                                                                                 range(10 - len(lower_wl))])
                                                             else:
-                                                                lower_wl_dis.extend([lower_wl_dat_list[_][1] for _ in range(len(lower_wl_dat_list))])
-                                                                lower_wl.extend([lower_wl_dat_list[_][0] for _ in range(len(lower_wl_dat_list))])
+                                                                lower_wl_dis.extend([lower_wl_dat_list[_][1] for _ in
+                                                                                     range(len(lower_wl_dat_list))])
+                                                                lower_wl.extend([lower_wl_dat_list[_][0] for _ in
+                                                                                 range(len(lower_wl_dat_list))])
 
-                                                    if len(upper_wl_dis) == 10 and len(lower_wl_dis) == 10 and len(lower_wl) == 10:
+                                                    if len(upper_wl_dis) == 10 and len(lower_wl_dis) == 10 and len(
+                                                            lower_wl) == 10:
                                                         break
                                                 if len(upper_wl_dis) == 0:
                                                     upper_wl_dis = [0.00001]
@@ -3993,13 +4883,21 @@ class RS_dcs(object):
 
                                                 upper_wl_dis = [(1 / _) ** 2 for _ in upper_wl_dis]
                                                 lower_wl_dis = [(1 / _) ** 2 for _ in lower_wl_dis]
-                                                upper_wl = [wl_centre * upper_wl_dis[_] for _ in range(len(upper_wl_dis))]
-                                                lower_wl = [lower_wl[_] * lower_wl_dis[_] for _ in range(len(lower_wl_dis))]
+                                                upper_wl = [wl_centre * upper_wl_dis[_] for _ in
+                                                            range(len(upper_wl_dis))]
+                                                lower_wl = [lower_wl[_] * lower_wl_dis[_] for _ in
+                                                            range(len(lower_wl_dis))]
 
-                                                min_wl_arr_refined_t[pos_y, pos_x] = sum([sum(upper_wl), sum(lower_wl)]) / sum([sum(upper_wl_dis), sum(lower_wl_dis)])
+                                                min_wl_arr_refined_t[pos_y, pos_x] = sum(
+                                                    [sum(upper_wl), sum(lower_wl)]) / sum(
+                                                    [sum(upper_wl_dis), sum(lower_wl_dis)])
 
                                     min_wl_arr_refined_t[np.isnan(min_wl_arr_refined_t)] = 0
-                                    min_wl_arr_refined[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] = min_wl_arr_refined[offset_all[0] - 1: bound_all[0] + 2, offset_all[1] - 1: bound_all[1] + 2] + min_wl_arr_refined_t
+                                    min_wl_arr_refined[offset_all[0] - 1: bound_all[0] + 2,
+                                    offset_all[1] - 1: bound_all[1] + 2] = min_wl_arr_refined[
+                                                                           offset_all[0] - 1: bound_all[0] + 2,
+                                                                           offset_all[1] - 1: bound_all[
+                                                                                                  1] + 2] + min_wl_arr_refined_t
                                     time4 = time.time() - s_t
 
                                     # print(f'P1: {str(time1)[0:6]}s, P2: {str(time2)[0:6]}s, P3: {str(time3)[0:6]}s, P4: {str(time4)[0:6]}s')
@@ -4007,21 +4905,28 @@ class RS_dcs(object):
 
                             min_wl_arr_refined[permanent_water_arr == 1] = -1
                             min_wl_arr_refined[permanent_water_arr == -2] = -2
-                            bf.write_raster(min_wl_ds, min_wl_arr_refined, annual_inform_folder, f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+                            bf.write_raster(min_wl_ds, min_wl_arr_refined, annual_inform_folder,
+                                            f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif',
+                                            raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
                     pbar.update()
 
         if generate_inun_duration:
             annual_inform_folder = output_path + 'annual_inun_wl_ras\\'
             annual_inunduration_folder = output_path + 'annual_inun_duration\\'
             annual_inunthr_folder = output_path + 'annual_inun_duration\\gt_thr\\'
-            with tqdm(total=len(year_list), desc=f'Calculate inundation duration and height', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            with tqdm(total=len(year_list), desc=f'Calculate inundation duration and height',
+                      bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in year_list:
-                    if not os.path.exists(annual_inunduration_folder + f'inun_duration_{str(_)}.tif') or not os.path.exists(annual_inunduration_folder + f'inun_height_{str(_)}.tif') or not os.path.exists(annual_inunduration_folder + f'mean_inun_height_{str(_)}.tif'):
+                    if not os.path.exists(
+                            annual_inunduration_folder + f'inun_duration_{str(_)}.tif') or not os.path.exists(
+                            annual_inunduration_folder + f'inun_height_{str(_)}.tif') or not os.path.exists(
+                            annual_inunduration_folder + f'mean_inun_height_{str(_)}.tif'):
                         bf.create_folder(annual_inunduration_folder)
                         if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif'):
                             raise Exception('Please refine the inundation water level!')
                         else:
-                            min_inun_ds = gdal.Open(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif')
+                            min_inun_ds = gdal.Open(
+                                annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif')
                             min_inun_arr_ori = min_inun_ds.GetRasterBand(1).ReadAsArray()
                             min_inun_arr = copy.deepcopy(min_inun_arr_ori)
                             min_inun_arr[min_inun_arr == 0] = np.nan
@@ -4033,11 +4938,13 @@ class RS_dcs(object):
                             acc_wl = np.zeros_like(min_inun_arr)
                             for __ in range(water_level_data.shape[0]):
                                 if int(water_level_data[__, 0] // 10000) == _:
-                                    inun_duration = inun_duration + (water_level_data[__, 1] > min_inun_arr).astype(np.float32)
+                                    inun_duration = inun_duration + (water_level_data[__, 1] > min_inun_arr).astype(
+                                        np.float32)
                                     max_wl = np.max([max_wl, water_level_data[__, 1]])
                                     wl_arr_temp = (water_level_data[__, 1] - min_inun_arr)
                                     wl_arr_temp[wl_arr_temp < 0] = 0
-                                    acc_wl = acc_wl + (water_level_data[__, 1] > min_inun_arr).astype(np.float32) * wl_arr_temp
+                                    acc_wl = acc_wl + (water_level_data[__, 1] > min_inun_arr).astype(
+                                        np.float32) * wl_arr_temp
                             acc_wl = acc_wl / inun_duration
 
                             inun_height = max_wl - min_inun_arr
@@ -4055,19 +4962,29 @@ class RS_dcs(object):
                             acc_wl[min_inun_arr_ori == -1] = -1
                             acc_wl[min_inun_arr_ori == -2] = -2
 
-                            bf.write_raster(min_inun_ds, inun_duration, annual_inunduration_folder, f'inun_duration_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
-                            bf.write_raster(min_inun_ds, inun_height, annual_inunduration_folder, f'inun_height_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
-                            bf.write_raster(min_inun_ds, acc_wl, annual_inunduration_folder, f'mean_inun_height_{str(_)}.tif', raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
+                            bf.write_raster(min_inun_ds, inun_duration, annual_inunduration_folder,
+                                            f'inun_duration_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
+                                            nodatavalue=-2)
+                            bf.write_raster(min_inun_ds, inun_height, annual_inunduration_folder,
+                                            f'inun_height_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
+                                            nodatavalue=-2)
+                            bf.write_raster(min_inun_ds, acc_wl, annual_inunduration_folder,
+                                            f'mean_inun_height_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
+                                            nodatavalue=-2)
 
                     itr_v = 100 / veg_inun_itr
-                    if _ in veg_height_dic.keys() and len(bf.file_filter(annual_inunthr_folder, [f'{str(_)}.tif'], exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])) != veg_inun_itr:
+                    if _ in veg_height_dic.keys() and len(bf.file_filter(annual_inunthr_folder, [f'{str(_)}.tif'],
+                                                                         exclude_word_list=['.xml', '.dpf', '.cpg',
+                                                                                            '.aux', 'vat',
+                                                                                            '.ovr'])) != veg_inun_itr:
                         bf.create_folder(annual_inunthr_folder)
                         if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif'):
                             raise Exception('Please refine the inundation water level!')
                         else:
                             for _temp in bf.file_filter(annual_inunthr_folder, [f'{str(_)}.tif']):
                                 os.remove(_temp)
-                            min_inun_ds = gdal.Open(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif')
+                            min_inun_ds = gdal.Open(
+                                annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif')
                             min_inun_arr_ori = min_inun_ds.GetRasterBand(1).ReadAsArray()
                             min_inun_arr = copy.deepcopy(min_inun_arr_ori)
                             min_inun_arr[min_inun_arr == 0] = np.nan
@@ -4081,8 +4998,11 @@ class RS_dcs(object):
                                 if int(water_level_data[__, 0] // 10000) == _:
                                     water_level_.append(water_level_data[__, 1])
 
-                            veg_arr_list = [veg_h_arr * (itr_v + itr_v * thr_) / 100 + min_inun_arr for thr_ in itr_list]
-                            output_npyfile = [annual_inunthr_folder + f'{str(int(itr_v + itr_v * thr_))}thr_inund_{str(_)}.npy' for thr_ in itr_list]
+                            veg_arr_list = [veg_h_arr * (itr_v + itr_v * thr_) / 100 + min_inun_arr for thr_ in
+                                            itr_list]
+                            output_npyfile = [
+                                annual_inunthr_folder + f'{str(int(itr_v + itr_v * thr_))}thr_inund_{str(_)}.npy' for
+                                thr_ in itr_list]
 
                             with concurrent.futures.ProcessPoolExecutor(max_workers=20) as exe:
                                 exe.map(process_itr_wl, repeat(water_level_), veg_arr_list, output_npyfile)
@@ -4092,7 +5012,9 @@ class RS_dcs(object):
                                 inund_arr[min_inun_arr_ori == 0] = 0
                                 inund_arr[min_inun_arr_ori == -1] = -1
                                 inund_arr[min_inun_arr_ori == -2] = -2
-                                bf.write_raster(min_inun_ds, inund_arr, annual_inunthr_folder, f'{str(int(itr_v + itr_v * thr_))}thr_inund_{str(_)}.tif', raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
+                                bf.write_raster(min_inun_ds, inund_arr, annual_inunthr_folder,
+                                                f'{str(int(itr_v + itr_v * thr_))}thr_inund_{str(_)}.tif',
+                                                raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
                             veg_arr_list, output_npyfile = None, None
                     pbar.update()
 
@@ -4347,7 +5269,7 @@ class RS_dcs(object):
             #                         date_max = 0
             #                         while len0 < water_level_epoch.shape[0]:
             #                             if water_level_epoch[len0, 2] >= 0:
-            #                                 if water_level_epoch[len0, 1] >= water_level_min:
+            #                                 if water_level_epoch[len0, 1]     >= water_level_min:
             #                                     annual_inundation_epoch += 1
             #                                     inundation_recession.append(water_level_epoch[len0, 2])
             #                                     date_min = min(date_min, water_level_epoch[len0, 0])
@@ -4407,7 +5329,7 @@ class RS_dcs(object):
             #                         annual_inundation_end[y_temp, x_temp] = date_max
             #                     else:
             #                         len0 = 0
-            #                         annual_inundation_epoch = 0
+            #                         annual_inundation_    epoch = 0
             #                         inundation_recession = []
             #                         date_min = 200000000
             #                         date_max = 0
@@ -4463,3 +5385,53 @@ class RS_dcs(object):
             #                  raster_datatype=gdal.GDT_Int32)
             #
             #
+
+    def _process_phemeinun_para(self, **kwargs):
+        pass
+
+    def pheme_inun_analysis(self, phemetric_index: list, inunfactor_index: list, year_range: list, ):
+
+        # Check the initial indi
+        if not self._withInunfacdc_:
+            raise Exception('Please input the inunfactor dc before pheme inun analysis！')
+        elif not self._withPhemetricdc_:
+            raise Exception('Please input the phemetric dc before pheme inun analysis！')
+
+        phemetric_index_, inunfactor_index_, year_range_ = [], [], []
+        # Check the input arg
+        for _ in phemetric_index:
+            if _ in self._phemetric_namelist:
+                phemetric_index_.append(_)
+            else:
+                print(f'{str(_)} phemetric is not input into the RSdcs')
+        if len(phemetric_index_) == 0:
+            raise ValueError('Please input a valid phemetric index')
+
+        # Check the input arg
+        for _ in inunfactor_index:
+            if _ in self._inunfac_namelist:
+                inunfactor_index_.append(_)
+            else:
+                print(f'{str(_)} inunfac is not input into the RSdcs')
+        if len(inunfactor_index_) == 0:
+            raise ValueError('Please input a valid inunfac index')
+
+        # Check the year range
+        for year in year_range:
+            if isinstance(year, int) and year in self._inunyear_list and year in self._pheyear_list or year + 1 in self._pheyear_list:
+                year_range_.append(year)
+            else:
+                print(f'{str(year)} year is not valid')
+        if len(year_range_) == 0:
+            raise ValueError('Please input a valid year')
+
+        for year_ in year_range_:
+            for pheme_ in phemetric_index_:
+                for inun_ in inunfactor_index_:
+                    pheme_next_year = self._dcs_backup_
+                    pheme_curr_year = 1
+
+
+
+
+

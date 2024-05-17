@@ -77,7 +77,10 @@ class NDSparseMatrix:
 
         arr_list = []
         if isinstance(z_r, (int, np.int8, np.int16, np.int32, np.int64)):
-            return self.SM_group[self.SM_namelist[z_r]][y_r, x_r].toarray()
+            if isinstance(y_r, (int, np.int8, np.int16, np.int32, np.int64)) and isinstance(x_r, (int, np.int8, np.int16, np.int32, np.int64)):
+                return self.SM_group[self.SM_namelist[z_r]][y_r, x_r]
+            else:
+                return self.SM_group[self.SM_namelist[z_r]][y_r, x_r].toarray()
         else:
             for _ in range(self.shape[2])[z_r]:
                 if isinstance(x_r, (int, np.int8, np.int16, np.int32, np.int64)) and isinstance(y_r, (int, np.int8, np.int16, np.int32, np.int64)):

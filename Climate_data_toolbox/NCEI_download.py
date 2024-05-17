@@ -65,3 +65,9 @@ def download_NCEIfiles_IDM(idList: list, database_link: str, year_range: tuple, 
         #     except:
         #         print(f'The {file} cannot be downloaded!')
 
+
+if __name__ == '__main__':
+    IDM = "C:\\Program Files (x86)\\Internet Download Manager\\IDMan.exe"
+    idList = import_station_id('G:\\A_Landsat_Floodplain_veg\\NCEI\\Station_id.xlsx')
+    bf.create_folder('G:\\A_Landsat_Floodplain_veg\\NCEI\\download\\')
+    download_NCEIfiles_IDM(idList, 'https://www.ncei.noaa.gov/data/global-summary-of-the-day/access/', [1980, 2023], IDM, 'G:\\A_Landsat_Floodplain_veg\\NCEI\\download\\')

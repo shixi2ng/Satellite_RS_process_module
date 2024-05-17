@@ -1,8 +1,7 @@
 import concurrent.futures
 import numpy as np
-import ogr
 import basic_function as bf
-import gdal
+from osgeo import gdal, ogr
 import os
 from itertools import repeat
 import time

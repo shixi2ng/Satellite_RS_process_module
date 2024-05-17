@@ -245,7 +245,7 @@ class Landsat_l2_ds(object):
                         unzipped_file.close()
 
                         landsat_indi = False
-                        for _ in ['LE07', 'LC08', 'LT04', 'LT05']:
+                        for _ in ['LE07', 'LC08', 'LT04', 'LT05', 'LC09']:
                             if _ in i:
                                 Sensor_type.append(i[i.find(_): i.find(_) + 4])
                                 FileID.append(i[i.find(_): i.find('.tar')])
@@ -1008,18 +1008,13 @@ class Landsat_l2_ds(object):
             # Generate the datacube
             # There are 2 * 2 * 2 types of datacubes, determined by their size, sparsity, and inclusion of band data
             # Define the var for different types
-            if _huge_matrix:
-                if _sparse_matrix:
-                    i, nodata_value, dtype_temp, dtype_out = 0, None, None, None
-                    data_cube = NDSparseMatrix()
-                    data_valid_array = np.zeros([len(doy_list)], dtype=int)
-                else:
-                    i, nodata_value, dtype_temp, dtype_out = 0, None, None, None
-                    data_cube = NDSparseMatrix()
-                    data_valid_array = np.zeros([len(doy_list)], dtype=int)
+            if _sparse_matrix:
+                i, nodata_value, dtype_temp, dtype_out = 0, None, None, None
+                data_cube = NDSparseMatrix()
+                data_valid_array = np.zeros([len(doy_list)], dtype=int)
             else:
                 i, nodata_value, dtype_temp, dtype_out = 0, None, None, None
-                data_cube_list = []
+                data_cube = []
                 data_valid_array = np.zeros([len(doy_list)], dtype=int)
 
             with tqdm(total=len(doy_list), desc=f'Assemble the \033[1;33m{str(_)}\033[0m into the Landsat sdc', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
@@ -1173,7 +1168,7 @@ class Landsat_l2_ds(object):
                             data_cube.append(sm_temp, name=doy_list[i])
                             data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
                         else:
-                            data_cube_list.append(output_arr)
+                            data_cube.append(output_arr)
                             data_valid_array[i] = 1 if np.all(output_arr == nodata_value) else 0
                         i += 1
                         pbar.update()
@@ -1182,8 +1177,8 @@ class Landsat_l2_ds(object):
                         print(traceback.format_exc())
                         raise Exception(f'Dc construction failed during process {str(doy_list[i])}!')
 
-            if not _huge_matrix:
-                data_cube = np.stack(data_cube_list, axis=2)
+            if not _sparse_matrix:
+                data_cube = np.stack(data_cube, axis=2)
 
             # remove nan layer
             try:
@@ -1214,15 +1209,13 @@ class Landsat_l2_ds(object):
             # Save Landsat dc
             start_time = time.time()
             try:
-                if _huge_matrix:
-                    if _sparse_matrix:
-                        # Save the sdc
-                        np.save(self._dc_infr[_] + f'doy.npy', doy_list)
-                        bf.create_folder(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
-                        data_cube.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
-                        metadata_dic['Zoffset'], metadata_dic['Nodata_value'] = - nodata_value, 0
-                    else:
-                        pass
+
+                if _sparse_matrix:
+                    # Save the sdc
+                    np.save(self._dc_infr[_] + f'doy.npy', doy_list)
+                    bf.create_folder(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
+                    data_cube.save(f'{self._dc_infr[_]}{str(_)}_sequenced_datacube\\')
+                    metadata_dic['Zoffset'], metadata_dic['Nodata_value'] = - nodata_value, 0
                 else:
                     metadata_dic['Zoffset'], metadata_dic['Nodata_value'] = None, nodata_value
                     np.save(self._dc_infr[_] + f'doy.npy', doy_list)
@@ -1247,7 +1240,7 @@ class Landsat_dc(object):
         self.dc_filepath = bf.Path(dc_filepath).path_name
 
         # Def key var
-        self.ROI_name, self.ROI, self.ROI_tif = None, None, None
+        self.ROI_name, self.ROI, self.ROI_tif, self.ROI_array = None, None, None, None
         self.index, self.Datatype, self.coordinate_system = None, None, None
         self.dc_group_list, self.tiles = None, None
         self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
@@ -1317,12 +1310,12 @@ class Landsat_dc(object):
 
         # Read datacube
         try:
-            if self.sparse_matrix and self.huge_matrix:
+            if self.sparse_matrix:
                 if os.path.exists(self.dc_filepath + f'{self.index}_sequenced_datacube\\'):
                     self.dc = NDSparseMatrix().load(self.dc_filepath + f'{self.index}_sequenced_datacube\\')
                 else:
                     raise Exception('Please double check the code if the sparse huge matrix is generated properly')
-            elif not self.huge_matrix:
+            elif not self.sparse_matrix and self.huge_matrix:
                 self.dc_filename = bf.file_filter(self.dc_filepath, ['sequenced_datacube.npy'])
                 if len(self.dc_filename) == 0:
                     raise ValueError('There has no valid dc or the dc was missing!')
@@ -1330,7 +1323,7 @@ class Landsat_dc(object):
                     raise ValueError('There has more than one date file in the dc dir')
                 else:
                     self.dc = np.load(self.dc_filename[0], allow_pickle=True)
-            elif self.huge_matrix and not self.sparse_matrix:
+            elif not self.huge_matrix and not self.sparse_matrix:
                 self.dc_filename = bf.file_filter(self.dc_filepath, ['sequenced_datacube', '.npy'], and_or_factor='and')
         except:
             raise Exception('Something went wrong when reading the datacube!')
@@ -1339,6 +1332,9 @@ class Landsat_dc(object):
         if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
             self._autotrans_sparse_matrix()
 
+        # Backdoor metadata check
+        self._backdoor_metadata_check()
+
         # Size calculation and shape definition
         self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
 
@@ -1346,6 +1342,35 @@ class Landsat_dc(object):
 
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()
+
+    def _backdoor_metadata_check(self):
+
+        backdoor_issue = False
+        # Check if metadata is valid and timeliness
+        # Problem 1 dir change between multi-devices ROI ROI arr ROI tif
+        if not os.path.exists(self.ROI_tif):
+            self.ROI_tif = retrieve_correct_filename(self.ROI_tif)
+            backdoor_issue = True
+
+        if not os.path.exists(self.ROI_array):
+            self.ROI_array = retrieve_correct_filename(self.ROI_array)
+            backdoor_issue = True
+
+        if not os.path.exists(self.ROI):
+            self.ROI = retrieve_correct_filename(self.ROI)
+            backdoor_issue = True
+
+        if not os.path.exists(self.oritif_folder):
+            self.oritif_folder = retrieve_correct_filename(self.oritif_folder)
+            backdoor_issue = True
+
+        if self.ROI_tif is None or self.ROI_array is None or self.ROI is None or self.oritif_folder is None:
+            raise Exception('Please manually change the roi path in the Landsat dc')
+
+        # Problem 2
+        if backdoor_issue:
+            self.save(self.dc_filepath)
+            self.__init__(self.dc_filepath)
 
     def _autotrans_sparse_matrix(self):
 
@@ -1359,6 +1384,45 @@ class Landsat_dc(object):
         self.dc._update_size_para()
         self.dc._matrix_type = sm.csr_matrix
         self.save(self.dc_filepath)
+
+    def append(self, append_landsat_dc):
+        if not isinstance(append_landsat_dc, Landsat_dc):
+            raise TypeError('The Landsat dc can only append with Landsat dc')
+
+        # size consistency
+        for _ in ['dc_XSize', 'dc_YSize', 'sparse_matrix', 'index', 'Nodata_value', 'Zoffset', 'size_control_factor']:
+            if _ not in self.__dict__.keys() or  _ not in append_landsat_dc.__dict__.keys():
+                raise ValueError(f'Missing factor {_} in Landsat dc!')
+            elif self.__dict__[_] != append_landsat_dc.__dict__[_]:
+                raise ValueError(f'The Landsat dcs didnot share consistency in {_}')
+
+        roi_arr_ori = np.load(self.ROI_array)
+        roi_arr_app = np.load(append_landsat_dc.ROI_array)
+
+        if not (roi_arr_ori == roi_arr_app).any():
+            raise ValueError('The Landsat dcs didnot share consistency roi')
+
+        # Move all the tif from append folder into the original landsat dc folder
+        append_tiffile = bf.file_filter(append_landsat_dc.oritif_folder, ['.TIF', '.tif'], and_or_factor='or')
+        for _ in append_tiffile:
+            filename = _.split('\\')[-1]
+            try:
+                shutil.copy(_, f"{self.oritif_folder}{filename}")
+            except:
+                pass
+
+        # re-arrange the doy and dc file
+        if self.sparse_matrix:
+            for __ in append_landsat_dc.sdc_doylist:
+                if __ not in self.sdc_doylist:
+                    self.sdc_doylist.append(__)
+                    self.dc.append(append_landsat_dc.dc.SM_group[__], name=__)
+        else:
+            pass
+
+        self.sdc_doylist.sort()
+        self.save(self.dc_filepath)
+        self.__init__(self.dc_filepath)
 
     def save(self, output_path: str):
         start_time = time.time()
@@ -1386,6 +1450,7 @@ class Landsat_dc(object):
                         'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
                         'size_control_factor': self.size_control_factor,
                         'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles}
+
         with open(f'{output_path}metadata.json', 'w') as js_temp:
             json.dump(metadata_dic, js_temp)
 

@@ -7,27 +7,31 @@ import pandas as pd
 import geopandas as gp
 import os
 import traceback
-from datetime import datetime
+from datetime import date
 import copy
 import scipy.sparse as sm
 from NDsm import NDSparseMatrix
 from Landsat_toolbox.Landsat_main_v2 import Landsat_dc
 from tqdm.auto import tqdm
-import matplotlib as plt
+import matplotlib.pyplot as plt
 import shapely
-from shapely import LineString, Point
+from shapely import LineString, Point, Polygon
 import concurrent.futures
 from itertools import repeat
 import rasterio
 import psutil
+import json
+
+
+topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
 
 
 def multiple_concept_model(year, thal, ):
     hydrodc1 = HydroDatacube()
-    hydrodc1.from_hydromatrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
+    hydrodc1.from_hydromatrix(f'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
     hydrodc1.simplified_conceptual_inundation_model(
-        'G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\ele_pretgd4model.TIF', thal,
-        'G:\A_Landsat_veg\Water_level_python\inundation_status\\prewl_predem\\')
+        'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\ele_pretgd4model.TIF', thal,
+        'G:\A_Landsat_Floodplain_veg\Water_level_python\inundation_status\\prewl_predem\\')
 
 
 class RiverChannel2D():
@@ -231,6 +235,191 @@ class HydrometricStationData(object):
             else:
                 raise TypeError('Code input wrong type hydrological df!')
 
+    def cs_wl(self, thal, cs_name, date_, ):
+
+        if isinstance(date_, int) and 19000000 < date_ < 21000000:
+            year_ = date_ // 10000
+            month_ = (date_ - year_ * 10000) // 100
+            day_ = date_ - year_ * 10000 - month_ * 100
+            doy = date(year=year_, month=month_, day=day_).toordinal() - date(year=year_, month=1, day=1).toordinal() + 1
+            doy = year_ * 1000 + doy
+        else:
+            raise Exception('Please input valid date')
+
+        if cs_name not in thal.Thalweg_cs_namelist:
+            raise Exception('Please input the right cross section!')
+        else:
+            cs_pos = thal.Thalweg_cs_namelist.index(cs_name)
+            _ = copy.deepcopy(cs_pos) - 1
+
+            while _ >= 0:
+                if thal.Thalweg_cs_namelist[_] in self.cross_section_namelist:
+                    station_name = self.station_namelist[self.cross_section_namelist.index(thal.Thalweg_cs_namelist[_])]
+                    hydro_doy = np.array(self.hydrological_inform_dic[station_name]['doy'])
+                    if doy in hydro_doy:
+                        wl_st = np.array(self.hydrological_inform_dic[station_name][self.hydrological_inform_dic[station_name]['doy'] == doy]['water_level/m'])[0]
+                        wl_st = wl_st + self.water_level_offset[station_name]
+                        if thal.smoothed_Thalweg is not None:
+                            wl_st_dis = dis2points_via_line(thal.smoothed_Thalweg.coords[thal.smoothed_cs_index[cs_pos]], thal.smoothed_Thalweg.coords[thal.smoothed_cs_index[_]], thal.smoothed_Thalweg)
+                        else:
+                            wl_st_dis = dis2points_via_line(thal.Thalweg_Linestring.coords[cs_pos],thal.Thalweg_Linestring.coords[_], thal.Thalweg_Linestring)
+                        break
+                _ -= 1
+
+            _ = copy.deepcopy(cs_pos) + 1
+            while _ <= len(thal.Thalweg_cs_namelist):
+                if thal.Thalweg_cs_namelist[_] in self.cross_section_namelist:
+                    station_name = self.station_namelist[self.cross_section_namelist.index(thal.Thalweg_cs_namelist[_])]
+                    hydro_doy = np.array(self.hydrological_inform_dic[station_name]['doy'])
+                    if doy in hydro_doy:
+                        wl_ed = np.array(self.hydrological_inform_dic[station_name][self.hydrological_inform_dic[station_name]['doy'] == doy]['water_level/m'])[0]
+                        wl_ed = wl_ed + self.water_level_offset[station_name]
+                        if thal.smoothed_Thalweg is not None:
+                            wl_ed_dis = dis2points_via_line(thal.smoothed_Thalweg.coords[thal.smoothed_cs_index[cs_pos]], thal.smoothed_Thalweg.coords[thal.smoothed_cs_index[_]], thal.smoothed_Thalweg)
+                        else:
+                            wl_ed_dis = dis2points_via_line(thal.Thalweg_Linestring.coords[cs_pos],thal.Thalweg_Linestring.coords[_], thal.Thalweg_Linestring)
+                        break
+                _ += 1
+
+            wl_out = wl_st + (wl_ed - wl_st) * (wl_st_dis) / (wl_ed_dis + wl_st_dis)
+            print(f'{str(cs_name)}__{str(date_)}')
+            print(f'{str(wl_out)}')
+
+    def linear_comparison(self, station_name, thal, year,):
+
+        s = [int(_) for _ in self.hydrometric_id]
+
+        if station_name not in self.station_namelist:
+            raise Exception('Please input the right station!')
+        elif int(self.hydrometric_id[self.station_namelist.index(station_name)]) == min(s) or int(self.hydrometric_id[self.station_namelist.index(station_name)]) == max(s):
+            raise Exception('Linear comparison is not supported for start and end station!')
+        else:
+
+            interpolated_list = []
+            guaged_list = []
+            if isinstance(year, int) and year in self.hydrological_inform_dic[station_name]['year']:
+                year = [year]
+            elif isinstance(year, list):
+                for _ in year:
+                    if _ not in self.hydrological_inform_dic[station_name]['year']:
+                        print('The year is not valid')
+                        return
+
+            for year_ in year:
+                if year_ in np.array(self.hydrological_inform_dic[station_name]['year']):
+                    cs = self.cross_section_namelist[self.station_namelist.index(station_name)]
+                    cs_wl = np.array(self.hydrological_inform_dic[station_name][self.hydrological_inform_dic[station_name]['year'] == year_]['water_level/m'])
+                else:
+                    print('The year is not valid')
+                    return
+
+                station_id = int(self.hydrometric_id[self.station_namelist.index(station_name)])
+                station_minr = [int(_) for _ in self.hydrometric_id if int(_) < station_id]
+                station_maxr = [int(_) for _ in self.hydrometric_id if int(_) > station_id]
+                station_minr = -np.sort(-np.array(station_minr))
+                station_maxr = np.sort(np.array(station_maxr))
+
+                for _ in station_minr:
+                    station_name_ = self.station_namelist[self.hydrometric_id.index(str(_))]
+                    if year_ in np.array(self.hydrological_inform_dic[station_name_]['year']):
+                        start_cs = self.cross_section_namelist[self.station_namelist.index(station_name_)]
+                        start_cs_wl = np.array(self.hydrological_inform_dic[station_name_][self.hydrological_inform_dic[station_name_]['year'] == year_]['water_level/m'])
+                        break
+
+                    if _ == station_minr[-1]:
+                        raise Exception('No valid start cs')
+
+                for _ in station_maxr:
+                    station_name_ = self.station_namelist[self.hydrometric_id.index(str(_))]
+                    if year_ in np.array(self.hydrological_inform_dic[station_name_]['year']):
+                        end_cs = self.cross_section_namelist[self.station_namelist.index(station_name_)]
+                        end_cs_wl = np.array(self.hydrological_inform_dic[station_name_][self.hydrological_inform_dic[station_name_]['year'] == year_]['water_level/m'])
+                        break
+
+                    if _ == station_maxr[-1]:
+                        raise Exception('No valid end cs')
+
+                if end_cs_wl.shape[0] != start_cs_wl.shape[0] or start_cs_wl.shape[0] != cs_wl.shape[0]:
+                    return
+
+                if cs in thal.Thalweg_cs_namelist:
+                    if thal.smoothed_Thalweg is not None:
+                        cs_index = thal.smoothed_cs_index[thal.Thalweg_cs_namelist.index(cs)]
+                    else:
+                        cs_index = thal.Thalweg_cs_namelist.index(cs)
+                else:
+                    raise Exception('Cross section is not in thalweg!')
+
+                if start_cs in thal.Thalweg_cs_namelist:
+                    if thal.smoothed_Thalweg is not None:
+                        scs_index = thal.smoothed_cs_index[thal.Thalweg_cs_namelist.index(start_cs)]
+                        start_dis = dis2points_via_line(thal.smoothed_Thalweg.coords[cs_index], thal.smoothed_Thalweg.coords[scs_index], thal.smoothed_Thalweg)
+                    else:
+                        scs_index = thal.Thalweg_cs_namelist.index(start_cs)
+                        start_dis = dis2points_via_line(thal.Thalweg_Linestring.coords[cs_index],  thal.Thalweg_Linestring.coords[scs_index], thal.Thalweg_Linestring)
+                else:
+                    raise Exception('Start cross section is not in thalweg!')
+
+                if end_cs in thal.Thalweg_cs_namelist:
+                    if thal.smoothed_Thalweg is not None:
+                        ecs_index = thal.smoothed_cs_index[thal.Thalweg_cs_namelist.index(end_cs)]
+                        end_dis = dis2points_via_line(thal.smoothed_Thalweg.coords[cs_index], thal.smoothed_Thalweg.coords[ecs_index], thal.smoothed_Thalweg)
+                    else:
+                        ecs_index = thal.Thalweg_cs_namelist.index(end_cs)
+                        end_dis = dis2points_via_line(thal.Thalweg_Linestring.coords[cs_index], thal.Thalweg_Linestring.coords[ecs_index], thal.Thalweg_Linestring)
+                else:
+                    raise Exception('End cross section is not in thalweg!')
+
+                linear_interpolated_wl = start_cs_wl + (end_cs_wl - start_cs_wl) * (start_dis) / (end_dis + start_dis)
+
+                for _ in range(0, 365):
+                    if abs(linear_interpolated_wl[_] - cs_wl[_]) > 5:
+                        linear_interpolated_wl[_] = cs_wl[_]
+
+                q = np.nanmean(linear_interpolated_wl[0: 365] - np.array(cs_wl)[0: 365]) / 2
+                linear_interpolated_wl = linear_interpolated_wl - q
+
+                interpolated_list.extend(linear_interpolated_wl[0: 365].tolist())
+                guaged_list.extend(np.array(cs_wl)[0: 365].tolist())
+
+        plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
+        plt.rc('font', size=50)
+        plt.rc('axes', linewidth=5)
+
+        fig_temp, ax_temp = plt.subplots(figsize=(8 * len(year), 10), constrained_layout=True)
+        ax_temp.plot(np.linspace(1, 365 * len(year) + 1, 365 * len(year)), interpolated_list, color=(1, 0, 0), lw=3, label='Interpolated stage')
+        ax_temp.plot(np.linspace(1, 365 * len(year) + 1, 365 * len(year)), guaged_list, color=(0, 0, 1), lw=3, label='Gauged stage')
+        q = 0
+        year_list = []
+        pos_list = []
+        min_v = np.floor(min(min(interpolated_list), min(guaged_list)) / 2) * 2
+        max_v = np.ceil(max(max(interpolated_list), max(guaged_list)) / 2) * 2
+        for _ in year:
+            q += 1
+            ax_temp.plot(np.linspace(365 * q + 1, 365 * q + 1, 365), np.linspace(min_v, max_v, 365), lw=4, color=(0, 0, 0), ls='--')
+            year_list.append(str(_))
+            pos_list.append((q - 1) * 365 + 182)
+
+        print(f'{station_name}')
+        print(str(np.sqrt(np.nanmean((np.array(interpolated_list) - np.nanmean(np.array(interpolated_list) - np.array(guaged_list)) - np.array(guaged_list)) ** 2))))
+        print(f'{str(np.nanmean(np.abs(np.array(guaged_list)[0: -1] - np.array(guaged_list)[1: ])))}')
+        rmse = np.sqrt(np.nanmean((np.array(interpolated_list) - np.array(guaged_list)) ** 2))
+        # add text box for the statistics
+        stats = (f'ME = {np.nanmean(np.array(interpolated_list) - np.array(guaged_list)):.2f}\n'
+                 f'MAE = {np.nanmean(abs(np.array(interpolated_list) - np.array(guaged_list))):.2f}\n'
+                 f'RMSE = {rmse:.2f}')
+        bbox = dict(boxstyle='round', fc='blanchedalmond', ec='orange', alpha=0.5)
+        ax_temp.text(0.13, 0.1, stats, fontsize=50, bbox=bbox, transform=ax_temp.transAxes, horizontalalignment='right')
+        ax_temp.legend(fontsize=50)
+        ax_temp.set_xlim(1, 365 * len(year) + 1)
+        ax_temp.set_ylim(min_v, max_v)
+        ax_temp.set_xticks(pos_list)
+        ax_temp.set_xticklabels(year_list)
+        plt.savefig(f"E:\\A_Vegetation_Identification\\Paper\\Moderate_rev\Fig\\Method1\\{station_name}_{str(max(year))}_{str(min(year))}_rmse{str(rmse)[0:4]}.png", dpi=300)
+        plt.close()
+        fig_temp = None
+        ax_temp = None
+
     def load_csvs(self, csv_filelist):
         for _ in csv_filelist:
             pass
@@ -403,7 +592,7 @@ class HydroDatacube(object):
 
         print(f'Finish loading the Hydrodatacube of \033[1;31m{str(self.year)}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
-    def simplified_conceptual_inundation_model(self, demfile, thalweg_temp, output_path):
+    def simplified_conceptual_inundation_model(self, demfile, thalweg_temp, output_path, inun_factor=True, construct_inunfac_dc_factor=True, meta_dic=None):
 
         # Check the thalweg
         if isinstance(thalweg_temp,Thalweg):
@@ -420,7 +609,7 @@ class HydroDatacube(object):
 
         # Compare with dem
         if self.sparse_factor:
-            cpu_amount = os.cpu_count()
+            cpu_amount = os.cpu_count() - 2
             itr = int(np.floor(self.hydrodatacube.shape[2]/cpu_amount))
             sm_list, nm_list = [], []
             for _ in range(cpu_amount):
@@ -433,7 +622,68 @@ class HydroDatacube(object):
             with concurrent.futures.ProcessPoolExecutor() as exe:
                 exe.map(concept_inundation_model, nm_list, sm_list, repeat(demfile), repeat(thelwag_linesting), repeat(output_path))
 
-    def seq_simplified_conceptual_inundation_model(self, demfile, thalweg_temp, output_path):
+            # Create inun factor
+            if inun_factor:
+                bf.create_folder(f'{output_path}\\inundation_factor\\{str(self.year)}\\')
+                dem_ds = gdal.Open(demfile)
+                dem_arr = dem_ds.GetRasterBand(1).ReadAsArray()
+                dem_nodata = np.nan
+
+                inun_duration = np.zeros([self.hydrodatacube.shape[0], self.hydrodatacube.shape[1]])
+                inun_mean_waterlevel = np.zeros([self.hydrodatacube.shape[0], self.hydrodatacube.shape[1]])
+                inun_max_waterlevel = np.zeros([self.hydrodatacube.shape[0], self.hydrodatacube.shape[1]])
+
+                if np.isnan(dem_nodata):
+                    inun_duration[np.isnan(dem_arr)] = np.nan
+                    inun_mean_waterlevel[np.isnan(dem_arr)] = np.nan
+                    inun_max_waterlevel[np.isnan(dem_arr)] = np.nan
+                else:
+                    inun_duration[inun_duration == dem_nodata] = np.nan
+                    inun_mean_waterlevel[inun_mean_waterlevel == dem_nodata] = np.nan
+                    inun_max_waterlevel[inun_max_waterlevel == dem_nodata] = np.nan
+
+                cpu_amount = int(os.cpu_count() / 2)
+                indi_list_amount = int(np.floor(len(self.hydrodatacube.SM_namelist) / cpu_amount))
+                sm_name_list, sm_group_list = [], []
+                for _ in range(cpu_amount):
+                    if _ != cpu_amount - 1:
+                        sm_name_list.append(self.hydrodatacube.SM_namelist[_ * indi_list_amount: (_ + 1) * indi_list_amount])
+                    else:
+                        sm_name_list.append(self.hydrodatacube.SM_namelist[_ * indi_list_amount:])
+                    sm_group_list.append([self.hydrodatacube.SM_group[__] for __ in sm_name_list[-1]])
+
+                with concurrent.futures.ProcessPoolExecutor() as exe:
+                    res = exe.map(generate_inundation_indicator, sm_name_list, sm_group_list, repeat(dem_arr), repeat(dem_nodata), repeat(output_path))
+
+                res = list(res)
+                for _ in res:
+                    inun_duration = inun_duration + _[0]
+                    inun_mean_waterlevel = inun_mean_waterlevel + _[1]
+                    inun_max_waterlevel = np.nanmax([inun_max_waterlevel, _[2]], axis=0)
+                exe = None
+
+                inun_mean_waterlevel = inun_mean_waterlevel / inun_duration
+                bf.write_raster(dem_ds, inun_duration, f'{output_path}\\inundation_factor\\{str(self.year)}\\', 'inun_duration.tif')
+                bf.write_raster(dem_ds, inun_mean_waterlevel, f'{output_path}\\inundation_factor\\{str(self.year)}\\', 'inun_mean_wl.tif')
+                bf.write_raster(dem_ds, inun_max_waterlevel, f'{output_path}\\inundation_factor\\{str(self.year)}\\', 'inun_max_wl.tif')
+
+                if construct_inunfac_dc_factor:
+                    if meta_dic is not None and isinstance(meta_dic, str) and meta_dic.endswith('.json'):
+                        with open(meta_dic) as js_temp:
+                            dc_metadata = json.load(js_temp)
+                        metadata_dic = {'ROI_name': dc_metadata['ROI_name'], 'index': 'Inundation_factor', 'Datatype': 'float', 'ROI': dc_metadata['ROI'],
+                                        'ROI_array': dc_metadata['ROI_array'], 'ROI_tif': dc_metadata['ROI_tif'], 'Inunfac_factor': True,
+                                        'coordinate_system': dc_metadata['coordinate_system'], 'size_control_factor': False,
+                                        'oritif_folder': f'{output_path}\\inundation_factor\\{str(self.year)}\\', 'dc_group_list': None, 'tiles': None,
+                                        'Zoffset': None, 'sparse_matrix': True, 'huge_matrix': True, 'Nodata_value': np.nan}
+                    else:
+                        raise Exception('Please input related metadata dic before the dc construction')
+
+                    bf.create_folder(f'{output_path}\\inundation_dc\\')
+                    input_arr = {'inun_duration': inun_duration, 'inun_max_wl': inun_max_waterlevel, 'inun_mean_wl': inun_mean_waterlevel}
+                    construct_inunfac_dc(input_arr, f'{output_path}\\inundation_dc\\', self.year, metadata_dic)
+
+    def seq_simplified_conceptual_inundation_model(self, demfile, thalweg_temp, output_path, inun_factor = True):
 
         # Check the thalweg
         if isinstance(thalweg_temp,Thalweg):
@@ -498,12 +748,281 @@ class HydroDatacube(object):
                             burned = rasterio.features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=src_temp.transform)
                             out.write_band(1, burned)
                     print(f'The {str(wl_nm_)} is generated!')
+
                 except:
                     print(traceback.format_exc())
                     print(f'The {str(wl_nm_)} is not generated!!!!!')
 
     def remove_depression(self):
         pass
+
+
+class Inunfac_dc(object):
+
+    ####################################################################################################
+    # Inunfactor_dc represents "Inundation factor Datacube"
+    # It normally contains inundation factor like inundation duration, inundation water level derived from the simplified flood inundation model, etc
+    # And stack into a 3-D datacube type.
+    # Currently, it was integrated into the River_GIS as a output data for inunfactor generation.
+    ####################################################################################################
+
+    def __init__(self, inunfactor_filepath, work_env=None):
+
+        # Check the phemetric path
+        self.Inunfac_dc_filepath = bf.Path(inunfactor_filepath).path_name
+
+        # Init key var
+        self.ROI_name, self.ROI, self.ROI_tif, self.ROI_array = None, None, None, None
+        self.index, self.Datatype, self.coordinate_system = None, None, None
+        self.dc_group_list, self.tiles = None, None
+        self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
+        self.Inunfac_factor, self.inunyear = False, None
+        self.curfit_dic = {}
+
+        # Init protected var
+        self._support_inunfac_list = ['inun_duration', 'inun_max_wl', 'inun_mean_wl']
+
+        # Check work env
+        if work_env is not None:
+            self._work_env = bf.Path(work_env).path_name
+        else:
+            self._work_env = bf.Path(os.path.dirname(os.path.dirname(self.Inunfac_dc_filepath))).path_name
+        self.root_path = bf.Path(os.path.dirname(os.path.dirname(self._work_env))).path_name
+
+        # Define the basic var name
+        self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'inunyear',
+                             'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
+                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles', 'Nodata_value', 'Zoffset')
+
+        # Read the metadata file
+        metadata_file = bf.file_filter(self.Inunfac_dc_filepath, ['metadata.json'])
+        if len(metadata_file) == 0:
+            raise ValueError('There has no valid sdc or the metadata file of the sdc was missing!')
+        elif len(metadata_file) > 1:
+            raise ValueError('There has more than one metadata file in the dir')
+        else:
+            try:
+                with open(metadata_file[0]) as js_temp:
+                    dc_metadata = json.load(js_temp)
+
+                if not isinstance(dc_metadata, dict):
+                    raise Exception('Please make sure the metadata file is a dictionary constructed in python!')
+                else:
+                    # Determine whether this datacube is Inunfac or not
+                    if 'Inunfac_factor' not in dc_metadata.keys():
+                        raise TypeError('The Inunfac_factor was lost or it is not a Inunfac datacube!')
+                    elif dc_metadata['Inunfac_factor'] is False:
+                        raise TypeError(f'{self.Inunfac_dc_filepath} is not a Inunfac datacube!')
+                    elif dc_metadata['Inunfac_factor'] is True:
+                        self.Inunfac_factor = dc_metadata['Inunfac_factor']
+                    else:
+                        raise TypeError('The Inunfac factor was under wrong type!')
+
+                    for dic_name in self._fund_factor:
+                        if dic_name not in dc_metadata.keys():
+                            raise Exception(f'The {dic_name} is not in the dc metadata, double check!')
+                        else:
+                            self.__dict__[dic_name] = dc_metadata[dic_name]
+            except:
+                print(traceback.format_exc())
+                raise Exception('Something went wrong when reading the metadata!')
+
+        start_time = time.time()
+        print(f'Start loading the Inunfac datacube of {str(self.inunyear)} \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+
+        # Read paraname file of the Inunfac datacube
+        try:
+            if self.Inunfac_factor is True:
+                # Read paraname
+                paraname_file = bf.file_filter(self.Inunfac_dc_filepath, ['paraname.npy'])
+                if len(paraname_file) == 0:
+                    raise ValueError('There has no paraname file or file was missing!')
+                elif len(paraname_file) > 1:
+                    raise ValueError('There has more than one paraname file in the Inunfac datacube dir')
+                else:
+                    paraname_list = np.load(paraname_file[0], allow_pickle=True)
+                    self.paraname_list = [paraname for paraname in paraname_list]
+            else:
+                raise TypeError('Please input as a Inunfac datacube')
+        except:
+            raise Exception('Something went wrong when reading the paraname list!')
+
+        # Read func dic
+        try:
+            if self.sparse_matrix and self.huge_matrix:
+                if os.path.exists(self.Inunfac_dc_filepath + f'Inunfac_datacube\\'):
+                    self.dc = NDSparseMatrix().load(self.Inunfac_dc_filepath + f'Inunfac_datacube\\')
+                else:
+                    raise Exception('Please double check the code if the sparse huge matrix is generated properly')
+            elif not self.huge_matrix:
+                self.dc_filename = bf.file_filter(self.Inunfac_dc_filepath, ['Inunfac_datacube.npy'])
+                if len(self.dc_filename) == 0:
+                    raise ValueError('There has no valid Inunfac datacube or the dc was missing!')
+                elif len(self.dc_filename) > 1:
+                    raise ValueError('There has more than one data file in the dc dir')
+                else:
+                    self.dc = np.load(self.dc_filename[0], allow_pickle=True)
+            elif self.huge_matrix and not self.sparse_matrix:
+                self.dc_filename = bf.file_filter(self.Inunfac_dc_filepath, ['sequenced_datacube', '.npy'], and_or_factor='and')
+        except:
+            print(traceback.format_exc())
+            raise Exception('Something went wrong when reading the Inunfac datacube!')
+
+        # autotrans sparse matrix
+        if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
+            self._autotrans_sparse_matrix()
+
+        # Drop duplicate layers
+        self._drop_duplicate_layers()
+
+        # Backdoor metadata check
+        self._backdoor_metadata_check()
+
+        # Size calculation and shape definition
+        self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
+        if self.dc_ZSize != len(self.paraname_list):
+            raise TypeError('The Inunfac datacube is not consistent with the paraname file')
+
+        print(f'Finish loading the Inunfac datacube of  {str(self.inunyear)} \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+
+    def _autotrans_sparse_matrix(self):
+
+        if not isinstance(self.dc, NDSparseMatrix):
+            raise TypeError('The autotrans sparse matrix is specified for the NDsm!')
+
+        for _ in self.dc.SM_namelist:
+            if isinstance(self.dc.SM_group[_], sm.coo_matrix):
+                self.dc.SM_group[_] = sm.csr_matrix(self.dc.SM_group[_])
+                self.dc._update_size_para()
+        self.save(self.Inunfac_dc_filepath)
+
+    def _drop_duplicate_layers(self):
+        for _ in self.paraname_list:
+            if len([t for t in self.paraname_list if t == _]) != 1:
+                pos = [tt for tt in range(len(self.paraname_list)) if self.paraname_list[tt] == _]
+                if isinstance(self.dc, NDSparseMatrix):
+                    self.dc.SM_namelist.pop(pos[-1])
+                    self.paraname_list.pop(pos[-1])
+                    self.dc._update_size_para()
+                else:
+                    self.dc = np.delete(self.dc, pos[-1], axis=2)
+                    self.paraname_list.pop(pos[-1])
+
+    def _backdoor_metadata_check(self):
+
+        backdoor_issue = False
+        # Check if metadata is valid and timeliness
+        # Problem 1 dir change between multi-devices ROI ROI arr ROI tif
+        if not os.path.exists(self.ROI_tif):
+            self.ROI_tif = retrieve_correct_filename(self.ROI_tif)
+            backdoor_issue = True
+
+        if not os.path.exists(self.ROI_array):
+            self.ROI_array = retrieve_correct_filename(self.ROI_array)
+            backdoor_issue = True
+
+        if not os.path.exists(self.ROI):
+            self.ROI = retrieve_correct_filename(self.ROI)
+            backdoor_issue = True
+
+        if self.ROI_tif is None or self.ROI_array is None or self.ROI is None:
+            raise Exception('Please manually change the roi path in the phemetric dc')
+
+        # Problem 2
+        if backdoor_issue:
+            self.save(self.Inunfac_dc_filepath)
+            self.__init__(self.Inunfac_dc_filepath)
+
+    def __sizeof__(self):
+        return self.dc.__sizeof__() + self.paraname_list.__sizeof__()
+
+    def _add_layer(self, array, layer_name: str):
+
+        # Process the layer name
+        if not isinstance(layer_name, str):
+            raise TypeError('Please input the adding layer name as a string！')
+        elif not layer_name.startswith(str(self.inunyear)):
+            layer_name = str(self.inunyear) + '_' + layer_name
+
+        if self.sparse_matrix:
+            sparse_type = type(self.dc.SM_group[self.dc.SM_namelist[0]])
+            if not isinstance(array, sparse_type):
+                try:
+                    array = type(self.dc.SM_group[self.dc.SM_namelist[0]])(array)
+                except:
+                    raise Exception(f'The adding layer {layer_name} cannot be converted to the data type')
+            try:
+                self.dc.add_layer(array, layer_name, self.dc.shape[2])
+                self.paraname_list.append(layer_name)
+            except:
+                raise Exception('Some error occurred during the add layer within a phemetric dc')
+        else:
+            try:
+                self.dc = np.concatenate((self.dc, array.reshape(array.shape[0], array.shape[1], 1)), axis=2)
+                self.paraname_list.append(layer_name)
+            except:
+                raise Exception('Some error occurred during the add layer within a phemetric dc')
+
+    def remove_layer(self, layer_name):
+
+        # Process the layer name
+        layer_ = []
+        if isinstance(layer_name, str):
+            if str(self.inunyear) + '_' + layer_name in self.paraname_list:
+                layer_.append(str(self.inunyear) + '_' + layer_name)
+            elif layer_name in self.paraname_list:
+                layer_.append(layer_name)
+        elif isinstance(layer_name, list):
+            for layer_temp in layer_name:
+                if str(self.inunyear) + '_' + layer_temp in self.paraname_list:
+                    layer_.append(str(self.inunyear) + '_' + layer_temp)
+                elif layer_temp in self.paraname_list:
+                    layer_.append(layer_temp)
+
+        # Remove selected layer
+        for _ in layer_:
+            if self.sparse_matrix:
+                try:
+                    self.dc.remove_layer(_)
+                    self.paraname_list.remove(_)
+                except:
+                    raise Exception('Some error occurred during the removal of layer within a phemetric dc')
+            else:
+                try:
+                    self.dc = np.delete(self.dc, self.paraname_list.index(_), axis=2)
+                    self.paraname_list.remove(layer_name)
+                except:
+                    raise Exception('Some error occurred during the add layer within a phemetric dc')
+
+        self.save(self.Inunfac_dc_filepath)
+        self.__init__(self.Inunfac_dc_filepath)
+
+    def save(self, output_path: str):
+        start_time = time.time()
+        print(f'Start saving the Inunfac datacube of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+
+        if not os.path.exists(output_path):
+            bf.create_folder(output_path)
+        output_path = bf.Path(output_path).path_name
+
+        metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI,
+                        'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
+                        'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix, 'huge_matrix': self.huge_matrix,
+                        'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles,
+                        'inunyear': self.inunyear, 'curfit_dic': self.curfit_dic, 'Inunfac_factor': self.Inunfac_factor,
+                        'Nodata_value': self.Nodata_value, 'Zoffset': self.Zoffset}
+
+        paraname = self.paraname_list
+        np.save(f'{output_path}paraname.npy', paraname)
+        with open(f'{output_path}metadata.json', 'w') as js_temp:
+            json.dump(metadata_dic, js_temp)
+
+        if self.sparse_matrix:
+            self.dc.save(f'{output_path}{str(self.index)}_Inunfac_datacube\\')
+        else:
+            np.save(f'{output_path}{str(self.index)}_Inunfac_datacube.npy', self.dc)
+
+        print(f'Finish saving the Inunfac datacube of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
 
 class Thalweg(object):
@@ -518,13 +1037,37 @@ class Thalweg(object):
         self.Thalweg_Linestring = None
         self.Thalweg_geodf = None
         self.original_cs = None
+        self.Thalweg_slope = None
 
         # Define smooth index
         self.smoothed_Thalweg = None
         self.smoothed_cs_index = None
+        self.smoothed_Thalweg_slope = None
 
         # Define the property of cross section
         self.crs = None
+
+    def _generate_thalweg_slope(self):
+
+        # Generate the slope of each line
+        if self.Thalweg_Linestring is None:
+            raise IOError('Please input the thalweg linestring!')
+        else:
+            self.Thalweg_slope = []
+            for _ in range(len(self.Thalweg_Linestring.coords) - 1):
+                dis_ = distance_between_2points(self.Thalweg_Linestring.coords[_], self.Thalweg_Linestring.coords[_ + 1])
+                x_diff, y_diff = self.Thalweg_Linestring.coords[_ + 1][0] - self.Thalweg_Linestring.coords[_][0], self.Thalweg_Linestring.coords[_ + 1][1] - self.Thalweg_Linestring.coords[_][1]
+                self.Thalweg_slope.append((x_diff / dis_, y_diff / dis_))
+
+        # Generate the slope of each smooth line
+        if self.smoothed_Thalweg is None:
+            pass
+        else:
+            self.smoothed_Thalweg_slope = []
+            for _ in range(len(self.smoothed_Thalweg.coords) - 1):
+                dis_ = distance_between_2points(self.smoothed_Thalweg.coords[_], self.smoothed_Thalweg.coords[_ + 1])
+                x_diff, y_diff = self.smoothed_Thalweg.coords[_ + 1][0] - self.smoothed_Thalweg.coords[_][0], self.smoothed_Thalweg.coords[_ + 1][1] - self.smoothed_Thalweg.coords[_][1]
+                self.smoothed_Thalweg_slope.append((x_diff / dis_, y_diff / dis_))
 
     def _extract_Thalweg_geodf(self):
 
@@ -543,7 +1086,7 @@ class Thalweg(object):
             self.Thalweg_cs_namelist = self.Thalweg_geodf['cs_namelist'][0]
             self.Thalweg_Linestring = self.Thalweg_geodf['geometry'][0]
         else:
-            raise Exception('The thalweg has inconsistent cross section name and linstring!')
+            raise Exception('The thalweg has inconsistent cross section name and linestring!')
 
     def _struct_Thalweg_geodf(self):
 
@@ -556,6 +1099,199 @@ class Thalweg(object):
 
                 if self.crs is not None:
                     self.Thalweg_geodf = self.Thalweg_geodf.set_crs(self.crs)
+
+    def straighten_river_through_thalweg(self, tiffile, itr=1, resize_factor=5):
+
+        gdal.SetConfigOption('CHECK_DISK_FREE_SPACE', 'NO')
+
+        # Read the tiffile
+        ds_temp = gdal.Open(tiffile)
+        srs_temp = retrieve_srs(ds_temp)
+        if int(srs_temp.split(':')[-1]) != self.crs.to_epsg():
+            gdal.Warp('/vsimem/temp1.TIF', ds_temp)
+            ds_temp = gdal.Open('/vsimem/temp1.TIF')
+        [ul_x, x_res, xt, ul_y, yt, y_res] = ds_temp.GetGeoTransform()
+        arr = ds_temp.GetRasterBand(1).ReadAsArray()
+        nodata = ds_temp.GetRasterBand(1).GetNoDataValue()
+
+        # Generate cache folder
+        cache_folder = os.path.dirname(tiffile) + '\\cache\\'
+        bf.create_folder(cache_folder)
+
+        # Process into the designed pixel
+        tiffile_resize = tiffile.split('.TIF')[0] + f'_resized_{str(itr / resize_factor)}.TIF'
+        if not os.path.exists(tiffile_resize):
+            arr_new = np.repeat(np.repeat(arr, int(x_res / itr * resize_factor), axis=0), int(- y_res / itr * resize_factor), axis=1)
+            driver = gdal.GetDriverByName('GTiff')
+            driver.Register()
+            outds = driver.Create(tiffile_resize, xsize=arr_new.shape[1], ysize=arr_new.shape[0], bands=1, eType=gdal.GDT_Float32, options=['COMPRESS=LZW', 'PREDICTOR=2'])
+            outds.SetGeoTransform(ds_temp.GetGeoTransform())
+            outds.SetProjection(ds_temp.GetProjection())
+            outband = outds.GetRasterBand(1)
+            outband.WriteArray(arr_new)
+            outband.SetNoDataValue(nodata)
+            outband.FlushCache()
+            outband = None
+            outds = None
+
+        # Determine the thalweg
+        if self.smoothed_Thalweg is None:
+            thalweg_line = copy.deepcopy(self.Thalweg_Linestring)
+            slope_ = copy.deepcopy(self.Thalweg_slope)
+        else:
+            thalweg_line = copy.deepcopy(self.smoothed_Thalweg)
+            slope_ = copy.deepcopy(self.smoothed_Thalweg_slope)
+
+        # Define the value
+        itr_num = int(np.ceil(thalweg_line.length / itr)) + 1
+        left_bank_v, right_bank_v = [], []
+        coord, end_point = thalweg_line.coords[0], 1
+
+        # For each itr
+        # Strategies I and II
+        online_factor, num = True, 0
+        end_coord, mid_coord, end_slope, mid_slope = [(thalweg_line.coords[0][0], thalweg_line.coords[0][1])],[(thalweg_line.coords[0][0], thalweg_line.coords[0][1])], [slope_[0]], [slope_[0]]
+        with tqdm(total=itr_num, desc=f'Get the slope and coord for each itr', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            while online_factor:
+                dis_to_end = distance_between_2points(coord, thalweg_line.coords[end_point])
+                if num == 0:
+                    if dis_to_end >= itr:
+                        end_coord.append((coord[0] + (itr * slope_[end_point - 1][0]), coord[1] + (itr * slope_[end_point - 1][1])))
+                        end_slope.append(slope_[end_point - 1])
+                        mid_coord.append((coord[0] + (itr * slope_[end_point - 1][0]), coord[1] + (itr * slope_[end_point - 1][1])))
+                        mid_slope.append(slope_[end_point - 1])
+                        coord1 = (coord[0] + (itr * slope_[end_point - 1][0]), coord[1] + (itr * slope_[end_point - 1][1]))
+                        end_point1 = end_point
+                    else:
+                        dis_remain = itr - dis_to_end
+                        for end__ in range(len(thalweg_line.coords)):
+                            if dis_remain <= distance_between_2points(thalweg_line.coords[end_point + end__], thalweg_line.coords[end_point + 1 + end__]):
+                                end_coord.append((thalweg_line.coords[end_point + end__][0] + dis_remain * slope_[end_point + end__ - 1][0],
+                                                  thalweg_line.coords[end_point + end__][1] + dis_remain * slope_[end_point + end__ - 1][1]))
+                                end_slope.append(slope_[end_point + end__ - 1])
+                                mid_coord.append((thalweg_line.coords[end_point + end__][0] + dis_remain * slope_[end_point + end__ - 1][0],
+                                                  thalweg_line.coords[end_point + end__][1] + dis_remain * slope_[end_point + end__ - 1][1]))
+                                mid_slope.append(slope_[end_point + end__ - 1])
+                                coord1 = (thalweg_line.coords[end_point + end__][0] + dis_remain * slope_[end_point + end__ - 1][0],
+                                          thalweg_line.coords[end_point + end__][1] + dis_remain * slope_[end_point + end__ - 1][1])
+                                end_point1 = end_point + end__ + 1
+                                break
+                            else:
+                                dis_remain = dis_remain - distance_between_2points(thalweg_line.coords[end_point + end__], thalweg_line.coords[end_point + 1 + end__])
+
+                    if dis_to_end >= 3 * itr / 2:
+                        end_coord.append((coord[0] + (itr * slope_[end_point - 1][0]) * 3 / 2, coord[1] + (itr * slope_[end_point - 1][1]) * 3 / 2))
+                        end_slope.append(slope_[end_point - 1])
+                    else:
+                        dis_remain = itr - dis_to_end
+                        for end__ in range(len(thalweg_line.coords)):
+                            if dis_remain <= distance_between_2points(thalweg_line.coords[end_point + end__], thalweg_line.coords[end_point + 1 + end__]):
+                                end_coord.append((thalweg_line.coords[end_point + end__][0] + dis_remain * slope_[end_point + end__ - 1][0],
+                                                  thalweg_line.coords[end_point + end__][1] + dis_remain * slope_[end_point + end__ - 1][1]))
+                                end_slope.append(slope_[end_point + end__ - 1])
+                                break
+                            else:
+                                dis_remain = dis_remain - distance_between_2points(thalweg_line.coords[end_point + end__], thalweg_line.coords[end_point + 1 + end__])
+                    coord = coord1
+                    end_point = end_point1
+
+                elif end_point == len(thalweg_line.coords) - 1 and dis_to_end < itr:
+
+                    mid_coord.append((thalweg_line.coords[len(thalweg_line.coords) - 1][0], thalweg_line.coords[len(thalweg_line.coords) - 1][1]))
+                    mid_slope.append(slope_[len(slope_) - 1])
+                    end_coord.append((thalweg_line.coords[len(thalweg_line.coords) - 1][0], thalweg_line.coords[len(thalweg_line.coords) - 1][1]))
+                    end_slope.append(slope_[len(slope_) - 1])
+                    online_factor = False
+
+                else:
+
+                    if dis_to_end >= 3 * itr / 2:
+                        end_coord.append((coord[0] + (itr * slope_[end_point - 1][0]) * 3 / 2,
+                                          coord[1] + (itr * slope_[end_point - 1][1]) * 3 / 2))
+                        end_slope.append(slope_[end_point - 1])
+                    else:
+                        dis_remain = itr * 3 / 2 - dis_to_end
+                        for end__ in range(len(thalweg_line.coords)):
+                            if dis_remain <= distance_between_2points(thalweg_line.coords[end_point + end__], thalweg_line.coords[end_point + 1 + end__]):
+                                end_coord.append((thalweg_line.coords[end_point + end__][0] + dis_remain * slope_[end_point + end__ - 1][0],
+                                                  thalweg_line.coords[end_point + end__][1] + dis_remain * slope_[end_point + end__ - 1][1]))
+                                end_slope.append(slope_[end_point + end__ - 1])
+                                break
+                            else:
+                                dis_remain = dis_remain - distance_between_2points(thalweg_line.coords[end_point + end__], thalweg_line.coords[end_point + 1 + end__])
+
+                    if dis_to_end >= itr:
+                        mid_coord.append((coord[0] + (itr * slope_[end_point - 1][0]), coord[1] + (itr * slope_[end_point - 1][1])))
+                        mid_slope.append(slope_[end_point - 1])
+                        coord = (coord[0] + (itr * slope_[end_point - 1][0]), coord[1] + (itr * slope_[end_point - 1][1]))
+                        end_point = end_point
+                    else:
+                        dis_remain = itr - dis_to_end
+                        for end__ in range(len(thalweg_line.coords)):
+                            if dis_remain <= distance_between_2points(thalweg_line.coords[end_point + end__], thalweg_line.coords[end_point + 1 + end__]):
+                                mid_coord.append((thalweg_line.coords[end_point + end__][0] + dis_remain * slope_[end_point + end__ - 1][0],
+                                                  thalweg_line.coords[end_point + end__][1] + dis_remain * slope_[end_point + end__ - 1][1]))
+                                mid_slope.append(slope_[end_point + end__ - 1])
+                                coord = (thalweg_line.coords[end_point + end__][0] + dis_remain * slope_[end_point + end__ - 1][0],
+                                         thalweg_line.coords[end_point + end__][1] + dis_remain * slope_[end_point + end__ - 1][1])
+                                end_point = end_point + end__ + 1
+                                break
+                            else:
+                                dis_remain = dis_remain - distance_between_2points(thalweg_line.coords[end_point + end__], thalweg_line.coords[end_point + 1 + end__])
+                num += 1
+                pbar.update()
+
+        # a = LineString(end_coord)
+        # gdf = gp.GeoDataFrame({'geometry': a, 'index': [0]}, crs=srs_temp)
+        # gdf.to_file('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\temp\\atemp.shp')
+        time1, time2, time3 = 0, 0, 0
+        bf.create_folder('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\temp\\')
+        ds_temp, arr = None, None
+
+        line_slope, line_coord, line_itr, itr_all = [], [], [], []
+        npyfiles = bf.file_filter(cache_folder, ['.npy'])
+        npynum = [int(npyfile.split('.npy')[0].split('line_')[-1]) for npyfile in npyfiles]
+        for __ in range(len(mid_coord)):
+            if __ not in npynum:
+                line_coord.append([[end_coord[__][0], end_coord[__][1]], [end_coord[__ + 1][0], end_coord[__ + 1][1]]])
+                line_slope.append([[end_slope[__][0], end_slope[__][1]], [end_slope[__ + 1][0], end_slope[__ + 1][1]]])
+                line_itr.append(__)
+            itr_all.append(__)
+
+        # MP CONCURRENT
+        # with concurrent.futures.ProcessPoolExecutor() as exe:
+        #     exe.map(get_value_through_river_crosssection, line_itr, line_coord, line_slope, repeat(nodata), repeat(itr), repeat(tiffile_resize), repeat(len(mid_coord)), repeat(cache_folder))
+        print('MP Succeed!')
+
+        # Generate the standard npy
+        standard_npy = []
+        for _ in itr_all:
+            if os.path.exists(f'{cache_folder}line_{str(_)}.npy'):
+                arr_ = np.load(f'{cache_folder}line_{str(_)}.npy')
+                standard_npy.append(arr_)
+            else:
+                print(f'The itr {str(_)} is not generated!')
+
+        size_min_list = [np.min(_[0, :]) for _ in standard_npy]
+        size_max_list = [np.max(_[0, :]) for _ in standard_npy]
+        arr_len = np.max(size_max_list) - np.min(size_min_list) + 1
+        new_arr = np.zeros([int(arr_len), len(standard_npy)]) * np.nan
+        zero_num = standard_npy[size_min_list.index(min(size_min_list))]
+        zero_num = np.argwhere(zero_num[0, :] == 0)[0][0]
+        x_num = 0
+        for _ in standard_npy:
+            try:
+                zero_temp = np.argwhere(_[0, :] == 0)[0][0]
+                new_arr[zero_num - zero_temp: zero_num - zero_temp + _.shape[1], x_num] = _[1, :].transpose()
+                x_num += 1
+            except:
+                raise Exception('Code Error')
+
+        print('Start saving the npy')
+        np.save(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\arr_{str(itr)}.npy', new_arr)
+        fig, ax = plt.subplots(figsize=(60, 3))
+        cax = ax.imshow(new_arr)
+        plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11_nc\\fig11_nc_{str(itr)}.png', dpi=600)
 
     # def load_shapefile(thalweg_temp, shapefile):
     #
@@ -628,7 +1364,8 @@ class Thalweg(object):
                         raise Exception('Code error!')
                     self.smoothed_Thalweg = LineString(smoothed_thalweg_list)
             # geodf = gp.GeoDataFrame(data=[{'a': 'b'}], geometry=[thalweg_temp.smoothed_Thalweg])
-            # geodf.to_file('G:\A_Landsat_veg\Water_level_python\\a.shp')
+            # geodf.to_file('G:\A_Landsat_Floodplain_veg\Water_level_python\\a.shp')
+        self._generate_thalweg_slope()
 
     def load_geojson(self, geodf_json):
 
@@ -666,6 +1403,7 @@ class Thalweg(object):
 
         # Extract information from geodf
         self._extract_Thalweg_geodf()
+        self._generate_thalweg_slope()
         return self
 
     def to_geojson(self,  output_path: str = None):
@@ -891,7 +1629,8 @@ class Flood_freq_based_hyspometry_method(object):
         elif hydro_dc.year not in np.unique(np.floor(np.array(inun_dc.sdc_doylist)/10000).astype(np.int32)):
             raise Exception('Please input the inundation dc under right year!')
 
-        boundary_temp = np.zeros_like(ele_arr)
+        boundary_wl = np.zeros_like(ele_arr) * np.nan
+        inundation_arr = np.zeros_like(ele_arr)
         for _ in inun_dc.sdc_doylist:
             if int(np.floor(_/10000)) == hydro_dc.year:
 
@@ -900,6 +1639,7 @@ class Flood_freq_based_hyspometry_method(object):
                 inun_arr_output = copy.deepcopy(inun_arr)
                 inun_arr_output[inun_arr != 2] = 0
                 inun_arr_output[inun_arr == 2] = 1
+                inundation_arr = np.logical_or(inundation_arr, inun_arr_output)
                 bf.create_folder(f'{self.work_env}inundation_temp\\')
                 bf.write_raster(ele_ds, inun_arr_output, f'{self.work_env}inundation_temp\\', str(_) + '.tif', raster_datatype=gdal.GDT_Byte)
 
@@ -935,6 +1675,7 @@ class Flood_freq_based_hyspometry_method(object):
                 # Get the boundary pixel
                 ds_temp = gdal.Open(f'{self.work_env}inundation_final\\{str(_)}.tif')
                 arr_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                arr_temp[inun_arr == 1] = 0
                 pos = np.argwhere(arr_temp == 1)
 
                 # Get the water level map
@@ -943,6 +1684,64 @@ class Flood_freq_based_hyspometry_method(object):
                     hydro = hydro_dc.hydrodatacube.SM_group[doy].toarray()
                 else:
                     pass
+
+                # Get the boundary water level
+                if pos.shape[0] != 0:
+                    for __ in pos:
+                        dc_temp = inun_arr[__[0] - 1: __[0] + 2, __[1] - 1: __[1] + 2]
+
+                        if 1 in dc_temp:
+                            wl_inundated_list, wl_noninun_list = [], []
+                            for ___ in inun_dc.sdc_doylist:
+                                if int(np.floor(___ / 10000)) == hydro_dc.year:
+                                    doy_t = bf.date2doy(___)
+                                    if inun_dc.dc[__[0], __[1], inun_dc.sdc_doylist.index(___)] == 2:
+                                        wl_inundated_list.append(hydro_dc.hydrodatacube[int(__[0]), int(__[1]), hydro_dc.hydrodatacube.SM_namelist.index(doy_t)])
+                                    elif inun_dc.dc[__[0], __[1], inun_dc.sdc_doylist.index(___)] == 1:
+                                        wl_noninun_list.append(hydro_dc.hydrodatacube[__[0], __[1], hydro_dc.hydrodatacube.SM_namelist.index(doy_t)])
+
+                            wl_noninun_list = np.array(wl_noninun_list)
+                            if wl_noninun_list.shape[0] == 0 or np.sum(wl_noninun_list > hydro[__[0], __[1]]) / wl_noninun_list.shape[0] > 0.1:
+                                pass
+                            else:
+                                if np.isnan(boundary_wl[__[0], __[1]]):
+                                    boundary_wl[__[0], __[1]] = hydro[__[0], __[1]]
+                                else:
+                                    boundary_wl[__[0], __[1]] = min(hydro[__[0], __[1]], boundary_wl[__[0], __[1]])
+
+        bias_arr = boundary_wl - ele_arr
+        bf.write_raster(ele_ds, boundary_wl, self.work_env, f'{str(hydro_dc.year)}_wl_boundary.tif', nodatavalue=np.nan)
+        bf.write_raster(ele_ds, bias_arr, self.work_env, f'{str(hydro_dc.year)}_bias.tif', nodatavalue=np.nan)
+
+        with rasterio.open(self.work_env + f'{str(hydro_dc.year)}_bias.tif') as raster:
+            # Read the specific band
+            band = raster.read(1)  # assuming you're interested in the first band
+
+            # Coordinate transformation
+            transform = raster.transform
+
+            # Extract points, here assuming we want all non-zero or non-nodata values
+            rows, cols = np.where(band != raster.nodata) if ~np.isnan(raster.nodata) else np.where(~np.isnan(band))
+            points = [transform * (col, row) for col, row in zip(cols, rows)]
+            values = band[rows, cols]  # The corresponding raster values
+
+            # Create geospatial points
+            geometries = [Point(xy) for xy in points]
+            gdf = gp.GeoDataFrame({'geometry': geometries, 'Raster Value': values})
+
+            # Set the coordinate reference system (CRS) to the raster's CRS
+            gdf.crs = raster.crs
+
+            # Save to a Shapefile
+            gdf.to_file(self.work_env + f'{str(hydro_dc.year)}_bias.shp')
+            # Interpolate the bias
+            # Method 1 Kriging
+
+            # Method 2 Cubic interpolation
+
+            # Method 3 Linear interpolation
+
+            # Method 4
 
 
 class CrossSection(object):

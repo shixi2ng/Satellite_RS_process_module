@@ -297,7 +297,7 @@ class Sentinel2_ds(object):
                 Corrupted_metadata.to_excel(self._work_env + 'Corrupted_metadata.xlsx')
             else:
                 Corrupted_metadata_old_version = pd.read_excel(self._work_env + 'Corrupted_metadata.xlsx')
-                Corrupted_metadata_old_version.append(Corrupted_metadata.to_dict(), ignore_index=True)
+                Corrupted_metadata_old_version = pd.concat([Corrupted_metadata_old_version, Corrupted_metadata], axis=0, ignore_index=True)
                 Corrupted_metadata_old_version.drop_duplicates()
                 Corrupted_metadata_old_version.to_excel(self._work_env + 'Corrupted_metadata.xlsx')
 
@@ -1043,7 +1043,7 @@ class Sentinel2_ds(object):
                                 band_file = bf.file_filter(subset_output_path, containing_word_list=[f'{str(sensing_date)}_{str(tile_num)}_{band_name_temp}'])
                                 ds_temp = gdal.Open(band_file[0])
                                 array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
-                                array_temp = ((array_temp / 10000) ** (1/gamma_coef) * 255).astype(np.int)
+                                array_temp = ((array_temp / 10000) ** (1/gamma_coef) * 255).astype(np.int8)
                                 array_temp[array_temp > 255] = 0
                                 RGB_array[band_name_temp] = array_temp
 
@@ -1603,11 +1603,15 @@ class Sentinel2_ds(object):
 
                             if self._size_control_factor and index not in band_list:
                                 array_temp = array_temp.astype(int) + 32768
+                                zoffset = 32768
                             elif np.isnan(nodata_value):
                                 array_temp[np.isnan(array_temp)] = 0
+                                zoffset = 0
                             else:
                                 array_temp[array_temp == nodata_value] = 0
+                                zoffset = 0
 
+                            nodata_value = 0
                             sm_temp = sm.csr_matrix(array_temp.astype(np.uint16))
                             data_cube.append(sm_temp, name=doy_list[i])
                             data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
@@ -1651,7 +1655,7 @@ class Sentinel2_ds(object):
 
             else:
                 i = 0
-                data_cube = np.zeros([rows, cols, len(doy_list)])
+                data_cube_list = []
                 data_valid_array = np.zeros([len(doy_list)], dtype=int)
                 while i < len(doy_list):
 
@@ -1662,41 +1666,53 @@ class Sentinel2_ds(object):
                         ds_temp = gdal.Open(f"{self._dc_infr[index + 'input_path']}{str(doy_list[i])}_{index}.TIF")
                         array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
 
-                    data_cube[:, :, i] = array_temp
-                    data_valid_array[i] = 1 if [array_temp == nodata_value].all() else 0
-
+                    data_cube_list.append(array_temp)
+                    if self._remove_nan_layer:
+                        data_valid_array[i] = 1 if np.array([array_temp == nodata_value]).all() else 0
                     print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
                     i += 1
 
-                # remove nan layer (NEED FIX)
+                # remove nan layer
                 if self._manually_remove_para is True and self._manually_remove_datelist is not None:
-                    i_temp = 0
-                    while i_temp < len(doy_list):
-                        if doy_list[i_temp] in self._manually_remove_datelist:
-                            data_valid_array[i] = 1
-                            self._manually_remove_datelist.remove(doy_list[i_temp])
-                        i_temp += 1
+                    if self._remove_nan_layer:
+                        i_temp = 0
+                        while i_temp < len(doy_list):
+                            if doy_list[i_temp] in self._manually_remove_datelist:
+                                data_valid_array[i] = 1
+                                self._manually_remove_datelist.remove(doy_list[i_temp])
+                            i_temp += 1
+                    else:
+                        data_valid_array = np.zeros([len(doy_list)], dtype=int)
+                        i_temp = 0
+                        while i_temp < len(doy_list):
+                            if doy_list[i_temp] in self._manually_remove_datelist:
+                                data_valid_array[i] = 1
+                                self._manually_remove_datelist.remove(doy_list[i_temp])
+                            i_temp += 1
 
                 elif self._manually_remove_para is True and self._manually_remove_datelist is None:
                     raise ValueError('Please correctly input the manual input date list')
 
-                if self._remove_nan_layer or self._manually_remove_para:
-                    i_temp = 0
-                    while i_temp < len(doy_list):
-                        if data_valid_array[i_temp]:
-                            data_cube = np.delete(data_cube, i_temp, 2)
-                            doy_list.remove(doy_list[i_temp])
-                            data_valid_array = np.delete(data_valid_array, i_temp, 0)
-                            i_temp -= 1
-                        i_temp += 1
+                st = time.time()
+                if np.sum(data_valid_array) > 0:
+                    pos_list = [_ for _ in range(data_valid_array.shape[0]) if data_valid_array[_] == 1]
+                    data_cube_list_new = [_ for idx, _ in enumerate(data_cube_list) if idx not in pos_list]
+                    doy_list_new = [_ for idx, _ in enumerate(doy_list) if idx not in pos_list]
+                    doy_list = doy_list_new
+                    data_cube_list = None
+                    data_cube = np.stack(data_cube_list_new, axis=2)
+                else:
+                    data_cube = np.stack(data_cube_list, axis=2)
+                print(f'Stack all the layers into the sdc using {str(time.time() - st)[0:5]}s (total layer of {str(len(doy_list))})')
 
                 # Save the sdc
+                zoffset = 0
                 np.save(self._dc_infr[index] + f'doy.npy', doy_list)
-                bf.create_folder(f'{self._dc_infr[index]}{str(index)}_sequenced_datacube\\')
                 np.save(f'{self._dc_infr[index]}{str(index)}_sequenced_datacube.npy', data_cube)
 
             # Save the metadata dic
             metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
+            metadata_dic['Zoffset'], metadata_dic['Nodata_value'] = zoffset, nodata_value
             with open(self._dc_infr[index] + 'metadata.json', 'w') as js_temp:
                 json.dump(metadata_dic, js_temp)
 
@@ -1747,6 +1763,7 @@ class Sentinel2_dc(object):
                         else:
                             self.__dict__[dic_name] = dc_metadata[dic_name]
             except:
+                print(traceback.format_exc())
                 raise Exception('Something went wrong when reading the metadata!')
 
         start_time = time.time()
