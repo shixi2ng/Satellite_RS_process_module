@@ -19,6 +19,11 @@ import rasterio
 import delineate
 import singularity_index
 import sys
+from lxml import etree
+
+
+global topts
+topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
 
 
 #######################################################################################################################
@@ -194,7 +199,6 @@ class River_centreline(object):
         # self.rcw_arr =
         # self.rcw_tif =
 
-
     def identify_mainstream(self, nodatavalue = 0):
         """
         Identify the mainstream of braided river within the River centreline width arr
@@ -205,12 +209,37 @@ class River_centreline(object):
 
         # Identify all the nodes in the raster
 
-
     def _generate_centreline_thr_(self):
         pass
 
     def _get_all_lines_in_psiarr(self, ):
         pass
+
+
+class Path(object):
+    def __init__(self, file_path):
+        """
+
+        :type file_path: str
+        """
+        if type(file_path) is not str:
+            raise TypeError(f'The input file path {file_path} is not a string')
+
+        self.path_type = None
+        self.path_extension = None
+
+        if os.path.exists(file_path):
+            self.path_name = file_path
+        else:
+            raise ValueError(f'Invalid filepath {file_path}!')
+
+        if os.path.isdir(self.path_name):
+            if not self.path_name.endswith('\\'):
+                self.path_name = f'{self.path_name}\\'
+            self.path_type = 'dir'
+        elif os.path.isfile(self.path_name):
+            self.path_type = 'file'
+            self.path_extension = self.path_name.split('.')[-1]
 
 
 class built_in_index(object):
@@ -582,11 +611,116 @@ def CLoudFreeComposite(index_images):
     output.FlushCache()
 
 
+def file_filter(file_path_temp, containing_word_list: list, subfolder_detection=False, and_or_factor=None, exclude_word_list=[]):
+
+    file_path_temp = Path(file_path_temp).path_name
+
+    if and_or_factor is None:
+        and_or_factor = 'or'
+    elif and_or_factor not in ['and', 'or']:
+        print("Caution the and or should exactly be string as 'and' or 'or'")
+        sys.exit(-1)
+
+    if and_or_factor == 'or':
+        file_list = os.listdir(file_path_temp)
+        filter_list = []
+        for file in file_list:
+            if os.path.isdir(file_path_temp + file) and subfolder_detection:
+                filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list, subfolder_detection=True, and_or_factor=and_or_factor)
+                if filter_list_temp != []:
+                    filter_list.extend(filter_list_temp)
+            else:
+                for containing_word in containing_word_list:
+                    if containing_word in file_path_temp + file:
+                        if exclude_word_list == []:
+                            filter_list.append(file_path_temp + file)
+                        else:
+                            exclude_factor = False
+                            for exclude_word in exclude_word_list:
+                                if exclude_word in file_path_temp + file:
+                                    exclude_factor = True
+                                    break
+                            if not exclude_factor:
+                                filter_list.append(file_path_temp + file)
+                        break
+        return filter_list
+    elif and_or_factor == 'and':
+        file_list = os.listdir(file_path_temp)
+        filter_list = []
+        for file in file_list:
+            file_factor = True
+            if os.path.isdir(file_path_temp + file) and subfolder_detection:
+                filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list,
+                                               subfolder_detection=True, and_or_factor=and_or_factor)
+                if filter_list_temp != []:
+                    filter_list.extend(filter_list_temp)
+            else:
+                for containing_word in containing_word_list:
+                    if containing_word not in file_path_temp + file:
+                        file_factor = False
+                        break
+                for exclude_word in exclude_word_list:
+                    if exclude_word in file_path_temp + file:
+                        file_factor = False
+                        break
+                if file_factor:
+                    filter_list.append(file_path_temp + file)
+        return filter_list
+
+
+def maximum_composite_tiffile(tiffiles: list, output_path: str, filename:str):
+
+    gdal.SetConfigOption('GDAL_VRT_ENABLE_PYTHON', 'YES')
+
+    if False in [os.path.exists(_) for _ in tiffiles] or False in [_.endswith('.TIF') or _.endswith('.tif') for _ in tiffiles]:
+        raise IOError('PLease input valid tiffile')
+
+    if not os.path.exists(output_path):
+        create_folder(output_path)
+
+    ds_temp = [gdal.Open(_) for _ in tiffiles]
+    band1_temp = [ds_.GetRasterBand(1) for ds_ in ds_temp]
+    datatype = [gdal.GetDataTypeName(band1_.DataType) for band1_ in band1_temp]
+
+    proj_temp = [ds_.GetGeoTransform() for ds_ in ds_temp]
+    Xres, Yres = min([proj_[1] for proj_ in proj_temp]), min([-proj_[5] for proj_ in proj_temp])
+
+    # if not os.path.exists(os.path.join(output_path, filename)):
+    vrt = gdal.BuildVRT(os.path.join(output_path, filename).split('.')[0] + ".vrt",
+                        tiffiles, xRes=Xres, yRes=Yres)
+    vrt = None
+
+    vrt_tree = etree.parse(os.path.join(output_path, filename).split('.')[0] + ".vrt")
+    vrt_root = vrt_tree.getroot()
+    vrtband1 = vrt_root.findall(".//VRTRasterBand[@band='1']")[0]
+
+    vrtband1.set("subClass", "VRTDerivedRasterBand")
+    pixelFunctionType = etree.SubElement(vrtband1, 'PixelFunctionType')
+    pixelFunctionType.text = "find_max"
+    pixelFunctionLanguage = etree.SubElement(vrtband1, 'PixelFunctionLanguage')
+    pixelFunctionLanguage.text = "Python"
+    pixelFunctionCode = etree.SubElement(vrtband1, 'PixelFunctionCode')
+    pixelFunctionCode.text = etree.CDATA("""
+import numpy as np
+
+def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
+     out_ar[:] = np.max(in_ar, axis=0)
+
+""")
+
+    # Write the modified VRT back to file
+    vrt_tree.write(os.path.join(output_path, filename).split('.')[0] + ".vrt")
+    gdal.Translate(os.path.join(output_path, filename), os.path.join(output_path, filename).split('.')[0] + ".vrt",
+                   options=topts)
+
+
 if __name__ == '__main__':
     # gee_api = GEE_ds()
     # gee_api.download_index_GEE('LT05', (20060101, 20211231), 'MNDWI',
     #                            [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.73681471587109],
     #                            'G:\\A_HH_upper\\GEE\\')
+
+    maximum_composite_tiffile(file_filter('G:\\A_HH_upper\\Bank_centreline\\MNDWI\\', ['.TIF', '.tif'],and_or_factor='or'), 'G:\\A_HH_upper\\Bank_centreline\\MNDWI\\composite\\', 'MNDWI_2019.TIF')
 
     mndwi_file = 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\LC08_133037_20131009.MNDWI.tif'
     ds_ = gdal.Open(mndwi_file)

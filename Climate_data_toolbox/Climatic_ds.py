@@ -585,12 +585,23 @@ class CMA_ds(object):
 
         if work_env is None:
             try:
-                self.work_env = bf.Path(os.path.dirname(os.path.dirname(file_path)) + '\\').path_name
+                self.work_env = bf.Path(os.path.dirname(file_path) + '\\').path_name
             except:
                 print('There has no base dir for the ori_folder and the ori_folder will be treated as the work env')
                 self.work_env = bf.Path(file_path).path_name
         else:
             self.work_env = bf.Path(work_env).path_name
+
+        # Define the metadata folder
+        self.metadata_folder = self.work_env + 'metadata\\'
+        bf.create_folder(self.metadata_folder)
+
+        # Init _arg
+        self._ds2raster_method_tup = ('IDW',)
+        self._ds2raster_method = None
+
+        # ras2dc
+        self._temporal_div_str = ['year', 'month']
 
         # Init key variable
         self.ROI, self.ROI_name = None, None
@@ -603,125 +614,222 @@ class CMA_ds(object):
 
         # Valid index
         self._valid_index = ['EVP', 'PRS', 'WIN', 'TEM', 'GST', 'RHU', 'PRE', 'SSD']
+        self._index_csvfile = {'EVP': [], 'PRS': [], 'WIN': [], 'TEM': [], 'GST': [], 'RHU': [], 'PRE': [], 'SSD': []}
         self._index_dic = {'EVP': [(7, 0.1, 'Minor EVP', 32766), (8, 0.1, 'Major EVP', 32766)],
-                           'PRS': [(7, 0.1, 'Daily average air pressure', 32766), (8, 0.1, 'Daily max air pressure', 32766), (9, 0.1, 'Daily min air pressure', 32766)],
-                           'WIN': [(7, 0.1, 'Daily average wind speed', 32766), (8, 0.1, 'Daily max wind speed', 32766), (10, 0.1, 'Daily extreme wind speed', 32766)],
-                           'TEM': [(7, 0.1, 'Daily average air temperature', 32766), (8, 0.1, 'Daily max air temperature', 32766), (9, 0.1, 'Daily min air temperature', 32766)],
-                           'GST': [(7, 0.1, 'Daily average land surface temperature', 32766), (8, 0.1, 'Daily max land surface temperature', 32766), (9, 0.1, 'Daily min land surface temperature', 32766)],
-                           'RHU': [(7, 0.01, 'Daily average humidity', 32766), (8, 0.01, 'Daily min humidity', 32766)],
-                           'PRE': [(7, 0.1, '20-8 precipitation', 32766), (8, 0.1, '8-20 precipitation', 32766), (9, 0.1, 'Accumulated precipitation', 32766)],
-                           'SSD': [(7, 0.1, 'Sunshine hour', 32766)]}
+                           'PRS': [(7, 0.1, 'DAve_Airp', 32766), (8, 0.1, 'DMax_Airp', 32766), (9, 0.1, 'DMin_Airp', 32766)],
+                           'WIN': [(7, 0.1, 'DAve_Winds', 32766), (8, 0.1, 'DMax_Winds', 32766), (10, 0.1, 'DMin_Winds', 32766)],
+                           'TEM': [(7, 0.1, 'DAve_AT', 32766), (8, 0.1, 'DMax_AT', 32766), (9, 0.1, 'DMin_AT', 32766)],
+                           'GST': [(7, 0.1, 'DAve_LST', 32766), (8, 0.1, 'DMax_LST', 32766), (9, 0.1, 'DMin_LST', 32766)],
+                           'RHU': [(7, 0.01, 'DAve_hum', 32766), (8, 0.01, 'Dmin_hum', 32766)],
+                           'PRE': [(7, 0.1, '20-8_prec', 32766), (8, 0.1, '8-20_prec', 32766), (9, 0.1, 'Acc_prec', 32766)],
+                           'SSD': [(7, 0.1, 'SS_hour', 32766)]}
         self.index = list(set([_.split('SURF_CLI_CHN_MUL_DAY-')[1].split('-')[0] for _ in csv_files]))
-        for _ in self.index:
-            if _ not in self._valid_index:
-                for __ in csv_files:
-                    if _ in csv_files:
-                        csv_files.remove(__)
-                print(f'The {str(_)} is not supported!')
+
+        if False in [_ in self._valid_index for _ in self.index]:
+            raise Exception(f'The index {str(self.index[[_ in self._valid_index for _ in self.index].index(False)])}')
+
+        for __ in csv_files:
+            if True not in [index_ in __ for index_ in self.index]:
+                csv_files.remove(__)
+            else:
+                for index_ in self._valid_index:
+                    if index_ in __:
+                        self._index_csvfile[index_].append(__)
 
         # Get the index month and
-        self._station_inform_list_ = {'Station': [], 'Lon': [], 'Lat': [], 'Alt': []}
-        header_ = ['Station_id', 'Lon', 'Lat', 'Alt', 'YYYY', 'MM', 'DD']
-        self.index_month_station = {}
+        self._cma_header_ = ['Station_id', 'Lat', 'Lon', 'Alt', 'YYYY', 'MM', 'DD']
+        station_inform_dic = {'Station_id': [], 'Lon': [], 'Lat': [], 'Alt': []}
+        self.date_range = {}
         for index_ in self.index:
-            for csv_ in csv_files:
-                if index_ in csv_:
-                    month = str(csv_.split('-')[-1].split('.')[0])
-                    self.index_month_station[f'{index_}_{month}'] = []
-                    df_temp = pd.read_table(csv_, delim_whitespace=True, header=None)
-                    station_all = df_temp[0]
-                    # column_name_list = ['None' for _ in range(len(df_temp.columns))]
-                    # for column_ in range(len(df_temp.columns)):
-                    #     if column_ < len(header_):
-                    #         column_name_list[column_] = header_[column_]
-                    #     elif column_ in [_[0] for _ in self._index_dic[index_]]:
-                    #         pos = [_[0] for _ in self._index_dic[index_]].index(column_)
-                    #         column_name_list[column_] = self._index_dic[index_][pos][2]
-                    #     else:
-                    #         column_name_list[column_] = 'None'
-                    # df_temp.columns = column_name_list
-                    df_temp
-        # Generate
-        for index_ in self.index:
-            df_name_list = ['Station_id', 'Lon', 'Lat', 'Alt', 'DOY']
-            df_name_list.extend([__[2] for __ in self._index_dic[index_]])
-            self.index_df[index_] = pd.DataFrame(columns=df_name_list)
+            self.date_range[index_] = []
+            if not os.path.exists(os.path.join(self.metadata_folder, f'{index_}.csv')) or not os.path.exists(os.path.join(self.metadata_folder, f'station_inform.csv')):
+                index_month_station = {'Station_id': [], 'Index': [], 'Month': []}
+                for csv_ in csv_files:
+                    if index_ in csv_:
+                        month_ = int(csv_.split('-')[-1].split('.')[0])
+                        df_temp = pd.read_table(csv_, delim_whitespace=True, header=None)
+                        station_all = pd.unique(df_temp[0])
+                        for station_ in station_all:
+                            if station_ not in station_inform_dic['Station_id']:
+                                station_inform_dic['Station_id'].append(station_)
+                                station_inform_dic['Lon'].append(pd.unique(df_temp[df_temp[0] == station_][1])[0] / 100)
+                                station_inform_dic['Lat'].append(pd.unique(df_temp[df_temp[0] == station_][2])[0] / 100)
+                                station_inform_dic['Alt'].append(pd.unique(df_temp[df_temp[0] == station_][3])[0] / 100)
 
-            for csv_ in csv_files:
-                if index_ in csv_:
-                    df_temp = pd.read_table(csv_, delim_whitespace=True, header=None)
-                    column_name_all = [_[2] for _ in self._index_dic[index_]]
-                    column_name_list = ['None' for _ in range(len(df_temp.columns))]
-                    for column_ in range(len(df_temp.columns)):
-                        if column_ < len(header_):
-                            column_name_list[column_] = header_[column_]
-                        elif column_ in [_[0] for _ in self._index_dic[index_]]:
-                            pos = [_[0] for _ in self._index_dic[index_]].index(column_)
-                            column_name_list[column_] = self._index_dic[index_][pos][2]
-                        else:
-                            column_name_list[column_] = 'None'
-                    df_temp.columns = column_name_list
+                        index_month_station['Station_id'].extend(station_all)
+                        index_month_station['Index'].extend([index_ for _ in range(len(station_all))])
+                        index_month_station['Month'].extend([month_ for _ in range(len(station_all))])
+                index_month_station = pd.DataFrame(index_month_station)
+                index_month_station.to_csv(os.path.join(self.metadata_folder, f'{index_}.csv'))
+            else:
+                index_month_station = pd.read_csv(os.path.join(self.metadata_folder, f'{index_}.csv'))
+            self.date_range[index_] = pd.unique(index_month_station['Month'])
 
-                    # Process DOY
-                    doy_list = []
-                    for row in range(df_temp.shape[0]):
-                        doy_list.append(df_temp['YYYY'][row] * 1000 + datetime.date(year=df_temp['YYYY'][row], month=df_temp['MM'][row], day=df_temp['DD'][row]).toordinal() - datetime.date(year=df_temp['YYYY'][row], month=1, day=1).toordinal() + 1)
+        if not os.path.exists(os.path.join(self.metadata_folder, f'station_inform.csv')):
+            self.station_inform_df = pd.DataFrame(station_inform_dic)
+            self.station_inform_df.to_csv(os.path.join(self.metadata_folder, f'station_inform.csv'))
+        else:
+            self.station_inform_df = pd.read_csv(os.path.join(self.metadata_folder, f'station_inform.csv'))
 
-                    df_temp['DOY'] = doy_list
-
-                    for column_ in df_temp.columns:
-                        if column_ == 'Lon' or column_ == 'Lat' or column_ == 'Alt':
-                            df_temp[column_].astype(np.float32)
-                            df_temp[column_] = df_temp[column_] / 100
-                        elif column_ in column_name_all:
-                            df_temp[column_].astype(np.float32)
-                            pos_ = column_name_all.index(column_)
-                            df_temp[column_] = df_temp[column_].replace(self._index_dic[index_][pos_][3], np.nan)
-                            df_temp[column_] = df_temp[column_] * self._index_dic[index_][pos_][1]
-
-                    self.index_df[index_] = pd.concat([self.index_df[index_], df_temp[self.index_df[index_].columns]], axis=0, ignore_index=True)
-
-        for index_ in self.index:
-            self.__dict__[f'{index_}_']
-
-        self.date_list = [int(_.split('.txt')[0].split('-')[-1]) if '.txt' in _ else int(_.split('.TXT')[0].split('-')[-1]) for _ in csv_files]
-        self.year_range = list(set([int(np.floor(_ / 100)) for _ in self.date_list]))
-        self.files_content_dic, self.valid_inform = {}, []
+        self.csv_files = csv_files
 
         # Define cache folder
-        self.cache_folder, self.trash_folder = self.work_env + 'cache\\', self.work_env + 'trash\\'
-        bf.create_folder(self.cache_folder)
-        bf.create_folder(self.trash_folder)
+        # self.cache_folder, self.trash_folder = self.work_env + 'cache\\', self.work_env + 'trash\\'
+        # bf.create_folder(self.cache_folder)
+        # bf.create_folder(self.trash_folder)
 
         # Create output path
         self.output_path, self.shpfile_path, self.log_filepath = f'{self.work_env}CMA_Output\\', f'{self.work_env}shpfile\\', f'{self.work_env}logfile\\'
         bf.create_folder(self.output_path)
         bf.create_folder(self.log_filepath)
-        bf.create_folder(self.shpfile_path)
+        # bf.create_folder(self.shpfile_path)
 
-        # Generate standard dataframe
-        self.sta_df = {}
+        # column_name_list = ['None' for _ in range(len(df_temp.columns))]
+        # for column_ in range(len(df_temp.columns)):
+        #     if column_ < len(header_):
+        #         column_name_list[column_] = header_[column_]
+        #     elif column_ in [_[0] for _ in self._index_dic[index_]]:
+        #         pos = [_[0] for _ in self._index_dic[index_]].index(column_)
+        #         column_name_list[column_] = self._index_dic[index_][pos][2]
+        #     else:
+        #         column_name_list[column_] = 'None'
+        # df_temp.columns = column_name_list
 
-        # ds2raster
-        self._ds2raster_method_tup = ('IDW',)
-        self._ds2raster_method = None
+    def generate_climate_ras(self, ROI=None, index=None, date_range=None, output_path=None, bulk=True):
 
-        # ras2dc
-        self._temporal_div_str = ['year', 'month']
+        # Generate climate raster
+        # Identify the index
+        if index is None:
+            index = self.index
+        elif isinstance(index, list):
+            index = [index_ for index_ in index if index_ in self.index]
+        elif isinstance(index, str):
+            if index not in self.index:
+                raise Exception(f'The {str(index)} is not supported!')
+        else:
+            raise TypeError('The input index is under wrong type!')
 
-        for year in self.year_range:
-            valid_inform_list = []
-            self.files_content_dic[year] = []
-            current_year_files = bf.file_filter(file_path, ['.csv', str(year)], and_or_factor='and', subfolder_detection=True)
+        # Identify the ROI
+        if ROI is None:
+            ROI = None
+            ul_coord, lr_coord = (np.min(self.station_inform_df['']), np.max(self.station_inform_df[])),1
+        elif isinstance(ROI, str) and os.path.exists(ROI) and (ROI.endswith('.shp') or ROI.endswith('.SHP')):
+            ROI = ROI
+        else:
+            raise TypeError('The input ROI is under wrong type!')
 
-            for csv_file_path in current_year_files:
-                df_temp = pd.read_csv(csv_file_path)
-                self.files_content_dic[year].append(df_temp)
-                valid_inform_list.extend(list(df_temp.keys()))
+        # Identify the date_range
+        if date_range is None:
+            date_range = {key: self.date_range[key] for key in self.date_range if key in index}
+        elif isinstance(date_range, list) and len(date_range) == 2:
+            try:
+                start_date, end_date = int(date_range[0]), int(date_range[1])
+                start_month, end_month = int(start_date // 100), int(end_date // 100)
+                if start_date > end_date:
+                    raise ValueError('The end date is smaller than start date!')
+                else:
+                    date_range = {key: self.date_range[key] for key in self.date_range if key in index}
+                    for _ in date_range.keys():
+                        date_range_ = [date_ for date_ in date_range[_] if start_month <= date_ <= end_month]
+                        date_range[_] = date_range_
+            except:
+                print(traceback.format_exc())
+                raise Exception('The input date type is not correct')
+        else:
+            raise TypeError('The input date range is under wrong type!')
 
-            self.valid_inform.extend(valid_inform_list)
+        # Check the output path
+        if output_path is None:
+            self.raster_output_path = self.output_path + 'Raster\\'
+            self.shp_output_path = self.output_path + 'Shpfile\\'
+        else:
+            if not os.path.exists(output_path):
+                raise ValueError('The output path does not exist')
+            else:
+                self.raster_output_path = os.path.join(self.output_path, 'Raster\\')
+                self.shp_output_path = os.path.join(self.work_env, 'Shpfile\\')
+        bf.create_folder(self.raster_output_path)
+        bf.create_folder(self.shp_output_path)
 
-        self.valid_inform = list(set(self.valid_inform))
+        for index_ in index:
+            # Generate the shpfile
+            index_date_range = date_range[index_]
+            if bulk:
+                with concurrent.futures.ProcessPoolExecutor() as exe:
+                    exe.map(self._generate_shpfile, index_date_range, repeat(index_), repeat(self.shp_output_path))
+            else:
+                for date_ in index_date_range:
+                    self._generate_shpfile(date_, index, self.shp_output_path)
+
+            # Generate the raster file
+
+    def _generate_shpfile(self, index_year_month, index, outputpath):
+
+        try:
+            # Check the output path
+            if not os.path.exists(outputpath):
+                raise ValueError(f'The {outputpath} is not valid')
+            index_output_path = os.path.join(outputpath, f'{index}\\')
+            bf.create_folder(index_output_path)
+
+            csv_file = [csv_ for csv_ in self.csv_files if str(index_year_month) in csv_ and index in csv_]
+            if len(csv_file) != 1:
+                raise Exception('Code error!')
+
+            df_name_list = ['Station_id', 'Lat', 'Lon', 'Alt', 'DOY']
+            df_name_list.extend([__[2] for __ in self._index_dic[index]])
+            df_temp = pd.read_table(csv_file[0], delim_whitespace=True, header=None)
+            column_name_all = [_[2] for _ in self._index_dic[index]]
+            column_name_list = ['None' for _ in range(len(df_temp.columns))]
+            for column_ in range(len(df_temp.columns)):
+                if column_ < len(self._cma_header_):
+                    column_name_list[column_] = self._cma_header_[column_]
+                elif column_ in [_[0] for _ in self._index_dic[index]]:
+                    pos = [_[0] for _ in self._index_dic[index]].index(column_)
+                    column_name_list[column_] = self._index_dic[index][pos][2]
+                else:
+                    column_name_list[column_] = 'None'
+            df_temp.columns = column_name_list
+
+            # Process DOY
+            doy_list = []
+            for row in range(df_temp.shape[0]):
+                doy_list.append(df_temp['YYYY'][row] * 1000 + datetime.date(year=df_temp['YYYY'][row],
+                                                                            month=df_temp['MM'][row],
+                                                                            day=df_temp['DD'][row]).toordinal()
+                                - datetime.date(year=df_temp['YYYY'][row], month=1, day=1).toordinal() + 1)
+            df_temp['DOY'] = doy_list
+
+            # Process lat lon and alt
+            df_temp['Lon'] = df_temp['Lon'].astype(np.float32) / 100
+            df_temp['Lat'] = df_temp['Lat'].astype(np.float32) / 100
+            df_temp['Alt'] = df_temp['Alt'].astype(np.float32) / 100
+
+            # Determine the header
+            header = ['Station_id', 'Lon', 'Lat', 'Alt', 'DOY']
+            for _ in self._index_dic[index]:
+                header.append(_[2])
+
+            # Get the geodf itr through date
+            doy_list = pd.unique(df_temp['DOY'])
+            for doy in doy_list:
+                t1 = time.time()
+                print(f'Start processing the {str(index)} data of \033[1;31m{str(doy)}\033[0m')
+                if not os.path.exists(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.shp')):
+                    pd_temp = df_temp[df_temp['DOY'] == doy][header]
+                    for _ in self._index_dic[index]:
+                        pd_temp[_[2]] = pd_temp[_[2]].astype(np.float32)
+                        pd_temp[_[2]] = pd_temp[_[2]].replace(_[3], np.nan)
+                        pd_temp[_[2]] = pd_temp[_[2]] * _[1]
+                    geodf_temp = gp.GeoDataFrame(pd_temp, geometry=gp.points_from_xy(pd_temp['Lon'], pd_temp['Lat']), crs="EPSG:4326")
+
+                    geodf_temp.to_file(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.shp'), encoding='gbk')
+                print(f'Finish generating the {str(index)} shpfile of \033[1;31m{str(doy)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
+        except:
+            print(traceback.format_exc())
+
+    def _interpolate_shpfile2raster(self):
+        pass
 
     def _retrieve_para(self, required_para_name_list, protected_var=False, **kwargs):
 
@@ -846,7 +954,7 @@ class CMA_ds(object):
         return wrapper
 
     @save_log_file
-    def ds2pointshp(self, zvalue_list: list, output_path: str, main_coordinate_system: str):
+    def ds2pointshp(self, zvalue_list: list, output_path: str):
 
         output_path = bf.Path(output_path).path_name
         bf.create_folder(output_path)
@@ -1231,5 +1339,6 @@ if __name__ == '__main__':
     # bounds_temp = bf.raster_ds2bounds('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')
     # size = [ds_temp.RasterYSize, ds_temp.RasterXSize]
     ds_temp = CMA_ds('G:\\A_Landsat_Floodplain_veg\\Data_cma\\')
+    ds_temp.generate_climate_ras()
     # ds_temp.ds2raster(['TEMP'], ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020.shp', raster_size=size, ds2ras_method='IDW', bounds=bounds_temp)
     # ds_temp.raster2dc(['TEMP'], temporal_division='year')
