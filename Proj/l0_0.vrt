@@ -1,0 +1,12 @@
+
+                    <OGRVRTDataSource>
+                        <OGRVRTLayer name="polygon_layer">
+                            <SrcDataSource>dummy</SrcDataSource>
+                            <GeometryType>wkbPolygon</GeometryType>
+                            <LayerSRS>EPSG:32649</LayerSRS>
+                            <GeometryField encoding="WKT" field="geom">
+                                POLYGON((526161.4466000022 3395467.931800002, 526166.3941350528 3395476.622133536, 526175.0844685863 3395471.674598485, 526170.1369335357 3395462.9842649517))
+                            </GeometryField>
+                        </OGRVRTLayer>
+                    </OGRVRTDataSource>
+                    
