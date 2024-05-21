@@ -20,6 +20,10 @@ import delineate
 import singularity_index
 import sys
 from lxml import etree
+from scipy.ndimage import label
+from skimage.graph import route_through_array
+import concurrent.futures
+from itertools import repeat
 
 
 global topts
@@ -299,7 +303,7 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
     if centreline_arr.shape[0] != width_arr.shape[0] or centreline_arr.shape[1] != width_arr.shape[1] or psi_arr.shape[0] != width_arr.shape[0] or psi_arr.shape[1] != width_arr.shape[1]:
         raise Exception ('The input arr is not consistent in size!')
 
-    psi_arr = np.max(psi) - psi_arr
+    psi_arr = (np.max(psi) - psi_arr) ** 2
     centreline_arr = centreline_arr.astype(np.uint8)
     width_arr_connected = copy.deepcopy(width_arr)
     centerline_arr_connected = copy.deepcopy(centreline_arr)
@@ -315,23 +319,31 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
     node_y = convolve2d(centreline_arr, kernely, mode='same', boundary='fill', fillvalue=0)
     node_x_y = np.abs(node_x) + np.abs(node_y)
     node_arr = np.zeros_like(centreline_arr)
-    node_arr[np.logical_or(node_sum==1, np.logical_and(node_sum==2, node_x_y == 3))] = 1
+    node_arr[np.logical_and(centreline_arr==1, np.logical_or(node_sum==1, np.logical_and(node_sum==2, node_x_y == 3)))] = 1
 
-    contours, _ = cv2.findContours(centreline_arr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Define connectivity (8-connectivity in this example)
+    structure = np.array([[1, 1, 1],
+                          [1, 1, 1],
+                          [1, 1, 1]])
 
-    # Convert contours to linestrings
-    linestrings = [contour.reshape(-1, 2) for contour in contours]
+    labeled_array, num_features = label(centerline_arr, structure=structure)
+    linestrings = []
+    for i in range(1, num_features + 1):
+        linestrings.append(np.argwhere(labeled_array == i))
 
     # Sort linestrings from widest to thinnest
     width_average_list = []
     for line_ in linestrings:
         width_all = 0
         for pix_ in line_:
-            width_all += width_arr[pix_[1], pix_[0]]
+            width_all += width_arr[pix_[0], pix_[1]]
         width_average_list.append(width_all / len(line_))
 
-    width_average_list_sort = np.sort(np.array(width_average_list))[::-1].tolist()
-    linestrings_sorted = [linestrings[width_average_list.index(_)] for _ in width_average_list_sort]
+    width_average_list_sort = np.unique(np.sort(np.array(width_average_list))[::-1]).tolist()
+    linestrings_sorted = []
+    for width_ in width_average_list_sort:
+        linestrings_ex = [linestrings[__] for __ in range(len(width_average_list)) if width_average_list[__] == width_]
+        linestrings_sorted.extend(linestrings_ex)
 
     # Generate the buffer
     try:
@@ -340,11 +352,11 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
         buffer_all = np.zeros_like(centreline_arr, dtype=np.int32)
         for linestring in linestrings_sorted:
             if len(linestring) == 1:
-                width_arr_connected[linestring[0][1], linestring[0][0]] = 0
+                width_arr_connected[linestring[0][0], linestring[0][1]] = 0
+                centerline_arr_connected[linestring[0][0], linestring[0][1]] = 0
             else:
                 buffer_temp = np.zeros_like(centreline_arr, dtype=np.int32)
                 for point_ in linestring:
-                    point_ = list(np.flip(point_))
                     line_all[point_[0], point_[1]] = linepos
                     rwidth = int(np.ceil(width_arr[point_[0], point_[1]]))
                     dis_arr = distance_matrix(rwidth)
@@ -386,7 +398,7 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
                     cut_area = np.sum(buffer_temp != 0)
                     union_area = np.sum(np.logical_and(buffer_temp != 0, buffer_all != 0))
                     ratio = union_area / cut_area
-                    if ratio < 0.5:
+                    if ratio < 0.75:
                         unique_r = np.sort(np.unique(buffer_all[np.logical_and(buffer_temp != 0, buffer_all != 0)]))
                         point_list_all = []
                         width_ave_all = []
@@ -432,7 +444,7 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
                                     start_node = connect_pix[dis2connect.index(min(dis2connect))]
                                     connect_line = np.argwhere(line_all == linepos)
 
-                                path = find_path(start_node, connect_line, psi_arr)
+                                path = optimal_path(start_node, connect_line, psi_arr)
                                 width_temp = [width_arr[path_[0], path_[1]] for path_ in path]
                                 nms_min = np.nanmean(np.array(width_temp[width_temp != 0]))
                                 for path_ in path:
@@ -457,12 +469,16 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
                             # line_all[line_all == unique_r[index_]] = linepos
                             buffer_all[buffer_all == r] = linepos
                             line_all[line_all == r] = linepos
+                            a = 1
                         buffer_all[buffer_temp == linepos] = linepos
                     else:
                         for point_ in linestring:
-                            width_arr_connected[point_[1], point_[0]] = 0
-                            centerline_arr_connected[point_[1], point_[0]] = 0
+                            width_arr_connected[point_[0], point_[1]] = 0
+                            centerline_arr_connected[point_[0], point_[1]] = 0
                 else:
+                    for point_ in linestring:
+                        centerline_arr_connected[point_[0], point_[1]] = 1
+                        width_arr_connected[point_[0], point_[1]] = width_arr[point_[0], point_[1]]
                     buffer_all[buffer_temp == linepos] = linepos
             linepos += 1
     except:
@@ -507,6 +523,33 @@ def find_path(A, B, values_matrix):
                 heappush(queue, (new_total_value, dist + 1, nx, ny, new_path))
 
     return None
+
+
+def compute_path(arr, pa, pb):
+    if (0 <= pa[0] < arr.shape[0] and 0 <= pa[1] < arr.shape[1] and
+            0 <= pb[0] < arr.shape[0] and 0 <= pb[1] < arr.shape[1]):
+        indices, weight = route_through_array(arr, pa, pb, fully_connected=True)
+        return (indices, weight)
+    else:
+        return (np.nan, np.nan)
+
+
+def optimal_path(A, B, values_matrix):
+
+    # Calculate the optimal path for each point
+    # with concurrent.futures.ProcessPoolExecutor() as executor:
+    #     results = executor.map(compute_path, repeat(values_matrix), repeat(A), B)
+
+    paths, costs = [], []
+    for pb in B:
+        indices, weight = route_through_array(values_matrix, A, pb, fully_connected=True)
+        paths.append(indices)
+        costs.append(weight)
+
+    min_cost_index = np.nanargmin(costs)
+    optimal_path_ = paths[min_cost_index]
+
+    return optimal_path_
 
 
 def adjent(pix, list_pix):
@@ -667,6 +710,30 @@ def file_filter(file_path_temp, containing_word_list: list, subfolder_detection=
                     filter_list.append(file_path_temp + file)
         return filter_list
 
+def CLoudFreeComposite(image_files):
+    ori_ds = gdal.Open(image_files[0])
+    geo_transform = ori_ds.GetGeoTransform()
+    projection = ori_ds.GetProjection()
+    x_size, y_size = ori_ds.RasterXSize, ori_ds.RasterYSize
+
+    max_composite = np.zeros((y_size, x_size), dtype=np.float32)
+
+    for image_file in image_files:
+        ds = gdal.Open(image_file)
+        band_data = ds.GetRasterBand(1).ReadAsArray()
+        max_composite = np.maximum(max_composite, band_data)
+    return max_composite
+
+
+def list_tif_files(directory):
+    tif_files = []  # 创建一个空列表来存储 .tif 文件的路径
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if file.endswith('.TIF'):  # 检查文件扩展名是否为 .tif
+                file_path = os.path.join(root, file)
+                tif_files.append(file_path)  # 将文件路径添加到列表中
+    return tif_files
+
 
 def maximum_composite_tiffile(tiffiles: list, output_path: str, filename:str):
 
@@ -720,42 +787,40 @@ if __name__ == '__main__':
     #                            [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.73681471587109],
     #                            'G:\\A_HH_upper\\GEE\\')
 
-    maximum_composite_tiffile(file_filter('G:\\A_HH_upper\\Bank_centreline\\MNDWI\\', ['.TIF', '.tif'],and_or_factor='or'), 'G:\\A_HH_upper\\Bank_centreline\\MNDWI\\composite\\', 'MNDWI_2019.TIF')
+    directory_path = 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\'
+    image_files = list_tif_files(directory_path)
 
-    mndwi_file = 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\LC08_133037_20131009.MNDWI.tif'
-    ds_ = gdal.Open(mndwi_file)
-    arr_ = ds_.GetRasterBand(1).ReadAsArray()
+    maximum_composite_tiffile(file_filter('G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\', ['.TIF']), 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\', 'mndwi_2008_compo.TIF')
+    ori_ds = gdal.Open('G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\mndwi_2008_compo.TIF')
+    mndwi_arr = ori_ds.GetRasterBand(1).ReadAsArray()
+    mndwi_arr = mndwi_arr.astype(np.float32)
+    mndwi_arr[mndwi_arr == -32768] = -1
+    mndwi_arr = mndwi_arr/10000
+    # mndwi_file = 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\LC08_133037_20131009.MNDWI.tif'
+
+    # ds_ = gdal.Open(mndwi_file)
+    # array = ds_.GetRasterBand(1).ReadAsArray()
     # Create the filters that are needed to compute the singularity index
     filters = singularity_index.SingularityIndexFilters()
 
     # Compute the modified multiscale singularity index
-    psi, widthMap, orient = singularity_index.applyMMSI(arr_, filters)
-    # write_raster(ds_, psi, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'psi.tif')
-    # write_raster(ds_, widthMap, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'width.tif')
-    # write_raster(ds_, orient, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'orient.tif')
+    psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters)
 
     # Extract channel centerlines
     nms = delineate.extractCenterlines(orient, psi)
-    # write_raster(ds_, nms, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'nms.tif')
-    #
-    centerlines, centreline_can, strong_centreline, nms2 = delineate.thresholdCenterlines(nms)
-    # # write_raster(ds_, centerlines, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'centreline.tif')
-    # # write_raster(ds_, centreline_can, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'centreline_can.tif')
-    # # write_raster(ds_, strong_centreline, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'centreline_strong.tif')
-    # write_raster(ds_, nms2, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'nms2.tif')
 
-    # write_raster(ds_, psi, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'psi.tif')
-    file = 'G:\A_HH_upper\Bank_centreline\\nms_2013.tif'
-    ds_ = gdal.Open(file)
-    array = ds_.GetRasterBand(1).ReadAsArray()
-    trans = ds_.GetGeoTransform()
-    array = array / 30
-    centre_new, width_new = line_connection(centerlines, array, psi, nodata_value=0)
-    write_raster(ds_, centre_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'new_centereline_v3.tif')
-    write_raster(ds_, width_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\', 'new_width_v3.tif')
+    centerlines, centerlineCandidate, strongCenterline, nms = delineate.thresholdCenterlines(nms)
 
-    gee_api = GEE_ds()
-    gee_api.download_index_GEE('LC08', (20060101, 20211231), 'MNDWI', [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.13681471587109], 'G:\\A_HH_upper\\GEE\\')
+    centerline_arr = np.array(centerlines)
+    centerline_arr = centerline_arr.astype(np.int32)
+    width_arr = np.array(widthMap)
+    psi_arr = np.array(psi)
+    center_new, width_new = line_connection(centerline_arr, nms, psi_arr, nodata_value=0)
+    year = 2008
+    write_raster(ori_ds, centerline_arr, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'centereline_{year}.tif')
+    write_raster(ori_ds, center_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'centerelineNEW_{year}.tif')
+    write_raster(ori_ds, width_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'widthNEW_{year}.tif')
+
+    # gee_api = GEE_ds()
+    # gee_api.download_index_GEE('LC08', (20060101, 20211231), 'MNDWI', [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.13681471587109], 'G:\\A_HH_upper\\GEE\\')
     pass
-
-
