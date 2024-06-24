@@ -11,7 +11,6 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-
 def generateRasterMap(centerlines, orient, widthMap, thickness=3):
     """ Generates a raster map of channels. It draws a line of length
     w(x, y) and orientation θ(x, y) at each spatial location.

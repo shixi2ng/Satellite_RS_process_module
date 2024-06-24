@@ -8,7 +8,6 @@ Project Homepage: http://live.ece.utexas.edu/research/cne/
 """
 
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import sum as ndsum
 from scipy.ndimage import label as ndlabel
@@ -60,12 +59,6 @@ def thresholdCenterlines(nms, tLow=0.012, tHigh=0.12, bimodal=True):
     centerlines -- a binary matrix that indicates centerline locations
     """
 
-    # fig2, ax1 = plt.subplots(figsize=(6, 6), constrained_layout=True)
-    # nms_fla = nms.flatten()
-    # nms_fla = nms_fla[nms_fla != 0]
-    # ax1.hist(nms)
-    # plt.show()
-
     if bimodal:
         #Otsu's algorithm
         nms = preprocess.double2im(nms, 'uint8')
@@ -82,5 +75,4 @@ def thresholdCenterlines(nms, tLow=0.012, tHigh=0.12, bimodal=True):
     centerlines = np.hstack((0, sumstrong > 0)).astype('bool')
     centerlines = centerlines[cclabels]
 
-    # plt.imshow(centerlines)
-    return centerlines, centerlineCandidate, strongCenterline, nms
+    return centerlines, centerlineCandidate

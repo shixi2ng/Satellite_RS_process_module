@@ -11,7 +11,6 @@ import cv2
 import numpy as np
 from scipy.signal import fftconvolve
 
-
 class SingularityIndexFilters:
     
     def __init__(self, minScale=1.2, nrScales=15):
@@ -25,7 +24,8 @@ class SingularityIndexFilters:
         self.minScale = minScale
         self.nrScales = nrScales
         self._createFilters()
-
+        
+        
     def _createFilters(self):
         """ Creates the filters that are needed for computing the modified
         multiscale singularity index response. The filters can be used for
@@ -38,10 +38,10 @@ class SingularityIndexFilters:
         self.Gdebias = cv2.getGaussianKernel(2*ksized+1, sigmad)
     
         # Set sigma and kernel size for the second and first order derivatives
-        sigma2 = float(self.minScale)
-        sigma1 = self.minScale*1.7754
-        ksize2 = int(sigma2*3) + 1
-        ksize1 = int(sigma1*3) + 1
+        sigma2   = float(self.minScale)
+        sigma1   = self.minScale*1.7754
+        ksize2   = int(sigma2*3) + 1
+        ksize1   = int(sigma1*3) + 1
     
         # Set steerable filter basis orientations
         theta1 = 0
@@ -72,6 +72,7 @@ class SingularityIndexFilters:
         
         # Set the completion flag
         self.isCreated = True
+        
 
 def applyMMSI(I1, filters, togglePolarity=False, narrow_rivers=True):
     """ Applies the filters to a given input image to compute the

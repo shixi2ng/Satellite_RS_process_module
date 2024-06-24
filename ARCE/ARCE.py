@@ -2,28 +2,37 @@ import copy
 import traceback
 import ee
 import os
+from collections import deque
+import pandas as pd
 import requests
 import sympy
 import datetime
 import numpy as np
 import time
 import zipfile
+from skimage.measure import label, regionprops
+from skimage.morphology import skeletonize
+from skimage import measure
 import rivamap as rm
 import geopandas as gp
-from osgeo import gdal
+from osgeo import gdal, ogr
 from scipy.signal import convolve2d
 import cv2
 from heapq import heappop, heappush
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point, Polygon
 import rasterio
 import delineate
 import singularity_index
 import sys
 from lxml import etree
-from scipy.ndimage import label
+from scipy.ndimage import label, generate_binary_structure, binary_dilation
 from skimage.graph import route_through_array
 import concurrent.futures
 from itertools import repeat
+from rasterio.features import shapes
+import heapq
+import networkx as netx
+from geopy.distance import geodesic
 
 
 global topts
@@ -190,18 +199,141 @@ class GEE_ds(object):
 
 class River_centreline(object):
 
-    def __init__(self, MNDWI_tiffiles):
+    def __init__(self):
         # Define the basic attribute
         self.rcw_arr = None
         self.rcw_tif = None
 
-    def extract_RCL_byrivermap_(self, MNDWI_tiffiles):
-        if not os.path.exists(MNDWI_tiffiles) or (not MNDWI_tiffiles.endswith('.TIF') and not MNDWI_tiffiles.endswith('.tif')):
-            raise ValueError('The input mndwi tiffiles is not valid!')
+    def composite_month_landsat(self, MNDWI_folder):
+        mndwi_files = file_filter(MNDWI_folder, ['.TIF'], and_or_factor='or')
+        month_range = [np.floor(int(_.split('\\')[-1].split('.TIF')[0].split('_')[1])) for _ in mndwi_files]
+        month_range = np.unique(np.array(month_range).astype(np.int32)).tolist()
+        month_range = [str(int(_)) for _ in month_range]
+        composite_folder = os.path.join(MNDWI_folder, 'composite\\')
+        for month in month_range:
+            maximum_composite_tiffile(file_filter(MNDWI_folder, ['.TIF', month], and_or_factor='and'), composite_folder,f'MNDWI_{str(month)}.TIF')
 
-        # Set the psi arr as attribute here
-        # self.rcw_arr =
-        # self.rcw_tif =
+    def extract_RCL_byrivermap_(self, composite_folder):
+        composite_file = file_filter(composite_folder, ['.TIF'])
+        centreline_folder = os.path.join(composite_folder, 'centreline\\')
+        create_folder(centreline_folder)
+        with concurrent.futures.ProcessPoolExecutor() as exe:
+            exe.map(self.generete_centreline, composite_file, repeat(centreline_folder),)
+
+    def generete_centreline(self, mndwi_file, output_folder):
+        try:
+            ori_ds = gdal.Open(mndwi_file)
+            mndwi_arr = ori_ds.GetRasterBand(1).ReadAsArray()
+            mndwi_arr = mndwi_arr.astype(np.float32)
+            mndwi_arr[mndwi_arr == -32768] = -2000
+            mndwi_arr = mndwi_arr / 10000
+
+            filters = singularity_index.SingularityIndexFilters()
+
+            # Compute the modified multiscale singularity index
+            psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters)
+
+            # Extract channel centerlines
+            nms = delineate.extractCenterlines(orient, psi)
+
+            centerlines = delineate.thresholdCenterlines(nms)
+            centerline_arr = np.array(centerlines)
+            centerline_arr = centerline_arr.astype(np.int32)
+            width_arr = np.array(widthMap)
+            psi_arr = np.array(psi)
+
+            filename = mndwi_file.split('\\')[-1].split('.TIF')[0]
+            write_raster(ori_ds, centerline_arr, output_folder, f'centerline_{str(filename)}.tif', raster_datatype=gdal.GDT_Byte)
+        except:
+            print(traceback.format_exc())
+
+    def braiding_index(self, centreline_files, cs_shpfile):
+
+        dic_ = {'index': [], 'cs': [], 'intersect': []}
+        for centerline in centreline_files:
+            centerline_shpfolder = os.path.join(os.path.dirname(centerline), 'shpfile')
+            create_folder(centerline_shpfolder)
+            try:
+                # 打开栅格数据
+                with rasterio.open(centerline) as src:
+                    raster = src.read(1)  # 读取第一波段
+                    raster = (raster > 0.001).astype(np.uint8)
+                    transform = src.transform
+                month = centerline.split('_')[-1].split('.tif')[0]
+                if np.argwhere(raster == 1).shape[0] < 0.5 * raster.shape[0] * raster.shape[1]:
+                    num_labels, labels_im = cv2.connectedComponents(raster.astype(np.uint8), connectivity=8)
+                    gdf = gp.GeoDataFrame(columns=['geometry'])
+                    lines = []
+
+                    for label in range(1, num_labels):
+                        start_pool = np.argwhere(labels_im == label)
+                        start_pool = [list(_) for _ in start_pool]
+                        end_pool = copy.deepcopy(start_pool)
+                        visited_pool = []
+
+                        for point_st in start_pool:
+                            # end_pool.remove(point_st)
+                            four_connect_point = [np.abs(point_st[0] - point_ed[0]) + np.abs(point_st[1] - point_ed[1]) == 1 for point_ed in end_pool]
+                            eight_connect_point = [np.abs(point_st[0] - point_ed[0]) == 1 and np.abs(point_st[1] - point_ed[1]) == 1 for point_ed in end_pool]
+                            four_connect_point_pos = [end_pool[_] for _ in range(len(four_connect_point)) if four_connect_point[_]]
+                            eight_connect_point_pos = [end_pool[_] for _ in range(len(eight_connect_point)) if eight_connect_point[_]]
+
+                            for point_ed in four_connect_point_pos:
+                                if point_ed not in visited_pool:
+                                    points = [point_st, point_ed]
+                                    # 转换点为地理坐标系
+                                    geo_points = [rasterio.transform.xy(transform, pt[0], pt[1], offset='center') for pt in points]
+
+                                    # 创建 LineString
+                                    line = LineString(geo_points)
+                                    lines.append(line)
+
+                            for point_ed in eight_connect_point_pos:
+                                if point_ed not in visited_pool:
+                                    if True not in [(np.abs(point_ed[0] - _[0]) + np.abs(point_ed[1] - _[1])) == 1 for _ in four_connect_point_pos]:
+                                        points = [point_st, point_ed]
+                                        # 转换点为地理坐标系
+                                        geo_points = [rasterio.transform.xy(transform, pt[0], pt[1], offset='center') for pt in points]
+
+                                        # 创建 LineString
+                                        line = LineString(geo_points)
+                                        lines.append(line)
+                                    else:
+                                        pass
+
+                            visited_pool.append(point_st)
+
+                    # 创建 GeoDataFrame
+                    gdf = gp.GeoDataFrame(geometry=lines)
+                    # 设置坐标系统
+                    gdf.crs = src.crs
+                    # 保存为 Shapefile
+                    gdf.to_file(os.path.join(centerline_shpfolder, centerline.split('\\')[-1].split('.tif')[0] + '.shp'))
+
+                    intersect_all = 0
+                    cs_gdf = gp.read_file(cs_shpfile)
+                    cs_gdf = cs_gdf.to_crs(src.crs)
+                    for cs_ in range(cs_gdf.shape[0]):
+                        cs_line = cs_gdf['geometry'][cs_]
+                        cs_name = cs_gdf['cs_name'][cs_]
+                        intersect_num = 0
+                        for _ in range(gdf.shape[0]):
+                            if cs_line.intersects(gdf['geometry'][_]):
+                                intersect_num += 1
+
+                        dic_['index'].append(month)
+                        dic_['cs'].append(cs_name)
+                        dic_['intersect'].append(intersect_num)
+                        intersect_all += intersect_num
+                    dic_['index'].append(month)
+                    dic_['cs'].append('all')
+                    dic_['intersect'].append(intersect_all / cs_gdf.shape[0])
+
+            except:
+                print(traceback.format_exc())
+
+        df = pd.DataFrame(dic_)
+        df.to_csv(os.path.join(centerline_shpfolder, 'braiding_index.csv'))
 
     def identify_mainstream(self, nodatavalue = 0):
         """
@@ -281,19 +413,6 @@ class built_in_index(object):
                 self.index_dic[i] = [var, func]
 
 
-def find_mainstream(centreline_arr, width_arr):
-
-    # Define all the centrelines
-    contours, _ = cv2.findContours(centreline_arr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    linestrings = [contour.reshape(-1, 2) for contour in contours]
-
-    # Sort linestrings from longest to shortest
-    linestrings_sorted = []
-    linwidthmax = max([len(_) for _ in linestrings])
-    while len(linestrings_sorted) != len(linestrings):
-        pass
-
-
 def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
 
     # Check if the width array meet the requirement
@@ -303,7 +422,7 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
     if centreline_arr.shape[0] != width_arr.shape[0] or centreline_arr.shape[1] != width_arr.shape[1] or psi_arr.shape[0] != width_arr.shape[0] or psi_arr.shape[1] != width_arr.shape[1]:
         raise Exception ('The input arr is not consistent in size!')
 
-    psi_arr = (np.max(psi) - psi_arr) ** 2
+    psi_arr = ((np.max(psi) - psi_arr) * 10) ** 2
     centreline_arr = centreline_arr.astype(np.uint8)
     width_arr_connected = copy.deepcopy(width_arr)
     centerline_arr_connected = copy.deepcopy(centreline_arr)
@@ -344,6 +463,8 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
     for width_ in width_average_list_sort:
         linestrings_ex = [linestrings[__] for __ in range(len(width_average_list)) if width_average_list[__] == width_]
         linestrings_sorted.extend(linestrings_ex)
+
+    label_line = np.zeros_like(centreline_arr, dtype=np.int32)
 
     # Generate the buffer
     try:
@@ -398,7 +519,7 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
                     cut_area = np.sum(buffer_temp != 0)
                     union_area = np.sum(np.logical_and(buffer_temp != 0, buffer_all != 0))
                     ratio = union_area / cut_area
-                    if ratio < 0.75:
+                    if ratio <= 1:
                         unique_r = np.sort(np.unique(buffer_all[np.logical_and(buffer_temp != 0, buffer_all != 0)]))
                         point_list_all = []
                         width_ave_all = []
@@ -484,7 +605,54 @@ def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
     except:
         print(traceback.format_exc())
 
-    return centerline_arr_connected, width_arr_connected
+    return centerline_arr_connected, width_arr_connected, node_arr
+
+
+def find_river_networks(centreline_arr):
+    # 使用8向连通结构
+    s = generate_binary_structure(2, 2)
+    labeled_array, num_features = label(centreline_arr, structure=s)
+    return labeled_array, num_features
+
+
+def bfs_for_main_channel(labeled_array, width_arr, component_id):
+    rows, cols = labeled_array.shape
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+    queue = deque()
+    visited = np.zeros_like(labeled_array, dtype=bool)
+    main_channel = np.zeros_like(labeled_array, dtype=int)
+
+    # 找到初始节点
+    for i in range(rows):
+        for j in range(cols):
+            if labeled_array[i, j] == component_id and not visited[i, j]:
+                queue.append((i, j))
+                visited[i, j] = True
+                break
+
+    # BFS 遍历
+    while queue:
+        x, y = queue.popleft()
+        main_channel[x, y] = 1  # 假设当前点在主汊上
+        # 探索所有邻居
+        for dx, dy in directions:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < rows and 0 <= ny < cols and not visited[nx, ny] and labeled_array[nx, ny] == component_id:
+                visited[nx, ny] = True
+                queue.append((nx, ny))
+
+    return main_channel
+
+
+def find_mains(centreline_arr, width_arr):
+    labeled_array, num_features = find_river_networks(centreline_arr)
+    main_channels = np.zeros_like(centreline_arr, dtype=int)
+
+    for component_id in range(1, num_features + 1):
+        main_channel = bfs_for_main_channel(labeled_array, width_arr, component_id)
+        main_channels += main_channel
+
+    return main_channels
 
 
 def find_path(A, B, values_matrix):
@@ -710,6 +878,7 @@ def file_filter(file_path_temp, containing_word_list: list, subfolder_detection=
                     filter_list.append(file_path_temp + file)
         return filter_list
 
+
 def CLoudFreeComposite(image_files):
     ori_ds = gdal.Open(image_files[0])
     geo_transform = ori_ds.GetGeoTransform()
@@ -781,7 +950,244 @@ def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize
                    options=topts)
 
 
+def read_cs_file(file_list):
+    geometry_list = []
+    name_list = []
+    for file in file_list:
+        xls_t = pd.read_excel(file, skiprows=[0])
+        name_list.append(file.split('贵德县')[-1].split('-打印资料')[0])
+        geo_l = []
+        for r_ in range(xls_t.shape[0]):
+            if ~np.isnan(xls_t[xls_t.columns[1]][r_]):
+                geo_l.append((xls_t[xls_t.columns[1]][r_], xls_t[xls_t.columns[2]][r_]))
+            else:
+                break
+        geometry_list.append(LineString(geo_l))
+
+    pdf = gp.GeoDataFrame({'cs_name': name_list}, geometry=geometry_list, crs='EPSG:4479')
+    pdf.to_file('D:\\A_HH_upper\\Guide_upperhh\\guide_crosssection\\guide_cs.shp')
+    a = 1
+
+
+def dfs(raster, x, y, visited):
+    directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+    stack = [(x, y)]
+    local_path = []
+    width_sum = 0
+
+    while stack:
+        cx, cy = stack.pop()
+        if (cx, cy) not in visited:
+            visited.add((cx, cy))
+            local_path.append((cx, cy))
+            width_sum += raster[cx, cy]  # 使用栅格值作为宽度
+            for dx, dy in directions:
+                nx, ny = cx + dx, cy + dy
+                if 0 <= nx < raster.shape[0] and 0 <= ny < raster.shape[1] and raster[nx, ny] and (nx, ny) not in visited:
+                    stack.append((nx, ny))
+    return local_path, width_sum
+
+
+def process_river_networks(centreline_arr, width_arr):
+    # 识别所有独立的河网
+    num_labels, labels_im = cv2.connectedComponents(centreline_arr.astype(np.uint8))
+
+    # 准备输出主汊的栅格
+    main_channels_arr = np.zeros_like(centreline_arr)
+
+    len_list = []
+    for label in range(1, num_labels):
+        len_list.append(np.argwhere(labels_im == label).shape[0])
+        # 提取当前河网的节点
+    label = len_list.index(max(len_list)) + 1
+    nodes = np.argwhere(labels_im == label)
+    start = nodes[nodes[:, 1].argsort()[::-1]]
+    end = tuple(start[0, :])
+    start = tuple(start[-1, :])
+    graph = netx.Graph()
+
+    # 构建图：遍历节点，连接8向邻居（如果是河网的一部分）
+    for node in nodes:
+        x, y = node
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx != 0 or dy != 0:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < centreline_arr.shape[0] and 0 <= ny < centreline_arr.shape[1] and labels_im[nx, ny] == label:
+                        graph.add_edge((x, y), (nx, ny), weight=width_arr[x, y])
+
+        # 寻找主汊
+    if graph.number_of_nodes() > 0:
+        main_channel = find_max_avg_width_path(graph, start, end)
+        # 标记主汊到输出栅格中
+        for node in main_channel:
+            main_channels_arr[node[0], node[1]] = 1
+
+    return main_channels_arr
+
+
+def find_max_avg_width_path(graph, source, target):
+    # 初始化节点信息
+    best_path = {}
+    best_avg_width = {node: (0, 0) for node in graph.nodes()}  # (total width, number of steps)
+    best_avg_width[source] = (0, 0)
+
+    # 待探索队列
+    from heapq import heappush, heappop
+    queue = [(0, 0, source, [source])]  # (-average width, steps, current node, path)
+    heappush(queue, (-np.inf, 0, source, [source]))
+
+    while queue:
+        neg_avg_width, steps, current, path = heappop(queue)
+        current_avg = -neg_avg_width
+
+        # 当前节点已达到目标，返回路径
+        if current == target:
+            return path
+
+        # 探索所有邻接节点
+        for neighbor in graph[current]:
+            if neighbor in path:  # 避免环路
+                continue
+            edge_weight = graph.edges[current, neighbor]['weight']
+            new_steps = steps + 1
+            new_total_width = best_avg_width[current][0] + edge_weight
+            new_avg = new_total_width / new_steps
+
+            if new_avg > best_avg_width[neighbor][0] / (best_avg_width[neighbor][1] if best_avg_width[neighbor][1] > 0 else 1):
+                best_avg_width[neighbor] = (new_total_width, new_steps)
+                new_path = path + [neighbor]
+                heappush(queue, (-new_avg, new_steps, neighbor, new_path))
+
+    return []
+
+
+def mainstream_swing(cs_file, centreline_files, years=range(2006,2022)):
+
+    # Read file
+    crs_cl = gp.read_file(centreline_files[0]).crs
+    sections = gp.read_file(cs_file)
+    if crs_cl != sections.crs:
+        sections.to_crs(crs_cl, inplace=True)
+    name_list = sections['cs_name']
+
+    centerlines = {}
+    # 读取年度河道中心线数据
+    for centreline_file in centreline_files:
+        for year in years:
+            if str(year) in centreline_file:
+                centerlines[year] = gp.read_file(centreline_file)
+
+    # 准备结果存储
+    results = pd.DataFrame()
+
+    for index, section in sections.iterrows():
+        section_id = name_list[index]  # 使用索引作为断面ID
+        left_point_geom = section.geometry.coords[0]  # 如果没有有效的左端点，则跳过此断面
+        left_point = (left_point_geom[1], left_point_geom[0])  # 保证是元组
+
+        distances = []
+        for year in years:
+            centerline = centerlines[year]
+            try:
+                intersection = centerline.unary_union.intersection(section.geometry)
+
+                if intersection.is_empty:
+                    distances.append(np.nan)  # 如果没有交点
+                    continue
+
+                # 选择最近的交点
+                if isinstance(intersection, Point):
+                    intersection_point = (intersection.y, intersection.x)
+                else:
+                    all_points = [Point(coord) for coord in intersection.coords]
+                    intersection_point = min(all_points, key=lambda p: geodesic((p.y, p.x), left_point).meters)
+                    intersection_point = (intersection_point.y, intersection_point.x)
+
+                # 计算地理距离
+                distance = np.sqrt((left_point[0] - intersection_point[0]) ** 2 + (left_point[1] - intersection_point[1]) ** 2)
+                distances.append(distance)
+            except:
+                distances.append(distances[-1])
+
+        # 计算每年的摆动宽度和方向
+        if len(distances) > 1:
+            for i in range(1, len(distances)):
+                if np.isnan(distances[i]) or np.isnan(distances[i - 1]):
+                    continue  # 忽略缺失值
+                width = distances[i] - distances[i - 1]
+                direction = 'Right' if width > 0 else 'Left'
+                new_row = pd.DataFrame({
+                    'Year': [years[i]],
+                    'Section_ID': [section_id],
+                    'Width': [width],
+                    'Direction': [direction]
+                })
+                results = pd.concat([results, new_row], ignore_index=True)
+
+    # 输出结果到Excel
+    results.to_excel("D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream\\主槽摆动.xlsx", index=False)
+
+
 if __name__ == '__main__':
+
+
+    # braiding_index
+    rl = River_centreline()
+    rl.braiding_index(file_filter('D:\\A_HH_upper\\Guide_upperhh\\composite\\river_network\\', ['.tif']), 'D:\\A_HH_upper\\Guide_upperhh\\guide_crosssection\\guide_acs.shp')
+
+    # mainstream_swing('D:\\A_HH_upper\\Guide_upperhh\\guide_crosssection\\guide_cs.shp', file_filter('D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream\\shpfile',  ['.shp'], exclude_word_list=['.xml']))
+
+    # for year in range(2006, 2022):
+    #     ds = gdal.Open(os.path.join(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\', f'Mainstream_{year}.tif'))
+    #     c_arr = ds.GetRasterBand(1).ReadAsArray()
+    #     ds2 = gdal.Open(os.path.join(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\river_network\\', f'RiverNET_{year}.tif'))
+    #     w_arr = ds2.GetRasterBand(1).ReadAsArray()
+    #     # start = np.argwhere(c_arr == 1)
+    #     # start = start[start[:, 1].argsort()[::-1]]
+    #     # end = start[0,:]
+    #     # start = start[-1, :]
+    #     main_stream = process_river_networks(c_arr, w_arr)
+    #     write_raster(ds, main_stream, 'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream\\', f'centereline_{year}.tif')
+    #
+    # # read_cs_file(file_filter('D:\\A_HH_upper\\Guide_upperhh\\青海省黄河干流二期防洪工程贵德段横断面数据 23.11.22\青海省黄河干流二期防洪工程贵德段横断面数据 23.11.22\\', ['.xls']))
+    # for year in range(2006,2022):
+    #     maximum_composite_tiffile(file_filter(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\{str(year)}\\', ['.TIF']),
+    #                               f'D:\\A_HH_upper\\Guide_upperhh\\composite\\all\\', f'mndwi_{str(year)}_compo.TIF')
+
+    for year in [2009]:
+        ori_ds = gdal.Open(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\all\\mndwi_{str(year)}_compo.TIF')
+        mndwi_arr = ori_ds.GetRasterBand(1).ReadAsArray()
+        mndwi_arr = mndwi_arr.astype(np.float32)
+        mndwi_arr[mndwi_arr == -32768] = 0
+        mndwi_arr = mndwi_arr/10000
+
+        filters = singularity_index.SingularityIndexFilters()
+
+        # Compute the modified multiscale singularity index
+        psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters, narrow_rivers=False)
+
+        # Extract channel centerlines
+        nms = delineate.extractCenterlines(orient, psi)
+        centerlines, centerlineCandidate = delineate.thresholdCenterlines(nms)
+
+        centerline_arr = np.array(centerlines)
+        centerline_arr = centerline_arr.astype(np.int32)
+        width_arr = np.array(widthMap)
+        width_arr = width_arr
+        psi_arr = np.array(psi)
+        center_new, width_new, node_arr = line_connection(centerline_arr, width_arr, psi_arr, nodata_value=0)
+        write_raster(ori_ds, nms, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\river_network\\',
+                     f'RiverNET_{year}.tif')
+        write_raster(ori_ds, centerline_arr, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\',
+                     f'Mainstream_ori_{year}.tif')
+        write_raster(ori_ds, center_new, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\',
+                     f'Mainstream_{year}.tif')
+        write_raster(ori_ds, node_arr, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\',
+                     f'node_{year}.tif')
+        write_raster(ori_ds, width_arr, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\river_width\\',
+                     f'RW_{year}.tif')
+
     # gee_api = GEE_ds()
     # gee_api.download_index_GEE('LT05', (20060101, 20211231), 'MNDWI',
     #                            [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.73681471587109],
@@ -807,15 +1213,6 @@ if __name__ == '__main__':
     psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters)
 
     # Extract channel centerlines
-    nms = delineate.extractCenterlines(orient, psi)
-
-    centerlines, centerlineCandidate, strongCenterline, nms = delineate.thresholdCenterlines(nms)
-
-    centerline_arr = np.array(centerlines)
-    centerline_arr = centerline_arr.astype(np.int32)
-    width_arr = np.array(widthMap)
-    psi_arr = np.array(psi)
-    center_new, width_new = line_connection(centerline_arr, nms, psi_arr, nodata_value=0)
     year = 2008
     write_raster(ori_ds, centerline_arr, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'centereline_{year}.tif')
     write_raster(ori_ds, center_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'centerelineNEW_{year}.tif')

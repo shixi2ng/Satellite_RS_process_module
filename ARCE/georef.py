@@ -13,7 +13,6 @@ import numpy as np
 import shapefile
 from osgeo import osr, gdal
 
-
 class GeoMetadata:
     def __init__(self):
         self.projection = None

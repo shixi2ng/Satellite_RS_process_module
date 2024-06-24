@@ -36,6 +36,29 @@ class Path(object):
             self.path_extension = self.path_name.split('.')[-1]
 
 
+def get_tif_border(file_path):
+
+    # Open the GeoTIFF file
+    dataset = gdal.Open(file_path)
+
+    # Check if dataset is valid
+    if not dataset:
+        raise FileNotFoundError(f"No file found at {file_path}")
+
+    # Get raster geometry
+    width, height = dataset.RasterXSize, dataset.RasterYSize
+    transform = dataset.GetGeoTransform()
+
+    # Calculate bounds
+    ulx = transform[0]
+    lrx = transform[0] + width * transform[1]
+    lry = transform[3] + height * transform[5]
+    uly = transform[3]
+
+    # Return the bounds as a tuple
+    return [ulx, uly, lrx, lry]
+
+
 def shp2geojson(shpfile_path):
     if not os.path.exists(shpfile_path) or not shpfile_path.endswith('.shp'):
         print('Please input valid shpfile!')

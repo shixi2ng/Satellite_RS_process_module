@@ -375,7 +375,7 @@ class Landsat_l2_ds(object):
         if 'main_coordinate_system' in kwargs.keys():
             self.main_coordinate_system = kwargs['main_coordinate_system']
         else:
-            self.main_coordinate_system = 'EPSG:32649'
+            self.main_coordinate_system = 'EPSG:32647'
 
         # process ROI and ROI name
         if 'ROI' in kwargs.keys():
