@@ -13,7 +13,8 @@ import time
 def worm_waterlevel_runoff(output_folder):
 
     # Define station name
-    myr_station_name = ['莲花塘', '螺山', '石矶头', '汉口', '黄石港', '码头镇', '三岔河', '南县(罗文窖)', '石龟山']
+    jj_station_name = []
+    myr_station_name = ['长江_莲花塘', '长江_螺山', '长江_石矶头', '长江_汉口', '长江_黄石港', '长江_码头镇', '松滋河(西支)_三岔河', '(null)_梅田湖', '藕池河(北支)_南县(罗文窖)', '洞庭湖_注滋口', '澧水_石龟山', '澧水_蒿子港', '松滋河(西支)_官垸', '(null)_三不管', '松滋河(中支)_自治局(三)', '(null)_张九台', '(null)_大湖口', '(null)_小望角', '松虎合流_安乡', '松虎合流_白蚌口', '沅江_牛鼻滩', '沅江_周文庙', '西洞庭湖湖口(北端)_南咀', '目平湖_沙湾', '西洞庭湖湖口(南端)_小河咀', '草尾河_草尾', '草尾河_黄茅洲', '南洞庭湖_东南湖', '万子湖_沅江（二）', '资水_沙头(二)', '资水(西支)_甘溪港', '资水（东支）_杨堤(二)', '资水(东支)_白马寺', '南洞庭湖_杨柳潭', '湘江(东支)_湘阴', '横岭湖_营田', '东洞庭湖_鹿角', '洞庭湖湖口_岳阳', '洞庭湖_城陵矶(七)', '陆水_崇阳', '陆水_毛家桥(二)', '陆水_洪下', '陆水_陆水水库坝下', '陆水_蒲圻', '陆水_车埠', '陆水_石坑', '陆水_白云潭', '陆水_浪口', '陆水_毛家桥', '陆水_小港', '陆水_南渠', '陆水_北渠', '大河_白霓桥(二)', '汉江_皇庄', '汉江_大同', '汉江_沙洋(三)', '汉江_兴隆', '汉江_泽口', '汉江_岳口', '汉江_仙桃(二)', '汉江_汉川', '东荆河_潜江', '陆水_北渠开度', '陆水_南渠开度']
     lyr_station_name = ['九江', '八里江', '彭泽', '安庆', '江口', '大通', '南京', '南京潮位', '湖口', '襄河口闸上', '襄河口闸下', '晓桥', '滁州', '水口闸']
 
     # Define url
@@ -45,17 +46,31 @@ def worm_waterlevel_runoff(output_folder):
                 page_content = response.text
                 # 使用BeautifulSoup解析页面内容
                 soup = BeautifulSoup(page_content, 'html.parser')
-                content = str(soup).split('td')
+                content = str(soup).split('sssq')
+                myr_station_temp = [_.split('_')[1] for _ in myr_station_name]
+                for content_ in content:
+                    if [_ in content_ for _ in myr_station_temp].count(True) > len(myr_station_temp) - 3:
+                        content_station = content_.split('{')
+                        content_station = [_.split('},')[0] for _ in content_station if '},' in _]
+                        content_station = [ast.literal_eval('{' + _.replace(" ", '') + '}') for _ in content_station]
+                        break
 
                 for station_name in myr_station_name:
                     num_ = 0
                     while num_ in range(len(content)):
-                        if content[num_].startswith(f'>{station_name}'):
-                            temp_dic = {'Station_name': [content[num_].split('>')[-1].split('<')[0]],
-                                        'Time': [content[num_ + 2].split('>')[-1].split('<')[0]],
-                                        'Water level(m)': [content[num_ + 4].split('>')[-1].split('<')[0]],
-                                        'Runoff(m3/s)': [content[num_ + 6].split('>')[-1].split('<')[0]]}
+                        if len(content_station[num_].keys()) > 0 and 'stnm' in content_station[num_].keys() and 'rvnm' in content_station[num_].keys() and content_station[num_]['rvnm'] + '_' + content_station[num_]['stnm'] == station_name:
+                            stamp_time = datetime.datetime.utcfromtimestamp(content_station[num_]['tm'] / 1000)
+                            target_time_zone = pytz.timezone('Asia/Shanghai')  # UTC+8
+                            local_date_time = stamp_time.replace(tzinfo=pytz.utc).astimezone(target_time_zone)
+                            formatted_local_date_time = local_date_time.strftime('%Y-%m-%d %H:%M:%S %Z%z')
+                            water_level = content_station[num_]['z'] if 'z' in content_station[num_].keys() else -9999
+                            runoff = content_station[num_]['q'] if 'q' in content_station[num_].keys() else -9999
+                            temp_dic = {'Station_name': [station_name],
+                                        'Time': [formatted_local_date_time],
+                                        'Water level(m)': [water_level],
+                                        'Runoff(m3/s)': [runoff]}
                             new_pd = pd.DataFrame(temp_dic)
+
                             if new_pd['Time'][0] not in list(myr_dic[station_name]['Time']):
                                 myr_dic[station_name] = pd.concat([myr_dic[station_name], new_pd], axis=0, ignore_index=True)
                                 wait_time = min(wait_time, random.randint(3540, 3600))
