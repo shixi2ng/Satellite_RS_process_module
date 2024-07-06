@@ -353,7 +353,7 @@ def fig11nc2_func():
     ax_temp2 = fig_temp.add_subplot(gs[0, 0])
     ax_temp = fig_temp.add_subplot(gs[0, 1])
 
-    for _, c_ in zip([0.50, 0.45, 0.4, 0.35, 0.3, 0.25, 0.20, 0.15, 0.10, 0.051], pal):
+    for _, c_ in zip([0.50, 0.45, 0.4, 0.35, 0.3, 0.25, 0.20, 0.15, 0.10, 0.051], pal2[2:]):
         x_dic_post[_] = []
         veg_post_arr2 = copy.deepcopy(veg_post_arr)
         veg_post_arr2[np.logical_or(ff_all_arr >= _, ff_all_arr < _ - 0.05)] = np.nan
@@ -384,7 +384,7 @@ def fig11nc2_func():
     # std_pre=
 
     x_dic_pre = {}
-    for _, c_ in zip([0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.20, 0.15, 0.10, 0.051], pal2[2:]):
+    for _, c_ in zip([0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.20, 0.15, 0.10, 0.051], pal):
         x_dic_pre[_] = []
         veg_pre_arr2 = copy.deepcopy(veg_pre_arr)
         veg_pre_arr2[np.logical_or(ff_all_arr >= _, ff_all_arr < _ - 0.05)] = np.nan
@@ -415,8 +415,8 @@ def fig11nc2_func():
     for _ in range(4, 99, 5):
         pre_dic = np.array([x_dic_pre[__][int(_)] for __ in [0.45, 0.4, 0.35, 0.3, 0.25, 0.20, 0.15, 0.10, 0.051]])
         post_dic = np.array([x_dic_post[__][int(_)] for __ in [0.45, 0.4, 0.35, 0.3, 0.25, 0.20, 0.15, 0.10, 0.051]])
-        ax_temp2.plot(np.linspace(np.nanmin(pre_dic), np.nanmax(pre_dic), 100), np.linspace(y_per[_], y_per[_], 100), lw=1, c=(1, 0, 0), ls='--', zorder=4)
-        ax_temp.plot(np.linspace(np.nanmin(post_dic), np.nanmax(post_dic), 100), np.linspace(y_per[_], y_per[_], 100), lw=1, c=(0, 0, 1), ls='--', zorder=4)
+        ax_temp2.plot(np.linspace(np.nanmin(pre_dic), np.nanmax(pre_dic), 100), np.linspace(y_per[_], y_per[_], 100), lw=1, c=(0, 0, 1), ls='--', zorder=4)
+        ax_temp.plot(np.linspace(np.nanmin(post_dic), np.nanmax(post_dic), 100), np.linspace(y_per[_], y_per[_], 100), lw=1, c=(1, 0, 0), ls='--', zorder=4)
         if _ not in [79, 59, 39, 19]:
             ax_temp2.text(np.nanmax(pre_dic) + 0.01, y_per[_], rf'Std$_{{pre{str(int(_) + 1)}\%}}$', fontsize=16, fontname='Arial', fontweight='bold', bbox={'facecolor': 'white', 'pad': 0, 'edgecolor': 'white'})
             ax_temp.text(np.nanmax(post_dic) + 0.01, y_per[_], rf'Std$_{{post{str(int(_) + 1)}\%}}$', fontsize=16, fontname='Arial', fontweight='bold', bbox={'facecolor': 'white', 'pad': 0, 'edgecolor': 'white'})
@@ -430,10 +430,10 @@ def fig11nc2_func():
     for _ in [19, 39, 59, 79]:
         pre_dic = np.array([x_dic_pre[__][int(_)] for __ in [0.45, 0.4, 0.35, 0.3, 0.25, 0.20, 0.15, 0.10, 0.051]])
         post_dic = np.array([x_dic_post[__][int(_)] for __ in [0.45, 0.4, 0.35, 0.3, 0.25, 0.20, 0.15, 0.10, 0.051 ]])
-        ax_temp2.arrow(np.nanmin(pre_dic), y_per[_] + 0.004, np.nanmax(pre_dic) - np.nanmin(pre_dic), 0, width=0.011, length_includes_head=True, head_width = 0.02, head_length=0.025, shape='right',  ec=(1,  0, 0), fc=(1, 0, 0) ,zorder=4)
-        ax_temp.arrow(np.nanmin(post_dic), y_per[_] + 0.004, np.nanmax(post_dic) - np.nanmin(post_dic), 0, length_includes_head=True, width=0.011, head_width = 0.02, head_length=0.025, shape='right',  ec=(0, 0, 1), fc=(0, 0, 1) ,zorder=4)
-        ax_temp2.arrow(np.nanmax(pre_dic), y_per[_] - 0.004, -np.nanmax(pre_dic) + np.nanmin(pre_dic), 0, width=0.011, length_includes_head=True, head_width = 0.02, head_length=0.025, shape='right',   ec=(1, 0, 0), fc=(1, 0, 0) ,zorder=4)
-        ax_temp.arrow(np.nanmax(post_dic), y_per[_] - 0.004, -np.nanmax(post_dic) + np.nanmin(post_dic), 0, length_includes_head=True, width=0.011, head_width = 0.02, head_length=0.025, shape='right',ec=(0, 0, 1), fc=(0, 0, 1) ,zorder=4)
+        ax_temp2.arrow(np.nanmin(pre_dic), y_per[_] + 0.004, np.nanmax(pre_dic) - np.nanmin(pre_dic), 0, width=0.011, length_includes_head=True, head_width = 0.02, head_length=0.025, shape='right', ec=(0, 0, 1), fc=(0, 0, 1) , zorder=4)
+        ax_temp.arrow(np.nanmin(post_dic), y_per[_] + 0.004, np.nanmax(post_dic) - np.nanmin(post_dic), 0, length_includes_head=True, width=0.011, head_width = 0.02, head_length=0.025, shape='right', ec=(1,  0, 0), fc=(1, 0, 0) , zorder=4)
+        ax_temp2.arrow(np.nanmax(pre_dic), y_per[_] - 0.004, -np.nanmax(pre_dic) + np.nanmin(pre_dic), 0, width=0.011, length_includes_head=True, head_width = 0.02, head_length=0.025, shape='right',  ec=(0, 0, 1), fc=(0, 0, 1) , zorder=4)
+        ax_temp.arrow(np.nanmax(post_dic), y_per[_] - 0.004, -np.nanmax(post_dic) + np.nanmin(post_dic), 0, length_includes_head=True, width=0.011, head_width = 0.02, head_length=0.025, shape='right',ec=(1, 0, 0), fc=(1, 0, 0) ,zorder=4)
 
     ax_temp.plot(post_max, y_per, ls=':', lw=1)
     ax_temp2.plot(pre_max, y_per, ls=':', lw=1)
@@ -2604,6 +2604,5 @@ def fig20_func():
     ax.set_ylim([-0.5, 6.5])
     plt.savefig('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig20\\fig20.png', dpi=400)
 
-fig11nc_func()
+
 fig11nc2_func()
-fig11nc3_func()

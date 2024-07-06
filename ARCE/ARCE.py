@@ -1130,8 +1130,6 @@ def mainstream_swing(cs_file, centreline_files, years=range(2006,2022)):
 
 
 if __name__ == '__main__':
-
-
     # braiding_index
     rl = River_centreline()
     rl.braiding_index(file_filter('D:\\A_HH_upper\\Guide_upperhh\\composite\\river_network\\', ['.tif']), 'D:\\A_HH_upper\\Guide_upperhh\\guide_crosssection\\guide_acs.shp')

@@ -2438,12 +2438,7 @@ class RS_dcs(object):
                                 f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}',
                                 phedc_reconstructed.shape[2] + 1)
                         else:
-                            phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [
-                                                                                                                     self._doys_backup_[
-                                                                                                                         phepos[
-                                                                                                                             _]].index(
-                                                                                                                         [
-                                                                                                                             f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]),
+                            phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]),
                                                                  axis=2)
                     year_list_temp.append(self._pheyear_list[phepos[_]])
 
@@ -2657,12 +2652,7 @@ class RS_dcs(object):
                                                 f'{str(self._pheyear_list[phepos])}_SOS',
                                                 pheme_reconstructed.shape[2] + 1)
                                         else:
-                                            pheme_reconstructed = np.concatenate((pheme_reconstructed,
-                                                                                  self.dcs[phepos][:, :, [
-                                                                                                             self._doys_backup_[
-                                                                                                                 phepos].index(
-                                                                                                                 [
-                                                                                                                     f'{str(self._pheyear_list[phepos])}_SOS'])]]),
+                                            pheme_reconstructed = np.concatenate((pheme_reconstructed,self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]),
                                                                                  axis=2)
                                             pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
 
@@ -2672,28 +2662,17 @@ class RS_dcs(object):
                                                    np.ndarray) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_namelist):
                                     if pheme_reconstructed is None:
                                         if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[
-                                                                                     f'{str(self._pheyear_list[phepos])}_peak_doy'],
-                                                                                 SM_namelist=[
-                                                                                     f'{str(self._pheyear_list[phepos])}_peak_doy'])
+                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],
+                                                                                 SM_namelist=[f'{str(self._pheyear_list[phepos])}_peak_doy'])
                                         else:
-                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[
-                                                                                              phepos].index(
-                                                [f'{str(self._pheyear_list[phepos])}_peak_doy'])]]
+                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]
                                             pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
                                     else:
                                         if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[
-                                                                              f'{str(self._pheyear_list[phepos])}_peak_doy'],
-                                                                          f'{str(self._pheyear_list[phepos])}_peak_doy',
+                                            pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],f'{str(self._pheyear_list[phepos])}_peak_doy',
                                                                           pheme_reconstructed.shape[2] + 1)
                                         else:
-                                            pheme_reconstructed = np.concatenate((pheme_reconstructed,
-                                                                                  self.dcs[phepos][:, :, [
-                                                                                                             self._doys_backup_[
-                                                                                                                 phepos].index(
-                                                                                                                 [
-                                                                                                                     f'{str(self._pheyear_list[phepos])}_peak_doy'])]]),
+                                            pheme_reconstructed = np.concatenate((pheme_reconstructed,self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]),
                                                                                  axis=2)
                                         pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
 
@@ -2703,14 +2682,11 @@ class RS_dcs(object):
                             # Retrieve the phemetric inform
                             if isinstance(pheme_reconstructed, NDSparseMatrix):
                                 sos = np.round(pheme_reconstructed.SM_group[f'{str(year_temp)}_SOS'].toarray())
-                                peak_doy = np.round(
-                                    pheme_reconstructed.SM_group[f'{str(year_temp)}_peak_doy'].toarray())
+                                peak_doy = np.round(pheme_reconstructed.SM_group[f'{str(year_temp)}_peak_doy'].toarray())
                             elif isinstance(pheme_reconstructed, np.ndarray):
-                                sos = np.round(
-                                    pheme_reconstructed[:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].resshape(
+                                sos = np.round(pheme_reconstructed[:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].reshape(
                                         [pheme_reconstructed.shape[0], pheme_reconstructed.shape[1]]))
-                                peak_doy = np.round(pheme_reconstructed[:, :,
-                                                    pheme_namelist.index(f'{str(year_temp)}_peak_doy')].resshape(
+                                peak_doy = np.round(pheme_reconstructed[:, :, pheme_namelist.index(f'{str(year_temp)}_peak_doy')].reshape(
                                     [pheme_reconstructed.shape[0], pheme_reconstructed.shape[1]]))
                             else:
                                 raise TypeError('The para phemetric dc is not imported as a supported datatype!')
@@ -2749,10 +2725,7 @@ class RS_dcs(object):
                                     x_all_blocked.append(x_all[i * indi_block_size:])
 
                                 if isinstance(self.dcs[denvdc_pos[_]], NDSparseMatrix):
-                                    denv_dc_blocked.append(self.dcs[denvdc_pos[_]].extract_matrix(([min(
-                                        y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]),
-                                                                                          max(x_all_blocked[-1]) + 1],
-                                                                                                   ['all'])))
+                                    denv_dc_blocked.append(self.dcs[denvdc_pos[_]].extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]),max(x_all_blocked[-1]) + 1],['all'])))
                                 else:
                                     pass
 
@@ -2813,27 +2786,15 @@ class RS_dcs(object):
                             peak_doy_temp = peak_doy >= doy
                             peak_doy_temp = peak_doy_temp.astype(float)
                             if isinstance(self.dcs[denvdc_pos[_]], NDSparseMatrix):
-                                temp = (self.dcs[denvdc_pos[_]].SM_group[doy] - self.dcs[denvdc_pos[_]]._matrix_type(
-                                    base_env)).multiply(self.dcs[denvdc_pos[_]]._matrix_type(sos_temp))
+                                temp = (self.dcs[denvdc_pos[_]].SM_group[doy] - self.dcs[denvdc_pos[_]]._matrix_type(base_env)).multiply(self.dcs[denvdc_pos[_]]._matrix_type(sos_temp))
                                 temp[temp < 0] = 0
-                                self.dcs[denvdc_pos[_]].SM_group[doy] = type(temp)(
-                                    temp.astype(self.dcs[denvdc_pos[_]].SM_group[doy].dtype).toarray())
+                                self.dcs[denvdc_pos[_]].SM_group[doy] = type(temp)(temp.astype(self.dcs[denvdc_pos[_]].SM_group[doy].dtype).toarray())
                                 peak_doy_env += self.dcs[denvdc_pos[_]].SM_group[doy].toarray() * peak_doy_temp
                             else:
-                                self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] = (self.dcs[
-                                                                                                                   denvdc_pos[
-                                                                                                                       _]][
-                                                                                                               :, :,
-                                                                                                               self._doys_backup_[
-                                                                                                                   denvdc_pos[
-                                                                                                                       _]].index(
-                                                                                                                   doy)] - base_env) * sos_temp
-                                peak_doy_env += self.dcs[denvdc_pos[_]][:, :,
-                                                self._doys_backup_[denvdc_pos[_]].index(doy)] * peak_doy_temp
+                                self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] = (self.dcs[denvdc_pos[_]][:, :,self._doys_backup_[denvdc_pos[_]].index(doy)] - base_env) * sos_temp
+                                peak_doy_env += self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] * peak_doy_temp
                         self._dcs_backup_[phepos].dc = copy.copy(self.dcs[phepos])
-                        self._dcs_backup_[phepos]._add_layer(
-                            type(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'])(peak_doy_env),
-                            f'{str(year_temp)}_peak_{denvname}')
+                        self._dcs_backup_[phepos]._add_layer(type(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'])(peak_doy_env), f'{str(year_temp)}_peak_{denvname}')
                         self._dcs_backup_[phepos].save(self._dcs_backup_[phepos].Phemetric_dc_filepath)
                         self._dcs_backup_[phepos].dc = None
 

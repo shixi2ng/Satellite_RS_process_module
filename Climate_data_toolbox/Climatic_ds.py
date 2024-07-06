@@ -598,7 +598,7 @@ class CMA_ds(object):
         bf.create_folder(self.metadata_folder)
 
         # Init _arg
-        self._ds2raster_method_tup = ('IDW',)
+        self._ds2raster_method_tup = ('IDW', 'ANUSPLIN')
         self._ds2raster_method = None
 
         # ras2dc
@@ -613,10 +613,10 @@ class CMA_ds(object):
                 csv_files.remove(_)
                 print(f'{str(_)} is not a valid SURF_CLI_CHN file!')
 
-        # Valid index
-        self._valid_index = ['EVP', 'PRS', 'WIN', 'TEM', 'GST', 'RHU', 'PRE', 'SSD']
-        self._index_csvfile = {'EVP': [], 'PRS': [], 'WIN': [], 'TEM': [], 'GST': [], 'RHU': [], 'PRE': [], 'SSD': []}
-        self._index_dic = {'EVP': [(7, 0.1, 'Minor EVP', 32766), (8, 0.1, 'Major EVP', 32766)],
+        # Valid zvalue
+        self._valid_zvalue = ['EVP', 'PRS', 'WIN', 'TEM', 'GST', 'RHU', 'PRE', 'SSD']
+        self._zvalue_csvfile = {'EVP': [], 'PRS': [], 'WIN': [], 'TEM': [], 'GST': [], 'RHU': [], 'PRE': [], 'SSD': []}
+        self._zvalue_dic = {'EVP': [(7, 0.1, 'Minor EVP', 32766), (8, 0.1, 'Major EVP', 32766)],
                            'PRS': [(7, 0.1, 'DAve_Airp', 32766), (8, 0.1, 'DMax_Airp', 32766), (9, 0.1, 'DMin_Airp', 32766)],
                            'WIN': [(7, 0.1, 'DAve_Winds', 32766), (8, 0.1, 'DMax_Winds', 32766), (10, 0.1, 'DMin_Winds', 32766)],
                            'TEM': [(7, 0.1, 'DAve_AT', 32766), (8, 0.1, 'DMax_AT', 32766), (9, 0.1, 'DMin_AT', 32766)],
@@ -624,34 +624,32 @@ class CMA_ds(object):
                            'RHU': [(7, 0.01, 'DAve_hum', 32766), (8, 0.01, 'Dmin_hum', 32766)],
                            'PRE': [(7, 0.1, '20-8_prec', 32766), (8, 0.1, '8-20_prec', 32766), (9, 0.1, 'Acc_prec', 32766)],
                            'SSD': [(7, 0.1, 'SS_hour', 32766)]}
-        self._interpolate_index = {'EVP': (8, 0.1, 'Major EVP', 32766), 'PRS': (7, 0.1, 'DAve_Airp', 32766), 'WIN': (7, 0.1, 'DAve_Winds', 32766),
+        self._interpolate_zvalue = {'EVP': (8, 0.1, 'Major EVP', 32766), 'PRS': (7, 0.1, 'DAve_Airp', 32766), 'WIN': (7, 0.1, 'DAve_Winds', 32766),
                                    'TEM': (7, 0.1, 'DAve_AT', 32766), 'GST': (7, 0.1, 'DAve_LST', 32766), 'RHU': (7, 0.01, 'DAve_hum', 32766),
                                    'PRE': (9, 0.1, 'Acc_prec', 32766), 'SSD': (7, 0.1, 'SS_hour', 32766)}
-        self.index = list(set([_.split('SURF_CLI_CHN_MUL_DAY-')[1].split('-')[0] for _ in csv_files]))
-        self._splin_conf = '{}\n1\n2\n1\n0\n0\n{}\n{}\n-400 9000 1 1\n1\n0\n3\n1\n0\n1\n1\n{}.dat\n300\n6\n(A6,2F14.6,F6.2,F6.2)\n{}.res\n{}.opt\n{}.sur\n{}.lis\n{}.cov\n\n\n\n\n\n'
-        self._lapgrd_conf = '{}\n1\n1\n{}\n2\n3\n1\n1\n{}\n2\n{}\n2\n{}\n2\n{}\n2\n{}\n{}\n{}\n2\n{}\n{}\n{}\n\n\n\n\n\n'
+        self.zvalue = list(set([_.split('SURF_CLI_CHN_MUL_DAY-')[1].split('-')[0] for _ in csv_files]))
 
-        if False in [_ in self._valid_index for _ in self.index]:
-            raise Exception(f'The index {str(self.index[[_ in self._valid_index for _ in self.index].index(False)])}')
+        if False in [_ in self._valid_zvalue for _ in self.zvalue]:
+            raise Exception(f'The zvalue {str(self.zvalue[[_ in self._valid_zvalue for _ in self.zvalue].index(False)])}')
 
         for __ in csv_files:
-            if True not in [index_ in __ for index_ in self.index]:
+            if True not in [zvalue_ in __ for zvalue_ in self.zvalue]:
                 csv_files.remove(__)
             else:
-                for index_ in self._valid_index:
-                    if index_ in __:
-                        self._index_csvfile[index_].append(__)
+                for zvalue_ in self._valid_zvalue:
+                    if zvalue_ in __:
+                        self._zvalue_csvfile[zvalue_].append(__)
 
-        # Get the index month and
+        # Get the zvalue month and
         self._cma_header_ = ['Station_id', 'Lat', 'Lon', 'Alt', 'YYYY', 'MM', 'DD']
         station_inform_dic = {'Station_id': [], 'Lon': [], 'Lat': [], 'Alt': []}
         self.date_range = {}
-        for index_ in self.index:
-            self.date_range[index_] = []
-            if not os.path.exists(os.path.join(self.metadata_folder, f'{index_}.csv')) or not os.path.exists(os.path.join(self.metadata_folder, f'station_inform.csv')):
-                index_month_station = {'Station_id': [], 'Index': [], 'Month': []}
+        for zvalue_ in self.zvalue:
+            self.date_range[zvalue_] = []
+            if not os.path.exists(os.path.join(self.metadata_folder, f'{zvalue_}.csv')) or not os.path.exists(os.path.join(self.metadata_folder, f'station_inform.csv')):
+                zvalue_month_station = {'Station_id': [], 'Index': [], 'Month': []}
                 for csv_ in csv_files:
-                    if index_ in csv_:
+                    if zvalue_ in csv_:
                         month_ = int(csv_.split('-')[-1].split('.')[0])
                         df_temp = pd.read_table(csv_, delim_whitespace=True, header=None)
                         station_all = pd.unique(df_temp[0])
@@ -662,14 +660,14 @@ class CMA_ds(object):
                                 station_inform_dic['Lat'].append(pd.unique(df_temp[df_temp[0] == station_][2])[0] // 100 + np.mod(pd.unique(df_temp[df_temp[0] == station_][2])[0], 100) / 60)
                                 station_inform_dic['Alt'].append(pd.unique(df_temp[df_temp[0] == station_][3])[0] / 100)
 
-                        index_month_station['Station_id'].extend(station_all)
-                        index_month_station['Index'].extend([index_ for _ in range(len(station_all))])
-                        index_month_station['Month'].extend([month_ for _ in range(len(station_all))])
-                index_month_station = pd.DataFrame(index_month_station)
-                index_month_station.to_csv(os.path.join(self.metadata_folder, f'{index_}.csv'))
+                        zvalue_month_station['Station_id'].extend(station_all)
+                        zvalue_month_station['Index'].extend([zvalue_ for _ in range(len(station_all))])
+                        zvalue_month_station['Month'].extend([month_ for _ in range(len(station_all))])
+                zvalue_month_station = pd.DataFrame(zvalue_month_station)
+                zvalue_month_station.to_csv(os.path.join(self.metadata_folder, f'{zvalue_}.csv'))
             else:
-                index_month_station = pd.read_csv(os.path.join(self.metadata_folder, f'{index_}.csv'))
-            self.date_range[index_] = pd.unique(index_month_station['Month'])
+                zvalue_month_station = pd.read_csv(os.path.join(self.metadata_folder, f'{zvalue_}.csv'))
+            self.date_range[zvalue_] = pd.unique(zvalue_month_station['Month'])
 
         if not os.path.exists(os.path.join(self.metadata_folder, f'station_inform.csv')):
             self.station_inform_df = pd.DataFrame(station_inform_dic)
@@ -694,17 +692,14 @@ class CMA_ds(object):
         # for column_ in range(len(df_temp.columns)):
         #     if column_ < len(header_):
         #         column_name_list[column_] = header_[column_]
-        #     elif column_ in [_[0] for _ in self._index_dic[index_]]:
-        #         pos = [_[0] for _ in self._index_dic[index_]].index(column_)
-        #         column_name_list[column_] = self._index_dic[index_][pos][2]
+        #     elif column_ in [_[0] for _ in self._zvalue_dic[zvalue_]]:
+        #         pos = [_[0] for _ in self._zvalue_dic[zvalue_]].zvalue(column_)
+        #         column_name_list[column_] = self._zvalue_dic[zvalue_][pos][2]
         #     else:
         #         column_name_list[column_] = 'None'
         # df_temp.columns = column_name_list
 
-    def merge_with_NCEI_ds(self, NCEI_dataset):
-        pass
-
-    def anusplin(self, ROI, mask, DEM, index=None, date_range=None, cell_size=None, output_path=None, bulk=True):
+    def anusplin(self, ROI, DEM, mask=None, zvalue=None, date_range=None, cell_size=None,  bulk=True):
         """
         :param ROI: ROI is used as CropContent in gdal.Warp to extract the ANUSPLIN_processed climatology data. It should
         be under the same coordinate system with the mask and DEM
@@ -712,7 +707,7 @@ class CMA_ds(object):
         into the ASCII TXT file and share same bounds, cell size and coordinate system with the DEM.
         :param DEM: DEM is treated as the covariant in the ANUSPLINE. It should be converted into the ASCII TXT file and
         share same bounds, cell size and coordinate system with the mask.
-        :param index: The index of climatology data for processing
+        :param zvalue: The zvalue of climatology data for processing
         :param date_range: Start YYYYDOY - End YYYYDOY
         :param cell_size: Output cellsize
         :param output_path:
@@ -735,38 +730,45 @@ class CMA_ds(object):
                 dem_bound = [dem_content[2][1], dem_content[3][1] + dem_content[1][1] * dem_content[4][1],
                              dem_content[2][1] + dem_content[0][1] * dem_content[4][1], dem_content[3][1]]
                 dem_cellsize = dem_content[4][1]
+                dem_nodata = dem_content[5][1]
                 f.close()
         else:
             raise TypeError('Please convert the dem into txt file')
 
         # Identify the mask bounds
-        if mask.endswith('.txt') or mask.endswith('.TXT'):
-            with open(mask, 'r') as f:
-                mask_content = f.read()
-                mask_content = mask_content.split('\n')[0:6]
-                mask_content = [(str(_.split(' ')[0]), float(_.split(' ')[-1])) for _ in mask_content]
-                mask_bound = [mask_content[2][1], mask_content[3][1] + mask_content[1][1] * mask_content[4][1],
-                              mask_content[2][1] + mask_content[0][1] * mask_content[4][1], mask_content[3][1]]
-                mask_cellsize = mask_content[4][1]
-                f.close()
-        else:
-            raise TypeError('Please convert the MASK into ASCII txt file')
-
-        # Check the consistency between the mask amd DEM
-        if mask_bound != dem_bound:
-            raise ValueError('The DEM and mask share inconsistency bound')
-        else:
-            bounds = copy.deepcopy(mask_bound)
-        if mask_cellsize != dem_cellsize:
-            raise ValueError('The DEM and mask share inconsistency bound')
-        else:
-            if cell_size is None:
-                cell_size = copy.deepcopy(mask_cellsize)
+        if mask is not None:
+            if mask.endswith('.txt') or mask.endswith('.TXT'):
+                with open(mask, 'r') as f:
+                    mask_content = f.read()
+                    mask_content = mask_content.split('\n')[0:6]
+                    mask_content = [(str(_.split(' ')[0]), float(_.split(' ')[-1])) for _ in mask_content]
+                    mask_bound = [mask_content[2][1], mask_content[3][1] + mask_content[1][1] * mask_content[4][1],
+                                  mask_content[2][1] + mask_content[0][1] * mask_content[4][1], mask_content[3][1]]
+                    mask_cellsize = mask_content[4][1]
+                    mask_nodata = mask_content[5][1]
+                    f.close()
             else:
-                if cell_size <= mask_cellsize and mask_cellsize / cell_size == int(mask_cellsize / cell_size):
-                    cell_size = copy.deepcopy(mask_cellsize)
-                else:
-                    raise Exception('Please refactor the cell size!')
+                raise TypeError('Please convert the MASK into ASCII txt file')
+
+            # Check the consistency between the mask amd DEM
+            if mask_bound != dem_bound:
+                raise ValueError('The DEM and mask share inconsistency bound')
+            else:
+                anusplin_bounds = copy.deepcopy(dem_bound)
+
+            if mask_cellsize != dem_cellsize:
+                raise ValueError('The DEM and mask share inconsistency cellsize')
+            else:
+                anusplin_cellsize = copy.deepcopy(dem_cellsize)
+
+            if mask_nodata != dem_nodata:
+                raise ValueError('The DEM and mask share inconsistency nodata')
+            else:
+                anusplin_nodata = copy.deepcopy(dem_nodata)
+        else:
+            anusplin_bounds = copy.deepcopy(dem_bound)
+            anusplin_cellsize = copy.deepcopy(dem_cellsize)
+            anusplin_nodata = copy.deepcopy(dem_nodata)
 
         # Identify the ROI
         if isinstance(ROI, str) and os.path.exists(ROI) and (ROI.endswith('.shp') or ROI.endswith('.SHP')):
@@ -774,36 +776,45 @@ class CMA_ds(object):
             datasource = driver.Open(ROI, 0)
             layer = datasource.GetLayer(0)
             spatial_ref = layer.GetSpatialRef()
-            bounds_crs = 'EPSG:' + spatial_ref.GetAttrValue("AUTHORITY", 1)
+            output_crs = 'EPSG:' + spatial_ref.GetAttrValue("AUTHORITY", 1)
             extent = layer.GetExtent()
-            bounds = [extent[0], extent[3], extent[1], extent[2]]
-        elif isinstance(ROI, str) and os.path.exists(ROI) and (ROI.endswith('.tif') or ROIy.endswith('.TIF')):
-            ROI_type = 'ras'
-            bounds = bf.get_tif_border(ROI)
+            roi_bounds = [extent[0], extent[3], extent[1], extent[2]]
+        elif isinstance(ROI, str) and os.path.exists(ROI) and (ROI.endswith('.tif') or ROI.endswith('.TIF')):
+            roi_bounds = bf.get_tif_border(ROI)
             ds = gdal.Open(ROI)
             proj = osr.SpatialReference(wkt=ds.GetProjection())
-            bounds_crs = 'EPSG:' + proj.GetAttrValue('AUTHORITY', 1)
+            output_crs = 'EPSG:' + proj.GetAttrValue('AUTHORITY', 1)
             ds = None
         else:
             raise TypeError('The input ROI is under wrong type!')
 
-        # Check the consistency between ROI with mask and DEM
+        self.ROI = ROI
+        self.ROI_name = self.ROI.split('\\')[-1].split('.')[0]
 
-
-        # Identify the index
-        if index is None:
-            index = self.index
-        elif isinstance(index, list):
-            index = [index_ for index_ in index if index_ in self.index]
-        elif isinstance(index, str):
-            if index not in self.index:
-                raise Exception(f'The {str(index)} is not supported!')
+        # Check if the ROI within the range of DEM and Mask
+        if (roi_bounds[0] < anusplin_bounds[0] or roi_bounds[1] > anusplin_bounds[1]
+                or roi_bounds[2] > anusplin_bounds[2] or roi_bounds[3] < anusplin_bounds[3]):
+            raise Exception('The ROI is outside the DEM and Mask')
+        # Identify the output cell size
+        if cell_size is None:
+            output_cellsize = 30
         else:
-            raise TypeError('The input index is under wrong type!')
+            output_cellsize = cell_size
+
+        # Identify the zvalue
+        if zvalue is None:
+            zvalue = self.zvalue
+        elif isinstance(zvalue, list):
+            zvalue = [zvalue_ for zvalue_ in zvalue if zvalue_ in self.zvalue]
+        elif isinstance(zvalue, str):
+            if zvalue not in self.zvalue:
+                raise Exception(f'The {str(zvalue)} is not supported!')
+        else:
+            raise TypeError('The input zvalue is under wrong type!')
 
         # Identify the date_range
         if date_range is None:
-            date_range = {key: self.date_range[key] for key in self.date_range if key in index}
+            date_range = {key: self.date_range[key] for key in self.date_range if key in zvalue}
         elif isinstance(date_range, list) and len(date_range) == 2:
             try:
                 start_date, end_date = int(date_range[0]), int(date_range[1])
@@ -811,7 +822,7 @@ class CMA_ds(object):
                 if start_date > end_date:
                     raise ValueError('The end date is smaller than start date!')
                 else:
-                    date_range = {key: self.date_range[key] for key in self.date_range if key in index}
+                    date_range = {key: self.date_range[key] for key in self.date_range if key in zvalue}
                     for _ in date_range.keys():
                         date_range_ = [date_ for date_ in date_range[_] if start_month <= date_ <= end_month]
                         date_range[_] = date_range_
@@ -821,249 +832,511 @@ class CMA_ds(object):
         else:
             raise TypeError('The input date range is under wrong type!')
 
-        # Check the output path
-        if output_path is None:
-            self.splin_path = self.output_path + 'ANUSPLIN_SPLIN\\'
-            self.lapgrd_path = self.output_path + 'ANUSPLIN_LAPGRD\\'
-        else:
-            if not os.path.exists(output_path):
-                raise ValueError('The output path does not exist')
-            else:
-                self.splin_path = os.path.join(self.output_path, 'ANUSPLIN_SPLIN\\')
-                self.lapgrd_path = os.path.join(self.work_env, 'ANUSPLIN_LAPGRD\\')
-        bf.create_folder(self.splin_path)
-        bf.create_folder(self.lapgrd_path)
-
-        for index_ in index:
-            index_date_range = date_range[index_]
-            # if bulk is True:
-            #     with concurrent.futures.ProcessPoolExecutor() as exe:
-            #         exe.map(self.execute_splin, repeat(index_), index_date_range, repeat(self.splin_path), repeat(bounds), repeat(bounds_crs))
-            # else:
-            #     for index_month in index_date_range:
-            #         self.execute_splin(index_, index_month, self.splin_path, bounds, bounds_crs)
-
-            self.execute_lapgrd(index_, index_date_range[0], DEM, ROI, self.splin_path, self.lapgrd_path, bounds_crs)
+        # Execute the SPLIN and LAPGRD process
+        for zvalue_ in zvalue:
+            zvalue_date_range = date_range[zvalue_]
             if bulk is True:
                 with concurrent.futures.ProcessPoolExecutor() as exe:
-                    exe.map(self.execute_lapgrd, repeat(index_), index_date_range, repeat(DEM), repeat(ROI), repeat(self.splin_path), repeat(self.lapgrd_path), repeat(bounds_crs))
+                    exe.map(self.execute_splin, repeat(zvalue_), zvalue_date_range, repeat(anusplin_bounds), repeat(output_crs))
             else:
-                for index_month in index_date_range:
-                    self.execute_lapgrd(index_, index_month, DEM, ROI, self.splin_path, self.lapgrd_path, bounds_crs)
+                for zvalue_month in zvalue_date_range:
+                    self.execute_splin(zvalue_, zvalue_month,  anusplin_bounds, output_crs)
 
-    def execute_splin(self, index, year_month, output_path, output_bounds, output_crs):
-
-        # Identify the output path
-        if not os.path.exists(output_path):
-            raise ValueError(f'The {output_path} is not valid')
-        index_output_path = os.path.join(output_path, f'{index}\\')
-        bf.create_folder(index_output_path)
-
-        # Copy the programme
-        index_splina = os.path.join(index_output_path, 'splina.exe')
-        if not os.path.exists(index_splina):
-            shutil.copy(self._splina_program, index_splina)
-
-        csv_file = [csv_ for csv_ in self.csv_files if str(year_month) in csv_ and index in csv_]
-        df_name_list = ['Station_id', 'Lat', 'Lon', 'Alt', 'DOY']
-        df_name_list.extend([__[2] for __ in self._index_dic[index]])
-        df_temp = pd.read_table(csv_file[0], delim_whitespace=True, header=None)
-        column_name_all = [_[2] for _ in self._index_dic[index]]
-        column_name_list = ['None' for _ in range(len(df_temp.columns))]
-        for column_ in range(len(df_temp.columns)):
-            if column_ < len(self._cma_header_):
-                column_name_list[column_] = self._cma_header_[column_]
-            elif column_ in [_[0] for _ in self._index_dic[index]]:
-                pos = [_[0] for _ in self._index_dic[index]].index(column_)
-                column_name_list[column_] = self._index_dic[index][pos][2]
+            if bulk is True:
+                with concurrent.futures.ProcessPoolExecutor() as exe:
+                    exe.map(self.execute_lapgrd, repeat(zvalue_), zvalue_date_range, repeat(DEM), repeat(anusplin_cellsize), repeat(anusplin_nodata), repeat(ROI), repeat(output_cellsize), repeat(output_crs), repeat(mask))
             else:
-                column_name_list[column_] = 'None'
-        df_temp.columns = column_name_list
+                for zvalue_month in zvalue_date_range:
+                    self.execute_lapgrd(zvalue_, zvalue_month, DEM, anusplin_cellsize, anusplin_nodata, ROI, output_cellsize, output_crs, lapgrd_maskfile=mask)
 
-        # Process DOY
-        doy_list = []
-        for row in range(df_temp.shape[0]):
-            doy_list.append(df_temp['YYYY'][row] * 1000 + datetime.date(year=df_temp['YYYY'][row], month=df_temp['MM'][row], day=df_temp['DD'][row]).toordinal()
-                            - datetime.date(year=df_temp['YYYY'][row], month=1, day=1).toordinal() + 1)
-        df_temp['DOY'] = doy_list
+    def execute_splin(self, zvalue, year_month,  splin_bounds, output_crs):
 
-        # Process lat lon and alt
-        df_temp['Lon'] = df_temp['Lon'] // 100 + (np.mod(df_temp['Lon'], 100) / 60)
-        df_temp['Lat'] = df_temp['Lat'] // 100 + (np.mod(df_temp['Lat'], 100) / 60)
-        df_temp['Alt'] = df_temp['Alt'].astype(np.float32) / 100
+        try:
+            # Define the output path
+            splin_path = self.output_path + f'{str(self.ROI_name)}_Denv_raster\\ANUSPLIN_SPLIN_{zvalue}\\'
+            bf.create_folder(splin_path)
 
-        # Determine the header
-        header = ['Station_id', 'Lon', 'Lat', 'Alt', self._interpolate_index[index][2]]
+            # Define the standard lapgrd conf file
+            self._splin_conf = '{}\n1\n2\n1\n0\n0\n{}\n{}\n-400 9000 1 1\n1000.0\n0\n3\n1\n0\n1\n1\n{}.dat\n300\n6\n(a6,2f14.6,f6.2,f4.1)\n{}.res\n{}.opt\n{}.sur\n{}.lis\n{}.cov\n\n\n\n\n\n'
 
-        # Get the geodf itr through date
-        doy_list = pd.unique(df_temp['DOY'])
-        for doy in doy_list:
-            t1 = time.time()
-            print(f'Start executing the SPLINA for {str(index)} of \033[1;31m{str(doy)}\033[0m!')
-            if not os.path.exists(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.dat')):
-                pd_temp = df_temp[df_temp['DOY'] == doy][header]
-                pd_temp[self._interpolate_index[index][2]] = pd_temp[self._interpolate_index[index][2]].astype(np.float32)
-                pd_temp[self._interpolate_index[index][2]] = pd_temp[self._interpolate_index[index][2]].replace(self._interpolate_index[index][3], np.nan)
-                pd_temp[self._interpolate_index[index][2]] = pd_temp[self._interpolate_index[index][2]] * self._interpolate_index[index][1]
-                pd_temp = pd_temp.reset_index(drop = True)
-                geodf_temp = gp.GeoDataFrame(pd_temp, geometry=[Point(xy) for xy in zip(pd_temp['Lon'], pd_temp['Lat'])], crs='EPSG:4326')
+            # Identify the output path
+            if not os.path.exists(splin_path):
+                raise ValueError(f'The {splin_path} is not valid')
+            zvalue_splin_path = os.path.join(splin_path, f'{str(self.ROI_name)}_{zvalue}\\')
+            bf.create_folder(zvalue_splin_path)
 
-                # Transform into destination crs
-                if output_crs != 'EPSG:4326':
-                    geodf_temp = geodf_temp.to_crs(crs=output_crs)
-                    geodf_temp['Lon'] = [_.coords[0][0] for _ in geodf_temp['geometry']]
-                    geodf_temp['Lat'] = [_.coords[0][1] for _ in geodf_temp['geometry']]
+            # Copy the programme
+            zvalue_splina = os.path.join(zvalue_splin_path, 'splina.exe')
+            if not os.path.exists(zvalue_splina):
+                shutil.copy(self._splina_program, zvalue_splina)
 
-                # Use the bounds to extract the point
-                geodf_temp = geodf_temp[(output_bounds[2] >= geodf_temp['Lon']) & (geodf_temp['Lon'] >= output_bounds[0])]
-                geodf_temp = geodf_temp[(output_bounds[3] <= geodf_temp['Lat']) & (geodf_temp['Lat'] <= output_bounds[1])]
-                df_doy= pd.DataFrame(geodf_temp)[header]
+            csv_file = [csv_ for csv_ in self.csv_files if str(year_month) in csv_ and zvalue in csv_]
+            df_name_list = ['Station_id', 'Lat', 'Lon', 'Alt', 'DOY']
+            df_name_list.extend([__[2] for __ in self._zvalue_dic[zvalue]])
+            df_temp = pd.read_table(csv_file[0], delim_whitespace=True, header=None)
+            column_name_all = [_[2] for _ in self._zvalue_dic[zvalue]]
+            column_name_list = ['None' for _ in range(len(df_temp.columns))]
+            for column_ in range(len(df_temp.columns)):
+                if column_ < len(self._cma_header_):
+                    column_name_list[column_] = self._cma_header_[column_]
+                elif column_ in [_[0] for _ in self._zvalue_dic[zvalue]]:
+                    pos = [_[0] for _ in self._zvalue_dic[zvalue]].index(column_)
+                    column_name_list[column_] = self._zvalue_dic[zvalue][pos][2]
+                else:
+                    column_name_list[column_] = 'None'
+            df_temp.columns = column_name_list
 
-                # Format the dat file
-                # df_temp['Station_id'] = df_temp['Station_id'].astype(str)
-                # df_temp['Station_id'] = df_temp['Station_id'].apply(lambda x: x[:6].ljust(6, ' '))
-                # df_temp['Lon'] = df_temp['Lon'].map('{:14.6f}'.format)
-                # df_temp['Lat'] = df_temp['Lat'].map('{:14.6f}'.format)
-                # df_temp['Alt'] = df_temp['Alt'].map('{:6.2f}'.format)
-                # df_temp[self._interpolate_index[index][2]] = df_temp[self._interpolate_index[index][2]].map('{:6.1f}'.format)
-                df_doy = df_doy.reset_index(drop=True)
+            # Process DOY
+            doy_list = []
+            for row in range(df_temp.shape[0]):
+                doy_list.append(df_temp['YYYY'][row] * 1000 + datetime.date(year=df_temp['YYYY'][row], month=df_temp['MM'][row], day=df_temp['DD'][row]).toordinal()
+                                - datetime.date(year=df_temp['YYYY'][row], month=1, day=1).toordinal() + 1)
+            df_temp['DOY'] = doy_list
 
-                f = open(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.dat'), 'w')
-                for i in range(df_doy.shape[0]):
-                    sta, lon, lat, height, val = [df_doy[__][i] for __ in header]
-                    text = '{:>5} {:>14.6f} {:>14.6f} {:>6.2f} {:>6.2f}\n'.format(str(sta), lon, lat, height, val)
-                    f.write(text)
-                f.close()
+            # Process lat lon and alt
+            df_temp['Lon'] = df_temp['Lon'] // 100 + (np.mod(df_temp['Lon'], 100) / 60)
+            df_temp['Lat'] = df_temp['Lat'] // 100 + (np.mod(df_temp['Lat'], 100) / 60)
+            df_temp['Alt'] = df_temp['Alt'].astype(np.float32) / 100
 
-            file_name = os.path.join(index_output_path, f'{str(index)}_{str(doy)}')
-            if not os.path.exists(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.conf')):
-                f = open(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.conf'), 'w')
-                lon_coord = f'{str(output_bounds[0])} {str(output_bounds[2])} 0 1'
-                lat_coord = f'{str(output_bounds[3])} {str(output_bounds[1])} 0 1'
+            # Determine the header
+            header = ['Station_id', 'Lon', 'Lat', 'Alt', self._interpolate_zvalue[zvalue][2]]
 
-                f.writelines(self._splin_conf.format(file_name, lon_coord, lat_coord, file_name,file_name,file_name,file_name,file_name,file_name))
-                f.close()
+            # Get the geodf itr through date
+            doy_list = pd.unique(df_temp['DOY'])
+            for doy in doy_list:
+                try:
+                    t1 = time.time()
+                    print(f'Start executing the SPLINA for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m!')
+                    if not os.path.exists(os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}.dat')):
+                        pd_temp = df_temp[df_temp['DOY'] == doy][header]
+                        pd_temp[self._interpolate_zvalue[zvalue][2]] = pd_temp[self._interpolate_zvalue[zvalue][2]].astype(np.float32)
+                        pd_temp[self._interpolate_zvalue[zvalue][2]] = pd_temp[self._interpolate_zvalue[zvalue][2]].replace(self._interpolate_zvalue[zvalue][3], np.nan)
+                        pd_temp[self._interpolate_zvalue[zvalue][2]] = pd_temp[self._interpolate_zvalue[zvalue][2]] * self._interpolate_zvalue[zvalue][1]
+                        pd_temp = pd_temp.reset_index(drop = True)
+                        geodf_temp = gp.GeoDataFrame(pd_temp, geometry=[Point(xy) for xy in zip(pd_temp['Lon'], pd_temp['Lat'])], crs='EPSG:4326')
 
-            if not os.path.exists(file_name + '.sur'):
-                cmd_ = index_splina + ' <{}> {}.log'.format(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.c onf'), os.path.join(index_output_path, f'{str(index)}_{str(doy)}'))
-                os.system(cmd_)
-            print(f'Finish executing the SPLINA procedure for {str(index)} of \033[1;31m{str(doy)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
+                        # Transform into destination crs
+                        if output_crs != 'EPSG:4326':
+                            geodf_temp = geodf_temp.to_crs(crs=output_crs)
+                            geodf_temp['Lon'] = [_.coords[0][0] for _ in geodf_temp['geometry']]
+                            geodf_temp['Lat'] = [_.coords[0][1] for _ in geodf_temp['geometry']]
 
-    def execute_lapgrd(self, index, year_month, demfile, ROI, splin_path, output_path, crs):
+                        # Use the bounds to extract the point
+                        geodf_temp = geodf_temp[(splin_bounds[2] >= geodf_temp['Lon']) & (geodf_temp['Lon'] >= splin_bounds[0])]
+                        geodf_temp = geodf_temp[(splin_bounds[3] <= geodf_temp['Lat']) & (geodf_temp['Lat'] <= splin_bounds[1])]
+                        df_doy = pd.DataFrame(geodf_temp)[header]
+                        df_doy = df_doy.reset_index(drop=True)
 
-        # Identify the output path
-        if not os.path.exists(output_path):
-            raise ValueError(f'The {output_path} is not valid')
-        index_output_path = os.path.join(output_path, f'{index}\\')
-        splin_path = os.path.join(splin_path, f'{index}\\')
-        bf.create_folder(index_output_path)
+                        # Format and generate the dat file
+                        f = open(os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}.dat'), 'w')
+                        for i in range(df_doy.shape[0]):
+                            sta, lon, lat, height, val = [df_doy[__][i] for __ in header]
+                            text = '{:>5} {:>14.6f}{:>14.6f}{:>6.2f}{:>4.1f}\n'.format(str(sta), lon, lat, height, val)
+                            f.write(text)
+                        f.close()
 
-        # Copy the programme
-        index_lapgrd = os.path.join(index_output_path, 'lapgrd.exe')
-        if not os.path.exists(index_lapgrd):
-            shutil.copy(self._lapgrd_program, index_lapgrd)
+                    file_name = os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}')
+                    if not os.path.exists(os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}.conf')):
+                        # Format and generate the conf file
+                        f = open(os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}.conf'), 'w')
+                        lon_coord = f'{str(splin_bounds[0])} {str(splin_bounds[2])} 0 1'
+                        lat_coord = f'{str(splin_bounds[3])} {str(splin_bounds[1])} 0 1'
+                        f.writelines(self._splin_conf.format(file_name, lon_coord, lat_coord, file_name,file_name,file_name,file_name,file_name,file_name))
+                        f.close()
 
-        csv_file = [csv_ for csv_ in self.csv_files if str(year_month) in csv_ and index in csv_]
-        df_name_list = ['Station_id', 'Lat', 'Lon', 'Alt', 'DOY']
-        df_name_list.extend([__[2] for __ in self._index_dic[index]])
-        df_temp = pd.read_table(csv_file[0], delim_whitespace=True, header=None)
-        column_name_all = [_[2] for _ in self._index_dic[index]]
-        column_name_list = ['None' for _ in range(len(df_temp.columns))]
-        for column_ in range(len(df_temp.columns)):
-            if column_ < len(self._cma_header_):
-                column_name_list[column_] = self._cma_header_[column_]
-            elif column_ in [_[0] for _ in self._index_dic[index]]:
-                pos = [_[0] for _ in self._index_dic[index]].index(column_)
-                column_name_list[column_] = self._index_dic[index][pos][2]
+                    # Generate the surf file
+                    if not os.path.exists(file_name + '.sur'):
+                        cmd_ = zvalue_splina + ' <{}> {}.log'.format(os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}.conf'), os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}'))
+                        os.system(cmd_)
+                    print(f'Finish executing the SPLINA procedure for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
+                except:
+                    print(traceback.format_exc())
+                    print(f'Failed to execute the SPLINA procedure for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m.')
+        except:
+            print(traceback.format_exc())
+
+    def execute_lapgrd(self, zvalue, year_month, lapgrd_demfile, lapgrd_cellsize, lapgrd_nodata, ROI, ROI_cellsize, crs, lapgrd_maskfile=None):
+
+        try:
+            # Define the input and output path
+            splin_path = self.output_path + f'{str(self.ROI_name)}_Denv_raster\\ANUSPLIN_SPLIN_{zvalue}\\'
+            lapgrd_path = self.output_path + f'{str(self.ROI_name)}_Denv_raster\\ANUSPLIN_LAPGRD_{zvalue}\\'
+            bf.create_folder(lapgrd_path)
+
+            # Define the standard lapgrd conf file
+            if lapgrd_maskfile is None:
+                self._lapgrd_conf = '{}\n1\n1\n{}\n2\n\n1\n1\n{}\n2\n{}\n0\n2\n{}\n2\n{}\n{}\n{}\n2\n{}\n{}\n{}\n\n\n\n\n\n'
             else:
-                column_name_list[column_] = 'None'
-        df_temp.columns = column_name_list
+                self._lapgrd_conf = '{}\n1\n1\n{}\n2\n\n1\n1\n{}\n2\n{}\n2\n{}\n2\n{}\n2\n{}\n{}\n{}\n2\n{}\n{}\n{}\n\n\n\n\n\n'
 
-        # Process DOY
-        doy_list = []
-        for row in range(df_temp.shape[0]):
-            doy_list.append(df_temp['YYYY'][row] * 1000 + datetime.date(year=df_temp['YYYY'][row], month=df_temp['MM'][row], day=df_temp['DD'][row]).toordinal()
-                            - datetime.date(year=df_temp['YYYY'][row], month=1, day=1).toordinal() + 1)
-        df_temp['DOY'] = doy_list
+            # Identify the output LAPGRD path and Input splin path
+            if not os.path.exists(lapgrd_path):
+                raise ValueError(f'The {lapgrd_path} is not valid')
+            if not os.path.exists(os.path.join(splin_path, f'{str(self.ROI_name)}_{zvalue}\\')):
+                raise ValueError(f'The {splin_path} is not valid')
+            else:
+                splin_path = os.path.join(splin_path, f'{str(self.ROI_name)}_{zvalue}\\')
 
-        # Process DEM
-        if demfile.endswith('.txt') or demfile.endswith('.TXT'):
-            with open(demfile, 'r') as f:
-                dem_content = f.read()
-                dem_content = dem_content.split('\n')[0:6]
-                dem_content = [(str(_.split(' ')[0]), float(_.split(' ')[-1])) for _ in dem_content]
-                bounds_dem = [dem_content[2][1], dem_content[3][1] + dem_content[1][1] * dem_content[4][1], dem_content[2][1] + dem_content[0][1] * dem_content[4][1], dem_content[3][1]]
-                cellsize = dem_content[4][1]
-                nodata = dem_content[5][1]
-                f.close()
+            zvalue_lapgrd_path = os.path.join(lapgrd_path, f'{str(self.ROI_name)}_{zvalue}\\')
+            bf.create_folder(zvalue_lapgrd_path)
+
+            # Copy the programme
+            zvalue_lapgrd = os.path.join(zvalue_lapgrd_path, 'lapgrd.exe')
+            if not os.path.exists(zvalue_lapgrd):
+                shutil.copy(self._lapgrd_program, zvalue_lapgrd)
+
+            csv_file = [csv_ for csv_ in self.csv_files if str(year_month) in csv_ and zvalue in csv_]
+            df_name_list = ['Station_id', 'Lat', 'Lon', 'Alt', 'DOY']
+            df_name_list.extend([__[2] for __ in self._zvalue_dic[zvalue]])
+            df_temp = pd.read_table(csv_file[0], delim_whitespace=True, header=None)
+            column_name_all = [_[2] for _ in self._zvalue_dic[zvalue]]
+            column_name_list = ['None' for _ in range(len(df_temp.columns))]
+            for column_ in range(len(df_temp.columns)):
+                if column_ < len(self._cma_header_):
+                    column_name_list[column_] = self._cma_header_[column_]
+                elif column_ in [_[0] for _ in self._zvalue_dic[zvalue]]:
+                    pos = [_[0] for _ in self._zvalue_dic[zvalue]].index(column_)
+                    column_name_list[column_] = self._zvalue_dic[zvalue][pos][2]
+                else:
+                    column_name_list[column_] = 'None'
+            df_temp.columns = column_name_list
+
+            # Process DOY
+            doy_list = []
+            for row in range(df_temp.shape[0]):
+                doy_list.append(df_temp['YYYY'][row] * 1000 + datetime.date(year=df_temp['YYYY'][row], month=df_temp['MM'][row], day=df_temp['DD'][row]).toordinal()
+                                - datetime.date(year=df_temp['YYYY'][row], month=1, day=1).toordinal() + 1)
+            df_temp['DOY'] = doy_list
+
+            # Get the geodf itr through date
+            doy_list = pd.unique(df_temp['DOY'])
+            for doy in doy_list:
+                try:
+                    t1 = time.time()
+                    print(f'Start executing the LAPGRD for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m!')
+                    if (len(bf.file_filter(splin_path, [str(zvalue), str(doy), '.cov'], and_or_factor='and')) < 1 or
+                            len(bf.file_filter(splin_path, [str(zvalue), str(doy), '.sur'], and_or_factor='and')) < 1):
+                        raise Exception('.cov file for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m is missing!')
+
+                    # Generate the conf file
+                    output_grd = os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}.grd')
+                    output_res = os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}_res.grd')
+                    if not os.path.exists(os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}.conf')):
+                        f = open(os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}.conf'), 'w')
+                        sur_file = bf.file_filter(splin_path, [str(zvalue), str(doy), '.sur'], and_or_factor='and')[0]
+                        cov_file = bf.file_filter(splin_path, [str(zvalue), str(doy), '.cov'], and_or_factor='and')[0]
+                        with open(sur_file, 'r') as surf_f:
+                            surf_content = surf_f.read()
+                            surf_content = surf_content.split('\n')[2:4]
+                            if surf_content[0].startswith(' '):
+                                x_limit = f"{surf_content[0].split(' ')[2]} {surf_content[0].split(' ')[4]} {str(lapgrd_cellsize)}"
+                            else:
+                                x_limit = f"{surf_content[0].split(' ')[1]} {surf_content[0].split(' ')[3]} {str(lapgrd_cellsize)}"
+
+                            if surf_content[1].startswith(' '):
+                                y_limit = f"{surf_content[1].split(' ')[2]} {surf_content[1].split(' ')[4]} {str(lapgrd_cellsize)}"
+                            else:
+                                y_limit = f"{surf_content[1].split(' ')[1]} {surf_content[1].split(' ')[3]} {str(lapgrd_cellsize)}"
+
+                        if lapgrd_maskfile is None:
+                            f.writelines(self._lapgrd_conf.format(sur_file, cov_file, x_limit, y_limit, lapgrd_demfile, str(lapgrd_nodata), output_grd, '(1f6.2)', str(lapgrd_nodata), output_res, '(1f8.2)'))
+                        else:
+                            f.writelines(self._lapgrd_conf.format(sur_file, cov_file, x_limit, y_limit, lapgrd_maskfile, lapgrd_demfile, str(lapgrd_nodata), output_grd, '(1f6.2)', str(lapgrd_nodata), output_res, '(1f8.2)'))
+                        f.close()
+
+                    # Execute the lapgrd
+                    if not os.path.exists(os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}.grd')):
+                        cmd_ = zvalue_lapgrd + ' <{}> {}.log'.format(os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}.conf'), os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}'))
+                        os.system(cmd_)
+
+                    # Execute the gdal Warp
+                    if not os.path.exists(os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}.tif')):
+                        temp_ds = gdal.Warp('/vsimem/' + f'{str(zvalue)}_{str(doy)}_temp.vrt', os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}.grd'), srcSRS=crs,
+                                            resampleAlg=gdal.GRA_Bilinear, outputType=gdal.GDT_Float32, dstNodata=np.nan, xRes=ROI_cellsize, yRes=ROI_cellsize)
+                        temp_ds2 = gdal.Warp('/vsimem/' + f'{str(zvalue)}_{str(doy)}_temp2.vrt', os.path.join('/vsimem/' + f'{str(zvalue)}_{str(doy)}_temp.vrt'), srcSRS=crs,
+                                             cropToCutline=True, cutlineDSName=ROI, outputType=gdal.GDT_Float32, dstNodata=np.nan, xRes=ROI_cellsize, yRes=ROI_cellsize)
+                        temp_ds3 = gdal.Translate(os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}.TIF'), f'/vsimem/{str(zvalue)}_{str(doy)}_temp2.vrt', options=topts)
+                        gdal.Unlink('/vsimem/' + f'{str(zvalue)}_{str(doy)}_temp.vrt')
+                        gdal.Unlink('/vsimem/' + f'{str(zvalue)}_{str(doy)}_temp2.vrt')
+                        temp_ds = None
+                        temp_ds2 = None
+                        temp_ds3 = None
+
+                    # Remove redundant fileD
+                    # try:
+                    #     os.remove(output_res)
+                    #     os.remove(output_grd)
+                    # except:
+                    #     print('Failed to delete file')
+
+                    print(f'Finish executing the LAPGRD procedure for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
+                except:
+                    print(traceback.format_exc())
+                    print(f'Failed to execute the LAPGRD procedure for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m.')
+        except:
+            print(traceback.format_exc())
+
+    def _process_raster2dc_para(self, **kwargs):
+        # Detect whether all the indicators are valid
+        for kwarg_indicator in kwargs.keys():
+            if kwarg_indicator not in ('inherit_from_logfile', 'ROI', 'ROI_name', 'dc_overwritten_para',
+                                       'manually_remove_datelist', 'size_control_factor'):
+                raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
+
+        # process clipped_overwritten_para
+        if 'dc_overwritten_para' in kwargs.keys():
+            if isinstance(kwargs['dc_overwritten_para'], bool):
+                self._dc_overwritten_para = kwargs['dc_overwritten_para']
+            else:
+                raise TypeError('Please mention the dc_overwritten_para should be bool type!')
         else:
-            raise TypeError('Please convert the dem into txt file')
+            self._clipped_overwritten_para = False
 
-        # Get the geodf itr through date
-        doy_list = pd.unique(df_temp['DOY'])
-        for doy in doy_list:
-            t1 = time.time()
-            print(f'Start executing the LAPGRD for {str(index)} of \033[1;31m{str(doy)}\033[0m!')
-            if (len(bf.file_filter(splin_path, [str(index), str(doy), '.cov'], and_or_factor='and')) < 1 or
-                    len(bf.file_filter(splin_path, [str(index), str(doy), '.sur'], and_or_factor='and')) < 1):
-                raise Exception('.cov file for {str(index)} of \033[1;31m{str(doy)}\033[0m is missing!')
+        # process inherit from logfile
+        if 'inherit_from_logfile' in kwargs.keys():
+            if isinstance(kwargs['inherit_from_logfile'], bool):
+                self._inherit_from_logfile = kwargs['inherit_from_logfile']
+            else:
+                raise TypeError('Please mention the dc_overwritten_para should be bool type!')
+        else:
+            self._inherit_from_logfile = False
 
-            output_grd = os.path.join(index_output_path, f'{str(index)}_{str(doy)}.grd')
-            output_res = os.path.join(index_output_path, f'{str(index)}_{str(doy)}_res.grd')
-            # Generate the conf file
-            if not os.path.exists(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.conf')):
-                f = open(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.conf'), 'w')
-                sur_file = bf.file_filter(splin_path, [str(index), str(doy), '.sur'], and_or_factor='and')[0]
-                cov_file = bf.file_filter(splin_path, [str(index), str(doy), '.cov'], and_or_factor='and')[0]
-                with open(sur_file, 'r') as surf_f:
-                    surf_content = surf_f.read()
-                    surf_content = surf_content.split('\n')[2:4]
-                    if surf_content[0].startswith(' '):
-                        x_limit = f"{surf_content[0].split(' ')[2]} {surf_content[0].split(' ')[4]} {cellsize}"
-                    else:
-                        x_limit = f"{surf_content[0].split(' ')[1]} {surf_content[0].split(' ')[3]} {cellsize}"
+        # process ROI_NAME
+        if 'ROI_name' in kwargs.keys():
+            self.ROI_name = kwargs['ROI_name']
+        elif self.ROI_name is None and self._inherit_from_logfile:
+            self._retrieve_para(['ROI_name'])
+        elif self.ROI_name is None:
+            raise Exception('Notice the ROI name was missed!')
 
-                    if surf_content[1].startswith(' '):
-                        y_limit = f"{surf_content[1].split(' ')[2]} {surf_content[1].split(' ')[4]} {cellsize}"
-                    else:
-                        y_limit = f"{surf_content[1].split(' ')[1]} {surf_content[1].split(' ')[3]} {cellsize}"
+        # process ROI
+        if 'ROI' in kwargs.keys():
+            self.ROI = kwargs['ROI']
+        elif self.ROI is None and self._inherit_from_logfile:
+            self._retrieve_para(['ROI'])
+        elif self.ROI is None:
+            raise Exception('Notice the ROI was missed!')
 
-                f.writelines(self._lapgrd_conf.format(sur_file, cov_file, x_limit, y_limit, ROI, demfile, nodata, output_grd, '(100f10.3)', nodata, output_res, '(1f8.2)'))
-                f.close()
+        # Retrieve size control factor
+        if 'ds2ras_method' in kwargs.keys():
+            if 'ds2ras_method' in self._ds2raster_method:
+                self._ds2ras_method = kwargs['ds2ras_method']
+            else:
+                raise TypeError('Please mention the ds2ras_method should be supported!')
+        elif self._inherit_from_logfile:
+            self._retrieve_para(['ds2ras_method'], protected_var=True)
+            if self._ds2ras_method is None:
+                self._ds2ras_method = 'IDW'
+        else:
+            raise TypeError('Please mention the ds2ras_method should be supported!')
 
-            # Execute the lapgrd
-            if not os.path.exists(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.TIF')):
-                cmd_ = index_lapgrd + ' <{}> {}.log'.format(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.conf'), os.path.join(index_output_path, f'{str(index)}_{str(doy)}'))
-                os.system(cmd_)
+    def raster2dc(self, zvalue_list: list, temporal_division=None, ROI=None, **kwargs):
 
-                # Execute the lapgrd
-                temp_ds2 = gdal.Warp('/vsimem/' + f'{str(index)}_{str(doy)}_temp.vrt', os.path.join(index_output_path, f'{str(index)}_{str(doy)}.grd'), srcSRS=crs,
-                                     resampleAlg=gdal.GRA_NearestNeighbour,  cropToCutline=True, cutlineDSName='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020.shp',
-                                     outputType=gdal.GDT_Float32, dstNodata=np.nan)
-                temp_ds3 = gdal.Translate(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.TIF'), f'/vsimem/{str(index)}_{str(doy)}_temp.vrt', options=topts)
-                temp_ds2 = None
-                temp_ds3 = None
+        kwargs['inherit_from_logfile'] = True
+        self._process_raster2dc_para(**kwargs)
 
-            try:
-                os.remove(output_res)
-                os.remove(output_grd)
-            except:
-                print('Failed to delete file')
-            print(f'Finish executing the SPLINA procedure for {str(index)} of \033[1;31m{str(doy)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
+        if temporal_division is not None and not isinstance(temporal_division, str):
+            raise TypeError(f'The {temporal_division} should be a str!')
+        elif temporal_division is None:
+            temporal_division = 'all'
+        elif temporal_division not in self._temporal_div_str:
+            raise ValueError(f'The {temporal_division} is not supported!')
 
-    def generate_climate_ras(self, ROI=None, index=None, date_range=None, output_path=None, bulk=True, generate_shp=True, generate_ras=True):
+        for zvalue_temp in zvalue_list:
+            # Create the output path
+            output_path = f'{self.output_path}{self.ROI_name}_Denv_datacube\\' if self.ROI_name is not None else f'{self.output_path}Ori_Denv_datacube\\'
+            bf.create_folder(output_path)
+
+            # Obtain the input files
+            if self._ds2ras_method == 'ANUSPLIN':
+                input_folder = f'{self.output_path}{str(self.ROI_name)}_Denv_raster\\ANUSPLIN_LAPGRD_{zvalue_temp}\\' if self.ROI_name is not None else f'{self.output_path}Ori_Denv_raster\\ANUSPLIN_LAPGRD_{zvalue_temp}\\'
+                input_files = bf.file_filter(input_folder, ['.TIF'], exclude_word_list=['aux', 'xml'])
+            elif self._ds2ras_method == 'IDW':
+                input_folder = f'{self.output_path}{str(self.ROI_name)}_Denv_raster\\IDW_{zvalue_temp}\\' if self.ROI_name is not None else f'{self.output_path}Ori_Denv_raster\\IDW_{zvalue_temp}\\'
+                input_files = bf.file_filter(input_folder, ['.TIF'], exclude_word_list=['aux'])
+            else:
+                raise Exception('The method is not supported!')
+
+            if self.main_coordinate_system is None:
+                self.main_coordinate_system = bf.retrieve_srs(gdal.Open(input_files[0]))
+
+            # Create the ROI map
+            roi_map_folder = f'{self.output_path}ROI_map\\'
+            bf.create_folder(roi_map_folder)
+            ROI_tif_name, ROI_array_name = f'{roi_map_folder}{self.ROI_name}.TIF', f'{roi_map_folder}{self.ROI_name}.npy'
+
+            if not os.path.exists(ROI_tif_name) or not os.path.exists(ROI_array_name):
+                for i in range(len(input_files)):
+                    try:
+                        shutil.copyfile(input_files[i], ROI_tif_name)
+                        break
+                    except:
+                        pass
+                ds_temp = gdal.Open(ROI_tif_name, gdal.GA_Update)
+                array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
+                array_temp = array_temp.astype(np.int16)
+
+                array_temp[array_temp != nodata_value] = 1
+                np.save(ROI_array_name, array_temp)
+                ds_temp.GetRasterBand(1).WriteArray(array_temp)
+                ds_temp.FlushCache()
+                ds_temp = None
+            else:
+                ds_temp = gdal.Open(ROI_tif_name)
+                array_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+                nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
+            cols, rows = array_temp.shape[1], array_temp.shape[0]
+            sparsify = np.sum(array_temp == nodata_value) / (array_temp.shape[0] * array_temp.shape[1])
+            _sparse_matrix = True if sparsify > 0.9 else False
+
+            # Create the metadata dic
+            metadata_dic = {'ROI_name': self.ROI_name, 'index': zvalue_temp, 'Datatype': 'float', 'ROI': self.ROI,
+                            'ROI_array': ROI_array_name, 'ROI_tif': ROI_tif_name, 'sdc_factor': True,
+                            'coordinate_system': self.main_coordinate_system, 'size_control_factor': False,
+                            'oritif_folder': input_folder, 'dc_group_list': None, 'tiles': None, 'timescale': temporal_division,
+                            'Denv_factor': True}
+
+            if temporal_division == 'year':
+                time_range = self.year_range
+            elif temporal_division == 'month':
+                time_range = []
+                for year_temp in self.year_range:
+                    for month_temp in ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']:
+                        time_range.append(str(year_temp) + str(month_temp))
+            elif temporal_division == 'all':
+                time_range = ['TIF']
+
+            with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
+                executor.map(self._raster2sdc, repeat(output_path), repeat(input_folder), time_range, repeat(zvalue_temp), repeat(metadata_dic), repeat(rows), repeat(cols), repeat(_sparse_matrix))
+
+    def _raster2sdc(self, output_path, input_folder, time_temp, zvalue_temp, metadata_dic, rows, cols, _sparse_matrix,):
+
+        start_time = time.time()
+        print(f'Start constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name}.')
+        nodata_value = None
+
+        # Create the output path
+        yearly_output_path = output_path + str(int(time_temp)) + '\\' if time_temp != 'TIF' else output_path + 'all\\'
+        bf.create_folder(yearly_output_path)
+
+        if not os.path.exists(f'{yearly_output_path}doy.npy') or not os.path.exists(f'{yearly_output_path}metadata.json'):
+
+            # Determine the input files
+            yearly_input_files = bf.file_filter(input_folder, ['.TIF', '\\' + str(time_temp)], exclude_word_list=['aux'],  and_or_factor='and')
+
+            if nodata_value is None:
+                nodata_value = gdal.Open(yearly_input_files[0])
+                nodata_value = nodata_value.GetRasterBand(1).GetNoDataValue()
+
+            # Create the doy list
+            doy_list = bf.date2doy([int(filepath_temp.split('\\')[-1][0:8]) for filepath_temp in yearly_input_files])
+
+            # Determine whether the output folder is huge and sparsify or not?
+            mem = psutil.virtual_memory()
+            dc_max_size = int(mem.free * 0.90)
+            _huge_matrix = True if len(doy_list) * cols * rows * 2 > dc_max_size else False
+
+            if _huge_matrix:
+                if _sparse_matrix:
+                    i = 0
+                    data_cube = NDSparseMatrix()
+                    data_valid_array = np.zeros([len(doy_list)], dtype=int)
+                    while i < len(doy_list):
+
+                        try:
+                            t1 = time.time()
+                            if not os.path.exists(f"{input_folder}{str(bf.doy2date(doy_list[i]))}_{zvalue_temp}.TIF"):
+                                raise Exception(f'The {str(doy_list[i])}_{zvalue_temp} is not properly generated!')
+                            else:
+                                array_temp = gdal.Open(f"{input_folder}{str(bf.doy2date(doy_list[i]))}_{zvalue_temp}.TIF")
+                                array_temp = array_temp.GetRasterBand(1).ReadAsArray()
+                                array_temp[array_temp == nodata_value] = 0
+
+                            sm_temp = sm.csr_matrix(array_temp.astype(np.uint16))
+                            array_temp = None
+                            data_cube.append(sm_temp, name=doy_list[i])
+                            data_valid_array[i] = 1 if sm_temp.data.shape[0] == 0 else 0
+
+                            print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
+                            i += 1
+                        except:
+                            error_inf = traceback.format_exc()
+                            print(error_inf)
+
+                    # remove nan layers
+                    i_temp = 0
+                    while i_temp < len(doy_list):
+                        if data_valid_array[i_temp]:
+                            if doy_list[i_temp] in data_cube.SM_namelist:
+                                data_cube.remove_layer(doy_list[i_temp])
+                            doy_list.remove(doy_list[i_temp])
+                            data_valid_array = np.delete(data_valid_array, i_temp, 0)
+                            i_temp -= 1
+                        i_temp += 1
+
+                    # Save the sdc
+                    np.save(f'{yearly_output_path}doy.npy', doy_list)
+                    data_cube.save(f'{yearly_output_path}{zvalue_temp}_Denv_datacube\\')
+                else:
+                    pass
+            else:
+                i = 0
+                data_cube = np.zeros([rows, cols, len(doy_list)])
+                data_valid_array = np.zeros([len(doy_list)], dtype=int)
+                while i < len(doy_list):
+
+                    try:
+                        t1 = time.time()
+                        if not os.path.exists(f"{input_folder}{str(doy_list[i])}_{zvalue_temp}.TIF"):
+                            raise Exception(f'The {str(doy_list[i])}_{zvalue_temp} is not properly generated!')
+                        else:
+                            array_temp = gdal.Open(f"{input_folder}{str(doy_list[i])}_{zvalue_temp}.TIF")
+                            array_temp = array_temp.GetRasterBand(1).ReadAsArray()
+
+                        data_cube[:, :, i] = array_temp
+                        data_valid_array[i] = [array_temp == nodata_value].all()
+
+                        print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
+                        i += 1
+                    except:
+                        error_inf = traceback.format_exc()
+                        print(error_inf)
+
+                # remove nan layers
+                i_temp = 0
+                while i_temp < len(doy_list):
+                    if data_valid_array[i_temp]:
+                        data_cube = np.delete(data_cube, i_temp, 2)
+                        doy_list.remove(doy_list[i_temp])
+                        data_valid_array = np.delete(data_valid_array, i_temp, 0)
+                        i_temp -= 1
+                    i_temp += 1
+
+                np.save(f'{yearly_output_path}doy.npy', doy_list)
+                np.save(f'{yearly_output_path}{zvalue_temp}_Denv_datacube.npy', data_cube)
+
+            # Save the metadata dic
+            metadata_dic['sparse_matrix'], metadata_dic['huge_matrix'] = _sparse_matrix, _huge_matrix
+            metadata_dic['timerange'] = time_temp
+            with open(f'{yearly_output_path}metadata.json', 'w') as js_temp:
+                json.dump(metadata_dic, js_temp)
+
+        print(f'Finish constructing the {str(time_temp)} {str(zvalue_temp)} sdc of {self.ROI_name} in \033[1;31m{str(time.time() - start_time)} s\033[0m.')
+
+    def interpolate_climate_ras(self, ROI=None, zvalue=None, date_range=None, output_path=None, bulk=True, generate_shp=True, generate_ras=True):
 
         # Generate climate raster
-        # Identify the index
-        if index is None:
-            index = self.index
-        elif isinstance(index, list):
-            index = [index_ for index_ in index if index_ in self.index]
-        elif isinstance(index, str):
-            if index not in self.index:
-                raise Exception(f'The {str(index)} is not supported!')
+        # Identify the zvalue
+        if zvalue is None:
+            zvalue = self.zvalue
+        elif isinstance(zvalue, list):
+            zvalue = [zvalue_ for zvalue_ in zvalue if zvalue_ in self.zvalue]
+        elif isinstance(zvalue, str):
+            if zvalue not in self.zvalue:
+                raise Exception(f'The {str(zvalue)} is not supported!')
         else:
-            raise TypeError('The input index is under wrong type!')
+            raise TypeError('The input zvalue is under wrong type!')
 
         # Identify the ROI
         spa_bounds = [np.min(self.station_inform_df['Lat']), np.max(self.station_inform_df['Lon']),
@@ -1112,7 +1385,7 @@ class CMA_ds(object):
 
         # Identify the date_range
         if date_range is None:
-            date_range = {key: self.date_range[key] for key in self.date_range if key in index}
+            date_range = {key: self.date_range[key] for key in self.date_range if key in zvalue}
         elif isinstance(date_range, list) and len(date_range) == 2:
             try:
                 start_date, end_date = int(date_range[0]), int(date_range[1])
@@ -1120,7 +1393,7 @@ class CMA_ds(object):
                 if start_date > end_date:
                     raise ValueError('The end date is smaller than start date!')
                 else:
-                    date_range = {key: self.date_range[key] for key in self.date_range if key in index}
+                    date_range = {key: self.date_range[key] for key in self.date_range if key in zvalue}
                     for _ in date_range.keys():
                         date_range_ = [date_ for date_ in date_range[_] if start_month <= date_ <= end_month]
                         date_range[_] = date_range_
@@ -1143,22 +1416,22 @@ class CMA_ds(object):
         bf.create_folder(self.raster_output_path)
         bf.create_folder(self.shp_output_path)
 
-        for index_ in index:
+        for zvalue_ in zvalue:
             # Generate the shpfile
-            index_date_range = date_range[index_]
+            zvalue_date_range = date_range[zvalue_]
             if generate_shp:
                 if bulk:
                     with concurrent.futures.ProcessPoolExecutor() as exe:
-                        exe.map(self._generate_shpfile, index_date_range, repeat(index_), repeat(self.shp_output_path))
+                        exe.map(self._generate_shpfile, zvalue_date_range, repeat(zvalue_), repeat(self.shp_output_path))
                 else:
-                    for date_ in index_date_range:
-                        self._generate_shpfile(date_, index, self.shp_output_path)
+                    for date_ in zvalue_date_range:
+                        self._generate_shpfile(date_, zvalue, self.shp_output_path)
 
             # Generate the raster file
             if generate_ras:
-                shpfile_list = bf.file_filter(os.path.join(self.shp_output_path, f'{index_}\\'), ['.shp'])
-                shpfile_valid_list = [shp_ for shp_ in shpfile_list if int(np.floor(bf.doy2date(int(shp_.split(f'{index_}_')[-1].split('.')[0])) / 100)) in index_date_range]
-                zvalue = [_[2] for _ in self._index_dic[index_]]
+                shpfile_list = bf.file_filter(os.path.join(self.shp_output_path, f'{zvalue_}\\'), ['.shp'])
+                shpfile_valid_list = [shp_ for shp_ in shpfile_list if int(np.floor(bf.doy2date(int(shp_.split(f'{zvalue_}_')[-1].split('.')[0])) / 100)) in zvalue_date_range]
+                zvalue = [_[2] for _ in self._zvalue_dic[zvalue_]]
 
                 if bulk:
                     with concurrent.futures.ProcessPoolExecutor() as exe:
@@ -1179,30 +1452,30 @@ class CMA_ds(object):
                     except Exception as e:
                         print(f'Failed to delete {file_path}. Reason: {e}')
 
-    def _generate_shpfile(self, index_year_month, index, outputpath):
+    def _generate_shpfile(self, zvalue_year_month, zvalue, outputpath):
 
         try:
             # Check the output path
             if not os.path.exists(outputpath):
                 raise ValueError(f'The {outputpath} is not valid')
-            index_output_path = os.path.join(outputpath, f'{index}\\')
-            bf.create_folder(index_output_path)
+            zvalue_output_path = os.path.join(outputpath, f'{zvalue}\\')
+            bf.create_folder(zvalue_output_path)
 
-            csv_file = [csv_ for csv_ in self.csv_files if str(index_year_month) in csv_ and index in csv_]
+            csv_file = [csv_ for csv_ in self.csv_files if str(zvalue_year_month) in csv_ and zvalue in csv_]
             if len(csv_file) != 1:
                 raise Exception('Code error!')
 
             df_name_list = ['Station_id', 'Lat', 'Lon', 'Alt', 'DOY']
-            df_name_list.extend([__[2] for __ in self._index_dic[index]])
+            df_name_list.extend([__[2] for __ in self._zvalue_dic[zvalue]])
             df_temp = pd.read_table(csv_file[0], delim_whitespace=True, header=None)
-            column_name_all = [_[2] for _ in self._index_dic[index]]
+            column_name_all = [_[2] for _ in self._zvalue_dic[zvalue]]
             column_name_list = ['None' for _ in range(len(df_temp.columns))]
             for column_ in range(len(df_temp.columns)):
                 if column_ < len(self._cma_header_):
                     column_name_list[column_] = self._cma_header_[column_]
-                elif column_ in [_[0] for _ in self._index_dic[index]]:
-                    pos = [_[0] for _ in self._index_dic[index]].index(column_)
-                    column_name_list[column_] = self._index_dic[index][pos][2]
+                elif column_ in [_[0] for _ in self._zvalue_dic[zvalue]]:
+                    pos = [_[0] for _ in self._zvalue_dic[zvalue]].index(column_)
+                    column_name_list[column_] = self._zvalue_dic[zvalue][pos][2]
                 else:
                     column_name_list[column_] = 'None'
             df_temp.columns = column_name_list
@@ -1223,23 +1496,23 @@ class CMA_ds(object):
 
             # Determine the header
             header = ['Station_id', 'Lon', 'Lat', 'Alt', 'DOY']
-            for _ in self._index_dic[index]:
+            for _ in self._zvalue_dic[zvalue]:
                 header.append(_[2])
 
             # Get the geodf itr through date
             doy_list = pd.unique(df_temp['DOY'])
             for doy in doy_list:
                 t1 = time.time()
-                print(f'Start processing the {str(index)} data of \033[1;31m{str(doy)}\033[0m')
-                if not os.path.exists(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.shp')):
+                print(f'Start processing the {str(zvalue)} data of \033[1;31m{str(doy)}\033[0m')
+                if not os.path.exists(os.path.join(zvalue_output_path, f'{str(zvalue)}_{str(doy)}.shp')):
                     pd_temp = df_temp[df_temp['DOY'] == doy][header]
-                    for _ in self._index_dic[index]:
+                    for _ in self._zvalue_dic[zvalue]:
                         pd_temp[_[2]] = pd_temp[_[2]].astype(np.float32)
                         pd_temp[_[2]] = pd_temp[_[2]].replace(_[3], np.nan)
                         pd_temp[_[2]] = pd_temp[_[2]] * _[1]
                     geodf_temp = gp.GeoDataFrame(pd_temp, geometry=gp.points_from_xy(pd_temp['Lon'], pd_temp['Lat']), crs="EPSG:4326")
-                    geodf_temp.to_file(os.path.join(index_output_path, f'{str(index)}_{str(doy)}.shp'), encoding='gbk')
-                print(f'Finish generating the {str(index)} shpfile of \033[1;31m{str(doy)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
+                    geodf_temp.to_file(os.path.join(zvalue_output_path, f'{str(zvalue)}_{str(doy)}.shp'), encoding='gbk')
+                print(f'Finish generating the {str(zvalue)} shpfile of \033[1;31m{str(doy)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
         except:
             print(traceback.format_exc())
 
@@ -1442,7 +1715,7 @@ class CMA_ds(object):
         return wrapper
 
     @save_log_file
-    def ds2pointshp(self, zvalue_list: list, output_path: str):
+    def ds2pointshp(self, zvalue_list: list, output_path: str, main_coordinate_system):
 
         output_path = bf.Path(output_path).path_name
         bf.create_folder(output_path)
@@ -1451,9 +1724,9 @@ class CMA_ds(object):
             if z not in self.valid_inform:
                 raise ValueError(f'The zvalue {str(z)} is not valid!')
 
-        index_all = ''
-        for index in zvalue_list:
-            index_all = f'{index_all}_{str(index)}'
+        zvalue_all = ''
+        for zvalue in zvalue_list:
+            zvalue_all = f'{zvalue_all}_{str(zvalue)}'
 
         basic_inform4point = copy.copy(zvalue_list)
         for z in ['LATITUDE', 'LONGITUDE', 'STATION', 'DATE']:
@@ -1466,9 +1739,9 @@ class CMA_ds(object):
             self.main_coordinate_system = main_coordinate_system
 
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            executor.map(self._ds2point, self.year_range, repeat(output_path), repeat(basic_inform4point), repeat(index_all), repeat(self.main_coordinate_system))
+            executor.map(self._ds2point, self.year_range, repeat(output_path), repeat(basic_inform4point), repeat(zvalue_all), repeat(self.main_coordinate_system))
 
-    def _ds2point(self, year, output_path, z_4point, index_all, crs):
+    def _ds2point(self, year, output_path, z_4point, zvalue_all, crs):
 
         z_dic = {}
         current_year_files_content = self.files_content_dic[year]
@@ -1477,7 +1750,7 @@ class CMA_ds(object):
             date = datetime.datetime.fromordinal(datetime.date(year, 1, 1).toordinal() + date_temp)
             t1 = time.time()
             print(f'Start processing the climatology data of \033[1;31m{str(datetime.date.strftime(date, "%Y%m%d"))}\033[0m')
-            if not os.path.exists(f'{output_path}{str(datetime.date.strftime(date, "%Y%m%d"))}{index_all}.shp'):
+            if not os.path.exists(f'{output_path}{str(datetime.date.strftime(date, "%Y%m%d"))}{zvalue_all}.shp'):
 
                 for z in z_4point:
                     z_dic[z] = []
@@ -1498,7 +1771,7 @@ class CMA_ds(object):
                 if geodf_temp.size == 0:
                     print(f'There has no valid file for date \033[1;31m{str(datetime.date.strftime(date, "%Y%m%d"))}\033[0m')
                 else:
-                    geodf_temp.to_file(f'{output_path}{str(datetime.date.strftime(date, "%Y%m%d"))}{index_all}.shp', encoding='gbk')
+                    geodf_temp.to_file(f'{output_path}{str(datetime.date.strftime(date, "%Y%m%d"))}{zvalue_all}.shp', encoding='gbk')
                     print(f'Finish generating the shpfile of \033[1;31m{str(datetime.date.strftime(date, "%Y%m%d"))}\033[0m in \033[1;34m{str(time.time()-t1)[0:7]}\033[0m s')
 
     @save_log_file
@@ -1828,12 +2101,12 @@ if __name__ == '__main__':
     geometry = gp.GeoDataFrame({'id':[1]}, geometry=station_rec, crs='EPSG:32649')
     geometry.to_file('G:\\A_Landsat_Floodplain_veg\\ROI_map\\weather_boundary.shp')
     ds_temp = CMA_ds('G:\\A_Landsat_Floodplain_veg\\Climatology_data\\Data_cma\\')
-    ds_temp.anusplin('G:\\A_Landsat_Floodplain_veg\\Climatology_data\\Mask\\myr_floodplain.txt', 'G:\\A_Landsat_Floodplain_veg\\Climatology_data\DEM\\\DEM\\alos_dem.txt', index=['TEM'], date_range=[19850101, 20201231], boundary='G:\\A_Landsat_Floodplain_veg\\ROI_map\\weather_boundary.shp',)
+    ds_temp.anusplin('G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_UTM.shp', 'G:\\A_Landsat_Floodplain_veg\\Climatology_data\\DEM\\DEM\\alos_dem300.txt', mask=None, zvalue=['PRE', 'RHU'], date_range=[19850101, 20201231], bulk=True)
 
     # ds_temp = gdal.Open('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')
     # bounds_temp = bf.raster_ds2bounds('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')
     # size = [ds_temp.RasterYSize, ds_temp.RasterXSize]
-    ds_temp = CMA_ds('G:\\A_Landsat_Floodplain_veg\\Data_cma\\')
-    ds_temp.generate_climate_ras(ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_map.TIF', index=['TEM'], date_range=[19850101, 20201231], generate_shp=True, bulk=True)
+    # ds_temp = CMA_ds('G:\\A_Landsat_Floodplain_veg\\Data_cma\\')
+    # ds_temp.generate_climate_ras(ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_map.TIF', zvalue=['TEM'], date_range=[19850101, 20201231], generate_shp=True, bulk=True)
     # ds_temp.ds2raster(['TEMP'], ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020.shp', raster_size=size, ds2ras_method='IDW', bounds=bounds_temp)
     # ds_temp.raster2dc(['TEMP'], temporal_division='year')
