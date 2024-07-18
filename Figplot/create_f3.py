@@ -1,5 +1,4 @@
 import os.path
-
 import numpy as np
 import pandas as pd
 from RSDatacube.RSdc import *
@@ -594,11 +593,16 @@ def fig11nc3_func():
     #
     # passing color=None to refline() uses the hue mapping
     g.refline(y=0, linewidth=2, linestyle="-", color=None, clip_on=False, zorder=3)
+    dmn_pre_list = [stats.ks_2samp(df[df['ff'] == __]['pre'], df[df['ff'] == 0.05]['pre'])[0] for __ in ff_list]
+    dmn_post_list = [stats.ks_2samp(df[df['ff'] == __]['post'], df[df['ff'] == 0.05]['post'])[0] for __ in ff_list]
+    dmn_change_list = [-stats.ks_2samp(df[df['ff'] == __]['post'], df[df['ff'] == 0.05]['post'])[0] + stats.ks_2samp(df[df['ff'] == __]['pre'], df[df['ff'] == 0.05]['pre'])[0] for __ in ff_list]
+    veg_change_list = [((veg_post_mean[__] - veg_pre_mean[__]) - (veg_post_mean[0] - veg_pre_mean[0])) * 6 for __ in range(len(veg_post_mean))]
+    veg_change_list2 = [((veg_post_mean[__] / veg_post_mean[0]) - (veg_pre_mean[__] / veg_pre_mean[0]))  for __ in range(len(veg_post_mean))]
 
     # Define and use a simple function to label the plot in axes coordinates
     ax = plt.gca()
     # ax.text(0, .2, "", fontweight="bold", color='b', ha="left", va="center", transform=ax.transAxes)
-    ax.set_xlim(0, 0.6)
+    ax.set_xlim(-0.05, 0.1)
 
     # Set the subplots to overlap
     g.figure.subplots_adjust(hspace=-.15)
@@ -716,6 +720,79 @@ def fig11nc3_func():
     ax.set_xticks([0.2, 0.35, 0.5])
     ax.set_xticklabels(['20%', '35%', '50%'], fontsize=22)
     plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\Fig11_nc_diff.png', dpi=300)
+    plt.close()
+
+    fig_temp = plt.figure(figsize=(5.2, 8.96), constrained_layout=True, )
+    gs = fig_temp.add_gridspec(1, 1)
+
+    x_temp = np.array([10, 9, 8, 7, 6, 5, 4, 3, 2, 1])
+    cubic_dmn_change = interp1d(x_temp, dmn_change_list, kind='cubic')
+    cubic_veg_mean = interp1d(x_temp, veg_change_list, kind='cubic')
+
+    smooth_x_temp = np.linspace(10, 1, 300)
+    ax = fig_temp.add_subplot(gs[0, 0])
+    ax.plot(cubic_dmn_change(smooth_x_temp), smooth_x_temp, lw=3.5, color=(0,0,0.8))
+    ax.plot(cubic_veg_mean(smooth_x_temp), smooth_x_temp, lw=3.5, color=(0.8,0,0))
+    ax.plot([0 for _ in range(1000)], np.linspace(-1, 2, 1000))
+
+    ax.scatter(dmn_change_list, x_temp, s=13 ** 2, lw=3.5, marker='o', edgecolors=(81 / 256, 121 / 256, 150 / 256), c='white', zorder=3)
+    ax.scatter(veg_change_list, x_temp, s=13 ** 2, lw=3.5, marker='s', edgecolors='#cf5362', c='white', zorder=3)
+
+    for _ in range(x_temp.shape[0]):
+        ax.plot([-1, 1], [x_temp[_], x_temp[_]], lw=3, color=(240 / 256, 240 / 256, 240 / 256), zorder=1)
+        ax.arrow(0, x_temp[_], dmn_change_list[_], 0, width=0.02, head_width=0.16, head_length=0.014, ec=(0, 0, 1), fc=(0, 0, 0), zorder=10, length_includes_head=True)
+        ax.arrow(dmn_change_list[_], x_temp[_], veg_change_list[_] - dmn_change_list[_], 0, width=0.02, head_width=0.16, head_length=0.014,
+                 ec=(0, 0, 0), fc=(0, 0, 0), zorder=10, length_includes_head=True)
+
+    ax.fill_betweenx(smooth_x_temp, cubic_dmn_change(smooth_x_temp), cubic_veg_mean(smooth_x_temp), alpha=0.3, edgecolor=(1, 0, 0), facecolor='#cf5362', hatch='/')
+    ax.fill_betweenx(smooth_x_temp, [0 for _ in range(smooth_x_temp.shape[0])], cubic_dmn_change(smooth_x_temp), hatch='/', edgecolor=(0, 0, 1), facecolor=(81 / 256, 121 / 256, 150 / 256), alpha=0.3, )
+
+    ax.set_ylim([0.8, 10.2])
+    ax.set_yticks([])
+
+    ax.set_xlim([-0.03, 0.30])
+    ax.set_xticks([0, 0.10, 0.2, 0.3])
+    ax.set_xticklabels(['0%', '10%', '20%', '30%',], fontsize=22)
+    plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\Fig11_nc_diff2.png', dpi=300)
+    plt.close()
+
+    fig_temp = plt.figure(figsize=(5.2, 8.96), constrained_layout=True, )
+    gs = fig_temp.add_gridspec(1, 1)
+
+    x_temp = np.array([10, 9, 8, 7, 6, 5, 4, 3, 2, 1])
+    cubic_dmn_change = interp1d(x_temp, dmn_change_list, kind='cubic')
+    cubic_veg_mean = interp1d(x_temp, veg_change_list2, kind='cubic')
+
+    smooth_x_temp = np.linspace(10, 1, 300)
+    ax = fig_temp.add_subplot(gs[0, 0])
+    ax.plot(cubic_dmn_change(smooth_x_temp), smooth_x_temp, lw=3.5, color=(0, 0, 0.8))
+    ax.plot(cubic_veg_mean(smooth_x_temp), smooth_x_temp, lw=3.5, color=(0.8, 0, 0))
+    ax.plot([0 for _ in range(1000)], np.linspace(-1, 12, 1000), lw=2., color=(0, 0, 0), zorder=2)
+
+    ax.scatter(dmn_change_list, x_temp, s=13 ** 2, lw=3.5, marker='o', edgecolors=(81 / 256, 121 / 256, 150 / 256),
+               c='white', zorder=4)
+    ax.scatter(veg_change_list2, x_temp, s=13 ** 2, lw=3.5, marker='s', edgecolors='#cf5362', c='white', zorder=4)
+
+    for _ in range(x_temp.shape[0]):
+        ax.plot([-1, 1], [x_temp[_], x_temp[_]], lw=3, color=(240 / 256, 240 / 256, 240 / 256), zorder=1)
+        ax.arrow(0, x_temp[_], dmn_change_list[_], 0, width=0.02, head_width=0.16, head_length=0.014, ec=(0, 0, 1),
+                 fc=(0, 0, 0), zorder=3, length_includes_head=True, )
+        ax.arrow(0, x_temp[_], veg_change_list2[_], 0, width=0.02, head_width=0.16, head_length=0.014,
+                 ec=(0, 0, 0), fc=(0, 0, 0), zorder=3, length_includes_head=True, )
+    ax.plot([-1, 1], [11 ,11], lw=3, color=(240 / 256, 240 / 256, 240 / 256), zorder=1)
+
+    ax.fill_betweenx(smooth_x_temp, cubic_dmn_change(smooth_x_temp), cubic_veg_mean(smooth_x_temp), alpha=0.3,
+                     edgecolor=(1, 0, 0), facecolor='#cf5362', hatch='/')
+    ax.fill_betweenx(smooth_x_temp, [0 for _ in range(smooth_x_temp.shape[0])], cubic_dmn_change(smooth_x_temp),
+                     hatch='/', edgecolor=(0, 0, 1), facecolor=(81 / 256, 121 / 256, 150 / 256), alpha=0.3, )
+
+    ax.set_ylim([0.8, 11.8])
+    ax.set_yticks([])
+
+    ax.set_xlim([-0.03, 0.15])
+    ax.set_xticks([0, 0.05, 0.10, 0.15,])
+    ax.set_xticklabels(['0%', '5%', '10%', '15%', ], fontsize=22)
+    plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\Fig11_nc_diff3.png', dpi=300)
     plt.close()
 
 
@@ -950,7 +1027,7 @@ def fig11nc_func():
     # ax_temp.plot(np.linspace(0, 0, 100), np.linspace(-1, 1, 100), lw=1.5, c=(0,0,0))
     ax_temp.set_xlim([-0, 0.6])
     ax_temp.set_ylim([0, 50000])
-    ax_temp.set_xlabel('Multiyear mean AMVI', fontname='Arial', fontsize=36, fontweight='bold')
+    ax_temp.set_xlabel('Multiyear mean MAVI', fontname='Arial', fontsize=36, fontweight='bold')
 
     # g = sns.JointGrid(data=t, x="Pre-TGD multi-year average AMVI", y="Post-TGD multi-year average AMVI", height=10, marginal_ticks=True, xlim=(-0.01, 0.6), ylim=(-0.01, 0.6))
     # camp = sns.cubehelix_palette(start=.5, rot=-.5, as_cmap=True)
@@ -2605,4 +2682,4 @@ def fig20_func():
     plt.savefig('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig20\\fig20.png', dpi=400)
 
 
-fig11nc2_func()
+fig11nc3_func()

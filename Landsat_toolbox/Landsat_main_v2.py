@@ -322,8 +322,7 @@ class Landsat_l2_ds(object):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
             if kwarg_indicator not in ('ROI', 'ROI_name', 'size_control_factor', 'cloud_removal_para', 'scan_line_correction',
-                                       'main_coordinate_system', 'overwritten_factor', 'cloud_removal_para', 'metadata_range',
-                                       'issued_files', 'harmonising_data'):
+                                       'main_coordinate_system', 'overwritten_factor', 'metadata_range', 'issued_files', 'harmonising_data'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process harmonising data parameter
@@ -436,8 +435,21 @@ class Landsat_l2_ds(object):
         return index_list
 
     @save_log_file
-    def mp_construct_index(self, *args, **kwargs):
+    def mp_construct_index(self, index_list: list, **kwargs):
+        """
 
+        :param index_list: list of indices to generate. All supported indices could be found in the self.__init__ function
+        :param kwargs: ROI: The ROI file used to cut the output indices (Should under the type of shpfile);
+        ROI_name: The name of ROI user specified or the file name of ROI will be used;
+        size_control_factor: Whether converted the float type arr into int16 to save the storage space or not;
+        cloud_removal_para: Whether used the QA_pixel layer to remove the cloud-contaminated pixels or not;
+        scan_line_correction: Whether fixed the scanline correction error for Landsat 7 ETM+ or not;
+        main_coordinate_system: The ESPG style coordinate system for output raster;
+        overwritten_factor Whether overwritten the current result;
+        'metadata_range';
+        issued_files: Do not change the value unless you manually encounter some issued files;
+        'harmonising_data: Whether harmonising the Landsat OLI sensor data into Landsat TM range or not'
+        """
         # Metadata check
         if self.Landsat_metadata is None:
             raise Exception('Please construct the Landsat_metadata before the subset!')
@@ -447,7 +459,7 @@ class Landsat_l2_ds(object):
         kwargs['metadata_range'] = i
         try:
             with concurrent.futures.ProcessPoolExecutor() as executor:
-                res = executor.map(self.construct_landsat_index, repeat(args[0]), i, repeat(kwargs))
+                res = executor.map(self.construct_landsat_index, repeat(index_list), i, repeat(kwargs))
         except OSError:
             print('The OSError during the thread close for py38')
 
@@ -455,10 +467,10 @@ class Landsat_l2_ds(object):
         res.remove(None)
 
         # Process issue file
-        self._process_issued_files(args[0], res, **kwargs)
+        self._process_issued_files(index_list, res, **kwargs)
 
     @save_log_file
-    def sequenced_construct_vi(self, *args, **kwargs):
+    def sequenced_construct_index(self, index_list, **kwargs):
 
         # Metadata check
         if self.Landsat_metadata is None:
@@ -468,10 +480,10 @@ class Landsat_l2_ds(object):
         kwargs['metadata_range'] = range(self.Landsat_metadata_size)
         res = []
         for i in range(self.Landsat_metadata_size):
-            res.append(self.construct_landsat_index(args[0], i, **kwargs))
+            res.append(self.construct_landsat_index(index_list, i, **kwargs))
 
         # Process issue file
-        self._process_issued_files(args[0], res, **kwargs)
+        self._process_issued_files(index_list, res, **kwargs)
 
     def _process_issued_files(self, index_, filenum_list, **kwargs):
         if filenum_list != []:

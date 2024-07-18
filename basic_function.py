@@ -277,7 +277,7 @@ def file_filter(file_path_temp, containing_word_list: list, subfolder_detection=
         filter_list = []
         for file in file_list:
             if os.path.isdir(file_path_temp + file) and subfolder_detection:
-                filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list, subfolder_detection=True, and_or_factor=and_or_factor)
+                filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list, subfolder_detection=True, exclude_word_list=exclude_word_list, and_or_factor=and_or_factor)
                 if filter_list_temp != []:
                     filter_list.extend(filter_list_temp)
             else:

@@ -113,7 +113,7 @@ class Denv_dc(object):
             raise Exception('The timescale and timerange para is not properly assigned!')
 
         start_time = time.time()
-        print(f'Start loading the Denv dc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
+        print(f'Start loading the \033[1;31m{str(self.timerange)}\033[0m Denv dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m')
 
         # Read doy or date file of the Datacube
         try:
@@ -148,10 +148,9 @@ class Denv_dc(object):
             self.compete_doy_list = bf.date2doy(compete_doy_list)
         elif self.timescale == 'all':
             date_min, date_max = bf.doy2date(min(self.sdc_doylist)), bf.doy2date(max(self.sdc_doylist))
-            date_min = datetime.date(year=int(np.floor(date_min / 1000)), month=1, day=1).toordinal() + np.mod(date_min,1000) - 1
-            date_max = datetime.date(year=int(np.floor(date_max / 1000)), month=1, day=1).toordinal() + np.mod(date_max,1000)
-            compete_doy_list = [datetime.date.fromordinal(date_temp).strftime('%Y%m%d') for date_temp in
-                                range(date_min, date_max)]
+            date_min = datetime.date(year=int(np.floor(date_min / 1000)), month=1, day=1).toordinal() + np.mod(date_min, 1000) - 1
+            date_max = datetime.date(year=int(np.floor(date_max / 1000)), month=1, day=1).toordinal() + np.mod(date_max, 1000)
+            compete_doy_list = [datetime.date.fromordinal(date_temp).strftime('%Y%m%d') for date_temp in range(date_min, date_max)]
             self.compete_doy_list = bf.date2doy(compete_doy_list)
 
         # Read the Denv datacube
@@ -177,7 +176,7 @@ class Denv_dc(object):
         if autofill is True and len(self.compete_doy_list) > len(self.sdc_doylist):
             self._autofill_Denv_DC()
         elif len(self.compete_doy_list) < len(self.sdc_doylist):
-            raise Exception('Code has issues in the Denc autofill procedure!')
+            raise Exception('Code has issues in the Denv autofill procedure!')
 
         # autotrans sparse matrix
         if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
@@ -191,7 +190,7 @@ class Denv_dc(object):
         if self.dc_ZSize != len(self.sdc_doylist):
             raise TypeError('The Denv datacube is not consistent with the doy list')
 
-        print(f'Finish loading the Denv dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
+        print(f'Finish loading the \033[1;31m{str(self.timerange)}\033[0m Denv dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
 
     def __sizeof__(self):
         return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()
@@ -222,8 +221,11 @@ class Denv_dc(object):
             self.__init__(self.Phemetric_dc_filepath)
 
     def _autofill_Denv_DC(self):
+        # Interpolate the denv dc
+        autofill_factor = False
         for date_temp in self.compete_doy_list:
             if date_temp not in self.sdc_doylist:
+                autofill_factor = True
                 if date_temp == self.compete_doy_list[0]:
                     date_merge = self.compete_doy_list[1]
                     if self.sparse_matrix:
@@ -240,7 +242,7 @@ class Denv_dc(object):
                     self.sdc_doylist.insert(-1, date_temp)
                 else:
                     date_beg, date_end, _beg, _end = None, None, None, None
-                    for _ in range(1, 30):
+                    for _ in range(1, 60):
                         ordinal_date = datetime.date(year=int(np.floor(bf.doy2date(date_temp) / 10000)),
                                                      month=int(np.floor(np.mod(bf.doy2date(date_temp), 10000) / 100)),
                                                      day=int(np.mod(bf.doy2date(date_temp), 100))).toordinal()
@@ -282,8 +284,9 @@ class Denv_dc(object):
         if self.sdc_doylist != self.compete_doy_list:
             raise Exception('Error occurred during the autofill for the Denv DC!')
 
-        self.save(self.Denv_dc_filepath)
-        self.__init__(self.Denv_dc_filepath)
+        if autofill_factor:
+            self.save(self.Denv_dc_filepath)
+            self.__init__(self.Denv_dc_filepath)
 
     def save(self, output_path: str):
 
@@ -834,8 +837,7 @@ class Phemetric_dc(object):
                 else:
                     phe_arr = self.dc[:, :, self.paraname_list.index(phe_)]
                 phe_arr[phe_arr == self.Nodata_value] = np.nan
-                bf.write_raster(ds_temp, phe_arr, output_folder, f'{str(phe_)}.TIF', raster_datatype=gdal.GDT_Float32,
-                                nodatavalue=np.nan)
+                bf.write_raster(ds_temp, phe_arr, output_folder, f'{str(phe_)}.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
 
 
 class RS_dcs(object):
@@ -859,7 +861,7 @@ class RS_dcs(object):
         self._space_optimised = space_optimised
         self._sparse_matrix_list, self._huge_matrix_list = [], []
 
-        # Construct the indicator for different dcs
+        # Define the indicator for different dcs
         self._phemetric_namelist, self._pheyear_list = None, []
         self._inunfac_namelist, self._inunyear_list = None, []
         self._withPhemetricdc_, self._withDenvdc_, self._withS2dc_, self._withLandsatdc_, self._withInunfacdc_ = False, False, False, False, False
@@ -960,8 +962,7 @@ class RS_dcs(object):
                     if x_size != self._dcs_backup_[_].dc_XSize or y_size != self._dcs_backup_[_].dc_YSize:
                         raise Exception('Please make sure all the Denv datacube share the same size!')
                     elif z_Phemetric_size != self._dcs_backup_[_].dc_ZSize:
-                        raise Exception(
-                            'The Phemetric_dc datacubes is not consistent in the Z dimension! Double check the input!')
+                        raise Exception('The Phemetric_dc datacubes is not consistent in the Z dimension! Double check the input!')
 
                 elif self._dc_typelist[_] == Inunfac_dc:
                     self._withInunfacdc_ = True
@@ -1033,8 +1034,7 @@ class RS_dcs(object):
                     if auto_harmonised:
                         harmonised_factor = True
                     else:
-                        raise Exception(
-                            'The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
+                        raise Exception('The datacubes is not consistent in the date dimension! Turn auto harmonised factor as True if wanna avoid this problem!')
 
                 # Harmonised the dcs
                 if harmonised_factor:
@@ -1074,6 +1074,13 @@ class RS_dcs(object):
 
             # Determine the denv index
             self.Denv_indexlist = list(set([self._index_list[_] for _ in range(len(self._index_list)) if self._dc_typelist[_] == Denv_dc]))
+
+            denvyear = []
+            for _ in self._pheyear_list:
+                if _ not in pheyear and _ is not None:
+                    pheyear.append(_)
+                elif _ is not None:
+                    raise ValueError('There are duplicate pheyears for different pheme dcs!')
 
         # Check the consistency of Phemetric dcs
         if self._withPhemetricdc_:
@@ -1245,6 +1252,12 @@ class RS_dcs(object):
 
         # Define var for flood_free_phenology_metrics
         self._flood_free_pm = ['annual_max_VI', 'average_VI_between_max_and_flood']
+
+        # Define the mode for process denv via pheme
+        self._denv_via_pheme_mode = ['acc', 'ave', 'max']
+        self._denv_via_pheme_st = ['SOY', 'SOS', 'peak_doy', 'senescence_doy', 'EOS', 'EOY']  # Denote start of the year, start of the season, peak of the season
+        self._denv_via_pheme_ed = ['SOY', 'SOS', 'peak_doy', 'senescence_doy', 'EOS', 'EOY']
+        self._denv_via_pheme_minus_base = False
 
     def __sizeof__(self):
         size = 0
@@ -2605,7 +2618,7 @@ class RS_dcs(object):
             except:
                 raise Exception('The df output procedure was interrupted by error!')
 
-    def process_denv_via_pheme(self, denvname, phename):
+    def calculate_denv_via_pheme(self, denvname, year_list, start_pheme, end_pheme, cal_method, base_status):
 
         if denvname not in self.Denv_indexlist:
             raise ValueError(f'The denv index {str(denvname)} is not imported')
@@ -2631,19 +2644,14 @@ class RS_dcs(object):
                         phepos = self._pheyear_list.index(year_temp)
                         if f'{str(year_temp)}_static_{denvname}' not in self._doys_backup_[phepos]:
                             try:
-                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed,
-                                                                              NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_reconstructed.SM_namelist) or (
-                                        isinstance(pheme_reconstructed,
-                                                   np.ndarray) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_namelist):
+                                if (pheme_reconstructed is None or (isinstance(pheme_reconstructed, NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_reconstructed.SM_namelist) or
+                                        (isinstance(pheme_reconstructed, np.ndarray) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_namelist)):
                                     if pheme_reconstructed is None:
                                         if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed = NDSparseMatrix(
-                                                self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
+                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
                                                 SM_namelist=[f'{str(self._pheyear_list[phepos])}_SOS'])
                                         else:
-                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[
-                                                                                              phepos].index(
-                                                [f'{str(self._pheyear_list[phepos])}_SOS'])]]
+                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]
                                             pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
                                     else:
                                         if self._sparse_matrix_list[phepos]:
@@ -2756,14 +2764,11 @@ class RS_dcs(object):
                                 peak_doy = np.round(self.dcs[phepos].SM_group[f'{str(year_temp)}_peak_doy'].toarray())
                                 base_env = self.dcs[phepos].SM_group[f'{str(year_temp)}_static_{denvname}'].toarray()
                             elif isinstance(self.dcs[phepos], np.ndarray):
-                                sos = np.round(
-                                    self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].reshape(
+                                sos = np.round(self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].reshape(
                                         [self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]]))
-                                peak_doy = np.round(
-                                    self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_peak_doy')].reshape(
+                                peak_doy = np.round(self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_peak_doy')].reshape(
                                         [self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]]))
-                                base_env = self.dcs[phepos][:, :,
-                                           pheme_namelist.index(f'{str(year_temp)}_static_{denvname}')].reshape(
+                                base_env = self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_static_{denvname}')].reshape(
                                     [self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]])
                             else:
                                 raise TypeError('The para phemetric dc is not imported as a supported datatype!')
@@ -2799,15 +2804,11 @@ class RS_dcs(object):
                         self._dcs_backup_[phepos].dc = None
 
                 self._dcs_backup_[denvdc_pos[_]].dc = copy.copy(self.dcs[denvdc_pos[_]])
-                ori_index, ori_path = self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[
-                    denvdc_pos[_]].Denv_dc_filepath
-                self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[
-                    denvdc_pos[_]].Denv_dc_filepath = ori_index + '_relative', os.path.dirname(
-                    os.path.dirname(ori_path)) + '\\' + ori_path.split('\\')[-2] + '_relative\\'
+                ori_index, ori_path = self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath
+                self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath = (ori_index + '_relative', os.path.dirname(os.path.dirname(ori_path)) + '\\' + ori_path.split('\\')[-2] + '_relative\\')
                 self._dcs_backup_[denvdc_pos[_]].save(self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath)
                 self._dcs_backup_[denvdc_pos[_]].dc = None
-                self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[
-                    denvdc_pos[_]].Denv_dc_filepath = ori_index, ori_path
+                self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath = ori_index, ori_path
         else:
             pass
 
@@ -2863,7 +2864,6 @@ class RS_dcs(object):
 
         # Generate the peak doy list
         if peak_factor:
-
             for q in date_pro:
                 if isinstance(q, str) and q.startswith('peak'):
 
