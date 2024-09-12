@@ -514,7 +514,7 @@ class River_centreline(object):
 
                 # Line connection and find mainstream
                 center_new, width_new, node_arr = self.line_connection(centerline_arr, width_arr, psi_arr, nodata_value=0)
-                main_stream = process_river_networks(center_new, width_new)
+                main_stream = self.process_river_networks(center_new, width_new)
                 write_raster(centerline_ds, center_new, output_folder, f'centerline_connect_{str(filename)}.tif',
                              raster_datatype=gdal.GDT_Byte)
                 write_raster(centerline_ds, main_stream, output_folder, f'mainstream_{str(filename)}.tif',
@@ -1155,8 +1155,45 @@ def mainstream_swing(cs_file, centreline_files, years=range(2006,2022)):
     results.to_excel("D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream\\主槽摆动.xlsx", index=False)
 
 
-if __name__ == '__main__':
+def process_xy_file(xyfile):
 
+    try:
+        df = pd.read_csv(xyfile)
+        line_df = {'id': [], 'geometry': []}
+        num = 0
+        for _ in range(df.shape[0]):
+            if _ == 0:
+                line_temp = [[df['Y'][_], df['X'][_]]]
+            elif _ == df.shape[0] - 1:
+                line_temp.append([df['Y'][_], df['X'][_]])
+                line_df['id'].append(str(num))
+                line_df['geometry'].append(LineString(line_temp))
+                break
+            elif len(line_temp) == 0:
+                line_temp.append([df['Y'][_], df['X'][_]])
+            elif df['X'][_] != df['X'][_ - 1] and df['X'][_ + 1] != df['X'][_] and np.abs(np.degrees(np.arctan((df['Y'][_] - df['Y'][_ - 1]) / (df['X'][_] - df['X'][_ - 1]))) - np.degrees(np.arctan((df['Y'][_ + 1] - df['Y'][_]) / (df['X'][_ + 1] - df['X'][_])))) > 5:
+                line_temp.append([df['Y'][_], df['X'][_]])
+                line_df['id'].append(str(num))
+                line_df['geometry'].append(LineString(line_temp))
+                num += 1
+                line_temp = []
+            elif df['Y'][_] != df['Y'][_ - 1] and df['Y'][_ + 1] != df['Y'][_] and np.abs(np.degrees(np.arctan((df['X'][_] - df['X'][_ - 1]) / (df['Y'][_] - df['Y'][_ - 1]))) - np.degrees(np.arctan((df['X'][_ + 1] - df['X'][_]) / (df['Y'][_ + 1] - df['Y'][_])))) > 5:
+                line_temp.append([df['Y'][_], df['X'][_]])
+                line_df['id'].append(str(num))
+                line_df['geometry'].append(LineString(line_temp))
+                num += 1
+                line_temp = []
+            else:
+                line_temp.append([df['Y'][_], df['X'][_]])
+        line_df = gp.GeoDataFrame(geometry=line_df['geometry'], crs='EPSG:4543')
+        line_df.to_file('D:\\A_HH_upper\\A_gansu_reach\\gansu_cs.shp')
+    except:
+        print(traceback.format_exc())
+        pass
+
+
+if __name__ == '__main__':
+    process_xy_file('D:\\A_HH_upper\\A_gansu_reach\\A_前期资料收集\\断面矢量\\XY_coordinate.csv')
     #
     # file_folder = 'D:\\A_YarlungZangbo_\\Landsat_30m\\KG137-2\\KG137_V2_selected\\centerl_selected\\2011\\composite\\centreline\\'
     # cetreline_ds = gdal.Open(os.path.join(file_folder, 'centerline_connect_MNDWI_137040.tif'))
@@ -1172,7 +1209,7 @@ if __name__ == '__main__':
         rl.composite_month_landsat(f'D:\\A_YarlungZangbo_\\Landsat_30m\\KG137-2\\KG137_V2_selected\\centerl_selected\\{str(_)}')
         rl.extract_RCL_byrivermap_(f'D:\\A_YarlungZangbo_\\Landsat_30m\\KG137-2\\KG137_V2_selected\\centerl_selected\\{str(_)}\\composite', f'D:\\A_YarlungZangbo_\\SHP-v1\\Reach3_small(46N).shp')
 
-    # braiding_index
+    # mainstream
     rl = River_centreline()
     for reach_, roi in zip(['KG137', 'ML135'], ['Reach1_small(46N)', 'Reach2_small(46N)']):
         for _ in [2011, 2016, 2021]:
@@ -1216,58 +1253,3 @@ if __name__ == '__main__':
 
         # Compute the modified multiscale singularity index
         psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters, narrow_rivers=False)
-
-        # Extract channel centerlines
-        nms = delineate.extractCenterlines(orient, psi)
-        centerlines, centerlineCandidate = delineate.thresholdCenterlines(nms)
-
-        centerline_arr = np.array(centerlines)
-        centerline_arr = centerline_arr.astype(np.int32)
-        width_arr = np.array(widthMap)
-        width_arr = width_arr
-        psi_arr = np.array(psi)
-        center_new, width_new, node_arr = line_connection(centerline_arr, width_arr, psi_arr, nodata_value=0)
-        write_raster(ori_ds, nms, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\river_network\\',
-                     f'RiverNET_{year}.tif')
-        write_raster(ori_ds, centerline_arr, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\',
-                     f'Mainstream_ori_{year}.tif')
-        write_raster(ori_ds, center_new, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\',
-                     f'Mainstream_{year}.tif')
-        write_raster(ori_ds, node_arr, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\',
-                     f'node_{year}.tif')
-        write_raster(ori_ds, width_arr, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\river_width\\',
-                     f'RW_{year}.tif')
-
-    # gee_api = GEE_ds()
-    # gee_api.download_index_GEE('LT05', (20060101, 20211231), 'MNDWI',
-    #                            [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.73681471587109],
-    #                            'G:\\A_HH_upper\\GEE\\')
-
-    directory_path = 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\'
-    image_files = list_tif_files(directory_path)
-
-    maximum_composite_tiffile(file_filter('G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\', ['.TIF']), 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\', 'mndwi_2008_compo.TIF')
-    ori_ds = gdal.Open('G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\mndwi_2008_compo.TIF')
-    mndwi_arr = ori_ds.GetRasterBand(1).ReadAsArray()
-    mndwi_arr = mndwi_arr.astype(np.float32)
-    mndwi_arr[mndwi_arr == -32768] = -1
-    mndwi_arr = mndwi_arr/10000
-    # mndwi_file = 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\LC08_133037_20131009.MNDWI.tif'
-
-    # ds_ = gdal.Open(mndwi_file)
-    # array = ds_.GetRasterBand(1).ReadAsArray()
-    # Create the filters that are needed to compute the singularity index
-    filters = singularity_index.SingularityIndexFilters()
-
-    # Compute the modified multiscale singularity index
-    psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters)
-
-    # Extract channel centerlines
-    year = 2008
-    write_raster(ori_ds, centerline_arr, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'centereline_{year}.tif')
-    write_raster(ori_ds, center_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'centerelineNEW_{year}.tif')
-    write_raster(ori_ds, width_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'widthNEW_{year}.tif')
-
-    # gee_api = GEE_ds()
-    # gee_api.download_index_GEE('LC08', (20060101, 20211231), 'MNDWI', [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.13681471587109], 'G:\\A_HH_upper\\GEE\\')
-    pass

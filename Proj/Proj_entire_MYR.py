@@ -125,12 +125,12 @@ if __name__ == '__main__':
     #
     # # Cross section construction POST-TGD
     cs1 = CrossSection('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\')
-    cs1.from_standard_cross_profiles(
+    cs1.from_stdCSfiles(
         'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_DEM_2019_all.csv')
-    cs1.import_section_coordinates(
+    cs1.import_CS_coords(
         'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_coordinates_wgs84.csv',
         epsg_crs='epsg:32649')
-    cs1.import_section_tributary(
+    cs1.import_CS_tribu(
         'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_tributary.xlsx')
     # cs1.to_geojson()
     # cs1.to_shpfile()

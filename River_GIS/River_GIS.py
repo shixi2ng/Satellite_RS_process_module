@@ -1395,7 +1395,7 @@ class Thalweg(object):
                 raise ValueError(f"The CrossSection json does not exist!")
             elif cs_json.endswith('.json'):
                 self.original_cs = CrossSection()
-                self.original_cs = self.original_cs.load_geojson(cs_json)
+                self.original_cs = self.original_cs.from_geojson(cs_json)
             else:
                 raise TypeError(f'The cs_json file should be a json!')
         else:
@@ -1746,6 +1746,16 @@ class Flood_freq_based_hyspometry_method(object):
 
 class CrossSection(object):
 
+    # CrossSection contains the Profile of cross-sections from the following several aspects:
+    # 0 The name of each cross-section (Key element \\ import from all files)
+    # 1 The distance to left bank of each node for each cross-section (Essential \\ import from standard cs file)
+    # 2 The elevation profile of each node (Essential \\ import from standard cs file)
+    # 3 The distance along river of each river (Essential \\ import from standard cs file)
+    # 4 The floodplain or channel type for each node (Optional \\ import from standard cs file or automatic generate through func)
+    # 5 The xy coordinates of each node (Optional \\ import from cs coords file)
+    # 6 The factor present if the cross-section is tributary or not (Optional \\ import from cs coords file)
+    # 7 The factor present if the cross-section is control cross-section or not (Optional \\ merged from hydro dataset)
+
     def __init__(self, work_env=None):
 
         # Define work env
@@ -1758,18 +1768,20 @@ class CrossSection(object):
             except:
                 self.work_env = None
 
-        # Define the property of cross section
-        self.cross_section_name = None
-        self.cross_section_dem = None
-        self.cross_section_distance = None
-        self.cross_section_tribu = None
-        self.cross_section_bank_coord = None
-        self.cross_section_geodf = None
+        # Define the property of cross-section
+        self.cross_section_name = None  # list of cross-section name (keys)
+        self.cross_section_ele = None  # list of cross-section elevation
+        self.cross_section_dis = None  # list of cross-section distance along the main channel
+        self.cross_section_type = None  # list of cross-section type
+        self.cross_section_tribu = None   # list of cross-section tributary factor
+        self.cross_section_cntrl = None  # list of control cross-section factor
+        self.cross_section_bank_coord = None  # list of cross-section tributary factor
+        self.cross_section_geodf = None  # cross-section Geo Dataframe
         self.cross_section_num = 0
         self.crs = None
         self.issued_cross_section = []
 
-        # Define the DEM extracted cross section inform
+        # Define the DEM extracted cross-section inform
         self.cross_section_2D_dem = None
 
         # Define the differential dem
@@ -1779,22 +1791,22 @@ class CrossSection(object):
     def _consistent_cross_section_inform(self):
 
         # Consistent all inform imported from the standard xlsx
-        if self.cross_section_name != list(self.cross_section_dem.keys()) or self.cross_section_dem.keys() != list(self.cross_section_distance.keys()):
-            combined_list = [_ for _ in self.cross_section_name if _ in list(self.cross_section_dem.keys()) and _ in list(self.cross_section_distance.keys())]
+        if self.cross_section_name != list(self.cross_section_ele.keys()) or self.cross_section_ele.keys() != list(self.cross_section_dis.keys()):
+            combined_list = [_ for _ in self.cross_section_name if _ in list(self.cross_section_ele.keys()) and _ in list(self.cross_section_dis.keys())]
             for _ in self.cross_section_name:
                 if _ not in combined_list:
                     self.cross_section_name.remove(_)
                     print(f'Some information for the cross section {str(_)} is missing!')
-            for _ in list(self.cross_section_dem.keys()):
-                if _ not in self.cross_section_dem.keys():
-                    self.cross_section_dem.pop(_)
+            for _ in list(self.cross_section_ele.keys()):
+                if _ not in self.cross_section_ele.keys():
+                    self.cross_section_ele.pop(_)
                     print(f'Some information for the cross section {str(_)} is missing!')
-            for _ in list(self.cross_section_distance.keys()):
-                if _ not in list(self.cross_section_distance.keys()):
-                    self.cross_section_distance.pop(_)
+            for _ in list(self.cross_section_dis.keys()):
+                if _ not in list(self.cross_section_dis.keys()):
+                    self.cross_section_dis.pop(_)
                     print(f'Some information for the cross section {str(_)} is missing!')
 
-        # Consistent the tribu
+        # Consistent the tributary factor
         if self.cross_section_tribu is None:
             self.cross_section_tribu = {}
             for _ in self.cross_section_name:
@@ -1820,6 +1832,19 @@ class CrossSection(object):
                 if _ not in self.cross_section_name:
                     self.cross_section_bank_coord.pop(_)
 
+        # Consistent the control cross-section
+        if self.cross_section_cntrl is None:
+            self.cross_section_cntrl = {}
+            for _ in self.cross_section_name:
+                self.cross_section_cntrl[_] = False
+        elif list(self.cross_section_cntrl.keys()) != self.cross_section_name:
+            for _ in self.cross_section_name:
+                if _ not in list(self.cross_section_cntrl.keys()):
+                    self.cross_section_cntrl[_] = False
+            for _ in list(self.cross_section_cntrl.keys()):
+                if _ not in self.cross_section_name:
+                    self.cross_section_cntrl.pop(_)
+
     def _construct_geodf(self):
 
         # Consistent the dem, distance and name list
@@ -1827,12 +1852,13 @@ class CrossSection(object):
         self.cross_section_num = len(self.cross_section_name)
 
         # Generate the geodataframe
-        tribu_temp, dem_temp, distance_temp, geometry_temp, bank_coord_temp = [], [], [], [], []
+        tribu_temp, dem_temp, distance_temp, geometry_temp, bank_coord_temp, control_section_temp = [], [], [], [], [], []
         for _ in self.cross_section_name:
             tribu_temp.append(self.cross_section_tribu[_])
-            dem_temp.append(self.cross_section_dem[_])
-            distance_temp.append(self.cross_section_distance[_])
+            dem_temp.append(self.cross_section_ele[_])
+            distance_temp.append(self.cross_section_dis[_])
             bank_coord_temp.append(self.cross_section_bank_coord[_])
+            control_section_temp.append(self.cross_section_cntrl[_])
 
             # Generate the geometry
             if bank_coord_temp[-1] == LineString() or np.isnan(bank_coord_temp[-1][0][0]):
@@ -1842,16 +1868,16 @@ class CrossSection(object):
                 lb_xcoord, lb_ycoord = bank_coord_temp[-1][0][0], bank_coord_temp[-1][0][1]
                 dis_ = np.sqrt((bank_coord_temp[-1][1][0] - bank_coord_temp[-1][0][0]) ** 2 + (bank_coord_temp[-1][1][1] - bank_coord_temp[-1][0][1]) ** 2)
                 itr_xdim, itr_ydim = (bank_coord_temp[-1][1][0] - bank_coord_temp[-1][0][0]) / dis_, (bank_coord_temp[-1][1][1] - bank_coord_temp[-1][0][1]) / dis_
-                offset = self.cross_section_dem[_][0][0] if abs(dis_ - (self.cross_section_dem[_][-1][0] - self.cross_section_dem[_][0][0])) < abs(dis_ - self.cross_section_dem[_][-1][0]) else 0
+                offset = self.cross_section_ele[_][0][0] if abs(dis_ - (self.cross_section_ele[_][-1][0] - self.cross_section_ele[_][0][0])) < abs(dis_ - self.cross_section_ele[_][-1][0]) else 0
 
-                for dem_index in range(len(self.cross_section_dem[_])):
-                    dem_dis = self.cross_section_dem[_][dem_index][0] - offset
-                    line_coord.append((lb_xcoord + dem_dis * itr_xdim, lb_ycoord + dem_dis * itr_ydim, self.cross_section_dem[_][dem_index][1]))
+                for dem_index in range(len(self.cross_section_ele[_])):
+                    dem_dis = self.cross_section_ele[_][dem_index][0] - offset
+                    line_coord.append((lb_xcoord + dem_dis * itr_xdim, lb_ycoord + dem_dis * itr_ydim, self.cross_section_ele[_][dem_index][1]))
                 geometry_temp.append(LineString(line_coord))
 
         dic_temp = {'cs_name': self.cross_section_name, 'cs_tribu': tribu_temp,
-                    'cs_dem': dem_temp, 'cs_distance2dam': distance_temp,
-                    'cs_bank_coord': bank_coord_temp, 'geometry': geometry_temp}
+                    'cs_dem': dem_temp, 'cs_DistLgRiv': distance_temp,
+                    'cs_bank_coord': bank_coord_temp, 'geometry': geometry_temp, 'control_section': control_section_temp}
         self.cross_section_geodf = gp.GeoDataFrame(dic_temp)
 
         # Set the crs
@@ -1866,20 +1892,20 @@ class CrossSection(object):
         except:
             raise ValueError('The crs of geodf is missing')
 
-        if False in [_ in list(self.cross_section_geodf.keys()) for _ in ['cs_name', 'cs_distance2dam', 'geometry', 'cs_tribu', 'cs_dem', 'cs_bank_coord']]:
-            missing_keys = [_ for _ in ['cs_name', 'cs_distance2dam', 'geometry', 'cs_tribu', 'cs_dem', 'cs_bank_coord'] if _ not in list(self.cross_section_geodf.keys())]
+        if False in [_ in list(self.cross_section_geodf.keys()) for _ in ['cs_name', 'cs_DistLgRiv', 'geometry', 'cs_tribu', 'cs_dem', 'cs_bank_coord']]:
+            missing_keys = [_ for _ in ['cs_name', 'cs_DistLgRiv', 'geometry', 'cs_tribu', 'cs_dem', 'cs_bank_coord'] if _ not in list(self.cross_section_geodf.keys())]
             raise KeyError(f'The key {str(missing_keys)} of geodf is missing!')
 
         # Extract information from geodf
         self.cross_section_name = list(self.cross_section_geodf['cs_name'])
-        self.cross_section_dem, self.cross_section_distance, self.cross_section_tribu, self.cross_section_bank_coord = {}, {}, {}, {}
+        self.cross_section_ele, self.cross_section_dis, self.cross_section_tribu, self.cross_section_bank_coord = {}, {}, {}, {}
         self.cross_section_num = len(self.cross_section_name)
 
         # Construct the dic
         dem4df = []
         for _ in self.cross_section_name:
             cs_index = self.cross_section_geodf[self.cross_section_geodf['cs_name'] == _].index[0]
-            self.cross_section_distance[_] = self.cross_section_geodf['cs_distance2dam'][cs_index]
+            self.cross_section_dis[_] = self.cross_section_geodf['cs_DistLgRiv'][cs_index]
             self.cross_section_bank_coord[_] = self.cross_section_geodf['geometry'][cs_index]
             self.cross_section_tribu[_] = self.cross_section_geodf['cs_tribu'][cs_index]
 
@@ -1901,63 +1927,89 @@ class CrossSection(object):
             else:
                 raise Exception(f'Dem of {_} was problematic!')
             dem4df.append(dem_output)
-            self.cross_section_dem[_] = self.cross_section_geodf['cs_dem'][cs_index]
+            self.cross_section_ele[_] = self.cross_section_geodf['cs_dem'][cs_index]
         self.cross_section_geodf['cs_dem'] = dem4df
 
-    def from_standard_cross_profiles(self, dem_xlsx_filename: str):
-
-        # Import dem xlsx filename
-        if isinstance(dem_xlsx_filename, str):
-            if not os.path.exists(dem_xlsx_filename):
-                raise ValueError(f'The {str(dem_xlsx_filename)} does not exist!')
-            elif dem_xlsx_filename.endswith('.xlsx') or dem_xlsx_filename.endswith('.xls'):
-                dem_xlsx_file = pd.read_excel(dem_xlsx_filename)
-            elif dem_xlsx_filename.endswith('.csv'):
-                dem_xlsx_file = pd.read_csv(dem_xlsx_filename)
-            else:
-                raise TypeError(f'The dem xlsx file should be a xlsx!')
-        else:
-            raise TypeError(f'The {str(dem_xlsx_filename)} should be a str!')
+    def from_stdCSfiles(self, std_CS_file: str):
 
         # Process work env
         if self.work_env is None:
-            self.work_env = bf.Path(os.path.dirname(dem_xlsx_filename)).path_name
+            self.work_env = bf.Path(os.path.dirname(std_CS_file)).path_name
+
+        # Import dem xlsx filename
+        if isinstance(std_CS_file, str):
+            if not os.path.exists(std_CS_file):
+                raise ValueError(f'The {str(std_CS_file)} does not exist!')
+            elif std_CS_file.endswith('.xlsx') or std_CS_file.endswith('.xls'):
+                cs_profile_df = pd.read_excel(std_CS_file)
+            elif std_CS_file.endswith('.csv'):
+                cs_profile_df = pd.read_csv(std_CS_file)
+            else:
+                raise TypeError(f'The dem file should be a .xlsx .xls or .csv files!')
+        else:
+            raise TypeError(f'The {str(std_CS_file)} should be a str!')
 
         # Process dem xlsx file
-        cs_start_index = dem_xlsx_file.loc[dem_xlsx_file[dem_xlsx_file.keys()[0]] == '序号'].index
-        cs_end_index = dem_xlsx_file[dem_xlsx_file.keys()[0]][(dem_xlsx_file[dem_xlsx_file.keys()[0]].str.isnumeric() == False)].index.tolist()
+        cs_start_index = cs_profile_df.loc[cs_profile_df[cs_profile_df.keys()[0]] == '序号'].index
+        cs_end_index = cs_profile_df[cs_profile_df.keys()[0]][(cs_profile_df[cs_profile_df.keys()[0]].str.isnumeric() == False)].index.tolist()
         itr = 0
         for cs_index in cs_start_index:
             try:
                 itr += 1
-                cs_name_ = dem_xlsx_file[dem_xlsx_file.keys()[0]][cs_index - 3]
-                # Index the cross section NAME
+                cs_name_ = cs_profile_df[cs_profile_df.keys()[0]][cs_index - 3]
+                cs_name_ = cs_name_.replace(' ', '')
+                # Index the cross-section NAME
                 if self.cross_section_name is None:
-                    self.cross_section_name = [dem_xlsx_file[dem_xlsx_file.keys()[0]][cs_index - 3]]
+                    self.cross_section_name = [cs_name_]
                 elif cs_name_ not in self.cross_section_name:
-                    self.cross_section_name.append(dem_xlsx_file[dem_xlsx_file.keys()[0]][cs_index - 3])
+                    self.cross_section_name.append(cs_name_)
 
-                # Index the cross section DEM
+                # Index the cross-section DEM
                 cs_end_index_temp = [_ for _ in cs_end_index if _ > cs_index]
                 cs_end_index_temp = min(cs_end_index_temp)
-                if self.cross_section_dem is None:
-                    self.cross_section_dem = {cs_name_: np.array(dem_xlsx_file[dem_xlsx_file.keys()[1:3]][cs_index + 1: cs_end_index_temp].astype(np.float32)).tolist()}
-                elif cs_name_ not in list(self.cross_section_dem.keys()):
-                    self.cross_section_dem[cs_name_] = np.array(dem_xlsx_file[dem_xlsx_file.keys()[1:3]][cs_index + 1: cs_end_index_temp].astype(np.float32)).tolist()
+                if self.cross_section_ele is None:
+                    self.cross_section_ele = {cs_name_: np.array(cs_profile_df[cs_profile_df.keys()[1: cs_profile_df.shape[1]]][cs_index + 1: cs_end_index_temp].astype(np.float32)).tolist()}
+                elif cs_name_ not in list(self.cross_section_ele.keys()):
+                    self.cross_section_ele[cs_name_] = np.array(cs_profile_df[cs_profile_df.keys()[1: cs_profile_df.shape[1]]][cs_index + 1: cs_end_index_temp].astype(np.float32)).tolist()
 
-                # Index the cross section distance
-                if self.cross_section_distance is None:
-                    self.cross_section_distance = {cs_name_: np.float32(dem_xlsx_file[dem_xlsx_file.keys()[1]][cs_end_index[-1] + itr])}
-                elif cs_name_ not in list(self.cross_section_distance.keys()):
-                    self.cross_section_distance[cs_name_] = np.float32(dem_xlsx_file[dem_xlsx_file.keys()[1]][cs_end_index[-1] + itr])
+                # Index the cross-section distance
+                if self.cross_section_dis is None:
+                    self.cross_section_dis = {cs_name_: np.float32(cs_profile_df[cs_profile_df.keys()[1]][cs_end_index[-1] + itr])}
+                elif cs_name_ not in list(self.cross_section_dis.keys()):
+                    self.cross_section_dis[cs_name_] = np.float32(cs_profile_df[cs_profile_df.keys()[1]][cs_end_index[-1] + itr])
             except:
                 self.issued_cross_section.append(cs_index)
 
         self._construct_geodf()
 
-    def import_section_coordinates(self, coordinate_files: str, epsg_crs: str):
+    def from_geojson(self, geodf_json: str):
 
-        # Check whether the cross section name is imported
+        # Process work env
+        if self.work_env is None:
+            self.work_env = bf.Path(os.path.dirname(geodf_json)).path_name
+
+        # Check the csv existence
+        try:
+            if isinstance(geodf_json, str):
+                if not os.path.exists(geodf_json):
+                    raise ValueError(f'The {str(geodf_json)} does not exist!')
+                elif geodf_json.endswith('.json'):
+                    self.cross_section_geodf = gp.read_file(geodf_json)
+                else:
+                    raise TypeError(f'It is not a valid geojson file for CrossSection!')
+            else:
+                raise TypeError(f'The {str(geodf_json)} should be a str!')
+        except:
+            print(traceback.format_exc())
+            raise IOError('Some error occurred during the import of geojson file for Cross section')
+
+        # import from geodf
+        self._extract_from_geodf()
+        return self
+
+    def import_CS_coords(self, coordinate_files: str, epsg_crs: str):
+
+        # Check whether the cross-section name is imported
         if self.cross_section_name is None or len(self.cross_section_name) == 0:
             raise ValueError('Please import the cross section standard information before the coordinates!')
 
@@ -1969,18 +2021,22 @@ class CrossSection(object):
             if not epsg_crs.startswith('epsg:'):
                 raise ValueError('The epsg crs should start with epsg!')
 
-        # Load coordinate_files
-        if isinstance(coordinate_files, str):
-            if not os.path.exists(coordinate_files):
-                raise ValueError(f'The {str(coordinate_files)} does not exist!')
-            elif coordinate_files.endswith('.xlsx') or coordinate_files.endswith('.xls'):
-                coordinate_file_df = pd.read_excel(coordinate_files)
-            elif coordinate_files.endswith('.csv'):
-                coordinate_file_df = pd.read_csv(coordinate_files)
+        try:
+            # Load coordinate_files
+            if isinstance(coordinate_files, str):
+                if not os.path.exists(coordinate_files):
+                    raise ValueError(f'The {str(coordinate_files)} does not exist!')
+                elif coordinate_files.endswith('.xlsx') or coordinate_files.endswith('.xls'):
+                    coordinate_file_df = pd.read_excel(coordinate_files)
+                elif coordinate_files.endswith('.csv'):
+                    coordinate_file_df = pd.read_csv(coordinate_files)
+                else:
+                    raise TypeError(f'The dem xlsx file should be a xlsx!')
             else:
-                raise TypeError(f'The dem xlsx file should be a xlsx!')
-        else:
-            raise TypeError(f'The {str(coordinate_files)} should be a str!')
+                raise TypeError(f'The {str(coordinate_files)} should be a str!')
+        except:
+            print(traceback.format_exc())
+            raise Exception(f'Error occurred when loading the coordinate file {coordinate_files}')
 
         # Import into the dataframe
         self.cross_section_bank_coord = {}
@@ -1995,24 +2051,28 @@ class CrossSection(object):
         self.crs = epsg_crs
         self._construct_geodf()
 
-    def import_section_tributary(self, tributary_files: str):
+    def import_CS_tribu(self, tributary_files: str):
 
-        # Check whether the cross section name is imported
+        # Check whether the cross-section name is imported
         if self.cross_section_name is None or len(self.cross_section_name) == 0:
             raise ValueError('Please import the cross section standard information before the tributary!')
 
         # Load coordinate_files
-        if isinstance(tributary_files, str):
-            if not os.path.exists(tributary_files):
-                raise ValueError(f'The {str(tributary_files)} does not exist!')
-            elif tributary_files.endswith('.xlsx') or tributary_files.endswith('.xls'):
-                tributary_file_df = pd.read_excel(tributary_files)
-            elif tributary_files.endswith('.csv'):
-                tributary_file_df = pd.read_csv(tributary_files)
+        try:
+            if isinstance(tributary_files, str):
+                if not os.path.exists(tributary_files):
+                    raise ValueError(f'The {str(tributary_files)} does not exist!')
+                elif tributary_files.endswith('.xlsx') or tributary_files.endswith('.xls'):
+                    tributary_file_df = pd.read_excel(tributary_files)
+                elif tributary_files.endswith('.csv'):
+                    tributary_file_df = pd.read_csv(tributary_files)
+                else:
+                    raise TypeError(f'The dem xlsx file should be a xlsx!')
             else:
-                raise TypeError(f'The dem xlsx file should be a xlsx!')
-        else:
-            raise TypeError(f'The {str(tributary_files)} should be a str!')
+                raise TypeError(f'The {str(tributary_files)} should be a str!')
+        except:
+            print(traceback.format_exc())
+            raise Exception(f'Error occurred when loading the tributary file {tributary_files}')
 
         # Import tributary inform
         for _ in list(tributary_file_df[tributary_file_df.keys()[0]]):
@@ -2022,7 +2082,7 @@ class CrossSection(object):
 
         self._construct_geodf()
 
-    def merged_hydro_inform(self, hydro_ds: HydrometricStationData):
+    def merge_Hydrods(self, hydro_ds: HydrometricStationData):
 
         # Create the hydro inform dic
         self.hydro_inform_dic = {}
@@ -2037,18 +2097,66 @@ class CrossSection(object):
                 wl_offset = hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
                 self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
                 self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
+                self.cross_section_cntrl[_] = True
+
+        self._construct_geodf()
+
+    def automatic_label_cs(self, inundation_frequency_tif: str):
+
+        # Load inundation frequency file
+        if isinstance(inundation_frequency_tif, str):
+            if not os.path.exists(inundation_frequency_tif):
+                raise ValueError(f'The {str(inundation_frequency_tif)} does not exist!')
+            elif inundation_frequency_tif.endswith('.tif') or inundation_frequency_tif.endswith('.TIF'):
+                if_ds = gdal.Open()
+                if_raster
+            elif tributary_files.endswith('.csv'):
+                tributary_file_df = pd.read_csv(tributary_files)
+            else:
+                raise TypeError(f'The dem xlsx file should be a xlsx!')
+        else:
+            raise TypeError(f'The {str(tributary_files)} should be a str!')
+
+
+
+    def generate_CSProf41DHM(self, output_path, ROI_name = None):
+
+        geodf4csprof = self.cross_section_geodf.sort_values(by='cs_DistLgRiv', ascending=True).reset_index(drop=True)
+        if len(self.cross_section_name) == 0:
+            raise Exception('No valid cross section is imported!')
+        else:
+            output_dic = {'Id': [], 'Distance to left node': [], 'Ele': [], 'Type': []}
+            for _ in range(geodf4csprof.shape[0]):
+                output_dic['Id'].extend([geodf4csprof['cs_name'][_], 'Id'])
+                output_dic['Distance to left node'].extend([geodf4csprof['cs_DistLgRiv'][_],'Distance to left node'])
+                output_dic['Ele'].extend([geodf4csprof['control_section'][_], 'Ele'])
+                output_dic['Type'].extend([None, 'Type'])
+                for __ in range(len(geodf4csprof['cs_dem'][_])):
+                    output_dic['Id'].append(__ + 1)
+                    output_dic['Distance to left node'].append(geodf4csprof['cs_dem'][_][__][0])
+                    output_dic['Ele'].append(geodf4csprof['cs_dem'][_][__][1])
+                    if len(geodf4csprof['cs_dem'][_][__]) > 2:
+                        output_dic['Type'].append(geodf4csprof['cs_dem'][_][__][2])
+                    else:
+                        output_dic['Type'].append(np.nan)
+
+        std_cs_prof = pd.DataFrame(output_dic)
+        if ROI_name is None:
+            std_cs_prof.to_csv(output_path + "CSProf.csv", header=False, index=False, encoding='gbk')
+        else:
+            std_cs_prof.to_csv(output_path + f"{str(ROI_name)}_CSProf.csv", header=False, index=False, encoding='gbk')
 
     def generate_differential_cross_profile(self, cross_section2):
 
         # Check the type of input
-        if self.cross_section_dem is None:
+        if self.cross_section_ele is None:
             raise Exception('Please input the cross profiles before further process!')
         elif self.cross_section_bank_coord is None:
             raise Exception('Please input the bank coordinate before further process!')
 
         if not isinstance(cross_section2, CrossSection):
             raise Exception('The differential cross profile only work for two cross section!!')
-        elif cross_section2.cross_section_dem is None:
+        elif cross_section2.cross_section_ele is None:
             raise Exception('Please input the cross profiles before further process!')
 
         # Differential the rs dem
@@ -2057,8 +2165,8 @@ class CrossSection(object):
         for _ in self.cross_section_name:
             if _ in cross_section2.cross_section_name:
                 diff_list = []
-                ref_cross_section_dem = self.cross_section_dem[_]
-                new_cross_section_dem = cross_section2.cross_section_dem[_]
+                ref_cross_section_dem = self.cross_section_ele[_]
+                new_cross_section_dem = cross_section2.cross_section_ele[_]
                 ref_dis, ref_ele = [__[0] for __ in ref_cross_section_dem], [__[1] for __ in ref_cross_section_dem]
                 new_dis, new_ele = [__[0] for __ in new_cross_section_dem], [__[1] for __ in new_cross_section_dem]
                 dis_sta, dis_end = [max(min(ref_dis), min(new_dis)), min(max(ref_dis), max(new_dis))]
@@ -2096,7 +2204,7 @@ class CrossSection(object):
                 ref_dis_ = ref_dis[-1] - ref_dis[0]
                 new_dis_ = new_dis[-1] - new_dis[0]
                 itr_xdim, itr_ydim = (bank_coord[1][0] - bank_coord[0][0]) / dis_, (bank_coord[1][1] - bank_coord[0][1]) / dis_
-                offset = self.cross_section_dem[_][0][0] if abs(dis_ - ref_dis_) < abs(dis_ - ref_dis[-1]) else 0
+                offset = self.cross_section_ele[_][0][0] if abs(dis_ - ref_dis_) < abs(dis_ - ref_dis[-1]) else 0
 
                 for dem_index in range(len(diff_list)):
                     dem_dis = diff_list[dem_index][0] - offset
@@ -2159,7 +2267,7 @@ class CrossSection(object):
                         wl_series_ = wl_series[wl_series['year'] == year]
                         if wl_series_.shape[0] != 0:
                             wl_start_series[year_list.index(year)].extend(np.array(wl_series_['water_level/m']).tolist())
-                            dis_start_series[year_list.index(year)] = abs(self.cross_section_distance[section_name] - self.cross_section_distance[self.cross_section_name[start_index]])
+                            dis_start_series[year_list.index(year)] = abs(self.cross_section_dis[section_name] - self.cross_section_dis[self.cross_section_name[start_index]])
                             start_year_list.remove(year)
                             y_ -= 1
                         y_ += 1
@@ -2175,7 +2283,7 @@ class CrossSection(object):
                         year = end_year_list[y_]
                         wl_series_ = wl_series[wl_series['year'] == year]
                         if wl_series_.shape[0] != 0:
-                            dis_end_series[year_list.index(year)] = abs(self.cross_section_distance[section_name] - self.cross_section_distance[self.cross_section_name[end_index]])
+                            dis_end_series[year_list.index(year)] = abs(self.cross_section_dis[section_name] - self.cross_section_dis[self.cross_section_name[end_index]])
                             wl_end_series[year_list.index(year)].extend(np.array(wl_series_['water_level/m']).tolist())
                             end_year_list.remove(year)
                             y_ -= 1
@@ -2341,7 +2449,7 @@ class CrossSection(object):
         self._check_output_information_()
 
         # Generate the thalweg
-        self.cross_section_geodf = self.cross_section_geodf.sort_values('cs_distance2dam').reset_index(drop=True)
+        self.cross_section_geodf = self.cross_section_geodf.sort_values('cs_DistLgRiv').reset_index(drop=True)
         Thalweg_list = []
         cs_list = []
         bank_inform = []
@@ -2565,25 +2673,6 @@ class CrossSection(object):
         rmse = np.sqrt(np.sum((np.array(rs_dem_all) - np.array(insitu_dem_all)) ** 2))
         df.to_csv(output_path + f'dem_all_{str(rmse)[0:6]}.csv', encoding='GB18030')
 
-    def load_geojson(self, geodf_json: str):
-
-        # Process work env
-        self.work_env = bf.Path(os.path.dirname(geodf_json)).path_name
-
-        # Check the csv existence
-        if isinstance(geodf_json, str):
-            if not os.path.exists(geodf_json):
-                raise ValueError(f'The {str(geodf_json)} does not exist!')
-            elif geodf_json.endswith('.json'):
-                self.cross_section_geodf = gp.read_file(geodf_json)
-            else:
-                raise TypeError(f'The dem xlsx file should be a xlsx!')
-        else:
-            raise TypeError(f'The {str(geodf_json)} should be a str!')
-
-        # import from geodf
-        self._extract_from_geodf()
-        return self
 
     def to_geojson(self, output_path: str = None):
         self._check_output_information_()

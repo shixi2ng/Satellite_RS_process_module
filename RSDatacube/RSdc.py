@@ -38,9 +38,9 @@ class Denv_dc(object):
 
     ####################################################################################################
     # Denv dc represents "Daily Environment Datacube"
-    # It normally contains data like daily temperature and daily radiation, etc
+    # It normally contains data like daily temperature and daily radiation, etc.
     # And stack into a 3-D datacube type.
-    # Currently, it was integrated into the NCEI and MODIS FPAR toolbox as a output datatype.
+    # Currently, it was integrated into the NCEI and MODIS FPAR toolbox as an output datatype.
     ####################################################################################################
 
     def __init__(self, Denv_dc_filepath, work_env=None, autofill=True):
@@ -156,8 +156,9 @@ class Denv_dc(object):
         # Read the Denv datacube
         try:
             if self.sparse_matrix and self.huge_matrix:
-                if os.path.exists(self.Denv_dc_filepath + f'{self.index}_Denv_datacube\\'):
-                    self.dc = NDSparseMatrix().load(self.Denv_dc_filepath + f'{self.index}_Denv_datacube\\')
+                self.dc_filename = self.Denv_dc_filepath + f'{self.index}_Denv_datacube\\'
+                if os.path.exists(self.dc_filename):
+                    self.dc = NDSparseMatrix().load(self.dc_filename)
                 else:
                     raise Exception('Please double check the code if the sparse huge matrix is generated properly')
             elif not self.huge_matrix:
@@ -260,16 +261,23 @@ class Denv_dc(object):
                             break
 
                     if isinstance(self.dc, NDSparseMatrix):
-                        type_temp = type(self.dc.SM_group[date_beg])
-                        array_beg = self.dc.SM_group[date_beg].toarray()
-                        array_end = self.dc.SM_group[date_end].toarray()
-                        dtype_temp = array_end.dtype
-                        array_beg = array_beg.astype(np.float32)
-                        array_end = array_end.astype(np.float32)
-                        array_out = array_beg + (array_end - array_beg) * _beg / (_beg + _end)
-                        array_out = array_out.astype(dtype_temp)
-                        array_out = type_temp(array_out)
-                        self.dc.add_layer(array_out, date_temp, self.compete_doy_list.index(date_temp))
+                        if date_end is None:
+                            array_beg = self.dc.SM_group[date_beg]
+                            self.dc.add_layer(array_beg, date_temp, self.compete_doy_list.index(date_temp))
+                        elif date_beg is None:
+                            array_end = self.dc.SM_group[date_end]
+                            self.dc.add_layer(array_end, date_temp, self.compete_doy_list.index(date_temp))
+                        else:
+                            type_temp = type(self.dc.SM_group[date_beg])
+                            array_beg = self.dc.SM_group[date_beg].toarray()
+                            array_end = self.dc.SM_group[date_end].toarray()
+                            dtype_temp = array_end.dtype
+                            array_beg = array_beg.astype(np.float32)
+                            array_end = array_end.astype(np.float32)
+                            array_out = array_beg + (array_end - array_beg) * _beg / (_beg + _end)
+                            array_out = array_out.astype(dtype_temp)
+                            array_out = type_temp(array_out)
+                            self.dc.add_layer(array_out, date_temp, self.compete_doy_list.index(date_temp))
                     else:
                         array_beg = self.dc[:, :, date_beg]
                         array_end = self.dc[:, :, date_end]
@@ -422,8 +430,9 @@ class Phemetric_dc(object):
         # Read func dic
         try:
             if self.sparse_matrix and self.huge_matrix:
-                if os.path.exists(self.Phemetric_dc_filepath + f'{self.index}_Phemetric_datacube\\'):
-                    self.dc = NDSparseMatrix().load(self.Phemetric_dc_filepath + f'{self.index}_Phemetric_datacube\\')
+                self.dc_filename = self.Phemetric_dc_filepath + f'{self.index}_Phemetric_datacube\\'
+                if os.path.exists(self.dc_filename):
+                    self.dc = NDSparseMatrix().load(self.dc_filename)
                 else:
                     raise Exception('Please double check the code if the sparse huge matrix is generated properly')
             elif not self.huge_matrix:
@@ -480,7 +489,12 @@ class Phemetric_dc(object):
         if self.ROI_tif is None or self.ROI_array is None or self.ROI is None:
             raise Exception('Please manually change the roi path in the phemetric dc')
 
-        # Problem 2
+        # Problem 2 Check if the coordinate system is missing
+        if self.coordinate_system is None:
+            ds_temp = gdal.Open(self.ROI_tif)
+            self.coordinate_system = bf.retrieve_srs(ds_temp)
+            backdoor_issue = True
+
         if backdoor_issue:
             self.save(self.Phemetric_dc_filepath)
             self.__init__(self.Phemetric_dc_filepath)
@@ -866,6 +880,7 @@ class RS_dcs(object):
         self._inunfac_namelist, self._inunyear_list = None, []
         self._withPhemetricdc_, self._withDenvdc_, self._withS2dc_, self._withLandsatdc_, self._withInunfacdc_ = False, False, False, False, False
         self._s2dc_work_env, self._phemetric_work_env, self._denv_work_env, self._inunfac_work_env = None, None, None, None
+        self._denvyear_list = []
 
         if not isinstance(args, (tuple, list)):
             raise TypeError('Please mention all dcs should be input as args or *args')
@@ -1075,12 +1090,8 @@ class RS_dcs(object):
             # Determine the denv index
             self.Denv_indexlist = list(set([self._index_list[_] for _ in range(len(self._index_list)) if self._dc_typelist[_] == Denv_dc]))
 
-            denvyear = []
-            for _ in self._pheyear_list:
-                if _ not in pheyear and _ is not None:
-                    pheyear.append(_)
-                elif _ is not None:
-                    raise ValueError('There are duplicate pheyears for different pheme dcs!')
+            # Determine the timerange list
+            self._denvyear_list = list(set([self._timerange_list[_] for _ in range(len(self._index_list)) if self._dc_typelist[_] == Denv_dc and self._timescale_list[_] == 'year']))
 
         # Check the consistency of Phemetric dcs
         if self._withPhemetricdc_:
@@ -1119,7 +1130,7 @@ class RS_dcs(object):
                 elif _ is not None:
                     raise ValueError('There are duplicate pheyears for different pheme dcs!')
 
-        # Check the consistency of Inunfact dcs
+        # Check the consistency of Inunfactor dcs
         if self._withInunfacdc_:
             Inunfacdc_pos = [i for i, v in enumerate(self._dc_typelist) if v == Inunfac_dc]
             if len(Inunfacdc_pos) != 1:
@@ -1254,10 +1265,9 @@ class RS_dcs(object):
         self._flood_free_pm = ['annual_max_VI', 'average_VI_between_max_and_flood']
 
         # Define the mode for process denv via pheme
-        self._denv_via_pheme_mode = ['acc', 'ave', 'max']
-        self._denv_via_pheme_st = ['SOY', 'SOS', 'peak_doy', 'senescence_doy', 'EOS', 'EOY']  # Denote start of the year, start of the season, peak of the season
-        self._denv_via_pheme_ed = ['SOY', 'SOS', 'peak_doy', 'senescence_doy', 'EOS', 'EOY']
-        self._denv_via_pheme_minus_base = False
+        self._denv8pheme_cal_method_list = ['acc', 'ave', 'max']
+        self._denv8pheme_ = ['SOY', 'SOS', 'peak_doy', 'senescence_doy', 'EOS', 'EOY']  # represent the start of the year, start of the season, peak of the season
+        self._denv8pheme_minus_base = False
 
     def __sizeof__(self):
         size = 0
@@ -2618,14 +2628,181 @@ class RS_dcs(object):
             except:
                 raise Exception('The df output procedure was interrupted by error!')
 
-    def calculate_denv_via_pheme(self, denvname, year_list, start_pheme, end_pheme, cal_method, base_status):
+    def calculate_denv8pheme(self, denvname: str, year_list: list, start_pheme: str, end_pheme: str, cal_method: str, base_status: bool, bulk = True):
 
+        # Construct the output folder
+        output_folder = os.path.join(self._denv_work_env, 'denv8pheme\\')
+        bf.create_folder(output_folder)
+
+        # Determine the cal method
+        if not isinstance(cal_method, str):
+            raise TypeError('The cal method should be str type!')
+        elif cal_method not in self._denv8pheme_cal_method_list:
+            raise ValueError('The cal method is not supported!')
+        else:
+            self._denv8pheme_cal = cal_method
+
+        # Determine the base status
+        if not isinstance(base_status, bool):
+            raise TypeError('The base status should be bool type!')
+        elif base_status and self._denv8pheme_cal != 'acc':
+            self._denv8pheme_minus_base = False
+            print('Only accumulated value could use the base status')
+        else:
+            self._denv8pheme_minus_base = base_status
+
+        # Determine the denv name
         if denvname not in self.Denv_indexlist:
             raise ValueError(f'The denv index {str(denvname)} is not imported')
 
-        if phename not in self._phemetric_namelist:
-            raise ValueError(f'The denv index {str(phename)} is not imported')
+        # Determine the process year list
+        processed_year_list = []
+        for year in year_list:
+            if year in self._pheyear_list and year in self._denvyear_list:
+                processed_year_list.append(year)
+            else:
+                print(f'The {str(year)} is not imported!')
+        if len(processed_year_list) == 0:
+            raise ValueError(f'No valid year imported!')
 
+        # Determine the start and end pheme
+        if start_pheme not in self._denv8pheme_:
+            raise ValueError(f'{str(start_pheme)} is not valid')
+        elif end_pheme not in self._denv8pheme_:
+            raise ValueError(f'{str(start_pheme)} is not valid')
+        elif self._denv8pheme_.index(end_pheme) < self._denv8pheme_.index(start_pheme):
+            raise ValueError(f'The {str(start_pheme)} could not before end pheme')
+        elif self._denv8pheme_.index(end_pheme) == self._denv8pheme_.index(start_pheme):
+            self._denv8pheme_minus_base = False
+
+        # Itr through the year
+        para_list = [denvname, copy.deepcopy(self._denv8pheme_cal), copy.deepcopy(self._denv8pheme_minus_base), True, output_folder, copy.deepcopy(self.ROI_tif)]
+        pheme_ = [start_pheme, end_pheme]
+        if bulk:
+            pheme_name, denv_name = [], []
+            for year_ in processed_year_list:
+                pheme_name.append(self._dcs_backup_[self._pheyear_list.index(year_)].dc_filename)
+                denv_name.append(self._dcs_backup_[[_ for _ in range(len(self._index_list)) if self._index_list[_] == denvname and self._timerange_list[_] == year_][0]].dc_filename)
+                self.dcs[self._pheyear_list.index(year_)] = None
+                self.dcs[[_ for _ in range(len(self._index_list)) if self._index_list[_] == denvname and self._timerange_list[_] == year_][0]] = None
+
+            with concurrent.futures.ProcessPoolExecutor() as exe:
+                exe.map(process_denv_via_pheme, denv_name, pheme_name, processed_year_list, repeat(pheme_), repeat(para_list))
+        else:
+            for year_ in processed_year_list:
+                process_denv_via_pheme(self._dcs_backup_[self._pheyear_list.index(year_)].dc_filename,
+                                       self._dcs_backup_[[_ for _ in range(len(self._index_list)) if self._index_list[_] == denvname and self._timerange_list[_] == year_][0]].dc_filename,
+                                       year_, pheme_, para_list)
+        #
+        # ds_temp = gdal.Open(self.ROI_tif)
+        # for year_ in processed_year_list:
+        #     st = time.time()
+        #     print(f'Start calculate the \033[1;31m{str(self._denv8pheme_cal)}\033[0m \033[1;31m{denvname}\033[0m for the year \033[1;34m{str(year_)}\033[0m')
+        #     # Get the denv and pheme position
+        #     denv_pos = [_ for _ in range(len(self._index_list)) if self._index_list[_] == denvname and self._timerange_list[_] == year_][0]
+        #     pheme_pos = self._pheyear_list.index(year_)
+        #
+        #     # Get the type of the denv and pheme dc
+        #     denv_sparse_factor = isinstance(self.dcs[denv_pos], NDSparseMatrix)
+        #     pheme_sparse_factor = isinstance(self.dcs[pheme_pos], NDSparseMatrix)
+        #
+        #     # Get the base status
+        #     if base_status is True:
+        #
+        #         # Determine the base time
+        #         if start_pheme == 'SOY':
+        #             start_doy = np.zeros([self.dcs_YSize, self.dcs_XSize])
+        #             end_doy = np.ones([self.dcs_YSize, self.dcs_XSize]) * 10
+        #
+        #         elif start_pheme == 'EOY':
+        #             raise Exception('EOY can not be the start pheme when base status is True')
+        #
+        #         elif start_pheme in ['SOS', 'peak_doy', 'EOS']:
+        #             if start_pheme not in self._phemetric_namelist:
+        #                 raise ValueError('The start_pheme is not generated')
+        #             else:
+        #                 if pheme_sparse_factor:
+        #                     start_doy = np.round(self.dcs[pheme_pos].SM_group[f'{str(year_)}_{start_pheme}'].toarray())
+        #                     start_doy[start_doy == 0] = np.nan
+        #                     start_doy = start_doy - 5
+        #                     end_doy = np.round(self.dcs[pheme_pos].SM_group[f'{str(year_)}_{start_pheme}'].toarray())
+        #                     end_doy[end_doy == 0] = np.nan
+        #                     end_doy = end_doy + 5
+        #                 else:
+        #                     raise Exception('Code error')
+        #         else:
+        #             raise Exception('Code Error')
+        #
+        #         # Generate the base value
+        #         start_time = np.nanmin(start_doy).astype(np.int16)
+        #         end_time = np.nanmax(end_doy).astype(np.int16)
+        #         acc_static = np.zeros([self.dcs_YSize, self.dcs_XSize])
+        #         cum_static = np.zeros([self.dcs_YSize, self.dcs_XSize])
+        #         with tqdm(total=end_time + 1 - start_time, desc=f'Get the static value of {str(year_)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+        #             for _ in range(start_time, end_time + 1):
+        #                 within_factor = np.logical_and(np.ones([self.dcs_YSize, self.dcs_XSize]) * _ >= start_doy, np.ones([self.dcs_YSize, self.dcs_XSize]) * _ < end_doy)
+        #                 cum_static = cum_static + within_factor
+        #                 if denv_sparse_factor:
+        #                     denv_date = int(year_ * 1000 + _)
+        #                     denv_arr = self.dcs[denv_pos].SM_group[denv_date].toarray()
+        #                 else:
+        #                     raise Exception('Code Error')
+        #                 denv_doy_arr = denv_arr * within_factor
+        #                 acc_static = acc_static + denv_doy_arr
+        #                 pbar.update()
+        #
+        #         acc_static = acc_static / cum_static
+        #         cum_static = None
+        #         bf.write_raster(ds_temp, acc_static, output_folder, f'{str(self._denv8pheme_cal)}_{denvname}_{str(year_)}_static.TIF', raster_datatype=gdal.GDT_Float32)
+        #
+        #     # Get the denv matrix
+        #     start_arr = np.round(self.dcs[pheme_pos].SM_group[f'{str(year_)}_{start_pheme}'].toarray())
+        #     end_arr = np.round(self.dcs[pheme_pos].SM_group[f'{str(year_)}_{end_pheme}'].toarray())
+        #     start_arr[start_arr == 0] = np.nan
+        #     end_arr[end_arr == 0] = np.nan
+        #
+        #     # Get the unique value
+        #     start_doy = np.nanmin(np.unique(start_arr)).astype(np.int16)
+        #     end_doy = np.nanmax(np.unique(end_arr)).astype(np.int16)
+        #     acc_denv = np.zeros([self.dcs_YSize, self.dcs_XSize])
+        #     cum_denv = np.zeros([self.dcs_YSize, self.dcs_XSize])
+        #
+        #     with tqdm(total=end_doy + 1 - start_doy, desc=f'Get the static value of {str(year_)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+        #         for _ in range(start_doy, end_doy + 1):
+        #
+        #             if denv_sparse_factor:
+        #                 denv_date = int(year_ * 1000 + _)
+        #                 denv_arr = self.dcs[denv_pos].SM_group[denv_date].toarray()
+        #             else:
+        #                 raise Exception('Code Error')
+        #
+        #             if base_status:
+        #                 within_factor = np.logical_and(np.logical_and(np.ones([self.dcs_YSize, self.dcs_XSize]) * _ >= start_doy,
+        #                                                np.ones([self.dcs_YSize, self.dcs_XSize]) * _ < end_doy),
+        #                                                denv_arr >= acc_static)
+        #                 denv_doy_arr = (denv_arr - acc_static) * within_factor
+        #             else:
+        #                 within_factor = np.logical_and(np.ones([self.dcs_YSize, self.dcs_XSize]) * _ >= start_doy,
+        #                                                np.ones([self.dcs_YSize, self.dcs_XSize]) * _ < end_doy)
+        #                 denv_doy_arr = denv_arr * within_factor
+        #
+        #             if self._denv8pheme_cal != 'max':
+        #                 cum_denv = cum_denv + within_factor
+        #                 acc_denv = acc_denv + denv_doy_arr
+        #             else:
+        #                 acc_denv = np.nanmax(acc_denv, denv_doy_arr)
+        #             pbar.update()
+        #
+        #     if self._denv8pheme_cal == 'mean':
+        #         acc_denv = acc_denv / cum_denv
+        #
+        #     if self._size_control_factor_list[denv_pos]:
+        #         acc_denv = acc_denv / 100
+        #
+        #     bf.write_raster(ds_temp, acc_denv, output_folder, f'{str(self._denv8pheme_cal)}_{denvname}_{str(year_)}.TIF', raster_datatype=gdal.GDT_Float32)
+        #     print(f'Finish calculate the \033[1;31m{str(self._denv8pheme_cal)}\033[0m \033[1;31m{denvname}\033[0m for the year \033[1;34m{str(year_)}\033[0m in {str(time.time()-st)}s')
+
+    def process_denv_via_pheme(self, denvname, phename, ):
         if phename == 'SOS':
             # Phe dc count and pos
             denvdc_count = len([_ for _ in self._index_list if _ == denvname])
@@ -2639,7 +2816,7 @@ class RS_dcs(object):
 
                 for year_temp in denvdc_year:
                     if year_temp not in self._pheyear_list:
-                        raise TypeError(f'The phemetric of {str(year_temp)} is not imported')
+                            raise TypeError(f'The phemetric of {str(year_temp)} is not imported')
                     else:
                         phepos = self._pheyear_list.index(year_temp)
                         if f'{str(year_temp)}_static_{denvname}' not in self._doys_backup_[phepos]:

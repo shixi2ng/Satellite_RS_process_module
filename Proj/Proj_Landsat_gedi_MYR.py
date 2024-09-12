@@ -10,15 +10,13 @@ if __name__ == '__main__':
     rsdc_temp = RS_dcs(*dc_temp_dic)
     rsdc_temp.link_GEDI_phenology_inform('G:\\A_Landsat_veg\\GEDI_L4A\\Result\\floodplain_2020_high_quality.xlsx', ['peak_vi', 'TSVI', 'MAVI'])
 
-    sample_YTR = GEDI_L4_ds('G:\A_Landsat_veg\GEDI_L4A\Ori\\')
+    sample_YTR = GEDI_ds('G:\\\A_GEDI_Floodplain_vegh\\\GEDI_MYR\\Ori_file\\')
     sample_YTR.generate_metadata()
-    sample_YTR.mp_extract_footprint_AGBD_infor(
-        shp_file='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
+    sample_YTR.mp_extract_L4_AGBD(shp_file='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
 
-    sample_YTR = GEDI_L2_ds('G:\\GEDI_MYR\\temp\\orifile\\')
+    sample_YTR = GEDI_ds('G:\\GEDI_MYR\\temp\\orifile\\')
     sample_YTR.generate_metadata()
-    sample_YTR.mp_extract_shots_elevation_infor(
-        shp_file='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
+    sample_YTR.mp_extract_L2_vegh(shp_file='E:\\A_Veg_phase2\\Sample_Inundation\\Floodplain_Devised\\floodplain_2020.shp')
 
     temp = [f'G:\A_veg\S2_all\GEDI_v3\GEDI_S2\\floodplain_2020_high_quality_{_}.csv' for _ in
             ['B2_noninun', 'B3_noninun', 'B4_noninun', 'B5_noninun', 'B6_noninun', 'B7_noninun', 'B8_noninun',
