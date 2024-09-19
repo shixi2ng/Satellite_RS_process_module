@@ -21,9 +21,9 @@ if __name__ == '__main__':
     temp = [f'G:\A_veg\S2_all\GEDI_v3\GEDI_S2\\floodplain_2020_high_quality_{_}.csv' for _ in
             ['B2_noninun', 'B3_noninun', 'B4_noninun', 'B5_noninun', 'B6_noninun', 'B7_noninun', 'B8_noninun',
              'B9_noninun', 'B8A_noninun', 'NDVI_20m_noninun', 'OSAVI_20m_noninun', 'MNDWI']]
-    YTR_list = GEDI_list(*temp)
+    YTR_list = GEDI_df(*temp)
     YTR_list.save('G:\A_veg\S2_all\GEDI_v3\GEDI_S2\\floodplain_2020_high_quality_merged.csv')
-    YTR_list = GEDI_list('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality_all_Phemetrics.csv',
+    YTR_list = GEDI_df('G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_phe\\floodplain_2020_high_quality_all_Phemetrics.csv',
                          'G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_S2\\floodplain_2020_high_quality_merged.csv',
                          'G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_TEMP\\floodplain_2020_high_quality_accumulated_DPAR_relative.csv',
                          'G:\\A_veg\\S2_all\\GEDI_v3\\GEDI_TEMP\\floodplain_2020_high_quality_accumulated_TEMP_relative.csv')

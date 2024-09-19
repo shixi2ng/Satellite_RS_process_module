@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import basic_function as bf
-from GEDI_toolbox.GEDI_main import GEDI_list
+from GEDI_toolbox.GEDI_main import GEDI_df
 import copy
 from sklearn import metrics
 import os
@@ -61,7 +61,7 @@ if __name__ == '__main__':
     ####################################################################################################################################
 
     # Input the dataset
-    gedi_ds = GEDI_list('G:\\A_veg\\S2_all\\XGB_vhm\\GEDI_ds_V3\\floodplain_2020_high_quality_merged.csv')
+    gedi_ds = GEDI_df('G:\\A_veg\\S2_all\\XGB_vhm\\GEDI_ds_V3\\floodplain_2020_high_quality_merged.csv')
 
     # User-defined indicator
     cross_validation_factor = True

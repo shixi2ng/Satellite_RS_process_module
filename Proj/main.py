@@ -51,20 +51,20 @@ if __name__ == '__main__':
     for index in ['NDVI_20m_noninun', 'OSAVI_20m_noninun']:
         dc_temp_dic[index] = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{index}_sequenced_datacube\\')
     dcs_temp = RS_dcs(dc_temp_dic['NDVI_20m_noninun'], dc_temp_dic['OSAVI_20m_noninun'])
-    dcs_temp.link_GEDI_RS_inform('G:\A_veg\S2_all\GEDI\\MID_YZR_high_quality.xlsx', ['NDVI_20m_noninun', 'OSAVI_20m_noninun'], retrieval_method='linear_interpolation')
+    dcs_temp.link_GEDI_Landsat_dc('G:\A_veg\S2_all\GEDI\\MID_YZR_high_quality.xlsx', ['NDVI_20m_noninun', 'OSAVI_20m_noninun'], retrieval_method='linear_interpolation')
 
     dc_temp_dic = {}
     for index in ['NDVI_20m_noninun', 'OSAVI_20m_noninun']:
         dc_temp_dic[index] = Sentinel2_dc(f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{index}_sequenced_datacube\\')
     dcs_temp = RS_dcs(dc_temp_dic['NDVI_20m_noninun'], dc_temp_dic['OSAVI_20m_noninun'])
-    dcs_temp.link_GEDI_RS_inform('G:\A_veg\S2_all\GEDI\\MID_YZR_high_quality.xlsx', ['NDVI_20m_noninun', 'OSAVI_20m_noninun'], retrieval_method='linear_interpolation')
+    dcs_temp.link_GEDI_Landsat_dc('G:\A_veg\S2_all\GEDI\\MID_YZR_high_quality.xlsx', ['NDVI_20m_noninun', 'OSAVI_20m_noninun'], retrieval_method='linear_interpolation')
 
     dc_temp_dic = {}
     for index in ['MNDWI', 'B8A_noninun']:
         dc_temp_dic[index] = Sentinel2_dc(
             f'G:\\A_veg\\S2_all\\Sentinel2_L2A_Output\\Sentinel2_MYZR_FP_2020_datacube\\{index}_sequenced_datacube\\')
     dcs_temp = RS_dcs(dc_temp_dic['MNDWI'], dc_temp_dic['B8A_noninun'])
-    dcs_temp.link_GEDI_RS_inform('G:\A_veg\S2_all\GEDI\\MID_YZR_high_quality.xlsx', ['B8A_noninun', 'MNDWI'], retrieval_method='linear_interpolation')
+    dcs_temp.link_GEDI_Landsat_dc('G:\A_veg\S2_all\GEDI\\MID_YZR_high_quality.xlsx', ['B8A_noninun', 'MNDWI'], retrieval_method='linear_interpolation')
 
     file_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\Original_Zipfile\\'
     output_path = 'E:\\A_PhD_Main_stuff\\2022_04_22_Mid_Yangtze\\Sample_Sentinel\\'

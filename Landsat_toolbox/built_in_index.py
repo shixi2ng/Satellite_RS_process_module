@@ -18,10 +18,11 @@ class built_in_index(object):
         self.NDVI = 'NDVI = (NIR - RED) / (NIR + RED)'
         self.OSAVI = 'OSAVI = 1.16 * (NIR - RED) / (NIR + RED + 0.16)'
         self.AWEI = 'AWEI = 4 * (GREEN - SWIR) - (0.25 * NIR + 2.75 * SWIR2)'
-        self.AWEInsh = 'AWEInsh = BLUE + 2.5 * GREEN - 0.25 * SWIR2 - 1.5 * (NIR + SWIR1)'
+        self.AWEInsh = 'AWEInsh = BLUE + 2.5 * GREEN - 0.25 * SWIR2 - 1.5 * (NIR + SWIR)'
         self.MNDWI = 'MNDWI = (GREEN - SWIR) / (SWIR + GREEN)'
         self.EVI = 'EVI = 2.5 * (NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1)'
         self.EVI2 = 'EVI2 = 2.5 * (NIR - RED) / (NIR + 2.4 * RED + 1)'
+        self.SVVI = "SVVI = sqrt(((BLUE - ((BLUE + GREEN + RED + NIR + SWIR + SWIR2) / 6)) ** 2 + (GREEN - ((BLUE + GREEN + RED + NIR + SWIR + SWIR2) / 6)) ** 2) + (RED - ((BLUE + GREEN + RED + NIR + SWIR + SWIR2) / 6)) ** 2) + (NIR - ((BLUE + GREEN + RED + NIR + SWIR + SWIR2) / 6)) ** 2) + (SWIR - ((BLUE + GREEN + RED + NIR + SWIR + SWIR2) / 6)) ** 2) + (SWIR2 - ((BLUE + GREEN + RED + NIR + SWIR + SWIR2) / 6)) ** 2)) / 6) - sqrt(((NIR - ((BLUE + GREEN + RED + NIR + SWIR + SWIR2) / 6)) ** 2) + (SWIR - ((BLUE + GREEN + RED + NIR + SWIR + SWIR2) / 6)) ** 2) + (SWIR2 - ((BLUE + GREEN + RED + NIR + SWIR + SWIR2) / 6)) ** 2)) / 3)"
 
         self._exprs2index(*args)
         self._built_in_index_dic()

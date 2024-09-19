@@ -635,5 +635,5 @@ if __name__ == '__main__':
     MD_ds.mp_hdf2tif(['PAR_Quality', 'GMT_0000_PAR', 'GMT_0300_PAR', 'GMT_0600_PAR', 'GMT_0900_PAR', 'GMT_1200_PAR', 'GMT_1500_PAR', 'GMT_1800_PAR', 'GMT_2100_PAR'])
     MD_ds.seq_cal_dailyPAR()
     bounds_temp = bf.raster_ds2bounds('G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\\ROI_map\\floodplain_2020.TIF')
-    MD_ds.mp_extract_with_ROI('G:\\A_veg\MODIS_FPAR\\shpfile\\floodplain_2020.shp', ['DPAR'], bounds=bounds_temp, ras_res=[10, 10])
+    MD_ds.mp_extract_with_ROI('G:\\A_veg\MODIS_FPAR\\shpfile\\floodplain_2020.shp', ['DPAR'], bounds=bounds_temp, ras_res=[30, 30])
     MD_ds.raster2dc(['DPAR'], ROI='G:\\A_veg\\MODIS_FPAR\\shpfile\\floodplain_2020.shp', temporal_division='year', inherit_from_logfile=True)

@@ -657,17 +657,17 @@ def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely
         return np.nan
 
 
-def link_GEDI_pheinform(dc, gedi_list, year_list, raster_gt, furname, phe_name):
+def link_GEDI_pheinform(dc, gedi_df, year_list, raster_gt, furname, phe_name):
 
-    df_size = gedi_list.shape[0]
+    df_size = gedi_df.shape[0]
     furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
-    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2phemetric_{phe_name}', value=np.nan)
+    gedi_df.insert(loc=len(gedi_df.columns), column=f'S2phemetric_{phe_name}', value=np.nan)
     sparse_matrix = True if isinstance(dc, NDSparseMatrix) else False
-    gedi_list = gedi_list.reset_index()
+    gedi_df = gedi_df.reset_index()
 
-    # itr through the gedi_list
+    # itr through the gedi_df
     for i in range(df_size):
-        lat, lon, date_temp, year_temp = gedi_list[furlat][i], gedi_list[furlon][i], gedi_list['Date'][i], int(np.floor(gedi_list['Date'][i]/1000))
+        lat, lon, date_temp, year_temp = gedi_df[furlat][i], gedi_df[furlon][i], gedi_df['Date'][i], int(np.floor(gedi_df['Date'][i]/1000))
 
         if year_temp in year_list:
 
@@ -679,7 +679,7 @@ def link_GEDI_pheinform(dc, gedi_list, year_list, raster_gt, furname, phe_name):
             print(f'Start linking the {phe_name} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
 
             # Link GEDI and S2phemetric inform
-            gedi_list.loc[i, f'S2phemetric_{phe_name}'] = np.nan
+            gedi_df.loc[i, f'S2phemetric_{phe_name}'] = np.nan
             if sparse_matrix:
                 array_temp = dc.SM_group[dc.SM_namelist[year_list.index(year_temp)]]
             else:
@@ -687,24 +687,24 @@ def link_GEDI_pheinform(dc, gedi_list, year_list, raster_gt, furname, phe_name):
             info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
 
             if ~np.isnan(info_temp):
-                gedi_list.loc[i, f'S2phemetric_{phe_name}'] = info_temp
+                gedi_df.loc[i, f'S2phemetric_{phe_name}'] = info_temp
 
             print(f'Finish linking the {phe_name} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
 
-    return gedi_list
+    return gedi_df
 
 
-def link_GEDI_accdenvinform(dc, gedi_list, doy_list, raster_gt, furname, denv_name):
+def link_GEDI_accdenvinform(dc, gedi_df, doy_list, raster_gt, furname, denv_name):
 
-    df_size = gedi_list.shape[0]
+    df_size = gedi_df.shape[0]
     furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
-    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2_accumulated_{str(denv_name)}', value=np.nan)
+    gedi_df.insert(loc=len(gedi_df.columns), column=f'S2_accumulated_{str(denv_name)}', value=np.nan)
     sparse_matrix = True if isinstance(dc, NDSparseMatrix) else False
-    gedi_list = gedi_list.reset_index()
+    gedi_df = gedi_df.reset_index()
 
-    # itr through the gedi_list
+    # itr through the gedi_df
     for i in range(df_size):
-        lat, lon, year_temp, doy_temp = gedi_list[furlat][i], gedi_list[furlon][i], int(np.floor(gedi_list['Date'][i]/1000)), int(np.mod(gedi_list['Date'][i], 1000))
+        lat, lon, year_temp, doy_temp = gedi_df[furlat][i], gedi_df[furlon][i], int(np.floor(gedi_df['Date'][i]/1000)), int(np.mod(gedi_df['Date'][i], 1000))
 
         # Draw a circle around the central point
         point_coords = [lon, lat]
@@ -714,7 +714,7 @@ def link_GEDI_accdenvinform(dc, gedi_list, doy_list, raster_gt, furname, denv_na
         print(f'Start linking the {str(denv_name)} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
 
         # Link GEDI and accumulated inform
-        gedi_list.loc[i, f'S2_accumulated_{str(denv_name)}'] = np.nan
+        gedi_df.loc[i, f'S2_accumulated_{str(denv_name)}'] = np.nan
         doy_templist = range(year_temp * 1000 + 1, year_temp * 1000 + doy_temp + 1)
         doy_pos = []
         for _ in doy_templist:
@@ -729,29 +729,29 @@ def link_GEDI_accdenvinform(dc, gedi_list, doy_list, raster_gt, furname, denv_na
             array_temp = array_temp.SM_group['sum'].toarray()
         else:
             array_temp = dc[:, :, min(doy_pos): max(doy_pos) + 1]
-            array_temp = np.nansun(array_temp, axis=2)
+            array_temp = np.nansum(array_temp, axis=2)
 
         info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
         if ~np.isnan(info_temp):
-            gedi_list.loc[i, f'S2_accumulated_{str(denv_name)}'] = info_temp
+            gedi_df.loc[i, f'S2_accumulated_{str(denv_name)}'] = info_temp
 
         print(f'Finish linking the {denv_name} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
 
-    return gedi_list
+    return gedi_df
 
 
-def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GEDI_link_S2_retrieval_method, search_window: int = 40):
+def link_GEDI_inform(dc, gedi_df, doy_list, raster_gt, furname, index_name, GEDI_link_S2_retrieval_method, search_window: int = 40):
 
-    df_size = gedi_list.shape[0]
+    df_size = gedi_df.shape[0]
     furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
-    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2_{index_name}_{GEDI_link_S2_retrieval_method}', value=np.nan)
-    gedi_list.insert(loc=len(gedi_list.columns), column=f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability', value=np.nan)
+    gedi_df.insert(loc=len(gedi_df.columns), column=f'S2_{index_name}_{GEDI_link_S2_retrieval_method}', value=np.nan)
+    gedi_df.insert(loc=len(gedi_df.columns), column=f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability', value=np.nan)
     sparse_matrix = True if isinstance(dc, NDSparseMatrix) else False
-    gedi_list = gedi_list.reset_index()
+    gedi_df = gedi_df.reset_index()
 
-    # itr through the gedi_list
+    # itr through the gedi_df
     for i in range(df_size):
-        lat, lon, date_temp = gedi_list[furlat][i], gedi_list[furlon][i], gedi_list['Date'][i]
+        lat, lon, date_temp = gedi_df[furlat][i], gedi_df[furlon][i], gedi_df['Date'][i]
 
         # Draw a circle around the central point
         point_coords = [lon, lat]
@@ -768,8 +768,8 @@ def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GE
 
             # Link GEDI and S2 inform using linear_interpolation
             data_positive, date_positive, data_negative, date_negative = None, None, None, None
-            gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = np.nan
-            gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = np.nan
+            gedi_df.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = np.nan
+            gedi_df.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = np.nan
 
             for date_interval in range(search_window):
                 if date_interval == 0 and date_interval + date_temp in doy_list:
@@ -778,8 +778,8 @@ def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GE
                         info_temp = extract_value2shpfile(array_temp, raster_gt, polygon, 32649, nodatavalue=0)
 
                     if ~np.isnan(info_temp):
-                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = info_temp
-                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = 1
+                        gedi_df.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = info_temp
+                        gedi_df.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = 1
                         break
 
                 else:
@@ -804,15 +804,15 @@ def link_GEDI_inform(dc, gedi_list, doy_list, raster_gt, furname, index_name, GE
                             date_positive = date_temp_temp
 
                     if data_positive is not None and data_negative is not None:
-                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = data_negative + (date_temp - date_negative) * (data_positive - data_negative) / (date_positive - date_negative)
-                        gedi_list.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = 1 - ((date_positive - date_negative) / (2 * search_window))
+                        gedi_df.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}'] = data_negative + (date_temp - date_negative) * (data_positive - data_negative) / (date_positive - date_negative)
+                        gedi_df.loc[i, f'S2_{index_name}_{GEDI_link_S2_retrieval_method}_reliability'] = 1 - ((date_positive - date_negative) / (2 * search_window))
                         break
 
             print(f'Finish linking the {index_name} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
         else:
             raise TypeError(f'{str(GEDI_link_S2_retrieval_method)} is not supported!')
 
-    return gedi_list
+    return gedi_df
 
 
 def get_index_by_date(dc_blocked, y_all_blocked: list, x_all_blocked: list, doy_list: list, req_date_list: list, xy_offset_blocked: list, index: str, date_name: list, mode: str, search_window: int = 40):

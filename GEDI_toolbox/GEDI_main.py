@@ -45,11 +45,11 @@ def gedi_finder(product, bbox):
         print(r.get(f"{cmr}{concept_ids[product]}&bounding_box={bbox.replace(' ', '')}&pageNum={page}").json())
 
 
-class GEDI_list(object):
+class GEDI_df(object):
 
     def __init__(self, *args):
 
-        self.GEDI_df = None
+        self.GEDI_inform_DF = None
         self._GEDI_fund_att = ['Shot Number', 'Beam', 'Latitude', 'Longitude', 'Tandem-X DEM', 'Elevation (m)',
                                'Canopy Elevation (m)', 'Canopy Height (rh100)', 'RH 98', 'RH 25', 'Quality Flag',
                                'Degrade Flag', 'Sensitivity', 'Urban rate', 'Landsat water rate', 'Leaf off flag']
@@ -66,29 +66,50 @@ class GEDI_list(object):
             if False in [q in GEDI_df.keys() for q in self._GEDI_fund_att]:
                 raise Exception(f'The {GEDI_inform_xlsx} does not contain all the required inform!')
 
-            elif self.GEDI_df is None:
-                self.GEDI_df = GEDI_df
+            elif self.GEDI_inform_DF is None:
+                self.GEDI_inform_DF = GEDI_df
 
             else:
                 key_temp = list(GEDI_df.keys())
 
                 _ = 0
                 while _ < len(key_temp):
-                    if key_temp[_] not in self.GEDI_df.keys() or 'Unnamed' in key_temp[_] or 'index' in key_temp[_]:
+                    if key_temp[_] not in self.GEDI_inform_DF.keys() or 'Unnamed' in key_temp[_] or 'index' in key_temp[_]:
                         key_temp.remove(key_temp[_])
                         _ -= 1
                     _ += 1
-                self.GEDI_df = pd.merge(GEDI_df, self.GEDI_df, on=key_temp, how='outer')
+                self.GEDI_inform_DF = pd.merge(GEDI_df, self.GEDI_inform_DF, on=key_temp, how='outer')
 
-        # Obtain the size of gedi
-        self.df_size = self.GEDI_df.shape[0]
+            # Obtain the size of gedi
+            if 'high_quality' in GEDI_inform_xlsx:
+                self._shp_name = GEDI_inform_xlsx.split('\\')[-1].split(f'_high_quality')[0]
+            elif 'all' in GEDI_inform_xlsx:
+                self._shp_name = GEDI_inform_xlsx.split('\\')[-1].split(f'_all')[0]
+            else:
+                raise Exception('Not a valid GEDI dataframe file')
+            self.work_env = os.path.dirname(GEDI_inform_xlsx)
+
+        self.df_size = self.GEDI_inform_DF.shape[0]
 
     def save(self, output_filename: str):
         if output_filename.endswith('.csv'):
-            self.GEDI_df.to_csv(output_filename)
+            self.GEDI_inform_DF.to_csv(output_filename)
         elif output_filename.endswith('.xlsx') or output_filename.endswith('.xls'):
-            self.GEDI_df.to_excel(output_filename)
+            self.GEDI_inform_DF.to_excel(output_filename)
+    
+    def GEDI_df2shpfile(self):
+        # Take the lat/lon dataframe and convert each lat/lon to a shapely point
+        self.GEDI_inform_DF['geometry'] = self.GEDI_inform_DF.apply(lambda row: Point(row.Longitude, row.Latitude), axis=1)
 
+        # Convert to GeoDataframe
+        self.GEDI_inform_DF = gp.GeoDataFrame(self.GEDI_inform_DF, crs='EPSG:4326')
+        self.GEDI_inform_DF = self.GEDI_inform_DF.drop(columns=['Latitude', 'Longitude'])
+        self.GEDI_inform_DF['Shot Number'] = self.GEDI_inform_DF['Shot Number'].astype(str)  # Convert shot number to string
+
+        bf.create_folder(os.path.join(self.work_env, f'shpfile\\'))
+        outName = self._shp_name + '.shp'
+        self.GEDI_inform_DF.to_file(os.path.join(self.work_env, f'shpfile\\{outName}'), driver='ESRI Shapefile')
+    
     def generate_boundary(self, ):
         pass
 
@@ -97,18 +118,18 @@ class GEDI_list(object):
         if not isinstance(xycolumn_start, str):
             raise TypeError(f'{xycolumn_start} is not a str')
 
-        if xycolumn_start + '_lat' not in self.GEDI_df.keys() or xycolumn_start + '_lon' not in self.GEDI_df.keys():
-            point_temp = gp.points_from_xy(list(self.GEDI_df.Longitude), list(self.GEDI_df.Latitude), crs='epsg:4326')
+        if xycolumn_start + '_lat' not in self.GEDI_inform_DF.keys() or xycolumn_start + '_lon' not in self.GEDI_inform_DF.keys():
+            point_temp = gp.points_from_xy(list(self.GEDI_inform_DF.Longitude), list(self.GEDI_inform_DF.Latitude), crs='epsg:4326')
             point_temp = point_temp.to_crs(crs=proj)
             lon = point_temp.x
             lat = point_temp.y
 
             for data_temp, name_temp in zip([lat, lon], [xycolumn_start + '_' + temp for temp in ['lat', 'lon']]):
-                self.GEDI_df.insert(len(self.GEDI_df.columns), name_temp, data_temp)
+                self.GEDI_inform_DF.insert(len(self.GEDI_inform_DF.columns), name_temp, data_temp)
 
             # Sort it according to lat and lon
-            self.GEDI_df = self.GEDI_df.sort_values([f'{xycolumn_start}_lon', f'{xycolumn_start}_lat'], ascending=[True, False])
-            self.GEDI_df = self.GEDI_df.reset_index()
+            self.GEDI_inform_DF = self.GEDI_inform_DF.sort_values([f'{xycolumn_start}_lon', f'{xycolumn_start}_lat'], ascending=[True, False])
+            self.GEDI_inform_DF = self.GEDI_inform_DF.reset_index()
 
 
 class GEDI_ds(object):
@@ -138,7 +159,7 @@ class GEDI_ds(object):
                         self.work_env += i + '\\'
 
         # Define the file list
-        self.filelist = bf.file_filter(self.ori_folder, ['.hdf'])
+        self.filelist = bf.file_filter(self.ori_folder, ['.hdf', '.h5'])
         self.l4_filelist = []
         self._l4_file_num = len(self.l4_filelist)
         self.l2_filelist = []
@@ -289,7 +310,7 @@ class GEDI_ds(object):
                 beam_lat_lon_time += time.time()-time_sta
                 # print(f'beam lat lon generation consumes ca. {str(beam_lat_lon_time)} seconds.')
 
-                if True in self._shpfile_gp.intersects(ll):
+                if True in list(self._shpfile_gp.intersects(ll)):
                     time_sta = time.time()
                     shot_number = np.array(GEDI_l2a_temp[f'{beam_temp}/shot_number'])
                     digital_elevation_model = np.array(GEDI_l2a_temp[f'{beam_temp}/digital_elevation_model'])
@@ -466,7 +487,7 @@ class GEDI_ds(object):
             self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['AGBD quality'].ne(0))
             # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Degrade Flag'] < 1)
             # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Sensitivity'] > 0.95)
-            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna()
+            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna().reset_index(drop=True)
             self.GEDI_inform_DF.to_excel(os.path.join(f'{output_folder}', f'{self._shp_name}_high_quality.xlsx'))
 
     def mp_extract_L4_AGBD(self, output_df_factor=True, *args, **kwargs):
@@ -516,7 +537,7 @@ class GEDI_ds(object):
             self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['AGBD quality'].ne(0))
             # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Degrade Flag'] < 1)
             # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Sensitivity'] > 0.95)
-            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna()
+            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna().reset_index(drop=True)
             self.GEDI_inform_DF.to_excel(os.path.join(f'{output_folder}', f'{self._shp_name}_high_quality.xlsx'))
 
     def seq_extract_L2_vegh(self, output_df_factor=True, *args, **kwargs):
@@ -571,7 +592,7 @@ class GEDI_ds(object):
             self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Quality Flag'].ne(0))
             # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Degrade Flag'] < 1)
             # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Sensitivity'] > 0.95)
-            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna()
+            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna().reset_index(drop=True)
             self.GEDI_inform_DF.to_excel(os.path.join(f'{output_folder}', f'{self._shp_name}_high_quality.xlsx'))
 
     def mp_extract_L2_vegh(self, output_df_factor=True, *args, **kwargs):
@@ -630,20 +651,8 @@ class GEDI_ds(object):
             self.GEDI_inform_DF = self.GEDI_inform_DF.where(self.GEDI_inform_DF['Quality Flag'].ne(0))
             # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Degrade Flag'] < 1)
             # thalweg_temp.GEDI_inform_DF = thalweg_temp.GEDI_inform_DF.where(thalweg_temp.GEDI_inform_DF['Sensitivity'] > 0.95)
-            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna()
+            self.GEDI_inform_DF = self.GEDI_inform_DF.dropna().reset_index(drop=True)
             self.GEDI_inform_DF.to_excel(os.path.join(f'{output_folder}', f'{self._shp_name}_high_quality.xlsx'))
-
-    def GEDI_inform2shpfile(self):
-        # Take the lat/lon dataframe and convert each lat/lon to a shapely point
-        self.GEDI_inform_DF['geometry'] = self.GEDI_inform_DF.apply(lambda row: Point(row.Longitude, row.Latitude), axis=1)
-
-        # Convert to GeoDataframe
-        self.GEDI_inform_DF = gp.GeoDataFrame(self.GEDI_inform_DF)
-        self.GEDI_inform_DF = self.GEDI_inform_DF.drop(columns=['Latitude', 'Longitude'])
-        self.GEDI_inform_DF['Shot Number'] = self.GEDI_inform_DF['Shot Number'].astype(str)  # Convert shot number to string
-
-        outName = self._shp_name + '.shp'
-        self.GEDI_inform_DF.to_file(f'{self.work_env}Result\\{outName}', driver='ESRI Shapefile')
 
     # def visualise_shots(thalweg_temp):
     #     vdims = []

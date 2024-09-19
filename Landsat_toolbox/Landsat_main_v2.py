@@ -84,22 +84,20 @@ class Landsat_l2_ds(object):
         # Constant
         self._band_output_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10']
         self._all_supported_index_list = ['RGB', 'QI', 'all_band', '4visual', 'NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI',
-                                          'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'AWEI', 'AWEInsh']
+                                          'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'AWEI', 'AWEInsh', 'SVVI']
         self._band_tab = {'LE07_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7'),
                           'LE07_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'TIR', 'SWIR2'),
                           'LT05_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8'),
                           'LT05_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'TIR', 'SWIR2', 'PAN'),
                           'LC08_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B10'),
-                          'LC08_bandname': ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2', 'PAN', 'TIR'),
-                          }
+                          'LC08_bandname': ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2', 'PAN', 'TIR')}
         self._band_sup = ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'MIR2', 'PAN', 'TIR')
         self._OLI2ETM_harmonised_factor = {"BLUE_band_OLS": (0.8850, 0.0183),
                                            "GREEN_band_OLS": (0.9317, 0.0123),
                                            "RED_band_OLS": (0.9372,  0.0123),
                                            "NIR_band_OLS": (0.8339, 0.0448),
                                            "SWIR_band_OLS": (0.8639, 0.0306),
-                                           "SWIR2_band_OLS": (0.9165, 0.0116)
-                                           }
+                                           "SWIR2_band_OLS": (0.9165, 0.0116)}
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):

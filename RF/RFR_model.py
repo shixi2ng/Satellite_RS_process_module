@@ -5,7 +5,7 @@ from sklearn import metrics
 import numpy as np
 import pandas as pd
 import basic_function as bf
-from GEDI_toolbox.GEDI_main import GEDI_list
+from GEDI_toolbox.GEDI_main import GEDI_df
 import copy
 
 
@@ -55,7 +55,7 @@ plt.show()
 
 for n_est in range(500, 1000):
     for max_d in range(20, 200):
-        gedi_ds = GEDI_list('G:\\A_veg\\S2_all\\XGB_vhm\\GEDI_ds_V3\\floodplain_2020_high_quality_merged.csv')
+        gedi_ds = GEDI_df('G:\\A_veg\\S2_all\\XGB_vhm\\GEDI_ds_V3\\floodplain_2020_high_quality_merged.csv')
         gedi_df = gedi_ds.GEDI_df
         gedi_df = gedi_df.dropna()
         index_list = ['S2_OSAVI_20m_noninun_linear_interpolation',
