@@ -5,6 +5,11 @@ from River_GIS.River_GIS import *
 
 if __name__ == '__main__':
 
+    landsat_temp = Landsat_l2_ds('G:\\A_Landsat_Floodplain_veg\\Landsat_YZR_2023\\Ori_zipfile\\')
+    landsat_temp.construct_metadata(unzipped_para=False)
+    landsat_temp.mp_construct_index(['SVVI', 'TCGREENESS'], cloud_removal_para=True, size_control_factor=True, ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020.shp', harmonising_data=True)
+    # landsat_temp.mp_ds2landsatdc(['SVVI'], inherit_from_logfile=True)
+
     # file_name = 'G:\\A_Landsat_veg\\ROI_map\\floodplain_2020_map.TIF'
     # a = retrieve_correct_filename(file_name)
     #

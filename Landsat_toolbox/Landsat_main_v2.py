@@ -1,4 +1,5 @@
 import concurrent.futures
+import traceback
 from itertools import repeat
 import pandas as pd
 from .built_in_index import built_in_index
@@ -82,9 +83,9 @@ class Landsat_l2_ds(object):
         bf.create_folder(self.trash_folder)
 
         # Constant
-        self._band_output_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10']
+        self._band_output_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10', 'QA_PIXEL', 'gap_mask']
         self._all_supported_index_list = ['RGB', 'QI', 'all_band', '4visual', 'NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI',
-                                          'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'AWEI', 'AWEInsh', 'SVVI']
+                                          'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'AWEI', 'AWEInsh', 'SVVI', 'TCGREENESS']
         self._band_tab = {'LE07_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7'),
                           'LE07_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'TIR', 'SWIR2'),
                           'LT05_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8'),
@@ -92,12 +93,15 @@ class Landsat_l2_ds(object):
                           'LC08_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B10'),
                           'LC08_bandname': ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2', 'PAN', 'TIR')}
         self._band_sup = ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'MIR2', 'PAN', 'TIR')
-        self._OLI2ETM_harmonised_factor = {"BLUE_band_OLS": (0.8850, 0.0183),
-                                           "GREEN_band_OLS": (0.9317, 0.0123),
-                                           "RED_band_OLS": (0.9372,  0.0123),
-                                           "NIR_band_OLS": (0.8339, 0.0448),
-                                           "SWIR_band_OLS": (0.8639, 0.0306),
-                                           "SWIR2_band_OLS": (0.9165, 0.0116)}
+        self._OLI2ETM_harmonised_factor = {"B2_band_OLS": (0.8850, 0.0183),
+                                           "B3_band_OLS": (0.9317, 0.0123),
+                                           "B4_band_OLS": (0.9372, 0.0123),
+                                           "B5_band_OLS": (0.8339, 0.0448),
+                                           "B6_band_OLS": (0.8639, 0.0306),
+                                           "B7_band_OLS": (0.9165, 0.0116),
+                                           "B1_band_OLS": (1.0000, 0.0000),
+                                           "B8_band_OLS": (1.0000, 0.0000),
+                                           "B10_band_OLS": (1.000, 0.0000)}
 
     def save_log_file(func):
         def wrapper(self, *args, **kwargs):
@@ -105,7 +109,7 @@ class Landsat_l2_ds(object):
             #########################################################################
             # Document the log file and para file
             # The difference between log file and para file is that the log file contains the information for each run/debug
-            # While the para file only comprises of the parameter for the latest run/debug
+            # While the para file only comprised of the parameter for the latest run/debug
             #########################################################################
 
             time_start = time.time()
@@ -314,7 +318,7 @@ class Landsat_l2_ds(object):
             try:
                 self.construct_metadata()
             except:
-                raise Exception('Please manually generate the Landsat metadat before further processing!')
+                raise Exception('Please manually generate the Landsat metadata before further processing!')
     
     def _process_index_construction_para(self, **kwargs):
         # Detect whether all the indicators are valid
@@ -509,7 +513,7 @@ class Landsat_l2_ds(object):
             issue_files.writelines(['#' * 50 + 'Construction issue files' + '#' * 50])
             issue_files.close()
 
-    def _check_output_band_statue(self, band_name, tiffile_serial_num):
+    def _safe_retrieve_band_arr(self, band_name_list, tiffile_serial_num):
 
         # Define local var
         sensing_date = self.Landsat_metadata['Date'][tiffile_serial_num]
@@ -517,23 +521,78 @@ class Landsat_l2_ds(object):
         sensor_type = self.Landsat_metadata['Sensor_Type'][tiffile_serial_num]
 
         # Factor configuration
-        if True in [band_temp not in self._band_output_list for band_temp in band_name]:
-            print(f'Band {band_name} is not valid!')
+        if True in [band_temp not in self._band_output_list for band_temp in band_name_list]:
+            print(f'Band {band_name_list} is not valid!')
             sys.exit(-1)
 
         # Detect whether the required band was generated before
-        try:
-            # Return output
-            if 0 in [len(bf.file_filter(self.unzipped_folder, [f'{str(band_temp)}.TIF', f'{str(tile_num)}_{str(sensing_date)}', str(sensor_type)], and_or_factor='and', exclude_word_list=['.ovr'])) for band_temp in band_name]:
-                print(f'The {band_name} of \033[1;31m Date:{str(sensing_date)} Tile:{str(tile_num)}\033[0m was missing!')
-                return None
-            elif 1 not in [len(bf.file_filter(self.unzipped_folder, [f'{str(band_temp)}.TIF', f'{str(tile_num)}_{str(sensing_date)}', str(sensor_type)], and_or_factor='and', exclude_word_list=['.ovr'])) for band_temp in band_name]:
-                print(f'There are more than one tiffile for \033[1;31m Sensor:{str(sensor_type)} Date:{str(sensing_date)} Tile:{str(tile_num)}\033[0m!')
-                return None
-            else:
-                return [gdal.Open(bf.file_filter(self.unzipped_folder, [f'{str(band_temp)}.TIF', f'{str(tile_num)}_{str(sensing_date)}', str(sensor_type)], and_or_factor='and', exclude_word_list=['.ovr'])[0]) for band_temp in band_name]
-        except:
-            return None
+        break_factor, arr_dic, bound_temp = False, {}, None
+        while True:
+
+            # Get the ds
+            try:
+                # Return output
+                file_len_list = [len(bf.file_filter(self.unzipped_folder, [f'{str(band_temp)}.TIF', f'{str(tile_num)}_{str(sensing_date)}', str(sensor_type)], and_or_factor='and', exclude_word_list=['.ovr', 'xml'])) for band_temp in band_name_list]
+                if True in [_ == 0 for _ in file_len_list]:
+                    file_len_t = [_ == 0 for _ in file_len_list]
+                    print(f'The {str(band_name_list[file_len_t.index(True)])} of \033[1;31m Date:{str(sensing_date)} Tile:{str(tile_num)}\033[0m was missing!')
+                    raise Exception(-1)
+                elif True in [_ > 1 for _ in file_len_list]:
+                    file_len_t = [_ > 1 for _ in file_len_list]
+                    print(f'There are more than one tiffile for \033[1;31m Sensor:{str(sensor_type)} Date:{str(sensing_date)} Tile:{str(tile_num)} Band: {str(band_name_list[file_len_t.index(True)])}\033[0m!')
+                    raise Exception(-1)
+                else:
+                    for band_temp in band_name_list:
+                        ds_temp = gdal.Open(bf.file_filter(self.unzipped_folder, [f'{str(band_temp)}.TIF', f'{str(tile_num)}_{str(sensing_date)}', str(sensor_type)], and_or_factor='and', exclude_word_list=['.ovr', 'xml'])[0])
+
+                        if ds_temp is None:
+                            print(f'The {str(band_temp)} of \033[1;31m Date:{str(sensing_date)} Tile:{str(tile_num)}\033[0m might be corrupted!')
+                            raise Exception(-1)
+
+                        arr_dic[band_temp] = ds_temp.GetRasterBand(1).ReadAsArray().astype(np.float32)
+                        nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
+
+                        # Reset the nodata value
+                        if nodata_value is None:
+                            pass
+                        elif ~np.isnan(nodata_value):
+                            arr_dic[band_temp][arr_dic[band_temp] == nodata_value] = np.nan
+
+                        # harmonise the Landsat 8
+                        if self._harmonising_data and sensor_type in ['LC08'] and band_temp not in ['QA_PIXEL', 'gap_mask']:
+                            arr_dic[band_temp] = arr_dic[band_temp] * self._OLI2ETM_harmonised_factor[f'{band_temp}_band_OLS'][0] + self._OLI2ETM_harmonised_factor[f'{band_temp}_band_OLS'][1]
+
+                        if bound_temp is None:
+                            ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
+                            bound_temp = (ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize,  ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp)
+
+                    return arr_dic, bound_temp, ds_temp
+
+            except Exception:
+                if break_factor:
+                    print(f"The file {self.Landsat_metadata['File_Path'][tiffile_serial_num]} might be corrupted. Please manually check!")
+                    return None, None, None
+
+            except:
+                if break_factor:
+                    print(traceback.format_exc())
+                    raise Exception('Code error during the retrieval of arrays for Landsat')
+
+            break_factor, ds_temp, arr_dic = True, None, {}
+            unzipped_file = tarfile.TarFile(self.Landsat_metadata['File_Path'][tiffile_serial_num])
+            issued_files = bf.file_filter(self.unzipped_folder, [f'{str(tile_num)}_{str(sensing_date)}', str(sensor_type)], and_or_factor='and')
+            for issued_file_temp in issued_files:
+                try:
+                    os.remove(issued_file_temp)
+                except:
+                    print(f'Please manually remove {str(issued_file_temp)} and rerun the program!')
+
+            try:
+                unzipped_file.extractall(path=self.unzipped_folder)
+                unzipped_file.close()
+            except:
+                print(f"The file {self.Landsat_metadata['File_Path'][tiffile_serial_num]} is corrupted")
+                return None, None, None
     
     def construct_landsat_index(self, index_list, i, *args, **kwargs):
 
@@ -564,9 +623,10 @@ class Landsat_l2_ds(object):
 
             # Detect VI existence
             self.vi_output_path_dic = {}
+            dep_dic = {}
 
+            # Get all unique bands
             for _ in index_list:
-
                 self.vi_output_path_dic[_] = f'{self._work_env}Landsat_constructed_index\\{str(_)}\\' if self.ROI is None else f'{self._work_env}Landsat_{str(self.ROI_name)}_index\\{str(_)}\\'
                 file_name = f'{str(filedate)}_{str(tile_num)}_{str(_)}.TIF'
 
@@ -576,97 +636,56 @@ class Landsat_l2_ds(object):
                     if _ in self._index_exprs_dic.keys():
                         dep_list = self._index_exprs_dic[_][0]
                         dep_list = [str(dep) for dep in dep_list]
-                        harfactor_list = None
                         if 'LE07' in fileid:
                             dep_list = [self._band_tab['LE07_bandnum'][self._band_tab['LE07_bandname'].index(dep_t)] for dep_t in dep_list]
                         elif 'LT05' in fileid or 'LT04' in fileid:
                             dep_list = [self._band_tab['LT05_bandnum'][self._band_tab['LT05_bandname'].index(dep_t)] for dep_t in dep_list]
                         elif 'LC08' in fileid or 'LC09' in fileid:
                             dep_list = [self._band_tab['LC08_bandnum'][self._band_tab['LC08_bandname'].index(dep_t)] for dep_t in dep_list]
-                            if self._harmonising_data:
-                                harfactor_list = [self._OLI2ETM_harmonised_factor[f"{self._band_tab['LC08_bandname'][self._band_tab['LC08_bandnum'].index(dep_t)]}_band_OLS"] for dep_t in dep_list]
                         else:
                             raise Exception('The Original Tiff files are not belonging to Landsat 5, 7, 8 OR 9')
-
-                        # Read original tif files
-                        ds_list = self._check_output_band_statue(dep_list, i)
-                        bound_temp = None
-                        if ds_list is not None:
-                            try:
-                                array_list = []
-                                for ds_temp in ds_list:
-                                    array_temp = ds_temp.GetRasterBand(1).ReadAsArray().astype(np.float32)
-                                    nodata_value = ds_temp.GetRasterBand(1).GetNoDataValue()
-                                    if ~np.isnan(nodata_value):
-                                        array_temp[array_temp == nodata_value] = np.nan
-                                    if harfactor_list is not None:
-                                        array_temp = array_temp * harfactor_list[ds_list.index(ds_temp)][0] + harfactor_list[ds_list.index(ds_temp)][1]
-                                    array_list.append(array_temp)
-
-                                    if bound_temp is None:
-                                        ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
-                                        bound_temp = (ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize,  ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp)
-
-                                output_array = self._index_exprs_dic[_][1](*array_list)
-                                array_list = None
-
-                            except RuntimeError:
-                                if 'issued_files' not in kwargs.keys():
-                                    array_list, ds_list = None, None
-                                    unzipped_file = tarfile.TarFile(self.Landsat_metadata['File_Path'][i])
-                                    issued_files = bf.file_filter(self.unzipped_folder, [self.Landsat_metadata['FileID'][i]])
-                                    for issued_file_temp in issued_files:
-                                        try:
-                                            os.remove(issued_file_temp)
-                                        except:
-                                            print(f'Please manually remove \033[1;31m{str(issued_file_temp)}\033[0m and rerun the program!')
-                                    unzipped_file.extractall(path=self.unzipped_folder)
-                                    unzipped_file.close()
-                                    kwargs_temp = copy.copy(kwargs)
-                                    kwargs_temp['issued_files'] = True
-                                    q = self.construct_landsat_index(index_list, i, **kwargs_temp)
-                                    return q
-                                else:
-                                    raise ValueError(f"The file {self.Landsat_metadata['File_Path'][i]} is corrupted")
-                            except:
-                                print(traceback.format_exc())
-                                raise Exception(f'Code error output array of {str(_)} for {str(filedate)}_{str(tile_num)} is not properly generated!')
-                        else:
-                            if 'issued_files' not in kwargs.keys():
-                                array_list, ds_list = None, None
-                                unzipped_file = tarfile.TarFile(self.Landsat_metadata['File_Path'][i])
-                                issued_files = bf.file_filter(self.unzipped_folder, [self.Landsat_metadata['FileID'][i]])
-                                for issued_file_temp in issued_files:
-                                    try:
-                                        os.remove(issued_file_temp)
-                                    except:
-                                        print(f'Please manually remove {str(issued_file_temp)}')
-                                unzipped_file.extractall(path=self.unzipped_folder)
-                                unzipped_file.close()
-                                kwargs_temp = copy.copy(kwargs)
-                                kwargs_temp['issued_files'] = True
-                                q = self.construct_landsat_index(index_list, i, **kwargs_temp)
-                                return q
-                            else:
-                                raise ValueError(f"The file {self.Landsat_metadata['File_Path'][i]} is corrupted")
+                        dep_dic[_] = dep_list
                     else:
                         raise Exception(f'Code error: the {str(_)} for {str(filedate)}_{str(tile_num)} is not in the index expression dic')
 
+            # Generate the unique dep list
+            unique_dep_list = []
+            for _ in dep_dic.keys():
+                for __ in dep_dic[_]:
+                    if __ not in unique_dep_list:
+                        unique_dep_list.append(__)
+
+            # Read all unique tif files and QA files
+            if len(unique_dep_list) > 0:
+                arr_dic, bound_temp, ds_temp = self._safe_retrieve_band_arr(unique_dep_list, i)
+                if arr_dic is None:
+                    raise Exception(f'Error during the retrival of Band Array of {fileid}')
+
+                if self._cloud_removal_para:
+                    # qi_folder = f'{thalweg_temp._work_env}Landsat_constructed_index\\QI\\' if thalweg_temp.ROI is None else f'{thalweg_temp._work_env}Landsat_{str(thalweg_temp.ROI_name)}_index\\QI\\'
+                    # bf.create_folder(qi_folder)
+                    QA_dic, bound_temp, ds_temp = self._safe_retrieve_band_arr(['QA_PIXEL'], i)
+                    if QA_dic is None:
+                        raise Exception(f'Error during the retrieval of QA_PIXEL file for {fileid}')
+
+                    QI_arr = QA_dic['QA_PIXEL']
+                    QI_arr = self._process_QA_band(QI_arr, i)
+
+            # Calculate each index
+            for _ in index_list:
+                file_name = f'{str(filedate)}_{str(tile_num)}_{str(_)}.TIF'
+                if not os.path.exists(f'{self.vi_output_path_dic[_]}{str(filedate)}_{str(tile_num)}_{str(_)}.TIF') or self._overwritten_para:
+
+                    # Generate the output arr
+                    output_array = self._index_exprs_dic[_][1](*[arr_dic[__] for __ in dep_dic[_]])
+
+                    # Cloud removal procedure
                     if self._cloud_removal_para:
-                        QI_filelist = bf.file_filter(self.unzipped_folder, [f'{str(tile_num)}_{str(filedate)}', sensor_type, 'QA_PIXEL'], and_or_factor='and', exclude_word_list=[f'{str(filedate)}_02'])
-                        if len(QI_filelist) != 1:
-                            raise ValueError(f'There are more than one QI file for {str(filedate)} {str(tile_num)}!')
-                        else:
-                            try:
-                                # qi_folder = f'{thalweg_temp._work_env}Landsat_constructed_index\\QI\\' if thalweg_temp.ROI is None else f'{thalweg_temp._work_env}Landsat_{str(thalweg_temp.ROI_name)}_index\\QI\\'
-                                # bf.create_folder(qi_folder)
-                                QI_ds = gdal.Open(QI_filelist[0])
-                                QI_arr = QI_ds.GetRasterBand(1).ReadAsArray().astype(np.float16)
-                                QI_arr = self._process_QA_band(QI_arr, QI_filelist[0])
-                                output_array = QI_arr * output_array
-                                # bf.write_raster(ds_list[0], output_array, qi_folder, file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
-                            except ValueError:
-                                raise ValueError(f'QI and BAND array for {str(tile_num)} {str(filedate)} {str(sensor_type)} is not compatible')
+                        try:
+                            output_array = QI_arr * output_array
+                            # bf.write_raster(ds_list[0], output_array, qi_folder, file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
+                        except ValueError:
+                            raise ValueError(f'QI and BAND array for {str(tile_num)} {str(filedate)} {str(sensor_type)} is not compatible')
 
                     if self._scan_line_correction:
                         fill_landsat7_gap(output_array)
@@ -676,10 +695,10 @@ class Landsat_l2_ds(object):
                         output_array[np.isnan(output_array)] = -3.2768
                         output_array = output_array * 10000
                         output_array.astype(int)
-                        bf.write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
+                        bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
                         data_type = gdal.GDT_Int16
                     else:
-                        bf.write_raster(ds_list[0], output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Float32)
+                        bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Float32)
                         data_type = gdal.GDT_Float32
 
                     if self.ROI is not None:
@@ -692,8 +711,10 @@ class Landsat_l2_ds(object):
                     gdal.Unlink('/vsimem/' + file_name + '2.TIF')
 
                     print(f'The \033[1;31m{str(_)}\033[0m of \033[1;33m{str(filedate)} {str(tile_num)}\033[0m were constructed in \033[1;34m{str(time.time() - start_time)}s\033[0m ({str(i + 1)} of {str(self.Landsat_metadata_size)})')
+                    start_time = time.time()
                 else:
                     print(f'The \033[1;31m{str(_)}\033[0m of \033[1;33m{str(filedate)} {str(tile_num)}\033[0m has been constructed ({str(i + 1)} of {str(self.Landsat_metadata_size)})')
+                    start_time = time.time()
 
                 # Generate SA map (NEED TO FIX)
                 if self.ROI is not None and kwargs['metadata_range'].index(i) == 0:
@@ -750,18 +771,25 @@ class Landsat_l2_ds(object):
             return None
         except:
             print(traceback.format_exc())
-            return i
+            # return i
+            return None
 
-    def _process_QA_band(self, QI_temp_array, filename):
+    def _process_QA_band(self, QI_temp_array, tiffile_serial_num):
 
         # s1_time = time.time()
-        if type(QI_temp_array) != np.ndarray or type(filename) != str:
-            raise TypeError('The qi temp array or the file name was under a wrong format!')
+        if not isinstance(QI_temp_array, np.ndarray):
+            raise TypeError('The qi temp array was under a wrong format!')
+
+        if not isinstance(tiffile_serial_num, int):
+            raise TypeError('The tiffile serial num was under a wrong format!')
+        else:
+            sensor_type = self.Landsat_metadata['Sensor_Type'][tiffile_serial_num]
+            fileid = self.Landsat_metadata.FileID[tiffile_serial_num]
 
         QI_temp_array = QI_temp_array.astype(np.float16)
         QI_temp_array[QI_temp_array == 1] = np.nan
 
-        if 'LC08' in filename or 'LC09' in filename:
+        if sensor_type in ['LC08', 'LC09']:
             QI_temp_array[np.floor_divide(QI_temp_array, 256) > 86] = np.nan
             QI_temp_array_temp = copy.copy(QI_temp_array)
             QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
@@ -773,7 +801,7 @@ class Landsat_l2_ds(object):
                                          np.logical_and(np.mod(QI_temp_array, 128) != 0,
                                                         np.mod(QI_temp_array, 128) != 66))] = np.nan
 
-        elif 'LE07' in filename:
+        elif sensor_type == 'LE07':
             QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
             QI_temp_array_temp = copy.copy(QI_temp_array)
             QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
@@ -786,11 +814,14 @@ class Landsat_l2_ds(object):
                                                         np.mod(QI_temp_array, 128) != 66))] = np.nan
 
             if self._scan_line_correction:
-                gap_mask_ds = gdal.Open(self.unzipped_folder + filename.split('_02_T')[0] + '_gap_mask.TIF')
-                gap_mask_array = gap_mask_ds.GetRasterBand(1).ReadAsArray()
+                gap_mask_array, t, tt = self._safe_retrieve_band_arr(['gap_mask'], tiffile_serial_num)
+                if gap_mask_array is None:
+                    raise Exception(f'Error during the retrival of Band Array of {fileid}')
+                else:
+                    gap_mask_array = gap_mask_array['gap_mask']
                 QI_temp_array[gap_mask_array == 0] = 1
 
-        elif 'LT05' in filename or 'LT04' in filename:
+        elif sensor_type in ['LT05', 'LT04']:
             QI_temp_array[np.floor_divide(QI_temp_array, 256) > 21] = np.nan
             QI_temp_array_temp = copy.copy(QI_temp_array)
             QI_temp_array_temp[~np.isnan(QI_temp_array_temp)] = 0
@@ -804,7 +835,7 @@ class Landsat_l2_ds(object):
                                                         np.mod(QI_temp_array, 128) != 66))] = np.nan
 
         else:
-            raise ValueError(f'This {filename} is not supported Landsat data!')
+            raise ValueError(f'This {sensor_type} is not supported Landsat data!')
 
         # print(f's1 time {str(time.time() - start_time)}')
         QI_temp_array[~np.isnan(QI_temp_array)] = 1
