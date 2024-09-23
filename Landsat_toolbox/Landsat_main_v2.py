@@ -54,6 +54,7 @@ class Landsat_l2_ds(object):
         self._remove_nan_layer = False
         self._manually_remove_para = False
         self._manually_remove_datelist = None
+        self._skip_invalid_file = False
 
         # Remove all the duplicated data
         dup_data = bf.file_filter(self.ori_folder, [f'.{str(_)}.zip' for _ in range(10)], and_or_factor='and')
@@ -895,7 +896,7 @@ class Landsat_l2_ds(object):
     def _process_2dc_para(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('inherit_from_logfile', 'ROI', 'ROI_name', 'dc_overwritten_para', 'remove_nan_layer', 'manually_remove_datelist', 'size_control_factor'):
+            if kwarg_indicator not in ('skip_invalid_file', 'inherit_from_logfile', 'ROI', 'ROI_name', 'dc_overwritten_para', 'remove_nan_layer', 'manually_remove_datelist', 'size_control_factor'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clipped_overwritten_para
@@ -915,6 +916,15 @@ class Landsat_l2_ds(object):
                 raise TypeError('Please mention the dc_overwritten_para should be bool type!')
         else:
             self._inherit_from_logfile = False
+
+        # process ship invalid file
+        if 'skip_invalid_file' in kwargs.keys():
+            if type(kwargs['skip_invalid_file']) is bool:
+                self._skip_invalid_file = kwargs['skip_invalid_file']
+            else:
+                raise TypeError('Please mention the skip_invalid_file should be bool type!')
+        else:
+            self._skip_invalid_file = False
 
         # process remove_nan_layer
         if 'remove_nan_layer' in kwargs.keys():
@@ -1004,7 +1014,7 @@ class Landsat_l2_ds(object):
 
         if not os.path.exists(self._dc_infr[_ + 'input_path']):
             raise Exception(f'Please validate the roi name and {str(_)} for ds2dc!')
-        elif len(bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
+        elif not self._skip_void_file and len(bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
             raise ValueError(f'{_} of the {self.ROI_name} is not consistent')
 
         eliminating_all_not_required_file(self._dc_infr[_ + 'input_path'])
@@ -1064,7 +1074,10 @@ class Landsat_l2_ds(object):
                         if _ not in self._band_sup:
                             file_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [str(doy_list[i]), f'{_}.TIF'], and_or_factor='and')
                             if len(file_list) == 0:
-                                raise Exception(f'The {str(doy_list[i])}_{_} is not properly generated!')
+                                if not self._skip_invalid_file:
+                                    raise Exception(f'The {str(doy_list[i])}_{_} is not properly generated!')
+                                else:
+                                    array_list = [np.ones(array_list[0].shape[0], array_list[0].shape[1]) * nodata_value]
                             else:
                                 try:
                                     ds_list = [gdal.Open(file_temp) for file_temp in file_list]

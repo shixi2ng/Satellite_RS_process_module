@@ -2287,8 +2287,7 @@ class RS_dcs(object):
 
         # process accumulated_method
         if 'accumulated_method' in kwargs.keys():
-            if isinstance(kwargs['accumulated_method'], str) and kwargs['accumulated_method'] in ['static_thr',
-                                                                                                  'phemetric_thr']:
+            if isinstance(kwargs['accumulated_method'], str) and kwargs['accumulated_method'] in ['static_thr', 'phemetric_thr']:
                 self._GEDI_link_S2_retrieval_method = kwargs['accumulated_method']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be str type!')
@@ -2542,7 +2541,7 @@ class RS_dcs(object):
 
         # process interpolation method
         if 'spatial_interpolate_method' in kwargs.keys():
-            if type(kwargs['spatial_interpolate_method']) is str and kwargs['spatial_interpolate_method'] in ['nearest_neighbor', 'linear_interpolation']:
+            if type(kwargs['spatial_interpolate_method']) is str and kwargs['spatial_interpolate_method'] in ['nearest_neighbor', 'area_average', 'focal']:
                 self._GEDI_link_RS_spatial_interpolate_method = kwargs['spatial_interpolate_method']
             else:
                 raise TypeError('Please mention the spatial_interpolate_method should be str type!')
@@ -2551,14 +2550,16 @@ class RS_dcs(object):
 
         # process para method
         if 'temporal_interpolate_method' in kwargs.keys():
-            if type(kwargs['temporal_interpolate_method']) is str and kwargs['temporal_interpolate_method'] in ['nearest_value', '16days_maximum']:
+            if type(kwargs['temporal_interpolate_method']) is str and kwargs['temporal_interpolate_method'] in ['linear_interpolation', '16days_max', '16days_ave']:
+                self._GEDI_link_RS_temporal_interpolate_method = [kwargs['temporal_interpolate_method']]
+            elif type(kwargs['temporal_interpolate_method']) is list and True in [_ in ['linear_interpolation', '16days_max', '16days_ave'] for _ in kwargs['temporal_interpolate_method']]:
                 self._GEDI_link_RS_temporal_interpolate_method = kwargs['temporal_interpolate_method']
             else:
                 raise TypeError('Please mention the temporal_interpolate_method should be str type!')
         else:
-            self._GEDI_link_RS_temporal_interpolate_method = 'nearest_value'
+            self._GEDI_link_RS_temporal_interpolate_method = ['linear_interpolation']
 
-    def link_GEDI_Landsat_dc(self, GEDI_xlsx_file, index_list, **kwargs):
+    def link_GEDI_RS_dc(self, GEDI_df_, index_list, **kwargs):
 
         # Two different method Nearest neighbor and linear interpolation
         self._process_link_GEDI_RS_para(**kwargs)
@@ -2568,11 +2569,12 @@ class RS_dcs(object):
         raster_proj = retrieve_srs(gdal.Open(self.ROI_tif))
 
         # Retrieve GEDI inform
-        GEDI_df_temp = gedi.GEDI_df(GEDI_xlsx_file)
-        GEDI_df_temp.reprojection(raster_proj, xycolumn_start='EPSG')
+        if isinstance(GEDI_df_, gedi.GEDI_df):
+            GEDI_df_.reprojection(raster_proj, xycolumn_start='EPSG')
+        else:
+            raise TypeError('The gedi_df_ is not under the right type')
 
         # resort through lat or lon
-
         for index_temp in index_list:
 
             if index_temp not in self._index_list:
@@ -2580,20 +2582,20 @@ class RS_dcs(object):
 
             # Divide the GEDI and dc into different blocks
             block_amount = os.cpu_count()
-            indi_block_size = int(np.ceil(GEDI_df_temp.df_size / block_amount))
+            indi_block_size = int(np.ceil(GEDI_df_.df_size / block_amount))
 
             # Allocate the GEDI_df and dc
-            GEDI_list_blocked, dc_blocked, raster_gt_list, doy_list_temp = [], [], [], []
+            GEDI_df_blocked, dc_blocked, raster_gt_list, doy_list_temp = [], [], [], []
             for i in range(block_amount):
                 if i != block_amount - 1:
-                    GEDI_list_blocked.append(GEDI_df_temp.GEDI_inform_DF[i * indi_block_size: (i + 1) * indi_block_size])
+                    GEDI_df_blocked.append(GEDI_df_.GEDI_inform_DF[i * indi_block_size: (i + 1) * indi_block_size])
                 else:
-                    GEDI_list_blocked.append(GEDI_df_temp.GEDI_inform_DF[i * indi_block_size: -1])
+                    GEDI_df_blocked.append(GEDI_df_.GEDI_inform_DF[i * indi_block_size: -1])
 
-                ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_list_blocked[-1].EPSG_lat.max() + 12.5, \
-                                                             GEDI_list_blocked[-1].EPSG_lat.min() - 12.5, \
-                                                             GEDI_list_blocked[-1].EPSG_lon.min() - 12.5, \
-                                                             GEDI_list_blocked[-1].EPSG_lon.max() + 12.5
+                ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_df_blocked[-1].EPSG_lat.max() + 12.5, \
+                                                             GEDI_df_blocked[-1].EPSG_lat.min() - 12.5, \
+                                                             GEDI_df_blocked[-1].EPSG_lon.min() - 12.5, \
+                                                             GEDI_df_blocked[-1].EPSG_lon.max() + 12.5
                 cube_ymin, cube_ymax, cube_xmin, cube_xmax = (int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))),
                                                               int(min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5]))),
                                                               int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))),
@@ -2604,8 +2606,7 @@ class RS_dcs(object):
                     dc_blocked.append(sm_temp.drop_nanlayer())
                     doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
                 elif isinstance(self.dcs[self._index_list.index(index_temp)], np.ndarray):
-                    dc_blocked.append(self.dcs[self._index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1,
-                        :])
+                    dc_blocked.append(self.dcs[self._index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
                     doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
                 raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2],
                                        raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
@@ -2615,9 +2616,9 @@ class RS_dcs(object):
                 # for i in range(block_amount):
                 #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
                 with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                    result = executor.map(link_GEDI_inform, dc_blocked, GEDI_list_blocked, doy_list_temp,
+                    result = executor.map(link_GEDI_inform, dc_blocked, GEDI_df_blocked, doy_list_temp,
                                           raster_gt_list, repeat('EPSG'), repeat(index_temp),
-                                          repeat('linear_interpolation'),
+                                          repeat(['linear_interpolation']),
                                           repeat(self._size_control_factor_list[self._index_list.index(index_temp)]))
             except:
                 raise Exception('The link procedure was interrupted by error!')
@@ -2650,7 +2651,7 @@ class RS_dcs(object):
         elif cal_method not in self._denv8pheme_cal_method_list:
             raise ValueError('The cal method is not supported!')
         else:
-            self._denv8pheme_cal = cal_method
+                self._denv8pheme_cal = cal_method
 
         # Determine the base status
         if not isinstance(base_status, bool):
