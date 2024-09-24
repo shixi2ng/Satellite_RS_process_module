@@ -381,7 +381,7 @@ class Landsat_l2_ds(object):
         if 'main_coordinate_system' in kwargs.keys():
             self.main_coordinate_system = kwargs['main_coordinate_system']
         else:
-            self.main_coordinate_system = 'EPSG:32647'
+            self.main_coordinate_system = 'EPSG:32649'
 
         # process ROI and ROI name
         if 'ROI' in kwargs.keys():
@@ -701,20 +701,23 @@ class Landsat_l2_ds(object):
                         output_array.astype(np.uint16)
                         bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_UInt16)
                         data_type = gdal.GDT_Int16 = gdal.GDT_UInt16
+                        nodata_value = 0
                     elif self._size_control_factor:
                         output_array[np.isnan(output_array)] = -3.2768
                         output_array = output_array * 10000
                         output_array.astype(int)
                         bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
                         data_type = gdal.GDT_Int16
+                        nodata_value = -32768
                     else:
                         bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Float32)
                         data_type = gdal.GDT_Float32
+                        nodata_value = np.nan
 
                     if self.ROI is not None:
-                        gdal.Warp('/vsimem/' + file_name + '2.TIF', '/vsimem/' + file_name + '.TIF', xRes=30, yRes=30, dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI, cropToCutline=True, outputType=data_type, outputBounds=bound_temp)
+                        gdal.Warp('/vsimem/' + file_name + '2.TIF', '/vsimem/' + file_name + '.TIF', xRes=30, yRes=30, dstSRS=self.main_coordinate_system, cutlineDSName=self.ROI, cropToCutline=True, outputType=data_type, outputBounds=bound_temp, srcNodata =nodata_value, dstNodata =nodata_value)
                     else:
-                        gdal.Warp('/vsimem/' + file_name + '2.TIF', '/vsimem/' + file_name + '.TIF', xRes=30, yRes=30, dstSRS=self.main_coordinate_system, outputType=data_type, outputBounds=bound_temp)
+                        gdal.Warp('/vsimem/' + file_name + '2.TIF', '/vsimem/' + file_name + '.TIF', xRes=30, yRes=30, dstSRS=self.main_coordinate_system, outputType=data_type, outputBounds=bound_temp, srcNodata =nodata_value, dstNodata =nodata_value)
 
                     gdal.Translate(f'{self.vi_output_path_dic[_]}{str(filedate)}_{str(tile_num)}_{str(_)}.TIF', '/vsimem/' + file_name + '2.TIF', options=topts)
                     gdal.Unlink('/vsimem/' + file_name + '.TIF')
@@ -1026,10 +1029,7 @@ class Landsat_l2_ds(object):
         self._process_2dc_para(**kwargs)
 
         # Define the input path
-        if _ in self._band_sup:
-            self._dc_infr[_ + 'input_path'] = self.unzipped_folder
-        else:
-            self._dc_infr[_ + 'input_path'] = self._work_env + f'Landsat_constructed_index\\{_}\\' if self.ROI_name is None else self._work_env + f'Landsat_{self.ROI_name}_index\\{_}\\'
+        self._dc_infr[_ + 'input_path'] = self._work_env + f'Landsat_constructed_index\\{_}\\' if self.ROI_name is None else self._work_env + f'Landsat_{self.ROI_name}_index\\{_}\\'
 
         if not os.path.exists(self._dc_infr[_ + 'input_path']):
             raise Exception(f'Please validate the roi name and {str(_)} for ds2dc!')
@@ -1061,10 +1061,10 @@ class Landsat_l2_ds(object):
 
             # Get the doy list
             start_time = time.time()
-            stack_file_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and', exclude_word_list=['aux', 'xml']) if _ not in self._band_sup else bf.file_filter(self._dc_infr[_ + 'input_path'], ['B1.TIF'],  exclude_word_list=['aux', 'xml'])
+            stack_file_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and', exclude_word_list=['aux', 'xml'])
             stack_file_list.sort()
 
-            doy_list = [int(filepath_temp.split('\\')[-1][0:8]) for filepath_temp in stack_file_list] if _ not in self._band_sup else [int(filepath_temp.split('\\')[-1].split('_')[3][0:8]) for filepath_temp in stack_file_list]
+            doy_list = [int(filepath_temp.split('\\')[-1][0:8]) for filepath_temp in stack_file_list]
             doy_list = list(set(doy_list))
             doy_list_ = []
             for doy_ in doy_list:
@@ -1102,93 +1102,93 @@ class Landsat_l2_ds(object):
             with tqdm(total=len(doy_list), desc=f'Assemble the \033[1;33m{str(_)}\033[0m into the Landsat sdc', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 while i < len(doy_list):
                     try:
-                        if _ not in self._band_sup:
-                            file_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [str(doy_list[i]), f'{_}.TIF'], and_or_factor='and')
-                            if len(file_list) == 0:
-                                if not self._skip_invalid_file:
-                                    raise Exception(f'The {str(doy_list[i])}_{_} is not properly generated!')
-                                else:
-                                    array_list = [np.ones(array_list[0].shape[0], array_list[0].shape[1]) * nodata_value]
+                        # if _ not in self._band_sup:
+                        file_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [str(doy_list[i]), f'{_}.TIF'], and_or_factor='and')
+                        if len(file_list) == 0:
+                            if not self._skip_invalid_file:
+                                raise Exception(f'The {str(doy_list[i])}_{_} is not properly generated!')
                             else:
+                                array_list = [np.ones(array_list[0].shape[0], array_list[0].shape[1]) * nodata_value]
+                        else:
+                            try:
+                                ds_list = [gdal.Open(file_temp) for file_temp in file_list]
+                                array_list = [ds_temp.GetRasterBand(1).ReadAsArray() for ds_temp in ds_list]
+                                nodata_list = [ds_temp.GetRasterBand(1).GetNoDataValue() for ds_temp in ds_list]
+                                dtype_list = [array_temp.dtype for array_temp in array_list]
+                            except RuntimeError:
+                                ds_list, array_list, nodata_list, dtype_list = None, None, None, None
+                                for file_temp in file_list:
+                                    date_temp = file_temp.split('\\')[-1].split('_')[0]
+                                    tile = file_temp.split('\\')[-1].split('_')[1]
+                                    index_name = file_temp.split('\\')[-1].split('_')[2]
+
                                 try:
+                                    os.remove(file_temp)
+                                except PermissionError:
+                                    pass
+
+                                try:
+                                    self.construct_landsat_index([index_name], self.Landsat_metadata[(self.Landsat_metadata['Date'] == int(date_temp)) & (self.Landsat_metadata['Tile_Num'] == int(tile))].index[0], inherit_from_logfile=True)
                                     ds_list = [gdal.Open(file_temp) for file_temp in file_list]
                                     array_list = [ds_temp.GetRasterBand(1).ReadAsArray() for ds_temp in ds_list]
                                     nodata_list = [ds_temp.GetRasterBand(1).GetNoDataValue() for ds_temp in ds_list]
                                     dtype_list = [array_temp.dtype for array_temp in array_list]
                                 except RuntimeError:
-                                    ds_list, array_list, nodata_list, dtype_list = None, None, None, None
-                                    for file_temp in file_list:
-                                        date_temp = file_temp.split('\\')[-1].split('_')[0]
-                                        tile = file_temp.split('\\')[-1].split('_')[1]
-                                        index_name = file_temp.split('\\')[-1].split('_')[2]
+                                    self._process_issued_files(index_name, [self.Landsat_metadata[(self.Landsat_metadata['Date'] == int(date_temp)) & (self.Landsat_metadata['Tile_Num'] == int(tile))].index[0]])
+                                    raise Exception(f'The {index_name} of {str(date_temp)} {str(tile)} is corrupted. Please manually rerun the program')
 
-                                    try:
-                                        os.remove(file_temp)
-                                    except PermissionError:
-                                        pass
+                            if len(list(set(nodata_list))) != 1:
+                                raise ValueError(f'The nodata value is not consistent for {str(_)} in {str(doy_list[i])}')
+                            elif nodata_value is None:
+                                nodata_value = list(set(nodata_list))[0]
+                            elif nodata_value != list(set(nodata_list))[0]:
+                                raise ValueError(f'The nodata value is not consistent for {str(_)} in {str(doy_list[i])}')
 
-                                    try:
-                                        self.construct_landsat_index([index_name], self.Landsat_metadata[(self.Landsat_metadata['Date'] == int(date_temp)) & (self.Landsat_metadata['Tile_Num'] == int(tile))].index[0], inherit_from_logfile=True)
-                                        ds_list = [gdal.Open(file_temp) for file_temp in file_list]
-                                        array_list = [ds_temp.GetRasterBand(1).ReadAsArray() for ds_temp in ds_list]
-                                        nodata_list = [ds_temp.GetRasterBand(1).GetNoDataValue() for ds_temp in ds_list]
-                                        dtype_list = [array_temp.dtype for array_temp in array_list]
-                                    except RuntimeError:
-                                        self._process_issued_files(index_name, [self.Landsat_metadata[(self.Landsat_metadata['Date'] == int(date_temp)) & (self.Landsat_metadata['Tile_Num'] == int(tile))].index[0]])
-                                        raise Exception(f'The {index_name} of {str(date_temp)} {str(tile)} is corrupted. Please manually rerun the program')
+                            if len(list(set(dtype_list))) != 1:
+                                raise ValueError(f'The dtype is not consistent for {str(_)} in {str(doy_list[i])}')
+                            elif dtype_temp is None:
+                                dtype_temp = list(set(dtype_list))[0]
+                            elif dtype_temp != list(set(dtype_list))[0]:
+                                raise ValueError(f'The dtype is not consistent for {str(_)} in {str(doy_list[i])}')
 
-                                if len(list(set(nodata_list))) != 1:
-                                    raise ValueError(f'The nodata value is not consistent for {str(_)} in {str(doy_list[i])}')
-                                elif nodata_value is None:
-                                    nodata_value = list(set(nodata_list))[0]
-                                elif nodata_value != list(set(nodata_list))[0]:
-                                    raise ValueError(f'The nodata value is not consistent for {str(_)} in {str(doy_list[i])}')
-
-                                if len(list(set(dtype_list))) != 1:
-                                    raise ValueError(f'The dtype is not consistent for {str(_)} in {str(doy_list[i])}')
-                                elif dtype_temp is None:
-                                    dtype_temp = list(set(dtype_list))[0]
-                                elif dtype_temp != list(set(dtype_list))[0]:
-                                    raise ValueError(f'The dtype is not consistent for {str(_)} in {str(doy_list[i])}')
-
-                            # Mean array
-                            if len(array_list) == 1:
-                                output_arr = array_list[0]
+                        # Mean array
+                        if len(array_list) == 1:
+                            output_arr = array_list[0]
+                        else:
+                            output_arr = np.stack(array_list, axis=2)
+                            if np.isnan(nodata_value):
+                                output_arr = np.nanmean(output_arr, axis=2)
                             else:
-                                output_arr = np.stack(array_list, axis=2)
-                                if np.isnan(nodata_value):
-                                    output_arr = np.nanmean(output_arr, axis=2)
-                                else:
-                                    # Alternative method but raised RuntimeWarning: Mean of empty slice.
-                                    # output_arr = np.mean(output_arr, axis=2, where=output_arr != nodata_value)
-                                    output_arr = output_arr.astype(float)
-                                    output_arr[output_arr == nodata_value] = np.nan
-                                    output_arr = np.nanmean(output_arr, axis=2)
+                                # Alternative method but raised RuntimeWarning: Mean of empty slice.
+                                # output_arr = np.mean(output_arr, axis=2, where=output_arr != nodata_value)
+                                output_arr = output_arr.astype(float)
+                                output_arr[output_arr == nodata_value] = np.nan
+                                output_arr = np.nanmean(output_arr, axis=2)
 
-                            # Convert the nodata value to 0
-                            if _sparse_matrix:
-                                if np.isnan(nodata_value):
-                                    output_arr[np.isnan(output_arr)] = 0
-                                    dtype_temp = np.float16
-                                else:
-                                    output_arr[np.isnan(output_arr)] = nodata_value
-                                    output_arr = output_arr - nodata_value
-                                    max_v = np.iinfo(dtype_temp).max - nodata_value
-                                    min_v = np.iinfo(dtype_temp).min - nodata_value
-                                    if min_v < 0:
-                                        for type_temp in [np.int8, np.int16, np.int32, np.int64]:
-                                            if min_v >= np.iinfo(type_temp).min and max_v <= np.iinfo(type_temp).max:
-                                                dtype_out = type_temp
-                                                break
-                                    elif min_v >= 0:
-                                        for type_temp in [np.uint8, np.uint16, np.uint32, np.uint64]:
-                                            if max_v <= np.iinfo(type_temp).max:
-                                                dtype_out = type_temp
-                                                break
-                                    if dtype_out is None:
-                                        raise Exception('Code error for generating the datatype of output array!')
+                        # Convert the nodata value to 0
+                        if _sparse_matrix:
+                            if np.isnan(nodata_value):
+                                output_arr[np.isnan(output_arr)] = 0
+                                dtype_temp = np.float16
                             else:
-                                dtype_out = type_temp
+                                output_arr[np.isnan(output_arr)] = nodata_value
+                                output_arr = output_arr - nodata_value
+                                max_v = np.iinfo(dtype_temp).max - nodata_value
+                                min_v = np.iinfo(dtype_temp).min - nodata_value
+                                if min_v < 0:
+                                    for type_temp in [np.int8, np.int16, np.int32, np.int64]:
+                                        if min_v >= np.iinfo(type_temp).min and max_v <= np.iinfo(type_temp).max:
+                                            dtype_out = type_temp
+                                            break
+                                elif min_v >= 0:
+                                    for type_temp in [np.uint8, np.uint16, np.uint32, np.uint64]:
+                                        if max_v <= np.iinfo(type_temp).max:
+                                            dtype_out = type_temp
+                                            break
+                                if dtype_out is None:
+                                    raise Exception('Code error for generating the datatype of output array!')
+                        else:
+                            dtype_out = type_temp
 
 #                         else:
 #                             dtype_out = np.uint16
