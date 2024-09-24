@@ -27,199 +27,202 @@ def worm_waterlevel_runoff(output_folder):
 
     while True:
         wait_time = 3600
-
-        # Read the csv
         try:
-            for station_name_ in jj_station_name:
-                if not os.path.exists(os.path.join(output_folder, f'{station_name_}.csv')):
-                    jj_dic[station_name_] = pd.DataFrame(
-                        columns=['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)'])
-                else:
-                    jj_dic[station_name_] = pd.read_csv(os.path.join(output_folder, f'{station_name_}.csv'))
-                    if list(jj_dic[station_name_].columns) != ['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)']:
-                        raise Exception(f'Column is not consistent for {station_name_}!')
-        except:
-            print(traceback.format_exc())
-            raise Exception(f"Failed to read or construct the JJ csv file")
+            # Read the csv
+            try:
+                for station_name_ in jj_station_name:
+                    if not os.path.exists(os.path.join(output_folder, f'{station_name_}.csv')):
+                        jj_dic[station_name_] = pd.DataFrame(
+                            columns=['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)'])
+                    else:
+                        jj_dic[station_name_] = pd.read_csv(os.path.join(output_folder, f'{station_name_}.csv'))
+                        if list(jj_dic[station_name_].columns) != ['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)']:
+                            raise Exception(f'Column is not consistent for {station_name_}!')
+            except:
+                print(traceback.format_exc())
+                raise Exception(f"Failed to read or construct the JJ csv file")
 
-        # Request the MYR inform
-        try:
-            response = requests.get(jj_url)
-            if response.status_code == 200:
-                page_content = response.text
-                content = str(page_content).split('sssq')
-                for content_ in content:
-                    if [_ in content_ for _ in jj_station_name].count(True) == len(jj_station_name):
-                        content_station = content_.split('[')[1].split(']')[0].split('{')
-                        content_station = [_.split('}')[0] for _ in content_station if '}' in _]
-                        content_station = [ast.literal_eval('{' + _.replace(" ", '') + '}') for _ in content_station]
-                        break
-
-                for station_name in jj_station_name:
-                    num_ = 0
-                    while num_ in range(len(content_station)):
-                        if len(content_station[num_].keys()) > 0 and 'stnm' in content_station[num_].keys() and content_station[num_]['stnm'] == station_name:
-                            stamp_time = datetime.datetime.utcfromtimestamp(content_station[num_]['tm'] / 1000)
-                            target_time_zone = pytz.timezone('Asia/Shanghai')  # UTC+8
-                            local_date_time = stamp_time.replace(tzinfo=pytz.utc).astimezone(target_time_zone)
-                            formatted_local_date_time = local_date_time.strftime('%Y-%m-%d %H:%M:%S')
-                            water_level = content_station[num_]['z'] if 'z' in content_station[num_].keys() else -9999
-                            runoff = content_station[num_]['q'] if 'q' in content_station[num_].keys() else -9999
-                            temp_dic = {'Station_name': [station_name],
-                                        'Time': [formatted_local_date_time],
-                                        'Water level(m)': [water_level],
-                                        'Runoff(m3/s)': [runoff]}
-                            new_pd = pd.DataFrame(temp_dic)
-
-                            if new_pd['Time'][0] not in list(jj_dic[station_name]['Time']):
-                                jj_dic[station_name] = pd.concat([jj_dic[station_name], new_pd], axis=0, ignore_index=True)
-                                wait_time = min(wait_time, random.randint(3540, 3600))
-                            else:
-                                wait_time = min(wait_time, random.randint(840, 960))
+            # Request the MYR inform
+            try:
+                response = requests.get(jj_url)
+                if response.status_code == 200:
+                    page_content = response.text
+                    content = str(page_content).split('sssq')
+                    for content_ in content:
+                        if [_ in content_ for _ in jj_station_name].count(True) == len(jj_station_name) and 'stnm' in content_:
+                            content_station = content_.split('[')[1].split(']')[0].split('{')
+                            content_station = [_.split('}')[0] for _ in content_station if '}' in _]
+                            content_station = [ast.literal_eval('{' + _.replace(" ", '') + '}') for _ in content_station]
                             break
-                        num_ += 1
-        except:
-            print(traceback.format_exc())
-            raise Exception(f"Failed to retrieve the information from jj page")
 
-        # Update the MYR files
-        try:
-            for station_name_ in jj_station_name:
-                jj_dic[station_name_].to_csv(os.path.join(output_folder, f'{station_name_}.csv'), encoding='utf-8-sig', index=False)
-        except:
-            print(traceback.format_exc())
-            raise Exception(f"Failed to save the csv file!")
+                    for station_name in jj_station_name:
+                        num_ = 0
+                        while num_ in range(len(content_station)):
+                            if len(content_station[num_].keys()) > 0 and 'stnm' in content_station[num_].keys() and content_station[num_]['stnm'] == station_name:
+                                stamp_time = datetime.datetime.utcfromtimestamp(content_station[num_]['tm'] / 1000)
+                                target_time_zone = pytz.timezone('Asia/Shanghai')  # UTC+8
+                                local_date_time = stamp_time.replace(tzinfo=pytz.utc).astimezone(target_time_zone)
+                                formatted_local_date_time = local_date_time.strftime('%Y-%m-%d %H:%M:%S')
+                                water_level = content_station[num_]['z'] if 'z' in content_station[num_].keys() else -9999
+                                runoff = content_station[num_]['q'] if 'q' in content_station[num_].keys() else -9999
+                                temp_dic = {'Station_name': [station_name],
+                                            'Time': [formatted_local_date_time],
+                                            'Water level(m)': [water_level],
+                                            'Runoff(m3/s)': [runoff]}
+                                new_pd = pd.DataFrame(temp_dic)
 
-        # Read the csv
-        try:
-            for station_name_ in myr_station_name:
-                if not os.path.exists(os.path.join(output_folder, f'{station_name_}.csv')):
-                    myr_dic[station_name_] = pd.DataFrame(columns=['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)'])
-                else:
-                    myr_dic[station_name_] = pd.read_csv(os.path.join(output_folder, f'{station_name_}.csv'))
-                    if list(myr_dic[station_name_].columns) != ['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)']:
-                        raise Exception(f'Column is not consistent for {station_name_}!')
-        except:
-            print(traceback.format_exc())
-            raise Exception(f"Failed to read or construct the MYR_CSV file")
+                                if new_pd['Time'][0] not in list(jj_dic[station_name]['Time']):
+                                    jj_dic[station_name] = pd.concat([jj_dic[station_name], new_pd], axis=0, ignore_index=True)
+                                    wait_time = min(wait_time, random.randint(3540, 3600))
+                                else:
+                                    wait_time = min(wait_time, random.randint(840, 960))
+                                break
+                            num_ += 1
+            except:
+                print(traceback.format_exc())
+                raise Exception(f"Failed to retrieve the information from jj page")
 
-        # Request the MYR inform
-        try:
-            response = requests.get(myr_url)
-            if response.status_code == 200:
-                page_content = response.text
-                # 使用BeautifulSoup解析页面内容
-                soup = BeautifulSoup(page_content, 'html.parser')
-                content = str(soup).split('sssq')
-                myr_station_temp = [_.split('_')[1] for _ in myr_station_name]
-                for content_ in content:
-                    if [_ in content_ for _ in myr_station_temp].count(True) > len(myr_station_temp) - 3:
-                        content_station = content_.split('{')
-                        content_station = [_.split('},')[0] for _ in content_station if '},' in _]
-                        content_station = [ast.literal_eval('{' + _.replace(" ", '') + '}') for _ in content_station]
-                        break
+            # Update the MYR files
+            try:
+                for station_name_ in jj_station_name:
+                    jj_dic[station_name_].to_csv(os.path.join(output_folder, f'{station_name_}.csv'), encoding='utf-8-sig', index=False)
+            except:
+                print(traceback.format_exc())
+                raise Exception(f"Failed to save the csv file!")
 
-                for station_name in myr_station_name:
-                    num_ = 0
-                    while num_ in range(len(content_station)):
-                        if len(content_station[num_].keys()) > 0 and 'stnm' in content_station[num_].keys() and 'rvnm' in content_station[num_].keys() and content_station[num_]['rvnm'] + '_' + content_station[num_]['stnm'] == station_name:
-                            stamp_time = datetime.datetime.utcfromtimestamp(content_station[num_]['tm'] / 1000)
-                            target_time_zone = pytz.timezone('Asia/Shanghai')  # UTC+8
-                            local_date_time = stamp_time.replace(tzinfo=pytz.utc).astimezone(target_time_zone)
-                            formatted_local_date_time = local_date_time.strftime('%Y-%m-%d %H:%M:%S')
-                            water_level = content_station[num_]['z'] if 'z' in content_station[num_].keys() else -9999
-                            runoff = content_station[num_]['q'] if 'q' in content_station[num_].keys() else -9999
-                            temp_dic = {'Station_name': [station_name],
-                                        'Time': [formatted_local_date_time],
-                                        'Water level(m)': [water_level],
-                                        'Runoff(m3/s)': [runoff]}
-                            new_pd = pd.DataFrame(temp_dic)
+            # Read the csv
+            try:
+                for station_name_ in myr_station_name:
+                    if not os.path.exists(os.path.join(output_folder, f'{station_name_}.csv')):
+                        myr_dic[station_name_] = pd.DataFrame(columns=['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)'])
+                    else:
+                        myr_dic[station_name_] = pd.read_csv(os.path.join(output_folder, f'{station_name_}.csv'))
+                        if list(myr_dic[station_name_].columns) != ['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)']:
+                            raise Exception(f'Column is not consistent for {station_name_}!')
+            except:
+                print(traceback.format_exc())
+                raise Exception(f"Failed to read or construct the MYR_CSV file")
 
-                            if new_pd['Time'][0] not in list(myr_dic[station_name]['Time']):
-                                myr_dic[station_name] = pd.concat([myr_dic[station_name], new_pd], axis=0, ignore_index=True)
-                                wait_time = min(wait_time, random.randint(3540, 3600))
-                            else:
-                                wait_time = min(wait_time, random.randint(840, 960))
+            # Request the MYR inform
+            try:
+                response = requests.get(myr_url)
+                if response.status_code == 200:
+                    page_content = response.text
+                    # 使用BeautifulSoup解析页面内容
+                    soup = BeautifulSoup(page_content, 'html.parser')
+                    content = str(soup).split('sssq')
+                    myr_station_temp = [_.split('_')[1] for _ in myr_station_name]
+                    for content_ in content:
+                        if [_ in content_ for _ in myr_station_temp].count(True) > len(myr_station_temp) - 3:
+                            content_station = content_.split('{')
+                            content_station = [_.split('},')[0] for _ in content_station if '},' in _]
+                            content_station = [ast.literal_eval('{' + _.replace(" ", '') + '}') for _ in content_station]
                             break
-                        num_ += 1
-        except:
-            print(traceback.format_exc())
-            raise Exception(f"Failed to retrieve the information from myr page")
 
-        # Update the MYR files
-        try:
-            for station_name_ in myr_station_name:
-                myr_dic[station_name_].to_csv(os.path.join(output_folder, f'{station_name_}.csv'), encoding='utf-8-sig', index=False)
-        except:
-            print(traceback.format_exc())
-            raise Exception(f"Failed to save the csv file!")
+                    for station_name in myr_station_name:
+                        num_ = 0
+                        while num_ in range(len(content_station)):
+                            if len(content_station[num_].keys()) > 0 and 'stnm' in content_station[num_].keys() and 'rvnm' in content_station[num_].keys() and content_station[num_]['rvnm'] + '_' + content_station[num_]['stnm'] == station_name:
+                                stamp_time = datetime.datetime.utcfromtimestamp(content_station[num_]['tm'] / 1000)
+                                target_time_zone = pytz.timezone('Asia/Shanghai')  # UTC+8
+                                local_date_time = stamp_time.replace(tzinfo=pytz.utc).astimezone(target_time_zone)
+                                formatted_local_date_time = local_date_time.strftime('%Y-%m-%d %H:%M:%S')
+                                water_level = content_station[num_]['z'] if 'z' in content_station[num_].keys() else -9999
+                                runoff = content_station[num_]['q'] if 'q' in content_station[num_].keys() else -9999
+                                temp_dic = {'Station_name': [station_name],
+                                            'Time': [formatted_local_date_time],
+                                            'Water level(m)': [water_level],
+                                            'Runoff(m3/s)': [runoff]}
+                                new_pd = pd.DataFrame(temp_dic)
 
-        # Read the csv
-        try:
-            for station_name_ in lyr_station_name:
-                if not os.path.exists(os.path.join(output_folder, f'{station_name_}.csv')):
-                    lyr_dic[station_name_] = pd.DataFrame(columns=['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)'])
-                else:
-                    lyr_dic[station_name_] = pd.read_csv(os.path.join(output_folder, f'{station_name_}.csv'))
-                    if list(lyr_dic[station_name_].columns) != ['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)']:
-                        raise Exception(f'Column is not consistent for {station_name_}!')
+                                if new_pd['Time'][0] not in list(myr_dic[station_name]['Time']):
+                                    myr_dic[station_name] = pd.concat([myr_dic[station_name], new_pd], axis=0, ignore_index=True)
+                                    wait_time = min(wait_time, random.randint(3540, 3600))
+                                else:
+                                    wait_time = min(wait_time, random.randint(840, 960))
+                                break
+                            num_ += 1
+            except:
+                print(traceback.format_exc())
+                raise Exception(f"Failed to retrieve the information from myr page")
 
-        except:
-            print(traceback.format_exc())
-            raise Exception(f"Failed to read or construct the LYR_CSV file")
+            # Update the MYR files
+            try:
+                for station_name_ in myr_station_name:
+                    myr_dic[station_name_].to_csv(os.path.join(output_folder, f'{station_name_}.csv'), encoding='utf-8-sig', index=False)
+            except:
+                print(traceback.format_exc())
+                raise Exception(f"Failed to save the csv file!")
 
-        # Request the LYR inform
-        try:
-            response = requests.get(lyr_url)
-            if response.status_code == 200:
-                page_content = response.text
-                # 使用BeautifulSoup解析页面内容
-                soup = BeautifulSoup(page_content, 'html.parser')
-                content = str(soup).split('sssq')
-                for content_ in content:
-                    if [_ in content_ for _ in lyr_station_name].count(True) > len(lyr_station_name) / 2:
-                        content_station = content_.split('{')
-                        content_station = [_.split('},')[0] for _ in content_station if '},' in _]
-                        content_station = [ast.literal_eval('{' + _.replace(" ", '') + '}') for _ in content_station]
-                        break
+            # Read the csv
+            try:
+                for station_name_ in lyr_station_name:
+                    if not os.path.exists(os.path.join(output_folder, f'{station_name_}.csv')):
+                        lyr_dic[station_name_] = pd.DataFrame(columns=['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)'])
+                    else:
+                        lyr_dic[station_name_] = pd.read_csv(os.path.join(output_folder, f'{station_name_}.csv'))
+                        if list(lyr_dic[station_name_].columns) != ['Station_name', 'Time', 'Water level(m)', 'Runoff(m3/s)']:
+                            raise Exception(f'Column is not consistent for {station_name_}!')
 
-                for station_name in lyr_station_name:
-                    num_ = 0
-                    while num_ in range(len(content_station)):
-                        if 'stnm' in content_station[num_].keys() and content_station[num_]['stnm'] == station_name:
-                            stamp_time = datetime.datetime.utcfromtimestamp(content_station[num_]['TM'] / 1000)
-                            target_time_zone = pytz.timezone('Asia/Shanghai')  # UTC+8
-                            local_date_time = stamp_time.replace(tzinfo=pytz.utc).astimezone(target_time_zone)
-                            formatted_local_date_time = local_date_time.strftime('%Y-%m-%d %H:%M:%S')
-                            water_level = content_station[num_]['Z'] if 'Z' in content_station[num_].keys() else -9999
-                            runoff = content_station[num_]['Q'] if 'Q' in content_station[num_].keys() else -9999
-                            temp_dic = {'Station_name': [station_name],
-                                        'Time': [formatted_local_date_time],
-                                        'Water level(m)': [water_level],
-                                        'Runoff(m3/s)': [runoff]}
-                            new_pd = pd.DataFrame(temp_dic)
+            except:
+                print(traceback.format_exc())
+                raise Exception(f"Failed to read or construct the LYR_CSV file")
 
-                            if new_pd['Time'][0] not in list(lyr_dic[station_name]['Time']):
-                                lyr_dic[station_name] = pd.concat([lyr_dic[station_name], new_pd], axis=0, ignore_index=True)
-                                wait_time = min(wait_time, random.randint(3540, 3600))
-                            else:
-                                wait_time = min(wait_time, random.randint(840, 960))
+            # Request the LYR inform
+            try:
+                response = requests.get(lyr_url)
+                if response.status_code == 200:
+                    page_content = response.text
+                    # 使用BeautifulSoup解析页面内容
+                    soup = BeautifulSoup(page_content, 'html.parser')
+                    content = str(soup).split('sssq')
+                    for content_ in content:
+                        if [_ in content_ for _ in lyr_station_name].count(True) > len(lyr_station_name) / 2:
+                            content_station = content_.split('{')
+                            content_station = [_.split('},')[0] for _ in content_station if '},' in _]
+                            content_station = [ast.literal_eval('{' + _.replace(" ", '') + '}') for _ in content_station]
                             break
-                        num_ += 1
+
+                    for station_name in lyr_station_name:
+                        num_ = 0
+                        while num_ in range(len(content_station)):
+                            if 'stnm' in content_station[num_].keys() and content_station[num_]['stnm'] == station_name:
+                                stamp_time = datetime.datetime.utcfromtimestamp(content_station[num_]['TM'] / 1000)
+                                target_time_zone = pytz.timezone('Asia/Shanghai')  # UTC+8
+                                local_date_time = stamp_time.replace(tzinfo=pytz.utc).astimezone(target_time_zone)
+                                formatted_local_date_time = local_date_time.strftime('%Y-%m-%d %H:%M:%S')
+                                water_level = content_station[num_]['Z'] if 'Z' in content_station[num_].keys() else -9999
+                                runoff = content_station[num_]['Q'] if 'Q' in content_station[num_].keys() else -9999
+                                temp_dic = {'Station_name': [station_name],
+                                            'Time': [formatted_local_date_time],
+                                            'Water level(m)': [water_level],
+                                            'Runoff(m3/s)': [runoff]}
+                                new_pd = pd.DataFrame(temp_dic)
+
+                                if new_pd['Time'][0] not in list(lyr_dic[station_name]['Time']):
+                                    lyr_dic[station_name] = pd.concat([lyr_dic[station_name], new_pd], axis=0, ignore_index=True)
+                                    wait_time = min(wait_time, random.randint(3540, 3600))
+                                else:
+                                    wait_time = min(wait_time, random.randint(840, 960))
+                                break
+                            num_ += 1
+            except:
+                print(traceback.format_exc())
+                raise Exception(f"Failed to retrieve the information from lyr page")
+
+            # Update the LYR files
+            try:
+                for station_name_ in lyr_station_name:
+                    lyr_dic[station_name_].to_csv(os.path.join(output_folder, f'{station_name_}.csv'), encoding='utf-8-sig', index=False)
+            except:
+                print(traceback.format_exc())
+                raise Exception(f"Failed to save the csv file!")
+
+            print(f"W!O!R!M! at {str(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}！")
         except:
             print(traceback.format_exc())
-            raise Exception(f"Failed to retrieve the information from lyr page")
-
-        # Update the LYR files
-        try:
-            for station_name_ in lyr_station_name:
-                lyr_dic[station_name_].to_csv(os.path.join(output_folder, f'{station_name_}.csv'), encoding='utf-8-sig', index=False)
-        except:
-            print(traceback.format_exc())
-            raise Exception(f"Failed to save the csv file!")
-
         time.sleep(wait_time)
 
 
 if __name__ == '__main__':
-    worm_waterlevel_runoff('G:\\WL\\')
+    worm_waterlevel_runoff('D:\\WL\\')

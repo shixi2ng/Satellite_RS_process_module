@@ -14,6 +14,7 @@ from Landsat_toolbox.utils import *
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
+gdal.SetConfigOption('GDAL_VRT_ENABLE_PYTHON', 'YES')
 gdal.UseExceptions()
 
 # Set np para
@@ -86,14 +87,17 @@ class Landsat_l2_ds(object):
         # Constant
         self._band_output_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10', 'QA_PIXEL', 'gap_mask']
         self._all_supported_index_list = ['RGB', 'QI', 'all_band', '4visual', 'NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI',
-                                          'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'AWEI', 'AWEInsh', 'SVVI', 'TCGREENESS']
+                                          'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'AWEI', 'AWEInsh', 'SVVI', 'TCGREENESS',
+                                          'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2']
         self._band_tab = {'LE07_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7'),
                           'LE07_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'TIR', 'SWIR2'),
+                          'LT04_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8'),
+                          'LT04_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'TIR', 'SWIR2', 'PAN'),
                           'LT05_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8'),
                           'LT05_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'TIR', 'SWIR2', 'PAN'),
                           'LC08_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B10'),
                           'LC08_bandname': ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2', 'PAN', 'TIR')}
-        self._band_sup = ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'MIR', 'MIR2', 'PAN', 'TIR')
+        self._band_sup = ('AER', 'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2', 'PAN', 'TIR')
         self._OLI2ETM_harmonised_factor = {"B2_band_OLS": (0.8850, 0.0183),
                                            "B3_band_OLS": (0.9317, 0.0123),
                                            "B4_band_OLS": (0.9372, 0.0123),
@@ -692,7 +696,12 @@ class Landsat_l2_ds(object):
                         fill_landsat7_gap(output_array)
                         pass
 
-                    if self._size_control_factor:
+                    if _ in self._band_sup:
+                        output_array[np.isnan(output_array)] = 0
+                        output_array.astype(np.uint16)
+                        bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_UInt16)
+                        data_type = gdal.GDT_Int16 = gdal.GDT_UInt16
+                    elif self._size_control_factor:
                         output_array[np.isnan(output_array)] = -3.2768
                         output_array = output_array * 10000
                         output_array.astype(int)
@@ -787,7 +796,7 @@ class Landsat_l2_ds(object):
             sensor_type = self.Landsat_metadata['Sensor_Type'][tiffile_serial_num]
             fileid = self.Landsat_metadata.FileID[tiffile_serial_num]
 
-        QI_temp_array = QI_temp_array.astype(np.float16)
+        QI_temp_array = QI_temp_array.astype(np.float32)
         QI_temp_array[QI_temp_array == 1] = np.nan
 
         if sensor_type in ['LC08', 'LC09']:
@@ -896,7 +905,7 @@ class Landsat_l2_ds(object):
     def _process_2dc_para(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ('skip_invalid_file', 'inherit_from_logfile', 'ROI', 'ROI_name', 'dc_overwritten_para', 'remove_nan_layer', 'manually_remove_datelist', 'size_control_factor'):
+            if kwarg_indicator not in ('skip_invalid_file', 'inherit_from_logfile', 'ROI', 'ROI_name', 'dc_overwritten_para', 'remove_nan_layer', 'manually_remove_datelist', 'size_control_factor', 'cloud_removal_para'):
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
         # process clipped_overwritten_para
@@ -975,6 +984,17 @@ class Landsat_l2_ds(object):
         else:
             self._size_control_factor = False
 
+        # Retrieve cloud removal factor
+        if 'cloud_removal_para' in kwargs.keys():
+            if type(kwargs['cloud_removal_para']) is bool:
+                self._cloud_removal_para = kwargs['cloud_removal_para']
+            else:
+                raise TypeError('Please mention the cloud_removal_para should be bool type!')
+        elif self._inherit_from_logfile:
+            self._retrieve_para(['cloud_removal_para'], protected_var=True)
+        else:
+            self._cloud_removal_para = False
+
     @save_log_file
     def mp_ds2landsatdc(self, index_list: list, *args, **kwargs):
 
@@ -998,7 +1018,6 @@ class Landsat_l2_ds(object):
             self.ds2landsatdc(index, *args, **kwargs)
 
     def ds2landsatdc(self, _, *args, **kwargs):
-
         # for the MP
         if args != () and type(args[0]) == dict:
             kwargs = copy.copy(args[0])
@@ -1014,7 +1033,7 @@ class Landsat_l2_ds(object):
 
         if not os.path.exists(self._dc_infr[_ + 'input_path']):
             raise Exception(f'Please validate the roi name and {str(_)} for ds2dc!')
-        elif not self._skip_void_file and len(bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
+        elif not self._skip_invalid_file and len(bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and')) != self.Landsat_metadata_size:
             raise ValueError(f'{_} of the {self.ROI_name} is not consistent')
 
         eliminating_all_not_required_file(self._dc_infr[_ + 'input_path'])
@@ -1031,6 +1050,7 @@ class Landsat_l2_ds(object):
                 raise ValueError('ROI needs to be specified before the Landsat dc construction')
             else:
                 print('Start processing ' + _ + ' datacube of the ' + self.ROI_name + '.')
+                self.main_coordinate_system = retrieve_srs(gdal.Open(self._work_env + 'ROI_map\\' + self.ROI_name + '_map.TIF',))
                 sa_map = np.load(bf.file_filter(self._work_env + 'ROI_map\\', [self.ROI_name, '.npy'], and_or_factor='and')[0], allow_pickle=True)
                 metadata_dic = {'ROI_name': self.ROI_name, 'index': _, 'ROI': self.ROI,
                                 'ROI_array': self._work_env + 'ROI_map\\' + self.ROI_name + '_map.npy',
@@ -1043,8 +1063,14 @@ class Landsat_l2_ds(object):
             start_time = time.time()
             stack_file_list = bf.file_filter(self._dc_infr[_ + 'input_path'], [_, '.TIF'], and_or_factor='and', exclude_word_list=['aux', 'xml']) if _ not in self._band_sup else bf.file_filter(self._dc_infr[_ + 'input_path'], ['B1.TIF'],  exclude_word_list=['aux', 'xml'])
             stack_file_list.sort()
-            doy_list = [int(filepath_temp.split('\\')[-1][0:8]) for filepath_temp in stack_file_list]
+
+            doy_list = [int(filepath_temp.split('\\')[-1][0:8]) for filepath_temp in stack_file_list] if _ not in self._band_sup else [int(filepath_temp.split('\\')[-1].split('_')[3][0:8]) for filepath_temp in stack_file_list]
             doy_list = list(set(doy_list))
+            doy_list_ = []
+            for doy_ in doy_list:
+                if doy_ in list(self.Landsat_metadata['Date']):
+                    doy_list_.append(doy_)
+            doy_list = doy_list_
             doy_list.sort()
 
             # Evaluate the size and sparsity of sdc
@@ -1067,6 +1093,11 @@ class Landsat_l2_ds(object):
                 i, nodata_value, dtype_temp, dtype_out = 0, None, None, None
                 data_cube = []
                 data_valid_array = np.zeros([len(doy_list)], dtype=int)
+
+            # Generate the bound
+            ds_temp = gdal.Open(metadata_dic['ROI_tif'])
+            ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
+            bound_temp = (ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize, ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp)
 
             with tqdm(total=len(doy_list), desc=f'Assemble the \033[1;33m{str(_)}\033[0m into the Landsat sdc', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 while i < len(doy_list):
@@ -1159,62 +1190,130 @@ class Landsat_l2_ds(object):
                             else:
                                 dtype_out = type_temp
 
-                        else:
-                            reqfile_metadata = self.Landsat_metadata[self.Landsat_metadata['Date'] == doy_list[i]]
-                            reqfile_list = []
-                            bound_temp = None
-
-                            # Obtain the filepath for each band tiffile
-                            for i in range(reqfile_metadata.shape[0]):
-                                band_name = self._band_tab[f"{reqfile_metadata['Sensor_Type'][i]}_bandnum"][self._band_tab[f"{reqfile_metadata['Sensor_Type'][i]}_bandname"].index(i)]
-                                file_name = reqfile_metadata['File_Path'][i].split('.tar')[0] + f'_{str(band_name)}.TIF'
-                                if not os.path.exists(file_name):
-                                    raise Exception(f'The band file {file_name} is not exists!')
-                                else:
-                                    reqfile_list.append(file_name)
-
-                            # Generate the bound
-                            if bound_temp is None:
-                                ds_temp = gdal.Open(metadata_dic['ROI_tif'])
-                                ulx_temp, xres_temp, xskew_temp, uly_temp, yskew_temp, yres_temp = ds_temp.GetGeoTransform()
-                                bound_temp = (ulx_temp, uly_temp + yres_temp * ds_temp.RasterYSize, ulx_temp + xres_temp * ds_temp.RasterXSize, uly_temp)
-
-                            # Generate the bound
-                            if len(reqfile_list) == 1:
-                                vrt = gdal.BuildVRT(
-                                    f"/vsimem/{str(doy_list[i])}_{_}.vrt",
-                                    reqfile_list, xRes=30, yRes=30, outputBounds=bound_temp,
-                                    srcNodata=0, VRTNodata=0)
-
-                            elif len(reqfile_list) > 1:
-                                vrt = gdal.BuildVRT(
-                                    f"/vsimem/{str(doy_list[i])}_{_}.vrt",
-                                    reqfile_list, xRes=30, yRes=30, outputBounds=bound_temp,
-                                    srcNodata=0, VRTNodata=0)
-
-                                vrt_tree = etree.parse(f"/vsimem/{str(doy_list[i])}_{_}.vrt",)
-                                vrt_root = vrt_tree.getroot()
-                                vrtband1 = vrt_root.findall(".//VRTRasterBand[@band='1']")[0]
-
-                                vrtband1.set("subClass", "VRTDerivedRasterBand")
-                                pixelFunctionType = etree.SubElement(vrtband1, 'PixelFunctionType')
-                                pixelFunctionType.text = "find_max"
-                                pixelFunctionLanguage = etree.SubElement(vrtband1, 'PixelFunctionLanguage')
-                                pixelFunctionLanguage.text = "Python"
-                                pixelFunctionCode = etree.SubElement(vrtband1, 'PixelFunctionCode')
-                                pixelFunctionCode.text = etree.CDATA("""
-                                import numpy as np
-    
-                                def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
-                                        np.amax(in_ar, axis=0, initial=255, out=out_ar)
-                                """)
-
-                            else:
-                                raise Exception('Code error')
-
-                            gdal.Warp(vrt, f"/vsimem/{str(doy_list[i])}_{_}.TIF", cutlineDSName=self.ROI, cropToCutline=True, xRes=30, yRes=30, dstNodata=0)
-                            output_ds = gdal.Open(f"/vsimem/{str(doy_list[i])}_{_}.TIF")
-                            output_arr = output_ds.GetRasterBand(1).ReadAsArray()
+#                         else:
+#                             dtype_out = np.uint16
+#                             index_folder = os.path.join(self._work_env + f'Landsat_constructed_index\\{_}\\') if self.ROI_name is None else os.path.join(self._work_env, f'Landsat_{self.ROI_name}_index\\{_}\\')
+#                             QA_folder = os.path.join(self._work_env + f'Landsat_constructed_index\\QA_pixel\\') if self.ROI_name is None else os.path.join(self._work_env, f'Landsat_{self.ROI_name}_index\\QA_pixel\\')
+#                             bf.create_folder(index_folder)
+#
+#                             # Get the file
+#                             reqfile_path, sensor_type, metadata_num = [], [], []
+#                             for metadata_n in range(self.Landsat_metadata.shape[0]):
+#                                 if self.Landsat_metadata['Date'][metadata_n] == doy_list[i]:
+#                                     reqfile_path.append(self.Landsat_metadata['File_Path'][metadata_n])
+#                                     sensor_type.append(self.Landsat_metadata['Sensor_Type'][metadata_n])
+#                                     metadata_num.append(metadata_n)
+#                             reqfile_list, QAfile_list = [], []
+#
+#                             # Obtain the filepath for each band tiffile
+#                             for reqfile_num in range(len(reqfile_path)):
+#                                 band_name = self._band_tab[f"{sensor_type[reqfile_num]}_bandnum"][
+#                                     self._band_tab[f"{sensor_type[reqfile_num]}_bandname"].index(_)]
+#                                 file_name = os.path.join(self.unzipped_folder, reqfile_path[reqfile_num].split('.tar')[0].split('\\')[-1] + f'_SR_{str(band_name)}.TIF')
+#                                 QA_file_name = os.path.join(self.unzipped_folder, reqfile_path[reqfile_num].split('.tar')[0].split('\\')[-1] + f'_QA_PIXEL.TIF')
+#                                 if not os.path.exists(file_name):
+#                                     raise Exception(f'The band file {file_name} was not existed')
+#                                 else:
+#                                     reqfile_list.append(file_name)
+#
+#                                 if not os.path.exists(QA_file_name):
+#                                     raise Exception(f'The QA pixel file {file_name} was not existed')
+#                                 else:
+#                                     QAfile_list.append(QA_file_name)
+#
+#                             if not os.path.exists(f"{index_folder}{str(doy_list[i])}_{_}.TIF"):
+#                                 # Merge the band file
+#                                 if len(reqfile_list) == 1:
+#                                     vrt = gdal.BuildVRT(f"{self.cache_folder}{str(doy_list[i])}_{_}.vrt",
+#                                                         reqfile_list, xRes=30, yRes=30, outputBounds=bound_temp, srcNodata=0, VRTNodata=0, outputSRS=self.main_coordinate_system)
+#                                     vrt = None
+#
+#                                 elif len(reqfile_list) > 1:
+#                                     vrt = gdal.BuildVRT(f"{self.cache_folder}{str(doy_list[i])}_{_}.vrt",
+#                                                         reqfile_list, xRes=30, yRes=30, outputBounds=bound_temp, srcNodata=0, VRTNodata=0, outputSRS=self.main_coordinate_system)
+#                                     vrt = None
+#
+#                                     vrt_tree = etree.parse(f"{self.cache_folder}{str(doy_list[i])}_{_}.vrt")
+#                                     vrt_root = vrt_tree.getroot()
+#                                     vrtband1 = vrt_root.findall(".//VRTRasterBand[@band='1']")[0]
+#
+#                                     vrtband1.set("subClass", "VRTDerivedRasterBand")
+#                                     pixelFunctionType = etree.SubElement(vrtband1, 'PixelFunctionType')
+#                                     pixelFunctionType.text = "find_max"
+#                                     pixelFunctionLanguage = etree.SubElement(vrtband1, 'PixelFunctionLanguage')
+#                                     pixelFunctionLanguage.text = "Python"
+#                                     pixelFunctionCode = etree.SubElement(vrtband1, 'PixelFunctionCode')
+#                                     pixelFunctionCode.text = etree.CDATA("""
+# import numpy as np
+#
+# def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
+#     out_ar[:] = np.max(in_ar, axis=0)
+#
+# """)
+#                                     vrt_tree.write(f"{self.cache_folder}{str(doy_list[i])}_{_}.vrt")
+#                                 else:
+#                                     raise Exception('Code error')
+#
+#                                 gdal.Warp(f"/vsimem/{str(doy_list[i])}_{_}.TIF", f"{self.cache_folder}{str(doy_list[i])}_{_}.vrt", cutlineDSName=self.ROI, cropToCutline=True, xRes=30, yRes=30, dstNodata=0, outputBounds=bound_temp, dstSRS=self.main_coordinate_system)
+#                                 gdal.Translate(f"{index_folder}{str(doy_list[i])}_{_}.TIF", f"/vsimem/{str(doy_list[i])}_{_}.TIF", options=topts)
+#                                 gdal.Unlink(f"/vsimem/{str(doy_list[i])}_{_}.TIF")
+#
+#                             output_ds = gdal.Open(f"{index_folder}{str(doy_list[i])}_{_}.TIF")
+#                             output_arr = output_ds.GetRasterBand(1).ReadAsArray()
+#
+#                             if self._cloud_removal_para:
+#                                 bf.create_folder(QA_folder)
+#                                 if not os.path.exists(os.path.join(QA_folder, f"{str(doy_list[i])}_QA.TIF")):
+#                                     # Merge the band file
+#                                     if len(QAfile_list) == 1:
+#                                         vrt = gdal.BuildVRT(f"{self.cache_folder}{str(doy_list[i])}_QA.vrt",
+#                                                             QAfile_list, xRes=30, yRes=30, outputBounds=bound_temp,
+#                                                             srcNodata=0, VRTNodata=0, outputSRS=self.main_coordinate_system)
+#                                         vrt = None
+#
+#                                     elif len(QAfile_list) > 1:
+#                                         vrt = gdal.BuildVRT(f"{self.cache_folder}{str(doy_list[i])}_QA.vrt",
+#                                                             QAfile_list, xRes=30, yRes=30, outputBounds=bound_temp,
+#                                                             srcNodata=0, VRTNodata=0, outputSRS=self.main_coordinate_system)
+#                                         vrt = None
+#
+#                                         vrt_tree = etree.parse(f"{self.cache_folder}{str(doy_list[i])}_QA.vrt")
+#                                         vrt_root = vrt_tree.getroot()
+#                                         vrtband1 = vrt_root.findall(".//VRTRasterBand[@band='1']")[0]
+#
+#                                         vrtband1.set("subClass", "VRTDerivedRasterBand")
+#                                         pixelFunctionType = etree.SubElement(vrtband1, 'PixelFunctionType')
+#                                         pixelFunctionType.text = "find_max"
+#                                         pixelFunctionLanguage = etree.SubElement(vrtband1, 'PixelFunctionLanguage')
+#                                         pixelFunctionLanguage.text = "Python"
+#                                         pixelFunctionCode = etree.SubElement(vrtband1, 'PixelFunctionCode')
+#                                         pixelFunctionCode.text = etree.CDATA("""
+# import numpy as np
+#
+# def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
+#     out_ar[:] = np.max(in_ar, axis=0)
+#
+# """)
+#                                         vrt_tree.write(f"{self.cache_folder}{str(doy_list[i])}_QA.vrt")
+#                                     else:
+#                                         raise Exception('Code error')
+#                                     # gdal.Translate(f"/vsimem/{str(doy_list[i])}_QA.TIF", f"{self.cache_folder}{str(doy_list[i])}_QA.vrt", options=topts, noData=0, outputSRS=self.main_coordinate_system)
+#                                     # gdal.Warp(os.path.join(QA_folder, f"{str(doy_list[i])}_QA.TIF"), f"/vsimem/{str(doy_list[i])}_QA.TIF", cutlineDSName=self.ROI, cropToCutline=True, xRes=30, yRes=30, dstNodata=0)
+#                                     gdal.Warp(f"/vsimem/{str(doy_list[i])}_QA.TIF", f"{self.cache_folder}{str(doy_list[i])}_QA.vrt", cutlineDSName=self.ROI, cropToCutline=True, xRes=30, yRes=30, dstNodata=0, dstSRS=self.main_coordinate_system)
+#                                     gdal.Translate(os.path.join(QA_folder, f"{str(doy_list[i])}_QA.TIF"), f"/vsimem/{str(doy_list[i])}_QA.TIF", options=topts)
+#                                     gdal.Unlink(f"/vsimem/{str(doy_list[i])}_QA.TIF")
+#
+#                                     qa_ds = gdal.Open(os.path.join(QA_folder, f"{str(doy_list[i])}_QA.TIF"), gdal.GA_Update)
+#                                     qa_arr = qa_ds.GetRasterBand(1).ReadAsArray()
+#                                     qa_arr = self._process_QA_band(qa_arr, metadata_num[0])
+#                                     qa_arr = qa_arr.astype(dtype_out)
+#                                     qa_ds.GetRasterBand(1).WriteArray(qa_arr)
+#                                     qa_ds.GetRasterBand(1).SetNoDataValue(0)
+#                                     qa_ds = None
+#                                 else:
+#                                     qa_ds = gdal.Open(os.path.join(QA_folder, f"{str(doy_list[i])}_QA.TIF"))
+#                                     qa_arr = qa_ds.GetRasterBand(1).ReadAsArray()
+#                                 output_arr = output_arr * qa_arr
 
                         if _sparse_matrix:
                             # Convert the output_arr 2 sparse matrix
@@ -1225,6 +1324,7 @@ class Landsat_l2_ds(object):
                             data_cube.append(output_arr)
                             data_valid_array[i] = 1 if np.all(output_arr == nodata_value) else 0
                         i += 1
+
                         pbar.update()
 
                     except:
@@ -1263,7 +1363,6 @@ class Landsat_l2_ds(object):
             # Save Landsat dc
             start_time = time.time()
             try:
-
                 if _sparse_matrix:
                     # Save the sdc
                     np.save(self._dc_infr[_] + f'doy.npy', doy_list)
