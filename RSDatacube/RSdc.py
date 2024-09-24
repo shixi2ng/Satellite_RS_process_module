@@ -2541,21 +2541,23 @@ class RS_dcs(object):
 
         # process interpolation method
         if 'spatial_interpolate_method' in kwargs.keys():
-            if type(kwargs['spatial_interpolate_method']) is str and kwargs['spatial_interpolate_method'] in ['nearest_neighbor', 'area_average', 'focal']:
-                self._GEDI_link_RS_spatial_interpolate_method = kwargs['spatial_interpolate_method']
+            if isinstance(kwargs['spatial_interpolate_method'], str) and kwargs['spatial_interpolate_method'] in ['nearest_neighbor', 'area_average', 'focal']:
+                self._GEDI_link_RS_spatial_interpolate_method = [kwargs['spatial_interpolate_method']]
+            elif isinstance(kwargs['spatial_interpolate_method'], list) and True in [_ in ['nearest_neighbor', 'area_average', 'focal'] for _ in kwargs['spatial_interpolate_method']]:
+                self._GEDI_link_RS_spatial_interpolate_method = [_ for _ in kwargs['spatial_interpolate_method'] if _ in ['nearest_neighbor', 'area_average', 'focal']]
             else:
-                raise TypeError('Please mention the spatial_interpolate_method should be str type!')
+                raise TypeError('The spatial_interpolate_method was problematic!')
         else:
-            self._GEDI_link_RS_spatial_interpolate_method = 'nearest_neighbor'
+            self._GEDI_link_RS_spatial_interpolate_method = ['nearest_neighbor']
 
         # process para method
         if 'temporal_interpolate_method' in kwargs.keys():
-            if type(kwargs['temporal_interpolate_method']) is str and kwargs['temporal_interpolate_method'] in ['linear_interpolation', '16days_max', '16days_ave']:
+            if isinstance(kwargs['temporal_interpolate_method'], str) and kwargs['temporal_interpolate_method'] in ['linear_interpolation', '16days_max', '16days_ave']:
                 self._GEDI_link_RS_temporal_interpolate_method = [kwargs['temporal_interpolate_method']]
-            elif type(kwargs['temporal_interpolate_method']) is list and True in [_ in ['linear_interpolation', '16days_max', '16days_ave'] for _ in kwargs['temporal_interpolate_method']]:
-                self._GEDI_link_RS_temporal_interpolate_method = kwargs['temporal_interpolate_method']
+            elif isinstance(kwargs['temporal_interpolate_method'], list) and True in [_ in ['linear_interpolation', '16days_max', '16days_ave'] for _ in kwargs['temporal_interpolate_method']]:
+                self._GEDI_link_RS_temporal_interpolate_method = [_ for _ in kwargs['temporal_interpolate_method'] if _ in ['linear_interpolation', '16days_max', '16days_ave']]
             else:
-                raise TypeError('Please mention the temporal_interpolate_method should be str type!')
+                raise TypeError('The temporal_interpolate_method was problematic!')
         else:
             self._GEDI_link_RS_temporal_interpolate_method = ['linear_interpolation']
 
@@ -2586,16 +2588,17 @@ class RS_dcs(object):
 
             # Allocate the GEDI_df and dc
             GEDI_df_blocked, dc_blocked, raster_gt_list, doy_list_temp = [], [], [], []
+            buffer_diamter = max(25, raster_gt[1])
             for i in range(block_amount):
                 if i != block_amount - 1:
                     GEDI_df_blocked.append(GEDI_df_.GEDI_inform_DF[i * indi_block_size: (i + 1) * indi_block_size])
                 else:
                     GEDI_df_blocked.append(GEDI_df_.GEDI_inform_DF[i * indi_block_size: -1])
 
-                ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_df_blocked[-1].EPSG_lat.max() + 12.5, \
-                                                             GEDI_df_blocked[-1].EPSG_lat.min() - 12.5, \
-                                                             GEDI_df_blocked[-1].EPSG_lon.min() - 12.5, \
-                                                             GEDI_df_blocked[-1].EPSG_lon.max() + 12.5
+                ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_df_blocked[-1].EPSG_lat.max() + buffer_diamter, \
+                                                             GEDI_df_blocked[-1].EPSG_lat.min() - buffer_diamter, \
+                                                             GEDI_df_blocked[-1].EPSG_lon.min() - buffer_diamter, \
+                                                             GEDI_df_blocked[-1].EPSG_lon.max() + buffer_diamter
                 cube_ymin, cube_ymax, cube_xmin, cube_xmax = (int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))),
                                                               int(min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5]))),
                                                               int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))),
@@ -2613,13 +2616,14 @@ class RS_dcs(object):
 
             try:
                 # Sequenced code for debug
-                # for i in range(block_amount):
-                #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
+                for i in range(block_amount):
+                    result = link_GEDI_inform(dc_blocked[i], raster_gt_list[i], doy_list_temp[i], index_temp,
+                                          GEDI_df_blocked[i], 'EPSG', self._GEDI_link_RS_temporal_interpolate_method,
+                                          self._GEDI_link_RS_spatial_interpolate_method)
                 with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                    result = executor.map(link_GEDI_inform, dc_blocked, GEDI_df_blocked, doy_list_temp,
-                                          raster_gt_list, repeat('EPSG'), repeat(index_temp),
-                                          repeat(['linear_interpolation']),
-                                          repeat(self._size_control_factor_list[self._index_list.index(index_temp)]))
+                    result = executor.map(link_GEDI_inform, dc_blocked, raster_gt_list, doy_list_temp, repeat(index_temp),
+                                          GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_RS_temporal_interpolate_method),
+                                          repeat(self._GEDI_link_RS_spatial_interpolate_method))
             except:
                 raise Exception('The link procedure was interrupted by error!')
 
