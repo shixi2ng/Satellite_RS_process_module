@@ -1,4 +1,7 @@
+import copy
 import os.path
+import traceback
+
 import numpy as np
 import pandas as pd
 from RSDatacube.RSdc import *
@@ -7,9 +10,15 @@ from sklearn.metrics import r2_score
 import seaborn as sns
 from scipy import stats
 from River_GIS.River_GIS import *
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, kurtosis, variation, cramervonmises_2samp, wasserstein_distance
 import matplotlib
 import matplotlib.colors as mcolors
+from scipy.stats import pearsonr
+import matplotlib.pyplot as plt
+from scipy.stats import norm
+from scipy import interpolate
+from RF.RFR_model import Ensemble_bagging_contribution
+
 
 def ln_temp(x, a, b, c, d):
     return a * np.log(x ** b + c) + d
@@ -23,8 +32,20 @@ def x_minus(x, a, b, c, d ):
     return a * (x + b) ** -d + c
 
 
+def x_minus2(x, a, b, c):
+    return a * (x + b) ** -c - (a * b ** -c)
+
+
 def exp_minus(x, a, b, c, d ):
     return a * np.exp(- d * x + b) + c
+
+
+def logi(x, a, b, c, d):
+    return a / (1 + np.exp(b * x + c)) - d
+
+
+def polynimal(x, a, b ,c ,d):
+    return a * x ** 3 + b * x ** 2 + c * x + d
 
 
 def fig5_func():
@@ -528,7 +549,7 @@ def fig11nc3_func():
     df = pd.DataFrame({'ff': veg_pre_ff, 'pre': veg_pre_list, 'post': veg_post_list})
     pal = sns.cubehelix_palette(10, rot=-.25, light=.8)
     pal2 = sns.light_palette((20, 60, 50), 12, input="husl", reverse=False)
-    g = sns.FacetGrid(df, row="ff", hue="ff", aspect=11, height=0.95, palette=pal)
+    g = sns.FacetGrid(df, row="ff", hue="ff", aspect=9, height=0.95, palette=pal)
 
     # Draw the densities in a few steps
     g.map(sns.kdeplot, "pre", bw_adjust=.5, clip_on=False, fill=True, alpha=0.4, linewidth=1.5)
@@ -565,7 +586,7 @@ def fig11nc3_func():
         # mean2_ = heights2.index(max(heights2)) * 0.006
         # heights2 = max(heights2)
         ax_.scatter(mean2_, heights2, zorder=10, s=14 ** 2, edgecolors='#cf5362', color='white', linewidths=3.5)
-        ax_.plot((mean_, mean2_), (heights1, heights2), zorder=12, lw=3.5, color=(0,0,1))
+        # ax_.plot((mean_, mean2_), (heights1, heights2), zorder=12, lw=3.5, color=(0,0,1))
         if ff_ == 0.05:
             dmn_list.append(np.nanmean(np.absolute(np.array(heights1_l) - np.array(heights2_l))) - 0.1)
         else:
@@ -593,12 +614,38 @@ def fig11nc3_func():
     #
     # passing color=None to refline() uses the hue mapping
     g.refline(y=0, linewidth=2, linestyle="-", color=None, clip_on=False, zorder=3)
-    dmn_pre_list = [stats.ks_2samp(df[df['ff'] == __]['pre'], df[df['ff'] == 0.05]['pre'])[0] for __ in ff_list]
-    dmn_post_list = [stats.ks_2samp(df[df['ff'] == __]['post'], df[df['ff'] == 0.05]['post'])[0] for __ in ff_list]
-    dmn_change_list = [-stats.ks_2samp(df[df['ff'] == __]['post'], df[df['ff'] == 0.05]['post'])[0] + stats.ks_2samp(df[df['ff'] == __]['pre'], df[df['ff'] == 0.05]['pre'])[0] for __ in ff_list]
-    veg_change_list = [((veg_post_mean[__] - veg_pre_mean[__]) - (veg_post_mean[0] - veg_pre_mean[0])) * 6 for __ in range(len(veg_post_mean))]
-    veg_change_list2 = [((veg_post_mean[__] / veg_post_mean[0]) - (veg_pre_mean[__] / veg_pre_mean[0]))  for __ in range(len(veg_post_mean))]
 
+    cmn_pre_list = [cramervonmises_2samp(df[df['ff'] == __]['pre'], df[df['ff'] == 0.05]['pre'], nan_policy='omit',).statistic for __ in ff_list]
+    cmn_post_list = [cramervonmises_2samp(df[df['ff'] == __]['post'], df[df['ff'] == 0.05]['post'], nan_policy='omit').statistic for __ in ff_list]
+    cmn_change_list = [-cramervonmises_2samp(df[df['ff'] == __]['post'], df[df['ff'] == 0.05]['post'], nan_policy='omit').statistic +
+                       cramervonmises_2samp(df[df['ff'] == __]['pre'], df[df['ff'] == 0.05]['pre'], nan_policy='omit').statistic for __ in ff_list]
+    cmn_weather = cramervonmises_2samp(df[df['ff'] == 0.05]['pre'], df[df['ff'] == 0.05]['post'], nan_policy='omit').statistic
+
+    wass_pre_list = [wasserstein_distance(df[df['ff'] == __]['pre'].dropna(), df[df['ff'] == 0.05]['pre'].dropna()) for __ in ff_list]
+    wass_post_list = [wasserstein_distance(df[df['ff'] == __]['post'].dropna(), df[df['ff'] == 0.05]['post'].dropna()) for __ in ff_list]
+
+    wass_pre_all, wass_post_all = [], []
+    for __ in ff_list:
+        for ___ in ff_list:
+            if __ != ___:
+                wass_pre_all.append(wasserstein_distance(df[df['ff'] == __]['pre'].dropna(), df[df['ff'] == ___]['pre'].dropna()))
+                wass_post_all.append(wasserstein_distance(df[df['ff'] == __]['post'].dropna(), df[df['ff'] == ___]['post'].dropna()))
+    wass_post_all = np.nanmean(wass_post_all)
+    wass_pre_all = np.nanmean(wass_pre_all)
+    wass_change_list = [-wasserstein_distance(df[df['ff'] == __]['post'].dropna(), df[df['ff'] == 0.05]['post'].dropna()) +
+                        wasserstein_distance(df[df['ff'] == __]['pre'].dropna(), df[df['ff'] == 0.05]['pre'].dropna()) for __ in ff_list]
+    wass_change_list[-1] = wass_change_list[-1] - 0.01
+    was_weather = wasserstein_distance(df[df['ff'] == 0.05]['pre'].dropna(), df[df['ff'] == 0.05]['post'].dropna())
+
+    dmn_weather = stats.ks_2samp(df[df['ff'] == 0.05]['pre'], df[df['ff'] == 0.05]['post'], nan_policy='omit').statistic
+    dmn_pre_list = [stats.ks_2samp(df[df['ff'] == __]['pre'], df[df['ff'] == 0.05]['pre'], nan_policy='omit').statistic for __ in ff_list]
+    dmn_post_list = [stats.ks_2samp(df[df['ff'] == __]['post'], df[df['ff'] == 0.05]['post'], nan_policy='omit').statistic for __ in ff_list]
+    dmn_change_list = [-stats.ks_2samp(df[df['ff'] == __]['post'], df[df['ff'] == 0.05]['post'], nan_policy='omit').statistic + stats.ks_2samp(df[df['ff'] == __]['pre'], df[df['ff'] == 0.05]['pre'], nan_policy='omit').statistic for __ in ff_list]
+
+    mean_change_list = [((veg_post_mean[__] - veg_pre_mean[__]) - (veg_post_mean[0] - veg_pre_mean[0])) / veg_pre_mean[0] for __ in range(len(veg_post_mean))]
+    mean_weather_list = [(veg_post_mean[0] - veg_pre_mean[0]) / veg_pre_mean[0] for __ in range(len(veg_post_mean))]
+    mean_change_list2 = [((veg_post_mean[__] / veg_post_mean[0]) - (veg_pre_mean[__] / veg_pre_mean[0])) for __ in range(len(veg_post_mean))]
+    veg_change_list = []
     # Define and use a simple function to label the plot in axes coordinates
     ax = plt.gca()
     # ax.text(0, .2, "", fontweight="bold", color='b', ha="left", va="center", transform=ax.transAxes)
@@ -616,7 +663,7 @@ def fig11nc3_func():
     ax.set_xlabel("Multiyear mean MAVI", fontsize=30, fontweight='bold')
 
     plt.subplots_adjust(bottom=0.13, right=0.95)
-    plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\Fig11_nc_pre_grid.png', dpi=300)
+    plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig3\\Fig11_nc_pre_grid_v2.png', dpi=300)
     plt.close()
     #
     # sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
@@ -662,6 +709,90 @@ def fig11nc3_func():
     plt.rcParams['font.family'] = ['Arial', 'SimHei']
     plt.rc('font', size=28)
     plt.rc('axes', linewidth=3)
+
+    wass_weather_list = [was_weather for _ in range(10)]
+    wass_dam_list = [was_change_ + was_weather for was_change_ in wass_change_list]
+    mean_weather_list = mean_weather_list
+    mean_dam_list = [_ + mean_weather_list[0] for _ in mean_change_list]
+
+    fig_temp = plt.figure(figsize=(9, 8.96), constrained_layout=True)
+    gs = fig_temp.add_gridspec(1, 1)
+
+    x_temp = np.array([10, 9, 8, 7, 6, 5, 4, 3, 2, 1])
+    cubic_weather_im = interp1d(x_temp, wass_weather_list, kind='cubic')
+    cubic_dam_im = interp1d(x_temp, wass_dam_list, kind='cubic')
+    cubic_mean_weather_im = interp1d(x_temp, mean_weather_list, kind='cubic')
+    cubic_mean_dam_im = interp1d(x_temp, mean_dam_list, kind='cubic')
+
+    smooth_x_temp = np.linspace(10, 1, 300)
+    ax = fig_temp.add_subplot(gs[0, 0])
+    ax.plot(cubic_weather_im(smooth_x_temp), smooth_x_temp, lw=3.5, color=(0.3, 0.3, 0.3))
+    ax.plot(cubic_weather_im(smooth_x_temp) * 1.5, smooth_x_temp, lw=1.5, ls='--', color=(0.3, 0.3, 0.3), zorder=2)
+    ax.plot(cubic_weather_im(smooth_x_temp) * 2, smooth_x_temp, lw=1.5, ls='--', color=(0.3, 0.3, 0.3), zorder=2)
+    ax.plot(cubic_weather_im(smooth_x_temp) * 3, smooth_x_temp, lw=1.5, ls='--', color=(0.3, 0.3, 0.3), zorder=2)
+    # ax.plot(cubic_weather_im(smooth_x_temp) * 4, smooth_x_temp, lw=1.5, ls='--', color=(0.3, 0.3, 0.3), zorder=2)
+    ax.plot([cubic_weather_im(10), cubic_weather_im(10)*5], [10, 10], lw=1.5, ls='--', color=(0.3, 0.3, 0.3), zorder=2)
+
+    ax.plot(cubic_dam_im(smooth_x_temp), smooth_x_temp, lw=3.5, color=(0.8, 0, 0))
+    ax.plot([0 for _ in range(1000)], np.linspace(-1, 12, 1000), lw=2., color=(0, 0, 0), zorder=2)
+
+    ax.scatter(wass_weather_list, x_temp, s=13 ** 2, lw=3.5, marker='o', edgecolors=(0.4, 0.4, 0.4),
+               c='white', zorder=4)
+    ax.scatter(wass_dam_list, x_temp, s=13 ** 2, lw=3.5, marker='s', edgecolors='#cf5362', c='white', zorder=4)
+
+    for _ in range(x_temp.shape[0]):
+        ax.plot([-1, 1], [x_temp[_], x_temp[_]], lw=3, color=(240 / 256, 240 / 256, 240 / 256), zorder=1)
+        if _ == 0 or _ == x_temp.shape[0] - 1:
+            ax.arrow(0, x_temp[_], wass_weather_list[_]-0.001, 0, width=0.02, head_width=0.0000006, head_length=0.0000001, ec=(0, 0, 0),
+                     fc=(0, 0, 0), zorder=7, length_includes_head=True)
+        if _ != 0:
+            ax.arrow(wass_weather_list[_] + 0.001, x_temp[_], wass_dam_list[_] - wass_weather_list[_] - 0.001, 0, width=0.02, head_width=0.16,
+                     head_length=0.002, ec=(0, 0, 0), fc=(0, 0, 0), zorder=7, length_includes_head=True, )
+    ax.plot([-1, 1], [11 ,11], lw=3, color=(240 / 256, 240 / 256, 240 / 256), zorder=1)
+
+    ax.fill_betweenx(smooth_x_temp, cubic_weather_im(smooth_x_temp), cubic_dam_im(smooth_x_temp), alpha=0.3,
+                     edgecolor=(1, 0, 0), facecolor='#cf5362', hatch='/', zorder=3)
+    ax.fill_betweenx(smooth_x_temp, [0 for _ in range(smooth_x_temp.shape[0])], cubic_weather_im(smooth_x_temp),
+                     hatch='/', edgecolor=(0.5, 0.5, 0.5), facecolor=(0.2, 0.2, 0.2), alpha=0.1, zorder=3)
+
+    ax.set_ylim([0.5, 12])
+    ax.set_yticks([])
+
+    ax.set_xlim([0, 0.06])
+    ax.set_xticks([0, 0.02, 0.04, 0.06])
+    ax.set_xticklabels(['0', '0.02', '0.04', '0.06'], fontsize=22)
+
+    # ax2 = fig_temp.add_subplot(gs[0, 1])
+    # ax2.plot(cubic_mean_weather_im(smooth_x_temp), smooth_x_temp, lw=3.5, color=(0, 0, 0.8))
+    # ax2.plot(cubic_mean_dam_im(smooth_x_temp), smooth_x_temp, lw=3.5, color=(0.8, 0, 0))
+    # ax2.plot([0 for _ in range(1000)], np.linspace(-1, 12, 1000), lw=2., color=(0, 0, 0), zorder=2)
+    #
+    # ax2.scatter(mean_weather_list, x_temp, s=13 ** 2, lw=3.5, marker='o', edgecolors=(81 / 256, 121 / 256, 150 / 256),
+    #             c='white', zorder=4)
+    # ax2.scatter(mean_dam_list, x_temp, s=13 ** 2, lw=3.5, marker='s', edgecolors='#cf5362', c='white', zorder=4)
+    #
+    # for _ in range(x_temp.shape[0]):
+    #     ax2.plot([-1, 1], [x_temp[_], x_temp[_]], lw=3, color=(240 / 256, 240 / 256, 240 / 256), zorder=1)
+    #     ax2.arrow(0, x_temp[_], mean_weather_list[_], 0, width=0.02, head_width=0.16, head_length=0.004, ec=(0, 0, 1),
+    #               fc=(0, 0, 0), zorder=3, length_includes_head=True)
+    #     ax2.arrow(mean_weather_list[_], x_temp[_], mean_dam_list[_] - mean_weather_list[_], 0, width=0.02,
+    #               head_width=0.16, head_length=0.004, ec=(0, 0, 0), fc=(0, 0, 0), zorder=3, length_includes_head=True)
+    # ax2.plot([-1, 1], [11, 11], lw=3, color=(240 / 256, 240 / 256, 240 / 256), zorder=1)
+    #
+    # ax2.fill_betweenx(smooth_x_temp,  cubic_mean_weather_im(smooth_x_temp), cubic_mean_dam_im(smooth_x_temp), alpha=0.3,
+    #                  edgecolor=(1, 0, 0), facecolor='#cf5362', hatch='/')
+    # ax2.fill_betweenx(smooth_x_temp, [0 for _ in range(smooth_x_temp.shape[0])],  cubic_mean_weather_im(smooth_x_temp),
+    #                  hatch='/', edgecolor=(0, 0, 1), facecolor=(81 / 256, 121 / 256, 150 / 256), alpha=0.3, )
+    #
+    # ax2.set_ylim([0.5, 12])
+    # ax2.set_yticks([])
+    #
+    # ax2.set_xlim([0, 0.16])
+    # ax2.set_xticks([0, 0.02, 0.04, 0.06])
+    # ax2.set_xticklabels(['0', '0.02', '0.04', '0.06'], fontsize=22)
+
+    plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig3\\Fig11_nc_diff3.png', dpi=300)
+    plt.close()
 
     fig_temp = plt.figure(figsize=(7.5, 11.2), constrained_layout=True,)
     gs = fig_temp.add_gridspec(1, 2, width_ratios=(3,2))
@@ -756,7 +887,7 @@ def fig11nc3_func():
     plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\Fig11_nc_diff2.png', dpi=300)
     plt.close()
 
-    fig_temp = plt.figure(figsize=(5.2, 8.96), constrained_layout=True, )
+    fig_temp = plt.figure(figsize=(7.96, 8.96), constrained_layout=True, )
     gs = fig_temp.add_gridspec(1, 1)
 
     x_temp = np.array([10, 9, 8, 7, 6, 5, 4, 3, 2, 1])
@@ -803,8 +934,10 @@ def fig11nc_func():
 
     veg_pre_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\veg_pre_tgd.TIF')
     veg_post_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\veg_post_tgd.TIF')
-    veg_pre_arr = veg_pre_ds.GetRasterBand(1).ReadAsArray().flatten()
-    veg_post_arr = veg_post_ds.GetRasterBand(1).ReadAsArray().flatten()
+    veg_pre_arr = veg_pre_ds.GetRasterBand(1).ReadAsArray()
+    veg_post_arr = veg_post_ds.GetRasterBand(1).ReadAsArray()
+    veg_type_arr = np.zeros_like(veg_post_arr) * np.nan
+
     print(str(np.nanmean(veg_post_arr/veg_pre_arr)))
 
     veg_post_arr[np.isnan(veg_post_arr)] = -0.03
@@ -840,7 +973,14 @@ def fig11nc_func():
     print(str(40.3839 / 728.1827))
     print(str(61.52219999999999 / 728.1827))
 
-    t = pd.DataFrame({'Pre-TGD multiyear mean AMVI': veg_pre_arr, 'Post-TGD multiyear mean AMVI': veg_post_arr})
+    veg_type_arr[veg_pre_arr == -0.03] = 1
+    veg_type_arr[np.logical_and(veg_post_arr >= veg_pre_arr + 0.15, veg_pre_arr > 0)] = 2
+    veg_type_arr[np.logical_and(np.logical_and(veg_post_arr < veg_pre_arr + 0.15, veg_post_arr > veg_pre_arr), veg_pre_arr > 0)] = 3
+    veg_type_arr[np.logical_and(veg_post_arr < veg_pre_arr, veg_post_arr > 0)] = 4
+    veg_type_arr[veg_post_arr == -0.03] = 5
+    # bf.write_raster(veg_pre_ds, veg_type_arr, 'G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig4\\', 'VEG_type.TIF')
+
+    t = pd.DataFrame({'Pre-TGD multi-year mean MAVI': veg_pre_arr, 'Post-TGD multiyear mean AMVI': veg_post_arr})
     t.dropna().reset_index(drop=True)
 
     fig_temp = plt.figure(figsize=(10.5, 10), constrained_layout=True, )
@@ -849,13 +989,27 @@ def fig11nc_func():
     ax_histx = fig_temp.add_subplot(gs[0, 0],)
     ax_histy = fig_temp.add_subplot(gs[1, 1], )
     camp = sns.color_palette("Blues", as_cmap=True)
+
+    post_kurt = np.array(t['Post-TGD multiyear mean AMVI'])
+    pre_kurt = np.array(t['Pre-TGD multi-year mean MAVI'])
+    post_kurt2 = post_kurt[~np.isnan(post_kurt)]
+    pre_kurt2 = pre_kurt[~np.isnan(pre_kurt)]
+    q1 = kurtosis(post_kurt2, fisher=False)
+    q2 = kurtosis(pre_kurt2, fisher=False)
+    print('post-TGP k:' + str(q1))
+    print('pre-TGP k:' + str(q2))
+    v1 = variation(post_kurt2)
+    v2 = variation(pre_kurt2)
+    print('post-TGP v:' + str(v1))
+    print('pre-TGP v:' + str(v2))
+
     ax.set_yticklabels([])
     ax.set_xticklabels([])
     # camp = sns.cubehelix_palette(10, rot=-.25, light=.8, as_cmap=True)
 
     significant_v, size_temp = [], []
     for _ in range(100):
-        t_temp = t[(t['Pre-TGD multiyear mean AMVI'] < (_ + 1)/ 166.66667) & (t['Pre-TGD multiyear mean AMVI'] > _ /166.66667) & (t['Post-TGD multiyear mean AMVI'] > t['Pre-TGD multiyear mean AMVI']) ]
+        t_temp = t[(t['Pre-TGD multi-year mean MAVI'] < (_ + 1)/ 166.66667) & (t['Pre-TGD multi-year mean MAVI'] > _ /166.66667) & (t['Post-TGD multiyear mean AMVI'] > t['Pre-TGD multi-year mean MAVI']) ]
         t_temp = t_temp.sort_values('Post-TGD multiyear mean AMVI').reset_index()
         if t_temp.shape[0] <= 500:
             significant_v.append((_ + 1) / 166.66667)
@@ -878,14 +1032,15 @@ def fig11nc_func():
         size_temp.append(t_temp.shape[0])
 
     ax.plot(np.linspace(-0, 0.6, 100), np.linspace(-0, 0.6, 100), lw=4, c=(0.8, 0, 0), zorder=2)
-    ax.hist2d(x=t['Pre-TGD multiyear mean AMVI'], y=t['Post-TGD multiyear mean AMVI'], bins=100, range=[(0, 0.6), (0, 0.6)], density=True, cmap=camp, norm='symlog')
-    ax.hist2d(x=t['Pre-TGD multiyear mean AMVI'], y=t['Post-TGD multiyear mean AMVI'], bins=100, range=[(0, 0.6), (0, 0.6)], density=True, cmap=camp, norm='symlog')
-    ax_histx.hist2d(x=t['Pre-TGD multiyear mean AMVI'], y=t['Post-TGD multiyear mean AMVI'], bins=50, range=[(-0.06, 0.6), (-0.06, 0.6)], density=True, cmap=camp, norm='symlog')
-    ax_histy.hist2d(x=t['Pre-TGD multiyear mean AMVI'], y=t['Post-TGD multiyear mean AMVI'], bins=50, range=[(-0.06, 0.6), (-0.06, 0.6)], density=True, cmap=camp, norm='symlog')
-    ax_histy.set_xlabel('Pre-TGP multiyear mean AMVI', fontname='Arial', fontsize=36, fontweight='bold')
-    ax_histx.set_ylabel('Post-TGP multiyear mean AMVI', fontname='Arial', fontsize=36, fontweight='bold')
+    h = ax.hist2d(x=t['Pre-TGD multi-year mean MAVI'], y=t['Post-TGD multiyear mean AMVI'], bins=100, range=[(0, 0.6), (0, 0.6)], density=True, cmap=camp, norm='symlog')
+    ax.hist2d(x=t['Pre-TGD multi-year mean MAVI'], y=t['Post-TGD multiyear mean AMVI'], bins=100, range=[(0, 0.6), (0, 0.6)], density=True, cmap=camp, norm='symlog')
+    ax_histx.hist2d(x=t['Pre-TGD multi-year mean MAVI'], y=t['Post-TGD multiyear mean AMVI'], bins=50, range=[(-0.06, 0.6), (-0.06, 0.6)], density=True, cmap=camp, norm='symlog')
+    ax_histy.hist2d(x=t['Pre-TGD multi-year mean MAVI'], y=t['Post-TGD multiyear mean AMVI'], bins=50, range=[(-0.06, 0.6), (-0.06, 0.6)], density=True, cmap=camp, norm='symlog')
+    ax_histy.set_xlabel('Pre-TGP multi-year mean MAVI', fontname='Arial', fontsize=36, fontweight='bold')
+    ax_histx.set_ylabel('Post-TGP multi-year mean MAVI', fontname='Arial', fontsize=36, fontweight='bold')
     ax.plot(np.linspace(-0, 0.6, 100), significant_v, lw=4, ls='--', c=(0.8, 0, 0), zorder=2)
 
+    fig_temp.colorbar(h[3], ax=ax)
     ax_histy.set_yticklabels([])
     ax_histx.set_xticklabels([])
     ax_histx.set_xlim([-0.06, 0])
@@ -940,9 +1095,9 @@ def fig11nc_func():
     plt.savefig(f'G:\A_Landsat_Floodplain_veg\Paper\Fig11\\Fig11_new_nc.png', dpi=300)
     plt.close()
 
-    t_new_pre = t[(t['Pre-TGD multiyear mean AMVI'] == -0.03)]
+    t_new_pre = t[(t['Pre-TGD multi-year mean MAVI'] == -0.03)]
     t_new_post = t[(t['Post-TGD multiyear mean AMVI'] == -0.03)]
-    t_old = t[(t['Pre-TGD multiyear mean AMVI'] != -0.03) & (t['Post-TGD multiyear mean AMVI'] != -0.03)]
+    t_old = t[(t['Pre-TGD multi-year mean MAVI'] != -0.03) & (t['Post-TGD multiyear mean AMVI'] != -0.03)]
 
     fig_temp = plt.figure(figsize=(10.5, 10), constrained_layout=True, )
     gs = fig_temp.add_gridspec(1, 2, width_ratios=(1, 12),)
@@ -955,7 +1110,7 @@ def fig11nc_func():
     ax.set_xticks([-0.03])
     ax.set_xticklabels(['Non-\nveg'])
 
-    sns.histplot(t_new_pre['Pre-TGD multiyear mean AMVI'],  bins=1,  binrange=(-0.04, -0.02), color='#55a7d2', edgecolor=(0., 0, 0.), alpha=0.5, lw=1.3, zorder=2, )
+    sns.histplot(t_new_pre['Pre-TGD multi-year mean MAVI'],  bins=1,  binrange=(-0.04, -0.02), color='#55a7d2', edgecolor=(0., 0, 0.), alpha=0.5, lw=1.3, zorder=2, )
     sns.histplot(t_new_post['Post-TGD multiyear mean AMVI'],  bins=1, binrange=(-0.04, -0.02),  color='#cf5362', edgecolor=(0., 0., 0.),  alpha=0.5, lw=1.3, zorder=3,)
     ax.set_xlabel('')
     ax.set_ylabel(r'$\text{Area/km}^2$', fontname='Arial', fontsize=36, fontweight='bold')
@@ -968,16 +1123,16 @@ def fig11nc_func():
 
     # bins3 = ax_temp.hist(t_new['Post-TGD multiyear mean AMVI'], bins=3, alpha=0.6, facecolor='#55a7d2',
     #                     edgecolor=(0.2, 0.2, 0.2), histtype='stepfilled', lw=2, zorder=3, range=(-0.35, -0.25),)
-    # bins4 = ax_temp.hist(t_new['Pre-TGD multiyear mean AMVI'], bins=3, alpha=0.6, facecolor='#cf5362',
+    # bins4 = ax_temp.hist(t_new['Pre-TGD multi-year mean MAVI'], bins=3, alpha=0.6, facecolor='#cf5362',
     #                      edgecolor=(0.2, 0.2, 0.2), histtype='stepfilled', lw=2, zorder=2, range=(-0.35, -0.25),)
 
-    # bins = ax_temp.hist(t_old['Post-TGD multiyear mean AMVI'], bins=200, alpha=0.6, facecolor='#55a7d2', edgecolor=(0.2, 0.2, 0.2), histtype='stepfilled', lw=2, zorder=3, label='Post-TGP multiyear mean AMVI')
-    # bins2 = ax_temp.hist(t_old['Pre-TGD multiyear mean AMVI'], bins=200, alpha=0.6, facecolor='#cf5362', edgecolor=(0.2, 0.2, 0.2), histtype='stepfilled', lw=2, zorder=2, label='Pre-TGP multiyear mean AMVI')
-    # ax_temp.hist(t_old['Pre-TGD multiyear mean AMVI'], bins=100, range=(0, 0.6), alpha=0.6, facecolor='#55a7d2', edgecolor=(1., 1., 1.), zorder=2, linewidth=0.3,  label='Post-TGP multiyear mean AMVI')
-    # ax_temp.hist(t_old['Post-TGD multiyear mean AMVI'], bins=100, range=(0, 0.6), alpha=0.6, facecolor='#cf5362', edgecolor=(1., 1., 1.), zorder=3, linewidth=0.3, label='Post-TGP multiyear mean AMVI')
+    # bins = ax_temp.hist(t_old['Post-TGD multiyear mean AMVI'], bins=200, alpha=0.6, facecolor='#55a7d2', edgecolor=(0.2, 0.2, 0.2), histtype='stepfilled', lw=2, zorder=3, label='Post-TGP multi-year mean MAVI')
+    # bins2 = ax_temp.hist(t_old['Pre-TGD multi-year mean MAVI'], bins=200, alpha=0.6, facecolor='#cf5362', edgecolor=(0.2, 0.2, 0.2), histtype='stepfilled', lw=2, zorder=2, label='Pre-TGP multi-year mean MAVI')
+    # ax_temp.hist(t_old['Pre-TGD multi-year mean MAVI'], bins=100, range=(0, 0.6), alpha=0.6, facecolor='#55a7d2', edgecolor=(1., 1., 1.), zorder=2, linewidth=0.3,  label='Post-TGP multi-year mean MAVI')
+    # ax_temp.hist(t_old['Post-TGD multiyear mean AMVI'], bins=100, range=(0, 0.6), alpha=0.6, facecolor='#cf5362', edgecolor=(1., 1., 1.), zorder=3, linewidth=0.3, label='Post-TGP multi-year mean MAVI')
 
-    box2 = sns.histplot(t_old['Pre-TGD multiyear mean AMVI'], bins=100, binrange=(0, 0.6), kde=True, color='#55a7d2', edgecolor=(1., 1, 1.), alpha=0.5, zorder=2, line_kws={'lw': 4, 'zorder':2}, label='Pre-TGP multiyear mean AMVI')
-    box1 = sns.histplot(t_old['Post-TGD multiyear mean AMVI'], bins=100, binrange=(0, 0.6), kde=True, color='#cf5362', edgecolor=(1., 1,  1.), alpha=0.5, zorder=3, line_kws={'lw': 4, 'zorder':3}, label='Post-TGP multiyear mean AMVI')
+    box2 = sns.histplot(t_old['Pre-TGD multi-year mean MAVI'], bins=100, binrange=(0, 0.6), kde=True, color='#55a7d2', edgecolor=(1., 1, 1.), alpha=0.5, zorder=2, line_kws={'lw': 4, 'zorder':2}, label='Pre-TGP multi-year mean MAVI')
+    box1 = sns.histplot(t_old['Post-TGD multiyear mean AMVI'], bins=100, binrange=(0, 0.6), kde=True, color='#cf5362', edgecolor=(1., 1,  1.), alpha=0.5, zorder=3, line_kws={'lw': 4, 'zorder':3}, label='Post-TGP multi-year mean MAVI')
     heights2 = [p.get_height() for p in box1.patches][:100]
     heights1 = [p.get_height() for p in box1.patches][100:]
 
@@ -992,7 +1147,7 @@ def fig11nc_func():
 
     # Mean value
     # pos1 = np.nanmean(t_old['Post-TGD multiyear mean AMVI'])
-    # pos2 = np.nanmean(t_old['Pre-TGD multiyear mean AMVI'])
+    # pos2 = np.nanmean(t_old['Pre-TGD multi-year mean MAVI'])
     #
     # ax_temp.plot(np.linspace(pos1 + 0.0015, pos1 + 0.0015, 100), np.linspace(0.01, heights1[int(np.round(pos1 / 0.006))], 100), color=(1, 0, 0), linewidth=1.3, zorder=5)
     # ax_temp.plot(np.linspace(pos2 + 0.0015, pos2 + 0.0015, 100), np.linspace(0.01, heights2[int(np.round(pos2 / 0.006))], 100), color=(0, 0, 1), linewidth=1.3, zorder=4)
@@ -1000,7 +1155,7 @@ def fig11nc_func():
     # ax_temp.plot(np.linspace(pos2 + 0.0045, pos2 + 0.0045, 100), np.linspace(0.01, heights2[int(np.round(pos2 / 0.006))], 100), color=(0, 0, 1), linewidth=1.3, zorder=4)
 
     std1 = np.nanstd(t_old['Post-TGD multiyear mean AMVI'])
-    std2 = np.nanstd(t_old['Pre-TGD multiyear mean AMVI'])
+    std2 = np.nanstd(t_old['Pre-TGD multi-year mean MAVI'])
     print(str(std1))
     print(str(std2))
     pre_left_v = heights1[int(np.round((pos1 + 0.003 - std1) / 0.006))]
@@ -1015,13 +1170,13 @@ def fig11nc_func():
     ax_temp.arrow(pos1 + 0.003 , pre_right_v, + std1, 0, width=300, head_length=0.01,  fc=(0,0,0), ec=(0,0,0), zorder=9, length_includes_head=True)
     ax_temp.arrow(pos2 + 0.003 , post_right_v-1000, + std2, 0, width=300, head_length=0.01,  fc=(0,0,0), ec=(0,0,0), zorder=9, length_includes_head=True)
 
-    # ax_temp.plot(np.mean(t_old['Pre-TGD multiyear mean AMVI']), 0, heights2[int(np.floor(np.mean(t_old['Pre-TGD multiyear mean AMVI']) / 0.06))], color='#55a7d2')
-    # sns.histplot(t_old['Pre-TGD multiyear mean AMVI'], kde=False, bins=200, alpha=0.1)
+    # ax_temp.plot(np.mean(t_old['Pre-TGD multi-year mean MAVI']), 0, heights2[int(np.floor(np.mean(t_old['Pre-TGD multi-year mean MAVI']) / 0.06))], color='#55a7d2')
+    # sns.histplot(t_old['Pre-TGD multi-year mean MAVI'], kde=False, bins=200, alpha=0.1)
     # sns.histplot(t_old['Post-TGD multiyear mean AMVI'], kde=False, bins=200, alpha=0.1)
 
     ax_temp.legend(fontsize=26)
     # sns.histplot(x =t['Pre-TGD multi-year average AMVI'], y=t['Post-TGD multi-year average AMVI'], thresh=-1, bins = 400, pmax=0.30, kde = True, stat='density', weights = 0.1, )
-    # sns.kdeplot(x=t['Pre-TGD multiyear mean AMVI'], y=t['post'], levels=200)
+    # sns.kdeplot(x=t['Pre-TGD multi-year mean MAVI'], y=t['post'], levels=200)
     # ax_temp.plot(np.linspace(-1,1,100), x_minus(np.linspace(-1,1,100), p0[0], p0[1], p0[2]), lw=3, c=(1,0,0))
     # ax_temp.plot(np.linspace(-1,1,100), np.linspace(0,0,100), lw=1.5, c=(0,0,0))
     # ax_temp.plot(np.linspace(0, 0, 100), np.linspace(-1, 1, 100), lw=1.5, c=(0,0,0))
@@ -1040,6 +1195,7 @@ def fig11nc_func():
 
     ax_temp.set_xticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
     ax_temp.set_xticklabels(['0', '0.1', '0.2', '0.3', '0.4', '0.5', '0.6'], fontname='Arial', fontsize=28)
+
     plt.savefig(f'G:\A_Landsat_Floodplain_veg\Paper\Fig11\\Fig11_2_nc.png', dpi=300)
     plt.close()
 
@@ -1533,27 +1689,41 @@ def fig7_temp_nc_func():
     plt.rc('axes', linewidth=2)
 
     DATA = pd.read_excel('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig6\\DATA.xlsx')
-    fig_temp, ax_temp = plt.subplots(figsize=(11, 6), constrained_layout=True)
-    year = list(DATA['YEAR'])
-    yz = np.array(list(DATA['YZ']))
-    jj = np.array(list(DATA['YZ'])) + np.array(list(DATA['JJ']))
-    ch = np.array(list(DATA['YZ'])) + np.array(list(DATA['JJ'])) + np.array(list(DATA['CH']))
-    hh = np.array(list(DATA['YZ'])) + np.array(list(DATA['JJ'])) + np.array(list(DATA['CH'])) + np.array(list(DATA['HH']))
-    ax_temp.plot(year, yz, lw = 2, c=(0,0,0), marker = '^', markersize=3**2,  markerfacecolor = (1,1,1), zorder=2)
-    ax_temp.plot(year, jj, lw = 2, c=(0,0,0), marker = 's', markersize=3**2, markerfacecolor = (1,1,1), zorder=2)
-    ax_temp.plot(year, ch, lw = 2, c=(0,0,0), marker = 'o', markersize=3**2, markerfacecolor = (1,1,1), zorder=2)
-    ax_temp.plot(year, hh, lw = 2, c=(0,0,0), marker = 'd', markersize=3**2, markerfacecolor = (1,1,1), zorder=2)
-    ax_temp.fill_between(year, np.linspace(0, 0, jj.shape[0]), jj, alpha=0.4, facecolor=(65/256, 106/256, 182/256), zorder=1, label='Yizhi reach')
-    ax_temp.fill_between(year, yz, jj, alpha=0.4, facecolor=(97/256, 138/256, 213/256), zorder=1, label='Jingjiang reach')
-    ax_temp.fill_between(year, jj, ch, alpha=0.4, facecolor=(145/256, 172/256, 223/256), zorder=1, label='Chenghan reach')
-    ax_temp.fill_between(year, ch, hh, alpha=0.4, facecolor=(194/256, 208/256, 233/256), zorder=1, label='Hanhu reach')
+    data2 = [[], [], [], []]
+    year_list, reach_list = [], ['Yizhi reach', 'Jingjiang reach', 'Chenghan reach', 'Hanhu reach']
+    fig_temp, ax_temp = plt.subplots(figsize=(10, 6), constrained_layout=True)
+    for _ in range(DATA.shape[0]):
+        year_list.append(DATA['YEAR'][_])
+        data2[0].append(DATA['YZ'][_])
+        data2[1].append(DATA['JJ'][_])
+        data2[2].append(DATA['CH'][_])
+        data2[3].append(DATA['HH'][_])
+
+    # year = list(DATA['YEAR'])
+    # yz = np.array(list(DATA['YZ']))
+    # jj = np.array(list(DATA['YZ'])) + np.array(list(DATA['JJ']))
+    # ch = np.array(list(DATA['YZ'])) + np.array(list(DATA['JJ'])) + np.array(list(DATA['CH']))
+    # hh = np.array(list(DATA['YZ'])) + np.array(list(DATA['JJ'])) + np.array(list(DATA['CH'])) + np.array(list(DATA['HH']))
+    # ax_temp.plot(year, yz, lw = 2, c=(0,0,0), marker = '^', markersize=3**2,  markerfacecolor = (1,1,1), zorder=2, label='Yizhi reach')
+    # ax_temp.plot(year, jj, lw = 2, c=(0,0,0), marker = 's', markersize=3**2, markerfacecolor = (1,1,1), zorder=2, label='Jingjiang reach')
+    # ax_temp.plot(year, ch, lw = 2, c=(0,0,0), marker = 'o', markersize=3**2, markerfacecolor = (1,1,1), zorder=2, label='Chenghan reach')
+    # ax_temp.plot(year, hh, lw = 2, c=(0,0,0), marker = 'd', markersize=3**2, markerfacecolor = (1,1,1), zorder=2, label='Hanhu reach')
+    # ax_temp.fill_between(year, np.linspace(0, 0, jj.shape[0]), jj, alpha=0.4, facecolor=(65/256, 106/256, 182/256), zorder=1, label='Yizhi reach')
+    # ax_temp.fill_between(year, yz, jj, alpha=0.4, facecolor=(97/256, 138/256, 213/256), zorder=1, label='Jingjiang reach')
+    # ax_temp.fill_between(year, jj, ch, alpha=0.4, facecolor=(145/256, 172/256, 223/256), zorder=1, label='Chenghan reach')
+    # ax_temp.fill_between(year, ch, hh, alpha=0.4, facecolor=(194/256, 208/256, 233/256), zorder=1, label='Hanhu reach')
+    bottom = np.zeros(len(year_list))
+    for i, color_ in zip(range(len(reach_list)), [(230/256, 235/256, 245/256), (210/256, 221/256, 241/256), (146/256, 171/256, 219/256), (179/256, 195/256, 225/256) ]):
+        ax_temp.bar(year_list, data2[i], 0.65, bottom=bottom, label=reach_list[i], color=color_, edgecolor=(0.4, 0.4, 0.4), lw=1.3)
+        bottom += data2[i]
     ax_temp.set_xlabel('Year', fontname='Arial', fontsize=28, fontweight='bold')
     ax_temp.set_ylabel('Erosion/108m3', fontname='Arial', fontsize=28, fontweight='bold')
-    ax_temp.set_xlim(2002, 2020)
+    ax_temp.set_xlim(2002.5, 2020.5)
     ax_temp.set_ylim(-27, 0)
-    ax_temp.legend()
-    plt.savefig(f'G:\A_Landsat_Floodplain_veg\Paper\Fig6\\rr.png', dpi=500)
+    ax_temp.legend(fontsize=20)
+    plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig1\\rr.png', dpi=500)
     plt.close()
+    pass
 
 
 def fig7nc_func():
@@ -1659,6 +1829,8 @@ def fig7nc_func():
     # sns.relplot(x="DOY", y='OSAVI', kind="line",  markers=True, data=fig4_df)
     plt.savefig(f'G:\A_Landsat_Floodplain_veg\Paper\Fig6s_NC\\along_ds_nc.png', dpi=500)
     plt.close()
+    wl_pri2, wl_post2 = [], []
+    wl_pri3, wl_post3 = [], []
 
     for sec, r1, l1, ytick, in zip(['宜昌', '枝城', '莲花塘', '汉口'], [(38, 56), (36, 52), (18, 36), (12, 32)], [49, 46, 31, 25], [[38, 41, 44, 47, 50, 53, 56], [36, 40, 44, 48, 52], [18, 21, 24, 27, 30, 33, 36], [12, 17, 22, 27, 32]]):
         fig14_df = wl1.hydrological_inform_dic[sec]
@@ -1666,6 +1838,7 @@ def fig7nc_func():
         wl_pri, wl_post = [], []
         sd_pri, sd_post = [], []
         ds_pri, ds_post = [], []
+
         for year in range(1985, 2021):
             year_temp = fig14_df['year'] == year
             discharge = fig14_df['flow/m3/s'][year_temp].tolist()
@@ -1678,8 +1851,16 @@ def fig7nc_func():
                     wl_post.append(flow_temp[0:365])
                     sd_post.append(sed_temp[0:365])
                     ds_post.append(discharge[0:365])
+                    if sec == '宜昌':
+                        wl_post2.extend(flow_temp[0: 365])
+                    elif sec == '汉口':
+                        wl_post3.extend(flow_temp[0: 365])
                 elif year <= 2004:
                     wl_pri.append(flow_temp[0:365])
+                    if sec == '宜昌':
+                        wl_pri2.extend(flow_temp[0: 365])
+                    elif sec == '汉口':
+                        wl_pri3.extend(flow_temp[0: 365])
 
                 if 1998 <= year <= 2004:
                     ds_pri.append(discharge[0:365])
@@ -1695,9 +1876,9 @@ def fig7nc_func():
         sd_pri[sd_pri == 0] = np.nan
         sd_post[sd_post == 0] = np.nan
 
-        plt.close()
-        plt.rc('axes', axisbelow=True)
-        plt.rc('axes', linewidth=3)
+        plt.rcParams['font.family'] = ['Arial', 'SimHei']
+        plt.rc('font', size=22)
+        plt.rc('axes', linewidth=2)
         fig_temp, ax_temp = plt.subplots(figsize=(10, 3.75), constrained_layout=True)
         ax_temp.grid(axis='y', color=(210 / 256, 210 / 256, 210 / 256), zorder=0)
         ax_temp.fill_between(np.linspace(152, 304, 121), np.linspace(r1[1], r1[1], 121), np.linspace(r1[0],r1[0],121),alpha=1, color=(0.9, 0.9, 0.9))
@@ -1823,6 +2004,94 @@ def fig7nc_func():
             plt.savefig(f'G:\A_Landsat_Floodplain_veg\Paper\Fig7\\{sec}_annual_wl_nc.png', dpi=500)
             plt.close()
 
+    fig_temp, ax_temp = plt.subplots(nrows=1, ncols=2, figsize=(11, 6), constrained_layout=True)
+    # n, bins, patches = ax_temp.hist(wl_pri2, 50, density=True, histtype="step",  cumulative=True, label="Cumulative histogram")
+    x = np.linspace(min(wl_pri2), max(wl_pri2))
+    y = ((1 / (np.sqrt(2 * np.pi) * 50)) * np.exp(-0.5 * (1 / 50 * (x - 50)) ** 2))
+    y = y.cumsum()
+    y /= y[-1]
+
+    # # Complementary cumulative distributions.
+    # b = plt.ecdf(wl_pri2, complementary=False, label="pre-TGP", orientation="horizontal")
+    # ax_temp[0].ecdf(wl_pri2, complementary=False, label="pre-TGP", orientation="horizontal")
+    # # n, bins, patches = ax_temp.hist(wl_post2, 50, density=True, histtype="step",  cumulative=True, label="Cumulative histogram")
+    # x = np.linspace(min(wl_post2), max(wl_post2))
+    # y = ((1 / (np.sqrt(2 * np.pi) * 50)) * np.exp(-0.5 * (1 / 50 * (x - 50)) ** 2))
+    # y = y.cumsum()
+    # y /= y[-1]
+    # # Complementary cumulative distributions.
+    # a = plt.ecdf(wl_post2, complementary=False, label="post-TGP", orientation="horizontal")
+
+    ax_temp[0].set_yticks([37, 43, 49, 55])
+    ax_temp[0].set_yticklabels(['37', '43', '49', '55'], fontname='Arial', fontsize=22)
+    ax_temp[0].set_xticks([0, 0.25, 0.5, 0.75, 1])
+    ax_temp[0].set_xticklabels(['0%', '25%', '50%', '75%', '100%'], fontname='Arial', fontsize=22)
+    # ax_temp.set_ylabel('Water level/m', fontname='Arial', fontsize=28, fontweight='bold')
+    # sns.relplot(x="DOY", y='OSAVI', kind="line",  markers=True, data=fig4_df)
+    ax_temp[0].set_xlabel('Density', fontname='Arial', fontsize=28, fontweight='bold')
+    ax_temp[0].set_ylabel('Water level/m', fontname='Arial', fontsize=28, fontweight='bold')
+    ax_temp[0].set_xlim([-0.03, 1.03])
+    ax_temp[0].set_ylim([37, 55])
+    ax_temp[0].legend()
+
+    x = np.linspace(min(wl_pri3), max(wl_pri3))
+    y = ((1 / (np.sqrt(2 * np.pi) * 50)) * np.exp(-0.5 * (1 / 50 * (x - 50)) ** 2))
+    y = y.cumsum()
+    y /= y[-1]
+
+    # Complementary cumulative distributions.
+    ax_temp[1].ecdf(wl_pri3, complementary=False, label="pre-TGP", orientation="horizontal")
+    # n, bins, patches = ax_temp.hist(wl_post2, 50, density=True, histtype="step",  cumulative=True, label="Cumulative histogram")
+
+    ax_temp[1].set_yticks([12, 18, 24, 30])
+    ax_temp[1].set_yticklabels(['12', '18', '24', '30'], fontname='Arial', fontsize=22)
+    ax_temp[1].set_xticks([0, 0.25, 0.5, 0.75, 1])
+    ax_temp[1].set_xticklabels(['0%', '25%', '50%', '75%', '100%'], fontname='Arial', fontsize=22)
+    x = np.linspace(min(wl_post3), max(wl_post3))
+    y = ((1 / (np.sqrt(2 * np.pi) * 50)) * np.exp(-0.5 * (1 / 50 * (x - 50)) ** 2))
+    y = y.cumsum()
+    y /= y[-1]
+    # Complementary cumulative distributions.
+    ax_temp[1].ecdf(wl_post3, complementary=False, label="post-TGP", orientation="horizontal")
+
+    # ax_temp.set_xticks(a)
+    # ax_temp.set_xticklabels(c, fontname='Arial', fontsize=24)
+    # ax_temp.set_ylabel('Water level/m', fontname='Arial', fontsize=28, fontweight='bold')
+    # sns.relplot(x="DOY", y='OSAVI', kind="line",  markers=True, data=fig4_df)
+    ax_temp[1].set_xlabel('Density', fontname='Arial', fontsize=28, fontweight='bold')
+    # ax_temp[1].set_ylabel('Water level/m', fontname='Arial', fontsize=28, fontweight='bold')
+    ax_temp[1].set_xlim([-0.03, 1.03])
+    ax_temp[1].set_ylim([12, 30])
+    ax_temp[1].legend()
+    plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig1\\{sec}_wl_freq_nc.png', dpi=500)
+
+    fig_temp, ax_temp = plt.subplots(nrows=1, ncols=1, figsize=(11, 6), constrained_layout=True)
+    wl_dic = {'wl': [], 'status': []}
+    s_ = 36
+    for _ in wl_pri2:
+        wl_dic['status'].append('Pre-TGP')
+        wl_dic['wl'].append(int(np.floor(_)))
+
+    for _ in wl_post2:
+        wl_dic['status'].append('Post-TGP')
+        wl_dic['wl'].append(int(np.floor(_)))
+
+    sns.histplot(data=wl_dic, x="wl", hue="status",palette=[(255/256, 226/256, 170/256), (127/256, 163/256, 222/256)], multiple="dodge", shrink=1.45, stat='density', alpha=0.9)
+    ax_temp.set_xticks([38, 42, 46, 50, 54])
+    ax_temp.set_xticklabels(['38', '42', '46', '50', '54'], fontname='Arial', fontsize=22)
+    ax_temp.set_yticks([0, 0.05, 0.10, 0.15, 0.2, 0.25])
+    ax_temp.set_yticklabels(['0%', '5%', '10%', '15%', '20%', '25%'], fontname='Arial', fontsize=22)
+    ax_temp.set_ylabel('Density', fontname='Arial', fontsize=26, fontweight='bold')
+    ax_temp.set_xlabel('Water level/m', fontname='Arial', fontsize=26, fontweight='bold')
+    ax_temp.set_ylim([0, 0.25])
+    ax_temp.set_xlim([37.5, 54])
+    ax_temp.get_legend()
+
+    plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig1\\{sec}_hist.png', dpi=500)
+    plt.close()
+    pass
+
+
 def fig9_func():
 
     plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
@@ -1897,6 +2166,464 @@ def fig9_func():
         ax_temp.set_xticklabels(['0%', '25%', '50%', '75%', '100%'], fontname='Times New Roman', fontsize=24)
         plt.savefig(f'G:\A_Landsat_Floodplain_veg\Paper\Fig9\\{sec}_inun_freq.png', dpi=500)
         plt.close()
+
+
+def fig12_nc_func():
+
+    plt.rcParams['font.family'] = ['Arial', 'SimHei']
+    plt.rc('font', size=24)
+    plt.rc('axes', linewidth=3)
+
+    if not os.path.exists('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\veg_pre_tgd.TIF') or not os.path.exists('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\veg_post_tgd.TIF'):
+        inundated_dc = []
+        for _ in range(1987, 2024):
+            inundated_dc.append(Phemetric_dc(f'G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\{str(_)}\\'))
+        rs_dc = RS_dcs(*inundated_dc)
+
+        veg_arr_pri = None
+        veg_arr_post = None
+        y_shape, x_shape = rs_dc.dcs_YSize, rs_dc.dcs_XSize
+        for phe_year in rs_dc._pheyear_list:
+            if phe_year <= 2004:
+                if veg_arr_pri is None:
+                    veg_arr_pri = rs_dc.dcs[rs_dc._pheyear_list.index(phe_year)].SM_group[f'{str(phe_year)}_peak_vi'][:,:].toarray().reshape([y_shape, x_shape, 1])
+                else:
+                    veg_arr_pri = np.concatenate((veg_arr_pri, rs_dc.dcs[rs_dc._pheyear_list.index(phe_year)].SM_group[f'{str(phe_year)}_peak_vi'][:, :].toarray().reshape([y_shape, x_shape, 1])), axis=2)
+            elif phe_year > 2004:
+                if veg_arr_post is None:
+                    veg_arr_post = rs_dc.dcs[rs_dc._pheyear_list.index(phe_year)].SM_group[f'{str(phe_year)}_peak_vi'][:,:].toarray().reshape([y_shape, x_shape, 1])
+                else:
+                    veg_arr_post = np.concatenate((veg_arr_post, rs_dc.dcs[rs_dc._pheyear_list.index(phe_year)].SM_group[f'{str(phe_year)}_peak_vi'][:, :].toarray().reshape([y_shape, x_shape, 1])), axis=2)
+
+        veg_arr_pri[veg_arr_pri == 0] = np.nan
+        veg_arr_post[veg_arr_post == 0] = np.nan
+        veg_arr_pri = np.nanmean(veg_arr_pri, axis=2)
+        veg_arr_post = np.nanmean(veg_arr_post, axis=2)
+
+        ds = gdal.Open(rs_dc.ROI_tif)
+        bf.write_raster(ds, veg_arr_pri, 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\', 'veg_pre_tgd.TIF', raster_datatype=gdal.GDT_Float32)
+        bf.write_raster(ds, veg_arr_post, 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\', 'veg_post_tgd.TIF', raster_datatype=gdal.GDT_Float32)
+
+    if not os.path.exists('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\ih_difftgd.TIF') or not os.path.exists('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\id_difftgd.TIF'):
+        args_inundation = [Inunfac_dc(f'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Inundation_indicator\\inundation_dc\\{str(_)}\\') for _ in range(1988, 2021)]
+        rs_dc = RS_dcs(*args_inundation)
+
+        ih_pre, ih_post, id_pre, id_post = None, None, None, None
+        y_shape, x_shape = rs_dc.dcs_YSize, rs_dc.dcs_XSize
+        for phe_year in rs_dc._inunyear_list:
+            if phe_year <= 2004:
+                if ih_pre is None:
+                    ih_pre = rs_dc.dcs[rs_dc._inunyear_list.index(phe_year)].SM_group[f'inun_mean_wl'][:, :].toarray().reshape([y_shape, x_shape, 1])
+                else:
+                    ih_pre = np.concatenate((ih_pre, rs_dc.dcs[rs_dc._inunyear_list.index(phe_year)].SM_group[f'inun_mean_wl'][:, :].toarray().reshape([y_shape, x_shape, 1])), axis=2)
+
+                if id_pre is None:
+                    id_pre = rs_dc.dcs[rs_dc._inunyear_list.index(phe_year)].SM_group[f'inun_duration'][:, :].toarray().reshape([y_shape, x_shape, 1])
+                else:
+                    id_pre = np.concatenate((id_pre, rs_dc.dcs[rs_dc._inunyear_list.index(phe_year)].SM_group[f'inun_duration'][:, :].toarray().reshape([y_shape, x_shape, 1])), axis=2)
+
+            elif phe_year > 2004:
+                if ih_post is None:
+                    ih_post = rs_dc.dcs[rs_dc._inunyear_list.index(phe_year)].SM_group[f'inun_mean_wl'][:, :].toarray().reshape([y_shape, x_shape, 1])
+                else:
+                    ih_post = np.concatenate((ih_post, rs_dc.dcs[rs_dc._inunyear_list.index(phe_year)].SM_group[f'inun_mean_wl'][:, :].toarray().reshape([y_shape, x_shape, 1])), axis=2)
+
+                if id_post is None:
+                    id_post = rs_dc.dcs[rs_dc._inunyear_list.index(phe_year)].SM_group[f'inun_duration'][:, :].toarray().reshape([y_shape, x_shape, 1])
+                else:
+                    id_post = np.concatenate((id_post, rs_dc.dcs[rs_dc._inunyear_list.index(phe_year)].SM_group[f'inun_duration'][:, :].toarray().reshape([y_shape, x_shape, 1])), axis=2)
+
+        ih_pre = np.nanmean(ih_pre, axis=2)
+        ih_post = np.nanmean(ih_post, axis=2)
+        id_pre = np.nanmean(id_pre, axis=2)
+        id_post = np.nanmean(id_post, axis=2)
+        id_diff = id_post - id_pre
+        ih_diff = ih_post - ih_pre
+        id_diff[id_diff == 0] = np.nan
+        ih_diff[ih_diff == 0] = np.nan
+
+        ds = gdal.Open(rs_dc.ROI_tif)
+        bf.write_raster(ds, id_diff, 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\', 'id_difftgd.TIF', raster_datatype=gdal.GDT_Float32)
+        bf.write_raster(ds, ih_diff, 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\', 'ih_difftgd.TIF', raster_datatype=gdal.GDT_Float32)
+
+    inun_pre_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\DT_inundation_frequency_pretgd.TIF')
+    inun_post_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\DT_inundation_frequency_posttgd.TIF')
+    veg_pre_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\veg_pre_tgd.TIF')
+    veg_post_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\veg_post_tgd.TIF')
+    ele_pre_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\ele_DT_inundation_frequency_pretgd.TIF')
+    ele_post_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\ele_DT_inundation_frequency_posttgd.TIF')
+    id_diff_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\id_difftgd.TIF')
+    ih_diff_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\ih_difftgd.TIF')
+    veg_type_ds = gdal.Open('G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig4\\VEG_type.TIF')
+
+    inun_pre_arr = inun_pre_ds.GetRasterBand(1).ReadAsArray()
+    inun_post_arr = inun_post_ds.GetRasterBand(1).ReadAsArray()
+    veg_pre_arr = veg_pre_ds.GetRasterBand(1).ReadAsArray()
+    veg_post_arr = veg_post_ds.GetRasterBand(1).ReadAsArray()
+    ele_pre_arr = ele_pre_ds.GetRasterBand(1).ReadAsArray()
+    ele_post_arr = ele_post_ds.GetRasterBand(1).ReadAsArray()
+    id_diff_arr = id_diff_ds.GetRasterBand(1).ReadAsArray()
+    ih_diff_arr = ih_diff_ds.GetRasterBand(1).ReadAsArray()
+    veg_type_arr = veg_type_ds.GetRasterBand(1).ReadAsArray()
+    reach_arr = copy.deepcopy(veg_type_arr)
+    reach_arr[:, 0: 2950] = 1
+    reach_arr[:, 950: 6100] = 2
+    reach_arr[:, 6100: 10210] = 3
+    reach_arr[:, 10210: 16537] = 4
+    reach_arr[np.isnan(veg_type_arr)] = np.nan
+
+    # inun_pre_arr[inun_pre_arr > 0.95] = np.nan
+    # inun_post_arr[inun_post_arr > 0.95] = np.nan
+    # inun_pre_arr[inun_pre_arr <= 0.05] = np.nan
+    # inun_post_arr[inun_post_arr <= 0.05] = np.nan
+    veg_pre_arr[np.isnan(veg_pre_arr)] = 0
+    veg_post_arr[np.isnan(veg_post_arr)] = 0
+    veg_pre_arr[np.isnan(veg_pre_arr)] = 0
+    veg_post_arr[np.isnan(veg_post_arr)] = 0
+    veg_pre_arr[np.logical_and(veg_pre_arr == 0, veg_post_arr == 0)] = np.nan
+    veg_post_arr[np.logical_and(np.isnan(veg_pre_arr), veg_post_arr == 0)] = np.nan
+    # veg_pre_arr[veg_pre_arr < 0.05] = np.nan
+    # veg_post_arr[veg_pre_arr < 0.05] = np.nan
+    ele_diff_arr = (ele_post_arr - ele_pre_arr)
+
+    inun_diff_arr = inun_post_arr - inun_pre_arr
+    inun_diff_arr[inun_diff_arr == 0] = np.nan
+    id_diff_arr[np.isinf(id_diff_arr)] = np.nan
+    ih_diff_arr[np.isinf(ih_diff_arr)] = np.nan
+    arr_dic = {'VEG': (veg_post_arr - veg_pre_arr).flatten(), 'IF': inun_diff_arr.flatten(), 'ID': id_diff_arr.flatten(), 'IH': ih_diff_arr.flatten(), 'ELE': ele_diff_arr.flatten(), 'Reach': reach_arr.flatten(), 'Veg_type': veg_type_arr.flatten()}
+    for index in ['SSD', 'RHU', 'WIN', 'PRE', 'PRS']:
+        climate_folder = f'G:\\A_Landsat_Floodplain_veg\\Climatology_data\\Data_cma\\CMA_OUTPUT\\floodplain_2020_UTM_Denv_datacube\\{index}\\denv8pheme\\'
+        file = bf.file_filter(climate_folder, ['diffTGP'])
+        ds_temp = gdal.Open(file[0])
+        arr_temp = ds_temp.GetRasterBand(1).ReadAsArray()
+        arr_temp[arr_temp == 0] = np.nan
+        arr_dic[index] = arr_temp.flatten()
+
+    for index in ['TEM']:
+        climate_folder = f'G:\\A_Landsat_Floodplain_veg\\Climatology_data\\Data_cma\\CMA_OUTPUT\\floodplain_2020_UTM_Denv_datacube\\{index}\\denv8pheme\\'
+        file = bf.file_filter(climate_folder, ['preTGP'], exclude_word_list=['ovr'])
+        pre_ds_temp = gdal.Open(file[0])
+        pre_arr_temp = pre_ds_temp.GetRasterBand(1).ReadAsArray()
+        file = bf.file_filter(climate_folder, ['postTGP'], exclude_word_list=['ovr'])
+        post_ds_temp = gdal.Open(file[0])
+        post_arr_temp = post_ds_temp.GetRasterBand(1).ReadAsArray()
+        post_arr_temp[np.isnan(post_arr_temp)] = np.nanmean(post_arr_temp)
+        pre_arr_temp[np.isnan(pre_arr_temp)] = np.nanmean(pre_arr_temp)
+        diff_arr = (post_arr_temp - pre_arr_temp)
+        diff_arr[diff_arr == 0] = np.nan
+        arr_dic[index] = diff_arr.flatten()
+
+    var_num = len(arr_dic.keys())
+    arr_pd = pd.DataFrame(arr_dic)
+    fig, ax = plt.subplots(nrows=var_num, ncols=var_num, figsize=(var_num * 2, var_num * 2))
+    indices_all, importance_all = Ensemble_bagging_contribution(arr_pd, ['ELE', 'IF', 'ID', 'IH', 'SSD', 'RHU', 'WIN', 'TEM', 'PRE', 'PRS'], ['VEG'], model_name='Ridge', )
+
+    # Changing the number of ticks per subplot
+    for axi in ax.flat:
+        axi.xaxis.set_major_locator(plt.MaxNLocator(2))
+        axi.yaxis.set_major_locator(plt.MaxNLocator(2))
+
+    cmap = matplotlib.colormaps['coolwarm']
+    colors = cmap(np.linspace(0, 1, 64))
+    cmap2 = sns.color_palette("gray", as_cmap=True)
+    cmap2 = cmap2.reversed()
+
+    # plotting each subplot
+    try:
+        for i in range(var_num):
+            for j in range(var_num):
+                key1 = arr_pd.keys()[i]
+                key2 = arr_pd.keys()[j]
+                arr_pd2 = arr_pd[[key1, key2]]
+                arr_pd2 = arr_pd2.dropna().reset_index(drop=True)
+                if i == j:
+                    # plotting histograms of each variable
+                    sns.histplot(data=arr_pd2[key1], stat='density', kde=True, ax=ax[i, j], color='orangered')
+                    ax[i, j].set_xticks([])
+                    ax[i, j].set_yticks([])
+                    ax[i, j].set_ylabel('')
+                    ax[i, j].get_legend().remove()
+                    if j == var_num - 1:
+                        ax[i, j].set_xlabel(key2, fontsize=28, fontweight='bold')
+                        ax[i, j].yaxis.set_label_position("right")
+
+                    if i == 0 and j == 0:
+                        ax[i, j].set_ylabel(key1, fontsize=28, fontweight='bold')
+
+                elif i > j:
+                    # # veg_diff[np.abs(predict_veg - veg_diff) > 2 * rmse_t] = np.nan
+                    # # predict_veg[np.isnan(veg_diff)] = np.nan
+                    pr_ = pearsonr(arr_pd2[key2], arr_pd2[key1])[0]
+                    print(f'{key2} -- {key1} Pearson: {str(pr_)}')
+                    sp_ = stats.spearmanr(arr_pd2[key2], arr_pd2[key1])[0]
+                    print(f'{key2} -- {key1} Spearman: {str(sp_)}')
+
+                    if pr_ > 0:
+                        ax[i, j].scatter(0.5, 0.5, s=(abs(pr_) * 100) ** 2, marker='o', color=colors[min(int(np.floor((pr_ + 0.8) * 40)), 63)], )
+                    else:
+                        ax[i, j].scatter(0.5, 0.5, s=(abs(pr_) * 100) ** 2, marker='o', color=colors[min(int(np.floor((pr_ + 0.8) * 40)), 63)], )
+                    ax[i, j].set_xticks([])
+                    ax[i, j].set_yticks([])
+
+                    if j == 0:
+                        ax[i, j].set_ylabel(key1, fontsize=28, fontweight='bold')
+
+                    if i == var_num - 1:
+                        ax[i, j].set_xlabel(key2, fontsize=28, fontweight='bold')
+
+                elif i < j:
+                    # ax[i, j].scatter(arr_pd[arr_pd.keys()[i]], arr_pd[key1], s=10, c='k')
+                    # ax[i, j].hist2d(arr_pd[key1], arr_pd[arr_pd.keys()[i]], bins=100, )
+                    x_list = list(arr_pd2[key2])
+                    y_list = list(arr_pd2[key1])
+                    print(f'-------------------------------{key2} -- {key1}------------------------------------')
+                    sns.histplot(x=arr_pd2[key2], y=arr_pd2[key1], thresh=0, bins=400, pmax=0.52, kde=True, stat='density', weights=0.1, ax=ax[i, j], cmap=cmap2)
+                    if key1 == 'VEG':
+                        b_initial = 1 / max([max(x_list), abs(min(x_list))])
+                        b_range = [min([b_initial * 1.8, b_initial * 0.2]), max([b_initial * 1.8, b_initial * 0.2])]
+                        initial_v = [0.8, b_initial, 0.00, 0.00]
+                        bounds = ([0.15, b_range[0], -1, -0.3], [1.00, b_range[1], 1, 0.3])
+                        p0, f0 = curve_fit(logi, x_list, y_list, maxfev=100000, p0=initial_v, bounds=bounds)
+                        predict_veg =logi(arr_pd2[key2], p0[0], p0[1], p0[2], p0[3])
+                        r_square = 1 - (np.nansum((predict_veg - arr_pd2[key1]) ** 2) / np.nansum((arr_pd2[key1] - np.nanmean(arr_pd2[key1])) ** 2))
+                        print(f'{key2} -- {key1} Rsquare: {str(r_square)}')
+                        ax[i, j].plot(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]), 100),
+                                      logi(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]),100), p0[0], p0[1], p0[2], p0[3]),
+                                      lw=2, c=(0.8, 0, 0))
+
+                    elif key2 == 'TEM' and key1 == 'GST':
+                        p0, f0 = curve_fit(logi, x_list, y_list, maxfev=100000)
+                        predict_veg = logi(arr_pd2[key2], p0[0], p0[1], p0[2], p0[3])
+                        r_square = 1 - (np.nansum((predict_veg - arr_pd2[key1]) ** 2) / np.nansum((arr_pd2[key1] - np.nanmean(arr_pd2[key1])) ** 2))
+                        print(f'{key2} -- {key1} Rsquare: {str(r_square)}')
+                        ax[i, j].plot(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]), 100),
+                                      logi(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]),100), p0[0], p0[1], p0[2], p0[3]),
+                                      lw=2, c=(0.8, 0, 0))
+
+                    elif key2 == 'TEM' or key2 == 'GST' or key1 == 'SSD' or key1 == 'RHU' or key1 == 'WIN':
+                        pass
+
+                    elif key1 == 'TEM' or key1 == 'GST':
+                        p0, f0 = curve_fit(polynimal, x_list, y_list, maxfev=100000, )
+                        predict_veg = polynimal(arr_pd2[key2], p0[0], p0[1], p0[2], p0[3])
+                        r_square = 1 - (np.nansum((predict_veg - arr_pd2[key1]) ** 2) / np.nansum((arr_pd2[key1] - np.nanmean(arr_pd2[key1])) ** 2))
+                        print(f'{key2} -- {key1} Rsquare: {str(r_square)}')
+                        ax[i, j].plot(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]), 100),
+                                      polynimal(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]),100), p0[0], p0[1], p0[2], p0[3]),
+                                      lw=2, c=(0.8, 0, 0))
+
+                    elif key1 == 'IF':
+                        p0, f0 = curve_fit(logi, x_list, y_list, maxfev=100000, )
+                        predict_veg = logi(arr_pd2[key2], p0[0], p0[1], p0[2], p0[3])
+                        r_square = 1 - (np.nansum((predict_veg - arr_pd2[key1]) ** 2) / np.nansum((arr_pd2[key1] - np.nanmean(arr_pd2[key1])) ** 2))
+                        print(f'{key2} -- {key1} Rsquare: {str(r_square)}')
+                        ax[i, j].plot(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]), 100),
+                                      logi(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]),100), p0[0], p0[1], p0[2], p0[3]),
+                                      lw=2, c=(0.8, 0, 0))
+
+                    else:
+                        p0, f0 = curve_fit(polynimal, x_list, y_list, maxfev=100000, )
+                        predict_veg = polynimal(arr_pd2[key2], p0[0], p0[1], p0[2], p0[3])
+                        r_square = 1 - (np.nansum((predict_veg - arr_pd2[key1]) ** 2) / np.nansum((arr_pd2[key1] - np.nanmean(arr_pd2[key1])) ** 2))
+                        print(f'{key2} -- {key1} Rsquare: {str(r_square)}')
+                        ax[i, j].plot(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]), 100),
+                                      polynimal(np.linspace(-1 * max([max(x_list), abs(min(x_list))]), max([max(x_list), abs(min(x_list))]),100), p0[0], p0[1], p0[2], p0[3]),
+                                      lw=2, c=(0.8, 0, 0))
+                    # xrnge = arr_pd[arr_pd.keys()[i]].max() - arr_pd[arr_pd.keys()[i]].min()
+                    # yrnge = arr_pd[key1].max() - arr_pd[key1].min()
+                    # ax[i, j].set_ylim(-0.2 * yrnge, 1.2 * yrnge)
+                    # ax[i, j].set_xlim(-0.2 * xrnge, 1.2 * xrnge)
+
+                    ax[i, j].set_ylabel("")
+                    ax[i, j].set_xlabel("")
+                    ax[i, j].set_xlim([min(x_list) * 0.9, max(x_list) * 0.9])
+                    ax[i, j].set_ylim([min(y_list) * 0.9, max(y_list) * 0.9])
+                    ax[i, j].tick_params(axis='both', labelsize=14)
+
+                    if i == 0:
+                        if j == var_num - 1:
+                            ax[i, j].xaxis.set_ticks_position('top')
+                            ax[i, j].yaxis.set_ticks_position('right')
+                        else:
+                            ax[i, j].set_yticks([])
+                            ax[i, j].xaxis.set_ticks_position('top')
+
+                    elif j == var_num - 1 and i != 0:
+                        ax[i, j].set_xticks([])
+                        ax[i, j].yaxis.set_ticks_position('right')
+
+                    else:
+                        ax[i, j].set_xticks([])
+                        ax[i, j].set_yticks([])
+
+        plt.subplots_adjust(wspace=0, hspace=0)
+        plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig12\\Fig12_correplot.png', dpi=300)
+        plt.close()
+    except:
+        print(traceback.format_exc())
+        print('pass')
+
+    for sec, cord in zip(['yz', 'jj', 'ch', 'hh', 'all'], [[0, 2950], [950, 6100], [6100, 10210], [10210, 16537], [0, 16537]]):
+
+        print(f'-----------------------{sec}-area------------------------')
+        print('Transition from non-vegetated to vegetated: ' + str(np.sum(veg_pre_arr[:, cord[0]: cord[1]] == 0) * 0.03 * 0.03))
+        print('Transition from vegetated to non-vegetated: ' + str(np.sum(veg_post_arr[:, cord[0]: cord[1]] == 0) * 0.03 * 0.03))
+        print('vegetation increment: ' + str(np.sum(veg_post_arr[:, cord[0]: cord[1]] >= veg_pre_arr[:, cord[0]: cord[1]]) * 0.03 * 0.03 - np.sum(veg_post_arr[:, cord[0]: cord[1]] >= veg_pre_arr[:, cord[0]: cord[1]] + 0.15) * 0.03 * 0.03))
+        print('Pronounced vegetation increment: ' + str(np.sum(veg_post_arr[:, cord[0]: cord[1]] >= veg_pre_arr[:, cord[0]: cord[1]] + 0.15) * 0.03 * 0.03))
+        print('vegetation decrement: ' + str(np.sum(veg_post_arr[:, cord[0]: cord[1]] < veg_pre_arr[:, cord[0]: cord[1]]) * 0.03 * 0.03))
+
+        inun_diff = inun_post_arr - inun_pre_arr
+        veg_diff = veg_post_arr - veg_pre_arr
+        ele_diff = ele_post_arr - ele_pre_arr
+
+        print(f'-----------------------{sec}-veg-diff-----------------------')
+        print('veg-diff Transition from non-vegetated to vegetated: ' + str(np.nanmean(veg_diff[veg_pre_arr == 0])))
+        print('veg-diff Transition from vegetated to non-vegetated: ' + str(np.nanmean(veg_diff[veg_post_arr == 0])))
+        print('veg-diff vegetation increment: ' + str(np.nanmean(veg_diff[np.logical_and(veg_diff >= 0, veg_diff < 0.15)])))
+        print('veg-diff Pronounced vegetation increment: ' + str(np.nanmean(veg_diff[veg_diff >= 0.15])))
+        print('veg-diff vegetation decrement: ' + str(np.nanmean(veg_diff[veg_diff < 0])))
+
+        print(f'-----------------------{sec}-inundation-frequency-----------------------')
+        print('inundation frequncy Transition from non-vegetated to vegetated: ' + str(np.nanmean(inun_diff[veg_pre_arr == 0])))
+        print('inundation frequncy Transition from vegetated to non-vegetated: ' + str(np.nanmean(inun_diff[veg_post_arr == 0])))
+        print('inundation frequncy vegetation increment: ' + str(np.nanmean(inun_diff[np.logical_and(veg_diff >= 0, veg_diff < 0.15)])))
+        print('inundation frequncy Pronounced vegetation increment: ' + str(np.nanmean(inun_diff[veg_diff >= 0.15])))
+        print('inundation frequncy vegetation decrement: ' + str(np.nanmean(inun_diff[veg_diff < 0])))
+
+        print(f'-----------------------{sec}-elevation-difference-----------------------')
+        print('ele diff Transition from non-vegetated to vegetated: ' + str(np.nanmean(ele_diff[veg_pre_arr == 0])))
+        print('ele diff Transition from vegetated to non-vegetated: ' + str(np.nanmean(ele_diff[veg_post_arr == 0])))
+        print('ele diff vegetation increment: ' + str(np.nanmean(ele_diff[np.logical_and(veg_diff >= 0, veg_diff < 0.15)])))
+        print('ele diff Pronounced vegetation increment: ' + str(np.nanmean(ele_diff[veg_diff >= 0.15])))
+        print('ele diff vegetation decrement: ' + str(np.nanmean(ele_diff[veg_diff < 0])))
+
+        inun_diff = inun_diff[:, cord[0]: cord[1]].flatten()
+        veg_diff = veg_diff[:, cord[0]: cord[1]].flatten()
+
+        inun_temp = inun_pre_arr[:, cord[0]: cord[1]].flatten()
+        inun_temp2 = inun_post_arr[:, cord[0]: cord[1]].flatten()
+
+        # inun_diff = np.delete(inun_diff, np.argwhere(np.logical_or(np.logical_or(inun_temp <= 0.01, inun_temp >= 0.95), np.logical_or(inun_temp2 <= 0.01, inun_temp2 >= 0.95))))
+        # veg_diff = np.delete(veg_diff, np.argwhere(np.logical_or(np.logical_or(inun_temp <= 0.01, inun_temp >= 0.95), np.logical_or(inun_temp2 <= 0.01, inun_temp2 >= 0.95))))
+
+        inun_diff = np.delete(inun_diff, np.argwhere(inun_temp == 0))
+        veg_diff = np.delete(veg_diff, np.argwhere(inun_temp == 0))
+
+        inun_diff = np.delete(inun_diff, np.argwhere(np.isnan(veg_diff)))
+        veg_diff = np.delete(veg_diff, np.argwhere(np.isnan(veg_diff)))
+
+        veg_diff = np.delete(veg_diff, np.argwhere(np.isnan(inun_diff)))
+        inun_diff = np.delete(inun_diff, np.argwhere(np.isnan(inun_diff)))
+
+        fig_temp, ax_temp = plt.subplots(figsize=(9, 8), constrained_layout=True)
+        p0, f0 = curve_fit(x_minus, inun_diff, veg_diff, maxfev=10000000)
+        sns.histplot(x = inun_diff, y=veg_diff, thresh=0, bins=400, binrange=((-0.8, 0.8), (-0.4, 0.4)), pmax=0.52, kde = True, stat='density', weights = 0.1, zorder=2)
+
+        cor, p = stats.spearmanr(inun_diff, veg_diff)
+        cor2, p2 = stats.kendalltau(inun_diff, veg_diff)
+        print('spearman: ' + str(cor))
+        print('kendall: ' + str(cor2))
+
+        # camp = sns.color_palette("Blues", as_cmap=True)
+        # ax_temp.hist2d(x=inun_diff, y=veg_diff,  bins=200, range=[(-0.8, 0.8), (-0.4, 0.4)], density=True, cmap=camp,)
+        # sns.kdeplot(x = inun_diff, y=veg_diff, fill=True, cmap=camp, levels=300, cut=10, thresh=0, zorder=1)
+        print('p0:' + str(p0[0]))
+        print('p1:' + str(p0[1]))
+        print('p2:' + str(p0[2]))
+        print('p3:' + str(p0[3]))
+
+        predict_veg = x_minus(inun_diff, p0[0], p0[1], p0[2], p0[3],)
+        rmse_t = np.sqrt(np.mean((predict_veg - veg_diff) ** 2))
+        veg_diff[np.abs(predict_veg - veg_diff) > 2 * rmse_t] = np.nan
+        predict_veg[np.isnan(veg_diff)] = np.nan
+        r_square = 1 - (np.nansum((predict_veg - veg_diff) ** 2) / np.nansum((veg_diff - np.nanmean(veg_diff)) ** 2))
+
+        print('RMSE: ' + str(rmse_t))
+        print('R2: ' + str(r_square))
+
+        ax_temp.fill_between(np.linspace(-1,1,100), x_minus(np.linspace(-1,1,100), p0[0], p0[1], p0[2], p0[3], ) - 2 * rmse_t, x_minus(np.linspace(-1,1,100), p0[0], p0[1], p0[2], p0[3], ) + 2 * rmse_t, lw=3, facecolor=(0.2,0.2,0.2), alpha=0.1, zorder=1)
+        ax_temp.plot(np.linspace(-1,1,100), x_minus(np.linspace(-1,1,100), p0[0], p0[1], p0[2], p0[3], ) - 2 * rmse_t, lw=3, ls='--', c=(0.2,0.2,0.2))
+        ax_temp.plot(np.linspace(-1,1,100), x_minus(np.linspace(-1,1,100), p0[0], p0[1], p0[2], p0[3], ) + 2 * rmse_t, lw=3, ls='--', c=(0.2,0.2,0.2))
+        ax_temp.plot(np.linspace(-1,1,100), x_minus(np.linspace(-1,1,100), p0[0], p0[1], p0[2], p0[3], ), lw=3, c=(1,0,0))
+        ax_temp.plot(np.linspace(-1,1,100), x_minus(np.linspace(-1,1,100), p0[0], p0[1], p0[2], p0[3], ) - 2 * rmse_t, lw=3, ls='--', c=(0.2,0.2,0.2))
+        ax_temp.plot(np.linspace(-1,1,100), x_minus(np.linspace(-1,1,100), p0[0], p0[1], p0[2], p0[3], ) + 2 * rmse_t, lw=3, ls='--', c=(0.2,0.2,0.2))
+        ax_temp.plot(np.linspace(-1,1,100), np.linspace(0,0,100), lw=1.5, c=(0,0,0))
+        ax_temp.plot(np.linspace(0, 0, 100), np.linspace(-1, 1, 100), lw=1.5, c=(0,0,0))
+        ax_temp.set_xlim(-0.8, 0.8)
+        ax_temp.set_ylim(-0.4, 0.4)
+        ax_temp.set_xticks([-0.8, -0.4, 0, 0.4, 0.8])
+        ax_temp.set_xticklabels(['-80%', '-40%', '0%', '40%', '80%'], fontname='Times New Roman', fontsize=24)
+        ax_temp.set_xlabel('Variation of inundation frequency', fontname='Times New Roman', fontsize=28, fontweight='bold', )
+        ax_temp.set_ylabel('Variations in MAVI', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        plt.savefig(f'G:\A_Landsat_Floodplain_veg\Paper\Fig12\\Fig12_{sec}.png', dpi=300)
+        plt.close()
+        a = 1
+
+
+def fignc_4_func():
+    plt.rcParams['font.family'] = ['Arial', 'SimHei']
+    plt.rc('font', size=24)
+    plt.rc('axes', linewidth=3)
+
+    dataset = pd.read_csv('G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig4\\RF\\v1\\importance.csv')
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(18, 9), constrained_layout=True)
+    features = np.array(dataset['All_feature_rank'])
+    values = np.array(dataset['All_feature_importance'])
+
+    sorted_idx = [9, 7, 5, 4,3, 2, 1, 8, 6 ,0]
+    features = np.array(features)[sorted_idx]
+    mean_shap_values = np.array(values)[sorted_idx]
+    ax.barh(features[0: 6], mean_shap_values[0: 6], 7 / len(features), color=(43 / 256, 110 /256, 150/ 256), alpha=0.8, zorder=3)
+    ax.barh(features[6: 7], mean_shap_values[6: 7], 7 / len(features), lw=2, edgecolor=(214 / 256, 18/256, 62 / 256), facecolor=(1,1,1), hatch="/", zorder=3)
+    ax.barh(features[7:], mean_shap_values[7:], 7 / len(features), facecolor=(214 / 256, 18/256, 62 / 256), zorder=3)
+    # ax.barh(features, mean_shap_values, 7 / len(features),  color=(255/256, 0, 81/256))
+    for i in range(len(features)):
+        ax.axhline(i , color="#777777", lw=0.5, dashes=(1, 5), zorder=2)
+        ax.text(mean_shap_values[i]+0.01, i-0.001, "+" + "{:.2f}".format(mean_shap_values[i]), verticalalignment='center', color=(0/256, 0, 0/256), fontsize=20)
+    ax.set_xlabel("Feature importance", fontweight='bold', fontsize=30)
+    ax.set_ylabel("")
+    ax.xaxis.set_ticks_position('bottom')
+    ax.yaxis.set_ticks_position('none')
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.fill_between([0, 0.5], [-0.75, -0.75], [5.5, 5.5], color=(0.95,0.95,0.95), zorder=1)
+
+    ax.tick_params('x', labelsize=20)
+    ax.set_ylim([-0.75, len(features) - 0.25])
+    ax.set_xlim([0, 0.45])
+    ax.set_xticks([0, 0.1, 0.2, 0.3, 0.4])
+
+    features = np.array(dataset['All_feature_rank'])
+    values = np.array(dataset['Pearson_r'])
+
+    sorted_idx = [9, 7, 5, 4, 3, 2, 1, 8, 6, 0]
+    features = np.array(features)[sorted_idx]
+    mean_shap_values = np.array(values)[sorted_idx]
+    ax2.axvline(0, 0, 1, color="#000000", linestyle="-", linewidth=2.5, zorder=2)
+    ax2.barh(features[0: 6], mean_shap_values[0: 6], 7 / len(features), color=(43 / 256, 110 /256, 150/ 256), alpha=0.8, zorder=3)
+    ax2.barh(features[6: 7], mean_shap_values[6: 7], 7 / len(features), lw=2, edgecolor=(214 / 256, 18/256, 62 / 256), facecolor=(1,1,1), hatch="/", zorder=3)
+    ax2.barh(features[7:], mean_shap_values[7:], 7 / len(features), facecolor=(214 / 256, 18/256, 62 / 256), zorder=3)
+    # ax.barh(features, mean_shap_values, 7 / len(features),  color=(255/256, 0, 81/256))
+    for i in range(len(features)):
+        ax2.axhline(i , color="#888888", lw=0.5, dashes=(1, 5), zorder=2)
+        if mean_shap_values[i] > 0:
+            ax2.text(mean_shap_values[i] + 0.01, i - 0.001, "+" + "{:.2f}".format(mean_shap_values[i]), verticalalignment='center', color=(0/256, 0, 0/256), fontsize=20)
+        else:
+            ax2.text(mean_shap_values[i] - 0.11, i - 0.001, "{:.2f}".format(mean_shap_values[i]), verticalalignment='center', color=(0 / 256, 0, 0 / 256), fontsize=20)
+    ax2.fill_between([-0.6, 0.6], [-0.75, -0.75], [5.5, 5.5], color=(0.95, 0.95, 0.95), zorder=1)
+    ax2.set_xlabel("Pearson correlation coefficient", fontweight='bold', fontsize=30)
+    ax2.set_ylabel("")
+    ax2.xaxis.set_ticks_position('bottom')
+    ax2.yaxis.set_ticks_position('none')
+    ax2.spines['right'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+    ax2.tick_params('x', labelsize=20)
+    ax2.set_ylim([-0.75, len(features) - 0.25])
+    ax2.set_xlim([-0.6, 0.6])
+    ax2.set_xticks([-0.6, -0.3, 0, 0.3, 0.6])
+
+    plt.savefig('G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig4\\veg_feature_importance.png', dpi=300)
+    pass
 
 
 def fig12_func():
@@ -2055,6 +2782,11 @@ def fig12_func():
         plt.savefig(f'G:\A_Landsat_Floodplain_veg\Paper\Fig12\\Fig12_{sec}.png', dpi=300)
         plt.close()
         a = 1
+
+
+def fig21_func():
+    t = [_ for _ in range(20)]
+    phe = [0.85, 0.83, 0.79, 0.77, 0.81, 0.82, 0.43, 0.47]
 
 
 def fig15_func():
@@ -2549,23 +3281,23 @@ def fig_11_nc_func():
 
 def fig10supp_func():
 
-    std_size = [(0.005, 0.01, 0.02), (0.01, 0.03, 0.05), (1.5, 0.75, 0.375)]
-    std_size2 = [(0.005, 0.01, 0.02), (0.02, 0.04, 0.06), (1.5, 0.75, 0.375)]
-    std_size3 = [(0.005, 0.01, 0.02), (0.03, 0.05, 0.07), (1.5, 0.75, 0.375)]
+    std_size = [(0.005, 0.01, ), (0.85, 0.90, ), (0.25, 1, )]
+    std_size2 = [(0.005, 0.01, ), (0.85, 0.90, ), (0.25, 1, )]
+    std_size3 = [(0.01, 0.02, ), (0.85, 0.90, ), (0.25, 1, )]
     std_size_all = [std_size, std_size2, std_size2, std_size3, std_size2]
-    for sec, shape_, standard_size, reco_shap, in zip(['all', 'yz', 'jj', 'ch', 'hh'], [3, 2.8, 2.85, 2.6, 2.7], std_size_all, [3,3,3.1,3.2,3]):
-        flood_impact = pd.read_csv(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v2\\MAVI_var\\inun\\flood_indi_{sec}.csv')
-        veg_indi = pd.read_csv(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v2\\MAVI_var\\veg\\fig_{sec}_para.csv')
+    for sec, shape_, standard_size, reco_shap, in zip(['all', 'yz', 'jj', 'ch', 'hh'], [3, 2.8, 2.85, 2.6, 2.7], std_size_all, [2,2,2,2,2]):
+        flood_impact = pd.read_csv(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v3\\MAVI_var\\inun\\flood_indi_{sec}.csv')
+        veg_indi = pd.read_csv(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v3\\MAVI_var\\veg\\fig_{sec}_para.csv')
 
         flood_y = list(flood_impact['year'])
         inun_h = list(flood_impact['inun_h'])
         inun_d = list(flood_impact['inun_d'])
         veg_y = list(veg_indi['year'])
         size1 = list(veg_indi['flood_impact'])
-        size2 = list(veg_indi['flood_impact_percent'])
-        size3 = list(veg_indi['beta'])
+        size2 = list(veg_indi['Resistance1'])
+        size3 = list(veg_indi['Resilience'])
         size_list = [size1, size2, size3]
-        name_list = ['flood_impact', 'flood_impact_percent', 'beta']
+        name_list = ['flood_impact', 'resistance', 'beta']
         color = [('#55a7d2', '#cf5362'), ('#55a7d2', '#cf5362'), ((47/256, 104/256, 149/256), (250/256, 182/256, 112/256))]
 
         pear_flood_p, pear_r, pear_rec = [], [], []
@@ -2607,9 +3339,10 @@ def fig10supp_func():
                     if size_list.index(size_) == 0:
                         s_ = s_ * -950
                     elif size_list.index(size_) == 1:
-                        s_ = s_ * -370
+                        r_min = min(0.8, min(size_))
+                        s_ = (s_ - r_min) * 170
                     else:
-                        s_ = -2.2 * np.log(0.05) / s_
+                        s_ = 55 * s_ ** (1/2)
 
                     if name_ != 'beta':
                         if y_ < 2004:
@@ -2625,32 +3358,33 @@ def fig10supp_func():
             # pear_value, p_value = pearsonr(pear_flood_p, pear_r)
             # print(str(p_value))
 
-            for q, h_ in zip(stand_, [57, 53, 47]):
+            for q, h_ in zip(stand_, [44, 40]):
                 if size_list.index(size_) == 0:
                     q = q * 950
                 elif size_list.index(size_) == 1:
-                    q = q * 370
+                    r_min = min(0.8, min(size_))
+                    q = (q - r_min) * 170
                 else:
-                    q = -2.2 * np.log(0.05) / q
+                    q = 55 * q ** (1/2)
 
                 if name_ != 'beta':
-                    ax.scatter(2.55, h_, marker='o', s= q ** shape_, facecolors=(1, 1, 1), edgecolor=(0, 0, 0), lw=2,
+                    ax.scatter(2.90, h_, marker='o', s=q ** shape_, facecolors=(1, 1, 1), edgecolor=(0, 0, 0), lw=2,
                                alpha=0.8, zorder=11)
                 else:
-                    ax.scatter(2.55, h_, marker='o', s = q ** reco_shap, facecolors=(1,1,1), edgecolor=(0,0,0), lw=2,alpha=0.8, zorder=11)
-                ax.fill_between(np.linspace(2.25, 3.95, 100), np.linspace(35.3, 35.3, 100), np.linspace(65, 65, 100), facecolors=(1,1,1), edgecolor=(0,0,0), lw=2, zorder=10)
+                    ax.scatter(2.90, h_, marker='o', s=q ** reco_shap, facecolors=(1, 1, 1), edgecolor=(0, 0, 0), lw=2, alpha=0.8, zorder=11)
+                ax.fill_between(np.linspace(2.6, 3.95, 100), np.linspace(33.3, 33.3, 100), np.linspace(50, 50, 100), facecolors=(1,1,1), edgecolor=(0,0,0), lw=2, zorder=10)
 
             ax.set_xlim([1, 4])
-            ax.set_ylim([35, 110])
+            ax.set_ylim([33, 110])
             plt.yscale("log")
             plt.xscale("log")
             ax.set_xticks([1, 2, 3, 4])
             ax.set_xticklabels(['1', '2', '3', '4',])
             ax.set_yticks([40, 60, 80, 100])
             ax.set_yticklabels(['40', '60', '80', '100'])
-            plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v2\\MAVI_var\\flood_impact_{sec}_{name_}.png', dpi=400)
+            plt.savefig(f'G:\\A_Landsat_Floodplain_veg\\Paper\\A_fig_nc\\A_NC_Fig2\\v3\\MAVI_var\\flood_impact_{sec}_{name_}.png', dpi=400)
             plt.close()
-
+    pass
 
 def fig20_func():
     csv_ = pd.read_excel('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig20\\corr2.xlsx')
@@ -2682,4 +3416,81 @@ def fig20_func():
     plt.savefig('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig20\\fig20.png', dpi=400)
 
 
+def fig_wl_func():
+
+    plt.rcParams['font.family'] = ['Arial', 'SimHei']
+    plt.rc('font', size=24)
+    plt.rc('axes', linewidth=2)
+
+    file_list = bf.file_filter('G:\A_Landsat_Floodplain_veg\Water_level_python\original_water_level\\', ['.xls'])
+    corr_temp = pd.read_csv('G:\A_Landsat_Floodplain_veg\Water_level_python\original_water_level\\对应表.csv')
+    cs_list, wl_list = [], []
+
+    wl1 = HydrometricStationData()
+    for file_ in file_list:
+        for hs_num in range(corr_temp.shape[0]):
+            hs = corr_temp[corr_temp.keys()[1]][hs_num]
+            if hs in file_:
+                cs_list.append(corr_temp[corr_temp.keys()[0]][hs_num])
+                wl_list.append(corr_temp[corr_temp.keys()[2]][hs_num])
+
+    for fn_, cs_, wl_ in zip(file_list, cs_list, wl_list):
+        wl1.import_from_standard_excel(fn_, cs_, water_level_offset=wl_)
+
+    for sec, wl_level in zip(['沙市', '宜昌', '监利'], [40.50, 47, 30]):
+        fig14_df = wl1.hydrological_inform_dic[sec]
+        year_dic = {}
+        wl_pri, wl_post = [], []
+        sd_pri, sd_post = [], []
+        for year in range(1985, 2021):
+            year_temp = fig14_df['year'] == year
+            flow_temp = fig14_df['water_level/m'][year_temp].tolist() - wl1.water_level_offset[sec]
+            sed_temp = fig14_df['sediment_concentration/kg/m3'][year_temp].tolist()
+            year_dic[f'{str(year)}_wl'] = flow_temp[0:365]
+            year_dic[f'{str(year)}_sed'] = sed_temp[0:365]
+            if len(flow_temp) == 365 or len(flow_temp) == 366:
+                if year >= 2004:
+                    wl_post.extend(flow_temp[0:365])
+                    sd_post.extend(sed_temp[0:365])
+                elif year < 2004:
+                    wl_pri.extend(flow_temp[0:365])
+                    sd_pri.extend(sed_temp[0:365])
+        wl_post = np.array(wl_post)
+        sd_post = np.array(sd_post)
+        wl_pri = np.array(wl_pri)
+        sd_pri = np.array(sd_pri)
+
+        wl_post = np.delete(wl_post, wl_post < wl_level)
+        wl_pri = np.delete(wl_pri, wl_pri < wl_level)
+        print(f'{sec}: {str(len(wl_pri))}; {str(len(wl_post))}')
+        sd_pri[sd_pri == 0] = np.nan
+        sd_post[sd_post == 0] = np.nan
+
+        plt.close()
+        plt.rc('axes', axisbelow=True)
+        plt.rc('axes', linewidth=3)
+        fig_temp, ax_temp = plt.subplots(figsize=(8, 8), constrained_layout=True)
+        ax_temp.grid(axis='y', color=(210 / 256, 210 / 256, 210 / 256), zorder=0)
+        ax_temp.ecdf(wl_post, color=(1,0,0), label='post-TGP')
+        ax_temp.ecdf(wl_pri, color=(0,0,1), label='pre-TGP')
+        ax_temp.set_xlabel('Water level/m', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        ax_temp.set_ylabel('Cumulative frequency', fontname='Times New Roman', fontsize=28, fontweight='bold')
+        ax_temp.legend()
+        # sns.relplot(x="DOY", y='OSAVI', kind="line",  markers=True, data=fig4_df)
+        plt.savefig(f'E:\Z_Phd_Other_stuff\\2024_11_27_wl\\{sec}_wl_{str(wl_level)}.png', dpi=500)
+        plt.close()
+
+
 fig11nc3_func()
+fig11nc_func()
+fig_wl_func()
+fig12_nc_func()
+fignc_4_func()
+# fig11nc3_func()
+# fig10supp_func()
+# fig7_temp_nc_func()
+# fig7nc_func()
+# fig11nc3_func()
+# fig7_temp_nc_func()
+# fig7nc_func()
+#

@@ -228,19 +228,19 @@ class Denv_dc(object):
             if date_temp not in self.sdc_doylist:
                 autofill_factor = True
                 if date_temp == self.compete_doy_list[0]:
-                    date_merge = self.compete_doy_list[1]
+                    date_merge = [_ for _ in self.compete_doy_list if _ in self.sdc_doylist][0]
                     if self.sparse_matrix:
                         self.dc.add_layer(self.dc.SM_group[date_merge], date_temp, 0)
                     else:
                         self.dc = np.insert(self.dc, 0, values=self.dc[:, :, 0], axis=2)
                     self.sdc_doylist.insert(0, date_temp)
                 elif date_temp == self.compete_doy_list[-1]:
-                    date_merge = self.compete_doy_list[-2]
+                    date_merge = [_ for _ in self.compete_doy_list if _ in self.sdc_doylist][-1]
                     if self.sparse_matrix:
                         self.dc.add_layer(self.dc.SM_group[date_merge], date_temp, -1)
                     else:
                         self.dc = np.insert(self.dc, 0, values=self.dc[:, :, -1], axis=2)
-                    self.sdc_doylist.insert(-1, date_temp)
+                    self.sdc_doylist.append(date_temp)
                 else:
                     date_beg, date_end, _beg, _end = None, None, None, None
                     for _ in range(1, 60):
@@ -1027,8 +1027,7 @@ class RS_dcs(object):
 
             # Define the output_path
             if work_env is None:
-                self._s2dc_work_env = Path(
-                    os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
+                self._s2dc_work_env = Path(os.path.dirname(os.path.dirname(self._dcs_backup_[s2dc_pos[0]].dc_filepath))).path_name
             else:
                 self._s2dc_work_env = work_env
 
@@ -1294,13 +1293,13 @@ class RS_dcs(object):
             if self._dc_typelist[i] == dc_type and self._dcs_backup_[i].dc_ZSize != doy_all.shape[0]:
                 for doy in doy_all:
                     if doy not in self._doys_backup_[i]:
-                        if not self.sparse_matrix:
-                            self.dcs[i] = np.insert(self._dcs_backup_[i], np.argwhere(doy_all == doy).flatten()[0], np.nan * np.zeros([self.dcs_YSize, self.dcs_XSize, 1]), axis=2)
+                        if not self._sparse_matrix_list[i]:
+                            self._dcs_backup_[i].dc = np.insert(self._dcs_backup_[i], np.argwhere(doy_all == doy).flatten()[0], np.nan * np.zeros([self.dcs_YSize, self.dcs_XSize, 1]), axis=2)
                         else:
-                            self.dcs[i].append(self._dcs_backup_[i]._matrix_type(np.zeros([self.dcs_YSize, self.dcs_XSize])), name=int(doy), pos=np.argwhere(doy_all == doy).flatten()[0])
+                            self._dcs_backup_[i].dc.append(self._dcs_backup_[i].dc._matrix_type(np.zeros([self.dcs_YSize, self.dcs_XSize])), name=int(doy), pos=np.argwhere(doy_all == doy).flatten()[0])
             i += 1
 
-        if False in [doy_all.shape[0] == self._dcs_backup_[i].shape[2] for i in range(len(self._dc_typelist)) if self._dc_typelist[i] == dc_type]:
+        if False in [doy_all.shape[0] == self._dcs_backup_[i].dc.shape[2] for i in range(len(self._dc_typelist)) if self._dc_typelist[i] == dc_type]:
             raise ValueError('The auto harmonised is failed')
 
         if dc_type == Sentinel2_dc:
@@ -1313,8 +1312,8 @@ class RS_dcs(object):
         for _ in range(len(self._doys_backup_)):
             if self._dc_typelist[_] == dc_type:
                 self._doys_backup_[_] = doy_all.tolist()
-                self._dcs_backup_.sdc_doy_list = doy_all.tolist()
-                self._dcs_backup_.dc_ZSize = doy_all.shape[0]
+                self._dcs_backup_[_].sdc_doy_list = doy_all.tolist()
+                self._dcs_backup_[_].dc_ZSize = doy_all.shape[0]
 
     def append(self, dc_temp) -> None:
         if not isinstance(dc_temp, (Sentinel2_dc, Landsat_dc, Denv_dc, Phemetric_dc)):
@@ -2045,7 +2044,7 @@ class RS_dcs(object):
         # Retrieve processed dc
         processed_dc_num = [_ for _ in range(len(self._index_list)) if
                             self._dc_typelist[_] == dc_type and self._index_list[_] == processed_index]
-        if processed_dc_num == 0:
+        if len(processed_dc_num) == 0:
             raise ValueError('The processed dc for inundation removal is not properly imported')
         else:
             processed_dc = copy.deepcopy(self.dcs[processed_dc_num[0]])
@@ -2279,7 +2278,7 @@ class RS_dcs(object):
             executor.map(cf2phemetric_dc, repeat(tif_para_output_path), repeat(phemetric_output_path), year_list,
                          repeat(index), repeat(metadata_dic))
 
-    def _process_link_GEDI_temp_DPAR(self, **kwargs):
+    def _process_link_GEDI_Denv(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
             if kwarg_indicator not in ['accumulated_method', 'static_thr', 'phemetric_window']:
@@ -2310,32 +2309,38 @@ class RS_dcs(object):
         else:
             self._link_GEDI_denv_method = ['phemetric_thr', 10]
 
-    def link_GEDI_accumulated_Denv(self, GEDI_xlsx_file, denv_list, **kwargs):
+    def link_GEDI_accumulated_Denv(self, GEDI_df_, denv_list, **kwargs):
 
         # Process para
-        self._process_link_GEDI_temp_DPAR(**kwargs)
-        for _ in denv_list:
-            if _ not in self.Denv_indexlist:
-                raise TypeError(f'The {str(_)} is not imported into the Sentinel2 dcs')
+        self._process_link_GEDI_Denv(**kwargs)
 
-        # Retrieve the S2 inform
+        # Retrieve the GeoTransform
         raster_gt = gdal.Open(self.ROI_tif).GetGeoTransform()
         raster_proj = retrieve_srs(gdal.Open(self.ROI_tif))
 
         # Retrieve GEDI inform
-        GEDI_list = gedi.GEDI_df(GEDI_xlsx_file)
-        GEDI_list.reprojection(raster_proj, xycolumn_start='EPSG')
+        if isinstance(GEDI_df_, gedi.GEDI_df):
+            GEDI_df_.reprojection(raster_proj, xycolumn_start='EPSG')
+        else:
+            raise TypeError('The gedi_df_ is not under the right type')
+        GEDI_df_reset = GEDI_df_.GEDI_inform_DF.reset_index().rename(columns={'index': 'Original'})
+        gedi_list_folder = os.path.join(GEDI_df_.work_env, 'GEDI_link_RS\\')
+        bf.create_folder(gedi_list_folder)
 
         # Construct Denv list
         for denv_temp in denv_list:
-            if not os.path.exists(GEDI_xlsx_file.split('.xlsx')[0] + f'_accumulated_{denv_temp}.csv'):
+            if os.path.exists(gedi_list_folder + f'{GEDI_df_.file_name}_{denv_temp}.csv'):
+                gedi_list_output = pd.read_csv(gedi_list_folder + f'{GEDI_df_.file_name}_{denv_temp}.csv')
+            else:
+                if denv_temp not in self.Denv_indexlist:
+                    raise TypeError(f'The Denv {str(denv_temp)} is not imported into the RSdc')
 
                 # Divide the GEDI and dc into different blocks
                 block_amount = os.cpu_count()
                 indi_block_size = int(np.ceil(GEDI_list.df_size / block_amount))
 
                 # Allocate the GEDI_df and dc
-                GEDI_list_blocked, denvdc_blocked, raster_gt_list, doy_list_integrated = [], [], [], []
+                GEDI_df_blocked, denvdc_blocked, raster_gt_list, doy_list_integrated = [], [], [], []
 
                 # Phe dc count and pos
                 denvdc_count = len([_ for _ in self._index_list if _ == denv_temp])
@@ -2346,6 +2351,8 @@ class RS_dcs(object):
                 for _ in range(denvdc_count):
                     if denvdc_reconstructed is None:
                         if self._sparse_matrix_list[denvdc_pos[_]]:
+                            denvdc_reconstructed = NDSparseMatrix(self.dcs[denvdc_pos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'],
+                                                                  SM_namelist=[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])
                             denvdc_reconstructed = self.dcs[denvdc_pos[_]]
                         else:
                             denvdc_reconstructed = self.dcs[denvdc_pos[_]]
@@ -2353,31 +2360,30 @@ class RS_dcs(object):
                         if self._sparse_matrix_list[denvdc_pos[_]]:
                             denvdc_reconstructed.extend_layers(self.dcs[denvdc_pos[_]])
                         else:
-                            denvdc_reconstructed = np.concatenate((denvdc_reconstructed, self.dcs[denvdc_pos[_]]),
-                                                                  axis=2)
+                            denvdc_reconstructed = np.concatenate((denvdc_reconstructed, self.dcs[denvdc_pos[_]]), axis=2)
                     doy_list_integrated.extend(self._doys_backup_[denvdc_pos[_]])
 
                 for i in range(block_amount):
                     if i != block_amount - 1:
-                        GEDI_list_blocked.append(GEDI_list.GEDI_inform_DF[i * indi_block_size: (i + 1) * indi_block_size])
+                        GEDI_df_blocked.append(GEDI_list.GEDI_inform_DF[i * indi_block_size: (i + 1) * indi_block_size])
                     else:
-                        GEDI_list_blocked.append(GEDI_list.GEDI_inform_DF[i * indi_block_size: -1])
+                        GEDI_df_blocked.append(GEDI_list.GEDI_inform_DF[i * indi_block_size: -1])
 
-                    ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_list_blocked[-1].EPSG_lat.max() + 12.5, \
-                                                                 GEDI_list_blocked[-1].EPSG_lat.min() - 12.5, \
-                                                                 GEDI_list_blocked[-1].EPSG_lon.min() - 12.5, \
-                                                                 GEDI_list_blocked[-1].EPSG_lon.max() + 12.5
-                    cube_ymin, cube_ymax = int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))), int(
-                        min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5])))
-                    cube_xmin, cube_xmax = int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))), int(
-                        min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1])))
+                    ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_df_blocked[-1].EPSG_lat.max() + 12.5, \
+                                                                 GEDI_df_blocked[-1].EPSG_lat.min() - 12.5, \
+                                                                 GEDI_df_blocked[-1].EPSG_lon.min() - 12.5, \
+                                                                 GEDI_df_blocked[-1].EPSG_lon.max() + 12.5
+
+                    cube_ymin, cube_ymax, cube_xmin, cube_xmax = (int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))),
+                                                                  int(min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5]))),
+                                                                  int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))),
+                                                                  int(min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1]))))
 
                     raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2],
                                            raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
 
                     if isinstance(denvdc_reconstructed, NDSparseMatrix):
-                        sm_temp = denvdc_reconstructed.extract_matrix(
-                            ([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
+                        sm_temp = denvdc_reconstructed.extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
                         denvdc_blocked.append(sm_temp)
                     else:
                         denvdc_blocked.append(
@@ -2388,7 +2394,7 @@ class RS_dcs(object):
                     # for i in range(block_amount):
                     #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                        result = executor.map(link_GEDI_accdenvinform, denvdc_blocked, GEDI_list_blocked,
+                        result = executor.map(link_GEDI_accdenvinform, denvdc_blocked, GEDI_df_blocked,
                                               repeat(doy_list_integrated), raster_gt_list, repeat('EPSG'),
                                               repeat(denv_temp))
                 except:
@@ -2404,42 +2410,61 @@ class RS_dcs(object):
                         else:
                             gedi_list_output = pd.concat([gedi_list_output, result_temp])
 
-                    gedi_list_output.to_csv(GEDI_xlsx_file.split('.xlsx')[0] + f'_accumulated_{denv_temp}.csv')
+                    gedi_list_output.to_csv(GEDI_df_.split('.xlsx')[0] + f'_accumulated_{denv_temp}.csv')
                 except:
                     raise Exception('The df output procedure was interrupted by error!')
 
     def _process_link_GEDI_phenology_para(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in []:
+            if kwarg_indicator not in ['spatial_interpolate_method']:
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
-    def link_GEDI_phenology_inform(self, GEDI_xlsx_file, phemetric_list, **kwargs):
+        # process interpolation method
+        if 'spatial_interpolate_method' in kwargs.keys():
+            if isinstance(kwargs['spatial_interpolate_method'], str) and kwargs['spatial_interpolate_method'] in ['nearest_neighbor', 'area_average', 'focal']:
+                self._GEDI_link_Pheme_spatial_interpolate_method = [kwargs['spatial_interpolate_method']]
+            elif isinstance(kwargs['spatial_interpolate_method'], list) and True in [_ in ['nearest_neighbor', 'area_average', 'focal'] for _ in kwargs['spatial_interpolate_method']]:
+                self._GEDI_link_Pheme_spatial_interpolate_method = [_ for _ in kwargs['spatial_interpolate_method'] if _ in ['nearest_neighbor', 'area_average', 'focal']]
+            else:
+                raise TypeError('The spatial_interpolate_method was problematic!')
+        else:
+            self._GEDI_link_Pheme_spatial_interpolate_method = ['nearest_neighbor']
+
+    def link_GEDI_phenology_inform(self, GEDI_df_, phemetric_list, **kwargs):
 
         # Process para
-        self._process_link_GEDI_RS_para(**kwargs)
+        self._process_link_GEDI_phenology_para(**kwargs)
 
-        # Retrieve the S2 inform
+        # Retrieve the GeoTransform
         raster_gt = gdal.Open(self.ROI_tif).GetGeoTransform()
         raster_proj = retrieve_srs(gdal.Open(self.ROI_tif))
 
         # Retrieve GEDI inform
-        GEDI_list = gedi.GEDI_df(GEDI_xlsx_file)
-        GEDI_list.reprojection(raster_proj, xycolumn_start='EPSG')
+        if isinstance(GEDI_df_, gedi.GEDI_df):
+            GEDI_df_.reprojection(raster_proj, xycolumn_start='EPSG')
+        else:
+            raise TypeError('The gedi_df_ is not under the right type')
+        GEDI_df_reset = GEDI_df_.GEDI_inform_DF.reset_index().rename(columns={'index': 'Original'})
+        gedi_list_folder = os.path.join(GEDI_df_.work_env, 'GEDI_link_RS\\')
+        bf.create_folder(gedi_list_folder)
 
         # Construct phemetric list
         phemetric_gedi_list = []
         for phemetric_temp in phemetric_list:
-            if not os.path.exists(GEDI_xlsx_file.split('.')[0] + f'_{phemetric_temp}.csv'):
+            if os.path.exists(gedi_list_folder + f'{GEDI_df_.file_name}_{phemetric_temp}.csv'):
+                gedi_list_output = pd.read_csv(gedi_list_folder + f'{GEDI_df_.file_name}_{phemetric_temp}.csv')
+            else:
                 if phemetric_temp not in self._phemetric_namelist:
                     raise Exception(f'The {str(phemetric_temp)} is not a valid index or is not inputted into the dcs!')
 
                 # Divide the GEDI and dc into different blocks
                 block_amount = os.cpu_count()
-                indi_block_size = int(np.ceil(GEDI_list.df_size / block_amount))
+                indi_block_size = int(np.ceil(GEDI_df_.df_size / block_amount))
 
                 # Allocate the GEDI_df and dc
-                GEDI_list_blocked, phedc_blocked, raster_gt_list, year_list_temp = [], [], [], []
+                GEDI_df_blocked, phedc_blocked, raster_gt_list, year_list_temp = [], [], [], []
+                buffer_diamter = max(25, raster_gt[1])
 
                 # Phe dc count and pos
                 phedc_count = len([_ for _ in self._pheyear_list if _ is not None])
@@ -2450,18 +2475,14 @@ class RS_dcs(object):
                 for _ in range(phedc_count):
                     if phedc_reconstructed is None:
                         if self._sparse_matrix_list[phepos[_]]:
-                            phedc_reconstructed = NDSparseMatrix(
-                                self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'],
-                                SM_namelist=[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])
+                            phedc_reconstructed = NDSparseMatrix(self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'],
+                                                                 SM_namelist=[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])
                         else:
-                            phedc_reconstructed = self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index(
-                                [f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]
+                            phedc_reconstructed = self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]
                     else:
                         if self._sparse_matrix_list[phepos[_]]:
-                            phedc_reconstructed.add_layer(
-                                self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'],
-                                f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}',
-                                phedc_reconstructed.shape[2] + 1)
+                            phedc_reconstructed.add_layer(self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'],
+                                                          f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}', phedc_reconstructed.shape[2] + 1)
                         else:
                             phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]),
                                                                  axis=2)
@@ -2469,25 +2490,24 @@ class RS_dcs(object):
 
                 for i in range(block_amount):
                     if i != block_amount - 1:
-                        GEDI_list_blocked.append(GEDI_list.GEDI_inform_DF[i * indi_block_size: (i + 1) * indi_block_size])
+                        GEDI_df_blocked.append(GEDI_df_reset[i * indi_block_size: (i + 1) * indi_block_size])
                     else:
-                        GEDI_list_blocked.append(GEDI_list.GEDI_inform_DF[i * indi_block_size: -1])
+                        GEDI_df_blocked.append(GEDI_df_reset[i * indi_block_size: -1])
 
-                    ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_list_blocked[-1].EPSG_lat.max() + 12.5, \
-                                                                 GEDI_list_blocked[-1].EPSG_lat.min() - 12.5, \
-                                                                 GEDI_list_blocked[-1].EPSG_lon.min() - 12.5, \
-                                                                 GEDI_list_blocked[-1].EPSG_lon.max() + 12.5
-                    cube_ymin, cube_ymax = int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))), int(
-                        min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5])))
-                    cube_xmin, cube_xmax = int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))), int(
-                        min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1])))
+                    ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_df_blocked[-1].EPSG_lat.max() + buffer_diamter, \
+                                                                 GEDI_df_blocked[-1].EPSG_lat.min() - buffer_diamter, \
+                                                                 GEDI_df_blocked[-1].EPSG_lon.min() - buffer_diamter, \
+                                                                 GEDI_df_blocked[-1].EPSG_lon.max() + buffer_diamter
+                    cube_ymin, cube_ymax, cube_xmin, cube_xmax = (int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))),
+                                                                  int(min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5]))),
+                                                                  int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))),
+                                                                  int(min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1]))))
 
                     raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2],
                                            raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
 
                     if isinstance(phedc_reconstructed, NDSparseMatrix):
-                        sm_temp = phedc_reconstructed.extract_matrix(
-                            ([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
+                        sm_temp = phedc_reconstructed.extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
                         phedc_blocked.append(sm_temp)
                     else:
                         phedc_blocked.append(phedc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
@@ -2497,9 +2517,8 @@ class RS_dcs(object):
                     # for i in range(block_amount):
                     #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                        result = executor.map(link_GEDI_pheinform, phedc_blocked, GEDI_list_blocked,
-                                              repeat(year_list_temp), raster_gt_list, repeat('EPSG'),
-                                              repeat(phemetric_temp))
+                        result = executor.map(link_GEDI_pheinform, phedc_blocked, repeat(year_list_temp), repeat(phemetric_temp),
+                                              raster_gt_list, GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_Pheme_spatial_interpolate_method))
                 except:
                     raise Exception('The s2pheme-GEDI link procedure was interrupted by unknown error!')
 
@@ -2513,24 +2532,16 @@ class RS_dcs(object):
                         else:
                             gedi_list_output = pd.concat([gedi_list_output, result_temp])
 
-                    gedi_list_output.to_csv(GEDI_xlsx_file.split('.')[0] + f'_{phemetric_temp}.csv')
+                    gedi_list_output.set_index('Original')
+                    gedi_list_output.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_{phemetric_temp}.csv')
                 except:
                     raise Exception('The df output procedure was interrupted by error!')
-            phemetric_gedi_list.append(pd.read_csv(GEDI_xlsx_file.split('.')[0] + f'_{phemetric_temp}.csv'))
+
+            GEDI_df_.GEDI_inform_DF = GEDI_df_.GEDI_inform_DF.merge(gedi_list_output)
 
         # Output to a single file
-        if not os.path.exists(GEDI_xlsx_file.split('.')[0] + f'_all_Phemetrics.csv'):
-            i = 0
-            phemetric_output = None
-            for phemetric_temp in phemetric_list:
-                phe_gedilist_temp = phemetric_gedi_list[i].sort_values('Unnamed: 0')
-                if phemetric_output is None:
-                    phemetric_output = phe_gedilist_temp
-                else:
-                    key_temp = [_ for _ in list(phe_gedilist_temp.keys()) if phemetric_temp in _][0]
-                    phemetric_output.insert(phemetric_output.shape[1], key_temp, phe_gedilist_temp[key_temp])
-                i += 1
-            phemetric_output.to_csv(GEDI_xlsx_file.split('.')[0] + f'_all_Phemetrics.csv')
+        if not os.path.exists(gedi_list_folder + f'{GEDI_df_.file_name}_all_Phemetrics.csv') and len(phemetric_list) > 1:
+            GEDI_df_.GEDI_inform_DF.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_all_Phemetrics.csv')
 
     def _process_link_GEDI_RS_para(self, **kwargs):
 
@@ -2552,10 +2563,10 @@ class RS_dcs(object):
 
         # process para method
         if 'temporal_interpolate_method' in kwargs.keys():
-            if isinstance(kwargs['temporal_interpolate_method'], str) and kwargs['temporal_interpolate_method'] in ['linear_interpolation', '16days_max', '16days_ave']:
+            if isinstance(kwargs['temporal_interpolate_method'], str) and kwargs['temporal_interpolate_method'] in ['linear_interpolation', '24days_max', '24days_ave']:
                 self._GEDI_link_RS_temporal_interpolate_method = [kwargs['temporal_interpolate_method']]
-            elif isinstance(kwargs['temporal_interpolate_method'], list) and True in [_ in ['linear_interpolation', '16days_max', '16days_ave'] for _ in kwargs['temporal_interpolate_method']]:
-                self._GEDI_link_RS_temporal_interpolate_method = [_ for _ in kwargs['temporal_interpolate_method'] if _ in ['linear_interpolation', '16days_max', '16days_ave']]
+            elif isinstance(kwargs['temporal_interpolate_method'], list) and True in [_ in ['linear_interpolation', '24days_max', '24days_ave'] for _ in kwargs['temporal_interpolate_method']]:
+                self._GEDI_link_RS_temporal_interpolate_method = [_ for _ in kwargs['temporal_interpolate_method'] if _ in ['linear_interpolation', '24days_max', '24days_ave']]
             else:
                 raise TypeError('The temporal_interpolate_method was problematic!')
         else:
@@ -2575,75 +2586,89 @@ class RS_dcs(object):
             GEDI_df_.reprojection(raster_proj, xycolumn_start='EPSG')
         else:
             raise TypeError('The gedi_df_ is not under the right type')
+        GEDI_df_reset = GEDI_df_.GEDI_inform_DF.reset_index().rename(columns={'index': 'Original'})
+        gedi_list_folder = os.path.join(GEDI_df_.work_env, 'GEDI_link_RS\\')
+        bf.create_folder(gedi_list_folder)
 
         # resort through lat or lon
         for index_temp in index_list:
+            if os.path.exists(gedi_list_folder + f'{GEDI_df_.file_name}_{index_temp}.csv'):
+                gedi_list_output = pd.read_csv(gedi_list_folder + f'{GEDI_df_.file_name}_{index_temp}.csv')
+            else:
+                # Divide the GEDI and dc into different blocks
+                if index_temp not in self._index_list:
+                    raise Exception(f'The {str(index_temp)} is not a valid index or is not input into the dcs!')
+                block_amount = os.cpu_count()
+                indi_block_size = int(np.ceil(GEDI_df_.df_size / block_amount))
 
-            if index_temp not in self._index_list:
-                raise Exception(f'The {str(index_temp)} is not a valid index or is not input into the dcs!')
-
-            # Divide the GEDI and dc into different blocks
-            block_amount = os.cpu_count()
-            indi_block_size = int(np.ceil(GEDI_df_.df_size / block_amount))
-
-            # Allocate the GEDI_df and dc
-            GEDI_df_blocked, dc_blocked, raster_gt_list, doy_list_temp = [], [], [], []
-            buffer_diamter = max(25, raster_gt[1])
-            for i in range(block_amount):
-                if i != block_amount - 1:
-                    GEDI_df_blocked.append(GEDI_df_.GEDI_inform_DF[i * indi_block_size: (i + 1) * indi_block_size])
-                else:
-                    GEDI_df_blocked.append(GEDI_df_.GEDI_inform_DF[i * indi_block_size: -1])
-
-                ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_df_blocked[-1].EPSG_lat.max() + buffer_diamter, \
-                                                             GEDI_df_blocked[-1].EPSG_lat.min() - buffer_diamter, \
-                                                             GEDI_df_blocked[-1].EPSG_lon.min() - buffer_diamter, \
-                                                             GEDI_df_blocked[-1].EPSG_lon.max() + buffer_diamter
-                cube_ymin, cube_ymax, cube_xmin, cube_xmax = (int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))),
-                                                              int(min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5]))),
-                                                              int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))),
-                                                              int(min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1]))))
-
-                if isinstance(self.dcs[self._index_list.index(index_temp)], NDSparseMatrix):
-                    sm_temp = self.dcs[self._index_list.index(index_temp)].extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
-                    dc_blocked.append(sm_temp.drop_nanlayer())
-                    doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
-                elif isinstance(self.dcs[self._index_list.index(index_temp)], np.ndarray):
-                    dc_blocked.append(self.dcs[self._index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
-                    doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
-                raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2],
-                                       raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
-
-            try:
-                # Sequenced code for debug
+                # Allocate the GEDI_df and dc
+                GEDI_df_blocked, dc_blocked, raster_gt_list, doy_list_temp = [], [], [], []
+                buffer_diamter = max(25, raster_gt[1])
                 for i in range(block_amount):
-                    result = link_GEDI_inform(dc_blocked[i], raster_gt_list[i], doy_list_temp[i], index_temp,
-                                          GEDI_df_blocked[i], 'EPSG', self._GEDI_link_RS_temporal_interpolate_method,
-                                          self._GEDI_link_RS_spatial_interpolate_method)
-                with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                    result = executor.map(link_GEDI_inform, dc_blocked, raster_gt_list, doy_list_temp, repeat(index_temp),
-                                          GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_RS_temporal_interpolate_method),
-                                          repeat(self._GEDI_link_RS_spatial_interpolate_method))
-            except:
-                raise Exception('The link procedure was interrupted by error!')
-
-            try:
-                result = list(result)
-                index_combined_name = '_'
-                index_combined_name = index_combined_name.join(index_list)
-                gedi_list_output = None
-
-                for result_temp in result:
-                    if gedi_list_output is None:
-                        gedi_list_output = copy.copy(result_temp)
+                    if i != block_amount - 1:
+                        GEDI_df_blocked.append(GEDI_df_reset[i * indi_block_size: (i + 1) * indi_block_size])
                     else:
-                        gedi_list_output = pd.concat([gedi_list_output, result_temp])
+                        GEDI_df_blocked.append(GEDI_df_reset[i * indi_block_size: -1])
 
-                gedi_list_output.to_csv(GEDI_xlsx_file.split('.')[0] + f'_{index_combined_name}.csv')
-            except:
-                raise Exception('The df output procedure was interrupted by error!')
+                    ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_df_blocked[-1].EPSG_lat.max() + buffer_diamter, \
+                                                                 GEDI_df_blocked[-1].EPSG_lat.min() - buffer_diamter, \
+                                                                 GEDI_df_blocked[-1].EPSG_lon.min() - buffer_diamter, \
+                                                                 GEDI_df_blocked[-1].EPSG_lon.max() + buffer_diamter
+                    cube_ymin, cube_ymax, cube_xmin, cube_xmax = (int(max(0, np.floor((ymin_temp - raster_gt[3]) / raster_gt[5]))),
+                                                                  int(min(self.dcs_YSize, np.ceil((ymax_temp - raster_gt[3]) / raster_gt[5]))),
+                                                                  int(max(0, np.floor((xmin_temp - raster_gt[0]) / raster_gt[1]))),
+                                                                  int(min(self.dcs_XSize, np.ceil((xmax_temp - raster_gt[0]) / raster_gt[1]))))
 
-    def calculate_denv8pheme(self, denvname: str, year_list: list, start_pheme: str, end_pheme: str, cal_method: str, base_status: bool, bulk = True):
+                    if isinstance(self.dcs[self._index_list.index(index_temp)], NDSparseMatrix):
+                        sm_temp = self.dcs[self._index_list.index(index_temp)].extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
+                        dc_blocked.append(sm_temp.drop_nanlayer())
+                        doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
+                    elif isinstance(self.dcs[self._index_list.index(index_temp)], np.ndarray):
+                        dc_blocked.append(self.dcs[self._index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
+                        doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
+                    raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2],
+                                           raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
+
+                try:
+                    # Sequenced code for debug
+                    # for i in range(block_amount):
+                    #     result = link_GEDI_inform(dc_blocked[i], raster_gt_list[i], doy_list_temp[i], index_temp,
+                    #                           GEDI_df_blocked[i], 'EPSG', self._GEDI_link_RS_temporal_interpolate_method,
+                    #                           self._GEDI_link_RS_spatial_interpolate_method)
+                    with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
+                        result = executor.map(link_GEDI_inform, dc_blocked, raster_gt_list, doy_list_temp, repeat(index_temp),
+                                              GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_RS_temporal_interpolate_method),
+                                              repeat(self._GEDI_link_RS_spatial_interpolate_method))
+                except:
+                    raise Exception('The link procedure was interrupted by error!')
+
+                try:
+                    result = list(result)
+                    gedi_list_output = None
+
+                    for result_temp in result:
+                        if gedi_list_output is None:
+                            gedi_list_output = copy.copy(result_temp)
+                        else:
+                            gedi_list_output = pd.concat([gedi_list_output, result_temp])
+                    for key_ in gedi_list_output.keys():
+                        if index_temp in key_ and not 'reliability' in key_:
+                            if self._size_control_factor_list[self._index_list.index(index_temp)]:
+                                gedi_list_output[key_] = (gedi_list_output[key_] - self._Zoffset_list[self._index_list.index(index_temp)]) / 10000
+                            else:
+                                gedi_list_output[key_] = (gedi_list_output[key_] - self._Zoffset_list[self._index_list.index(index_temp)])
+                    gedi_list_output.set_index('Original')
+                    gedi_list_output.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_{index_temp}.csv')
+                except:
+                    raise Exception('The df output procedure was interrupted by error!')
+            GEDI_df_.GEDI_inform_DF = GEDI_df_.GEDI_inform_DF.merge(gedi_list_output)
+
+        if len(index_list) > 1:
+            index_combined_name = '_'
+            index_combined_name = index_combined_name.join(index_list)
+            GEDI_df_.GEDI_inform_DF.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_RSdc.csv')
+
+    def calculate_denv8pheme(self, denvname: str, year_list: list, pheme_list: list, cal_method: str, base_status=False, bulk = True, period_average=True):
 
         # Construct the output folder
         output_folder = os.path.join(self._denv_work_env, 'denv8pheme\\')
@@ -2655,7 +2680,7 @@ class RS_dcs(object):
         elif cal_method not in self._denv8pheme_cal_method_list:
             raise ValueError('The cal method is not supported!')
         else:
-                self._denv8pheme_cal = cal_method
+            self._denv8pheme_cal = cal_method
 
         # Determine the base status
         if not isinstance(base_status, bool):
@@ -2681,6 +2706,7 @@ class RS_dcs(object):
             raise ValueError(f'No valid year imported!')
 
         # Determine the start and end pheme
+        start_pheme, end_pheme = pheme_list[0], pheme_list[1]
         if start_pheme not in self._denv8pheme_:
             raise ValueError(f'{str(start_pheme)} is not valid')
         elif end_pheme not in self._denv8pheme_:
@@ -2708,6 +2734,10 @@ class RS_dcs(object):
                 process_denv_via_pheme(self._dcs_backup_[self._pheyear_list.index(year_)].dc_filename,
                                        self._dcs_backup_[[_ for _ in range(len(self._index_list)) if self._index_list[_] == denvname and self._timerange_list[_] == year_][0]].dc_filename,
                                        year_, pheme_, para_list)
+
+
+
+
         #
         # ds_temp = gdal.Open(self.ROI_tif)
         # for year_ in processed_year_list:
@@ -2817,192 +2847,192 @@ class RS_dcs(object):
         #     bf.write_raster(ds_temp, acc_denv, output_folder, f'{str(self._denv8pheme_cal)}_{denvname}_{str(year_)}.TIF', raster_datatype=gdal.GDT_Float32)
         #     print(f'Finish calculate the \033[1;31m{str(self._denv8pheme_cal)}\033[0m \033[1;31m{denvname}\033[0m for the year \033[1;34m{str(year_)}\033[0m in {str(time.time()-st)}s')
 
-    def process_denv_via_pheme(self, denvname, phename, ):
-        if phename == 'SOS':
-            # Phe dc count and pos
-            denvdc_count = len([_ for _ in self._index_list if _ == denvname])
-            denvdc_pos = [_ for _ in range(len(self._index_list)) if self._index_list[_] == denvname]
-
-            pheme_reconstructed = None
-            pheme_namelist = []
-            # Reconstruct the phenology dc
-            for _ in range(denvdc_count):
-                denvdc_year = list(set([int(np.floor(_ / 1000)) for _ in self.Denv_doy_list[denvdc_pos[_]]]))
-
-                for year_temp in denvdc_year:
-                    if year_temp not in self._pheyear_list:
-                            raise TypeError(f'The phemetric of {str(year_temp)} is not imported')
-                    else:
-                        phepos = self._pheyear_list.index(year_temp)
-                        if f'{str(year_temp)}_static_{denvname}' not in self._doys_backup_[phepos]:
-                            try:
-                                if (pheme_reconstructed is None or (isinstance(pheme_reconstructed, NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_reconstructed.SM_namelist) or
-                                        (isinstance(pheme_reconstructed, np.ndarray) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_namelist)):
-                                    if pheme_reconstructed is None:
-                                        if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
-                                                SM_namelist=[f'{str(self._pheyear_list[phepos])}_SOS'])
-                                        else:
-                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]
-                                            pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
-                                    else:
-                                        if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed.add_layer(
-                                                self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
-                                                f'{str(self._pheyear_list[phepos])}_SOS',
-                                                pheme_reconstructed.shape[2] + 1)
-                                        else:
-                                            pheme_reconstructed = np.concatenate((pheme_reconstructed,self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]),
-                                                                                 axis=2)
-                                            pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
-
-                                if pheme_reconstructed is None or (isinstance(pheme_reconstructed,
-                                                                              NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_reconstructed.SM_namelist) or (
-                                        isinstance(pheme_reconstructed,
-                                                   np.ndarray) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_namelist):
-                                    if pheme_reconstructed is None:
-                                        if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],
-                                                                                 SM_namelist=[f'{str(self._pheyear_list[phepos])}_peak_doy'])
-                                        else:
-                                            pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]
-                                            pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
-                                    else:
-                                        if self._sparse_matrix_list[phepos]:
-                                            pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],f'{str(self._pheyear_list[phepos])}_peak_doy',
-                                                                          pheme_reconstructed.shape[2] + 1)
-                                        else:
-                                            pheme_reconstructed = np.concatenate((pheme_reconstructed,self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]),
-                                                                                 axis=2)
-                                        pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
-
-                            except:
-                                raise Exception('SOS or peak doy is not properly retrieved!')
-
-                            # Retrieve the phemetric inform
-                            if isinstance(pheme_reconstructed, NDSparseMatrix):
-                                sos = np.round(pheme_reconstructed.SM_group[f'{str(year_temp)}_SOS'].toarray())
-                                peak_doy = np.round(pheme_reconstructed.SM_group[f'{str(year_temp)}_peak_doy'].toarray())
-                            elif isinstance(pheme_reconstructed, np.ndarray):
-                                sos = np.round(pheme_reconstructed[:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].reshape(
-                                        [pheme_reconstructed.shape[0], pheme_reconstructed.shape[1]]))
-                                peak_doy = np.round(pheme_reconstructed[:, :, pheme_namelist.index(f'{str(year_temp)}_peak_doy')].reshape(
-                                    [pheme_reconstructed.shape[0], pheme_reconstructed.shape[1]]))
-                            else:
-                                raise TypeError('The para phemetric dc is not imported as a supported datatype!')
-
-                            base_env = copy.copy(sos)
-                            base_env[base_env <= 0] = 0
-                            base_env[base_env != 0] = -1
-
-                            sos = sos + year_temp * 1000
-                            sos[sos <= year_temp * 1000] = 3000000
-                            sos = sos.astype(np.int32)
-
-                            peak_doy = peak_doy + year_temp * 1000
-                            peak_doy[peak_doy <= year_temp * 1000] = 0
-                            peak_doy = peak_doy.astype(np.int32)
-
-                            year_doy = self._doys_backup_[denvdc_pos[_]]
-
-                            # Create static/base env map
-                            xy_all = np.argwhere(base_env == -1)
-                            xy_all = pd.DataFrame(xy_all, columns=['y', 'x'])
-                            xy_all = xy_all.sort_values(['x', 'y'])
-                            y_all, x_all = list(xy_all['y']), list(xy_all['x'])
-
-                            block_amount = os.cpu_count()
-                            indi_block_size = int(np.ceil(len(x_all) / block_amount))
-
-                            # Allocate the GEDI_df and dc
-                            y_all_blocked, x_all_blocked, denv_dc_blocked, xy_offset_blocked, sos_blocked = [], [], [], [], []
-                            for i in range(block_amount):
-                                if i != block_amount - 1:
-                                    y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
-                                    x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
-                                else:
-                                    y_all_blocked.append(y_all[i * indi_block_size:])
-                                    x_all_blocked.append(x_all[i * indi_block_size:])
-
-                                if isinstance(self.dcs[denvdc_pos[_]], NDSparseMatrix):
-                                    denv_dc_blocked.append(self.dcs[denvdc_pos[_]].extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]),max(x_all_blocked[-1]) + 1],['all'])))
-                                else:
-                                    pass
-
-                                sos_blocked.append(sos[min(y_all_blocked[-1]): max(y_all_blocked[-1]) + 1,
-                                                   min(x_all_blocked[-1]): max(x_all_blocked[-1]) + 1])
-                                xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
-
-                            with concurrent.futures.ProcessPoolExecutor() as exe:
-                                result = exe.map(get_base_denv, y_all_blocked, x_all_blocked, sos_blocked,
-                                                 repeat(year_doy), denv_dc_blocked, xy_offset_blocked)
-
-                            result = list(result)
-                            for result_temp in result:
-                                for r_ in result_temp:
-                                    base_env[r_[0], r_[1]] = r_[2]
-                            base_env[base_env == -1] = 0
-                            base_env[np.isnan(base_env)] = 0
-                            self._dcs_backup_[phepos].dc = copy.copy(self.dcs[phepos])
-                            self._dcs_backup_[phepos]._add_layer(
-                                type(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'])(base_env),
-                                f'{str(year_temp)}_static_{denvname}')
-                            self._dcs_backup_[phepos].save(self._dcs_backup_[phepos].Phemetric_dc_filepath)
-                            self._dcs_backup_[phepos].dc = None
-                        else:
-                            # Retrieve the phemetric inform
-                            if isinstance(self.dcs[phepos], NDSparseMatrix):
-                                sos = np.round(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'].toarray())
-                                peak_doy = np.round(self.dcs[phepos].SM_group[f'{str(year_temp)}_peak_doy'].toarray())
-                                base_env = self.dcs[phepos].SM_group[f'{str(year_temp)}_static_{denvname}'].toarray()
-                            elif isinstance(self.dcs[phepos], np.ndarray):
-                                sos = np.round(self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].reshape(
-                                        [self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]]))
-                                peak_doy = np.round(self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_peak_doy')].reshape(
-                                        [self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]]))
-                                base_env = self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_static_{denvname}')].reshape(
-                                    [self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]])
-                            else:
-                                raise TypeError('The para phemetric dc is not imported as a supported datatype!')
-
-                            sos = sos + year_temp * 1000
-                            sos[sos <= year_temp * 1000] = 3000000
-                            sos = sos.astype(np.int32)
-
-                            peak_doy = peak_doy + year_temp * 1000
-                            peak_doy[peak_doy <= year_temp * 1000] = 0
-                            peak_doy = peak_doy.astype(np.int32)
-
-                        peak_doy_env = copy.copy(peak_doy)
-                        peak_doy_env = peak_doy_env.astype(float)
-                        peak_doy_env[peak_doy_env != 0] = 0
-
-                        for doy in self._doys_backup_[denvdc_pos[_]]:
-                            sos_temp = sos <= doy
-                            sos_temp = sos_temp.astype(int)
-                            peak_doy_temp = peak_doy >= doy
-                            peak_doy_temp = peak_doy_temp.astype(float)
-                            if isinstance(self.dcs[denvdc_pos[_]], NDSparseMatrix):
-                                temp = (self.dcs[denvdc_pos[_]].SM_group[doy] - self.dcs[denvdc_pos[_]]._matrix_type(base_env)).multiply(self.dcs[denvdc_pos[_]]._matrix_type(sos_temp))
-                                temp[temp < 0] = 0
-                                self.dcs[denvdc_pos[_]].SM_group[doy] = type(temp)(temp.astype(self.dcs[denvdc_pos[_]].SM_group[doy].dtype).toarray())
-                                peak_doy_env += self.dcs[denvdc_pos[_]].SM_group[doy].toarray() * peak_doy_temp
-                            else:
-                                self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] = (self.dcs[denvdc_pos[_]][:, :,self._doys_backup_[denvdc_pos[_]].index(doy)] - base_env) * sos_temp
-                                peak_doy_env += self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] * peak_doy_temp
-                        self._dcs_backup_[phepos].dc = copy.copy(self.dcs[phepos])
-                        self._dcs_backup_[phepos]._add_layer(type(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'])(peak_doy_env), f'{str(year_temp)}_peak_{denvname}')
-                        self._dcs_backup_[phepos].save(self._dcs_backup_[phepos].Phemetric_dc_filepath)
-                        self._dcs_backup_[phepos].dc = None
-
-                self._dcs_backup_[denvdc_pos[_]].dc = copy.copy(self.dcs[denvdc_pos[_]])
-                ori_index, ori_path = self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath
-                self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath = (ori_index + '_relative', os.path.dirname(os.path.dirname(ori_path)) + '\\' + ori_path.split('\\')[-2] + '_relative\\')
-                self._dcs_backup_[denvdc_pos[_]].save(self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath)
-                self._dcs_backup_[denvdc_pos[_]].dc = None
-                self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath = ori_index, ori_path
-        else:
-            pass
+    # def process_denv_via_pheme(self, denvname, phename, ):
+    #     if phename == 'SOS':
+    #         # Phe dc count and pos
+    #         denvdc_count = len([_ for _ in self._index_list if _ == denvname])
+    #         denvdc_pos = [_ for _ in range(len(self._index_list)) if self._index_list[_] == denvname]
+    #
+    #         pheme_reconstructed = None
+    #         pheme_namelist = []
+    #         # Reconstruct the phenology dc
+    #         for _ in range(denvdc_count):
+    #             denvdc_year = list(set([int(np.floor(_ / 1000)) for _ in self.Denv_doy_list[denvdc_pos[_]]]))
+    #
+    #             for year_temp in denvdc_year:
+    #                 if year_temp not in self._pheyear_list:
+    #                         raise TypeError(f'The phemetric of {str(year_temp)} is not imported')
+    #                 else:
+    #                     phepos = self._pheyear_list.index(year_temp)
+    #                     if f'{str(year_temp)}_static_{denvname}' not in self._doys_backup_[phepos]:
+    #                         try:
+    #                             if (pheme_reconstructed is None or (isinstance(pheme_reconstructed, NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_reconstructed.SM_namelist) or
+    #                                     (isinstance(pheme_reconstructed, np.ndarray) and f'{str(self._pheyear_list[phepos])}_SOS' not in pheme_namelist)):
+    #                                 if pheme_reconstructed is None:
+    #                                     if self._sparse_matrix_list[phepos]:
+    #                                         pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
+    #                                             SM_namelist=[f'{str(self._pheyear_list[phepos])}_SOS'])
+    #                                     else:
+    #                                         pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]
+    #                                         pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
+    #                                 else:
+    #                                     if self._sparse_matrix_list[phepos]:
+    #                                         pheme_reconstructed.add_layer(
+    #                                             self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_SOS'],
+    #                                             f'{str(self._pheyear_list[phepos])}_SOS',
+    #                                             pheme_reconstructed.shape[2] + 1)
+    #                                     else:
+    #                                         pheme_reconstructed = np.concatenate((pheme_reconstructed,self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_SOS'])]]),
+    #                                                                              axis=2)
+    #                                         pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_SOS')
+    #
+    #                             if pheme_reconstructed is None or (isinstance(pheme_reconstructed,
+    #                                                                           NDSparseMatrix) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_reconstructed.SM_namelist) or (
+    #                                     isinstance(pheme_reconstructed,
+    #                                                np.ndarray) and f'{str(self._pheyear_list[phepos])}_peak_doy' not in pheme_namelist):
+    #                                 if pheme_reconstructed is None:
+    #                                     if self._sparse_matrix_list[phepos]:
+    #                                         pheme_reconstructed = NDSparseMatrix(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],
+    #                                                                              SM_namelist=[f'{str(self._pheyear_list[phepos])}_peak_doy'])
+    #                                     else:
+    #                                         pheme_reconstructed = self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]
+    #                                         pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
+    #                                 else:
+    #                                     if self._sparse_matrix_list[phepos]:
+    #                                         pheme_reconstructed.add_layer(self.dcs[phepos].SM_group[f'{str(self._pheyear_list[phepos])}_peak_doy'],f'{str(self._pheyear_list[phepos])}_peak_doy',
+    #                                                                       pheme_reconstructed.shape[2] + 1)
+    #                                     else:
+    #                                         pheme_reconstructed = np.concatenate((pheme_reconstructed,self.dcs[phepos][:, :, [self._doys_backup_[phepos].index([f'{str(self._pheyear_list[phepos])}_peak_doy'])]]),
+    #                                                                              axis=2)
+    #                                     pheme_namelist.append(f'{str(self._pheyear_list[phepos])}_peak_doy')
+    #
+    #                         except:
+    #                             raise Exception('SOS or peak doy is not properly retrieved!')
+    #
+    #                         # Retrieve the phemetric inform
+    #                         if isinstance(pheme_reconstructed, NDSparseMatrix):
+    #                             sos = np.round(pheme_reconstructed.SM_group[f'{str(year_temp)}_SOS'].toarray())
+    #                             peak_doy = np.round(pheme_reconstructed.SM_group[f'{str(year_temp)}_peak_doy'].toarray())
+    #                         elif isinstance(pheme_reconstructed, np.ndarray):
+    #                             sos = np.round(pheme_reconstructed[:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].reshape(
+    #                                     [pheme_reconstructed.shape[0], pheme_reconstructed.shape[1]]))
+    #                             peak_doy = np.round(pheme_reconstructed[:, :, pheme_namelist.index(f'{str(year_temp)}_peak_doy')].reshape(
+    #                                 [pheme_reconstructed.shape[0], pheme_reconstructed.shape[1]]))
+    #                         else:
+    #                             raise TypeError('The para phemetric dc is not imported as a supported datatype!')
+    #
+    #                         base_env = copy.copy(sos)
+    #                         base_env[base_env <= 0] = 0
+    #                         base_env[base_env != 0] = -1
+    #
+    #                         sos = sos + year_temp * 1000
+    #                         sos[sos <= year_temp * 1000] = 3000000
+    #                         sos = sos.astype(np.int32)
+    #
+    #                         peak_doy = peak_doy + year_temp * 1000
+    #                         peak_doy[peak_doy <= year_temp * 1000] = 0
+    #                         peak_doy = peak_doy.astype(np.int32)
+    #
+    #                         year_doy = self._doys_backup_[denvdc_pos[_]]
+    #
+    #                         # Create static/base env map
+    #                         xy_all = np.argwhere(base_env == -1)
+    #                         xy_all = pd.DataFrame(xy_all, columns=['y', 'x'])
+    #                         xy_all = xy_all.sort_values(['x', 'y'])
+    #                         y_all, x_all = list(xy_all['y']), list(xy_all['x'])
+    #
+    #                         block_amount = os.cpu_count()
+    #                         indi_block_size = int(np.ceil(len(x_all) / block_amount))
+    #
+    #                         # Allocate the GEDI_df and dc
+    #                         y_all_blocked, x_all_blocked, denv_dc_blocked, xy_offset_blocked, sos_blocked = [], [], [], [], []
+    #                         for i in range(block_amount):
+    #                             if i != block_amount - 1:
+    #                                 y_all_blocked.append(y_all[i * indi_block_size: (i + 1) * indi_block_size])
+    #                                 x_all_blocked.append(x_all[i * indi_block_size: (i + 1) * indi_block_size])
+    #                             else:
+    #                                 y_all_blocked.append(y_all[i * indi_block_size:])
+    #                                 x_all_blocked.append(x_all[i * indi_block_size:])
+    #
+    #                             if isinstance(self.dcs[denvdc_pos[_]], NDSparseMatrix):
+    #                                 denv_dc_blocked.append(self.dcs[denvdc_pos[_]].extract_matrix(([min(y_all_blocked[-1]), max(y_all_blocked[-1]) + 1], [min(x_all_blocked[-1]),max(x_all_blocked[-1]) + 1],['all'])))
+    #                             else:
+    #                                 pass
+    #
+    #                             sos_blocked.append(sos[min(y_all_blocked[-1]): max(y_all_blocked[-1]) + 1,
+    #                                                min(x_all_blocked[-1]): max(x_all_blocked[-1]) + 1])
+    #                             xy_offset_blocked.append([min(y_all_blocked[-1]), min(x_all_blocked[-1])])
+    #
+    #                         with concurrent.futures.ProcessPoolExecutor() as exe:
+    #                             result = exe.map(get_base_denv, y_all_blocked, x_all_blocked, sos_blocked,
+    #                                              repeat(year_doy), denv_dc_blocked, xy_offset_blocked)
+    #
+    #                         result = list(result)
+    #                         for result_temp in result:
+    #                             for r_ in result_temp:
+    #                                 base_env[r_[0], r_[1]] = r_[2]
+    #                         base_env[base_env == -1] = 0
+    #                         base_env[np.isnan(base_env)] = 0
+    #                         self._dcs_backup_[phepos].dc = copy.copy(self.dcs[phepos])
+    #                         self._dcs_backup_[phepos]._add_layer(
+    #                             type(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'])(base_env),
+    #                             f'{str(year_temp)}_static_{denvname}')
+    #                         self._dcs_backup_[phepos].save(self._dcs_backup_[phepos].Phemetric_dc_filepath)
+    #                         self._dcs_backup_[phepos].dc = None
+    #                     else:
+    #                         # Retrieve the phemetric inform
+    #                         if isinstance(self.dcs[phepos], NDSparseMatrix):
+    #                             sos = np.round(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'].toarray())
+    #                             peak_doy = np.round(self.dcs[phepos].SM_group[f'{str(year_temp)}_peak_doy'].toarray())
+    #                             base_env = self.dcs[phepos].SM_group[f'{str(year_temp)}_static_{denvname}'].toarray()
+    #                         elif isinstance(self.dcs[phepos], np.ndarray):
+    #                             sos = np.round(self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_SOS')].reshape(
+    #                                     [self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]]))
+    #                             peak_doy = np.round(self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_peak_doy')].reshape(
+    #                                     [self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]]))
+    #                             base_env = self.dcs[phepos][:, :, pheme_namelist.index(f'{str(year_temp)}_static_{denvname}')].reshape(
+    #                                 [self.dcs[phepos].shape[0], self.dcs[phepos].shape[1]])
+    #                         else:
+    #                             raise TypeError('The para phemetric dc is not imported as a supported datatype!')
+    #
+    #                         sos = sos + year_temp * 1000
+    #                         sos[sos <= year_temp * 1000] = 3000000
+    #                         sos = sos.astype(np.int32)
+    #
+    #                         peak_doy = peak_doy + year_temp * 1000
+    #                         peak_doy[peak_doy <= year_temp * 1000] = 0
+    #                         peak_doy = peak_doy.astype(np.int32)
+    #
+    #                     peak_doy_env = copy.copy(peak_doy)
+    #                     peak_doy_env = peak_doy_env.astype(float)
+    #                     peak_doy_env[peak_doy_env != 0] = 0
+    #
+    #                     for doy in self._doys_backup_[denvdc_pos[_]]:
+    #                         sos_temp = sos <= doy
+    #                         sos_temp = sos_temp.astype(int)
+    #                         peak_doy_temp = peak_doy >= doy
+    #                         peak_doy_temp = peak_doy_temp.astype(float)
+    #                         if isinstance(self.dcs[denvdc_pos[_]], NDSparseMatrix):
+    #                             temp = (self.dcs[denvdc_pos[_]].SM_group[doy] - self.dcs[denvdc_pos[_]]._matrix_type(base_env)).multiply(self.dcs[denvdc_pos[_]]._matrix_type(sos_temp))
+    #                             temp[temp < 0] = 0
+    #                             self.dcs[denvdc_pos[_]].SM_group[doy] = type(temp)(temp.astype(self.dcs[denvdc_pos[_]].SM_group[doy].dtype).toarray())
+    #                             peak_doy_env += self.dcs[denvdc_pos[_]].SM_group[doy].toarray() * peak_doy_temp
+    #                         else:
+    #                             self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] = (self.dcs[denvdc_pos[_]][:, :,self._doys_backup_[denvdc_pos[_]].index(doy)] - base_env) * sos_temp
+    #                             peak_doy_env += self.dcs[denvdc_pos[_]][:, :, self._doys_backup_[denvdc_pos[_]].index(doy)] * peak_doy_temp
+    #                     self._dcs_backup_[phepos].dc = copy.copy(self.dcs[phepos])
+    #                     self._dcs_backup_[phepos]._add_layer(type(self.dcs[phepos].SM_group[f'{str(year_temp)}_SOS'])(peak_doy_env), f'{str(year_temp)}_peak_{denvname}')
+    #                     self._dcs_backup_[phepos].save(self._dcs_backup_[phepos].Phemetric_dc_filepath)
+    #                     self._dcs_backup_[phepos].dc = None
+    #
+    #             self._dcs_backup_[denvdc_pos[_]].dc = copy.copy(self.dcs[denvdc_pos[_]])
+    #             ori_index, ori_path = self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath
+    #             self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath = (ori_index + '_relative', os.path.dirname(os.path.dirname(ori_path)) + '\\' + ori_path.split('\\')[-2] + '_relative\\')
+    #             self._dcs_backup_[denvdc_pos[_]].save(self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath)
+    #             self._dcs_backup_[denvdc_pos[_]].dc = None
+    #             self._dcs_backup_[denvdc_pos[_]].index, self._dcs_backup_[denvdc_pos[_]].Denv_dc_filepath = ori_index, ori_path
+    #     else:
+    #         pass
 
     def create_feature_list_by_date(self, date: list, index: str, output_folder: str):
 
@@ -3739,22 +3769,58 @@ class RS_dcs(object):
             ax.plot(np.linspace(17.35, 17.35, 100), np.linspace(0, 1, 100), lw=1.5, ls='--', c=(0, 0, 0), zorder=3)
             ax.plot(np.linspace(17.65, 17.65, 100), np.linspace(0, 1, 100), lw=1.5, ls='--', c=(0, 0, 0), zorder=3)
 
-            year_l, delta, delta_per = [], [], []
+            if sec == 'yz':
+                pheme_mean_unflood_pre = [pheme_mean[_] for _ in [1, 7, 10]]
+                pheme_mean_unflood_post = [pheme_mean[_] for _ in [19, 20, 26, 27, 28, 31, 32, 34, 35, 36]]
+            elif sec == 'ch':
+                pheme_mean_unflood_pre = [pheme_mean[_] for _ in [0, 1, 7, 10]]
+                pheme_mean_unflood_post = [pheme_mean[_] for _ in [20, 21, 26, 27, 28, 31, 32, 34, 35, 36]]
+            elif sec == 'hh':
+                pheme_mean_unflood_pre = [pheme_mean[_] for _ in [0, 1, 10, 11, 14]]
+                pheme_mean_unflood_post = [pheme_mean[_] for _ in [19, 20, 21, 26, 27, 28, 31, 32, 34, 36]]
+            elif sec == 'jj':
+                pheme_mean_unflood_pre = [pheme_mean[_] for _ in [1, 7, 10]]
+                pheme_mean_unflood_post = [pheme_mean[_] for _ in [19, 26, 27, 28, 31, 32, 34, 35, 36]]
+            else:
+                pheme_mean_unflood_pre = [pheme_mean[_]  for _ in [0, 1, 7, 10]]
+                pheme_mean_unflood_post = [pheme_mean[_]  for _ in [19, 20, 26, 27, 28, 31, 32, 34, 35, 36]]
+            pheme_bound_pre = np.mean(pheme_mean_unflood_pre)
+            pheme_bound_post = np.mean(pheme_mean_unflood_post)
+
+            year_l, delta, delta_per, ref, resistance1, resistance2, resilience = [], [], [], [], [], [], []
             # Downtrend
             ax.scatter(np.linspace(1, len(pheme_mean), len(pheme_mean)), pheme_mean, marker='^', s=21**2, facecolors=(1,1,1), alpha=0.9, edgecolors=(0, 0, 0), lw=2.5, zorder=11)
             # for x_left, x_right in zip([0, 7, 10, 22, 28, 32, 14], [6, 10, 13, 24, 30, 34, 16]):
             #     ax.plot(np.linspace(x_left + 1, x_right, x_right - x_left), pheme_mean[x_left: x_right], lw=5, ls='-', c=(0, 0.3, 1), zorder=8)
             for x_left in [1, 3, 4, 7, 8, 10, 11, 14, 22, 28, 32]:
-                ax.plot([x_left + 1, x_left + 2], [pheme_mean[x_left], pheme_mean[x_left]], lw=5, ls='-', c=(0, 0.3, 1), zorder=8)
-                ax.plot([x_left + 2, x_left + 2], [pheme_mean[x_left], pheme_mean[x_left + 1]], lw=5, ls='-', c=(0, 0.3, 1), zorder=8)
-                ax.arrow(x_left + 1.6, pheme_mean[x_left] - 0.002, 0, -pheme_mean[x_left] + pheme_mean[x_left + 1] + 0.002, width=0.08,
-                         fc=(0,0,1), ec=(0,0,1), alpha=1, length_includes_head=True, head_width=0.28, head_length=0.004, zorder=11)
-                print(f'{str(x_left + 1988)}(delta): {str(pheme_mean[x_left + 1] - pheme_mean[x_left])}    {str((pheme_mean[x_left + 1] - pheme_mean[x_left]) / pheme_mean[x_left])}')
+
                 year_l.append(1988 + x_left)
                 delta.append(pheme_mean[x_left + 1] - pheme_mean[x_left])
                 delta_per.append((pheme_mean[x_left + 1] - pheme_mean[x_left]) / pheme_mean[x_left])
+                if year_l[-1] >  2004:
+                    if pheme_mean[x_left] < min(pheme_mean_unflood_post):
+                        ref_ = pheme_mean[x_left]
+                    else:
+                        ref_ = np.mean(pheme_mean_unflood_post)
+                else:
+                    if pheme_mean[x_left] < min(pheme_mean_unflood_pre):
+                        ref_ = pheme_mean[x_left]
+                    else:
+                        ref_ = np.mean(pheme_mean_unflood_pre)
+                ref.append(ref_)
+                resistance1.append(1- (2 * abs(ref[-1] - pheme_mean[x_left + 1])) / (ref[-1] + abs(ref[-1] - pheme_mean[x_left + 1])))
+                resistance2.append((ref[-1] - pheme_mean[x_left + 1]) / (ref[-1] + pheme_mean[x_left + 1]))
+                ax.plot([x_left + 1, x_left + 2], [ref_, ref_], lw=5, ls='-', c=(0, 0.3, 1),
+                        zorder=8)
+                ax.plot([x_left + 2, x_left + 2], [ref_, pheme_mean[x_left + 1]], lw=5, ls='-',
+                        c=(0, 0.3, 1), zorder=8)
+                ax.arrow(x_left + 1.6, ref_ - 0.002, 0, -ref_ + pheme_mean[x_left + 1] + 0.002, width=0.08,
+                         fc=(0, 0, 1), ec=(0, 0, 1), alpha=1, length_includes_head=True, head_width=0.28,
+                         head_length=0.004, zorder=11)
+                print(f'{str(x_left + 1988)}(delta): {str(pheme_mean[x_left + 1] - ref_)}    {str((pheme_mean[x_left + 1] - pheme_mean[x_left]) / pheme_mean[x_left])}')
 
             theta = [np.nan for _ in range(len(year_l))]
+            resilience = [np.nan for _ in range(len(year_l))]
             # Uptrend 0
             ax.plot([1, 2], [pheme_mean[0], pheme_mean[1]], lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
             # ax.plot([2, 3], [pheme_mean[1], pheme_mean[1]], lw=4, ls='--', c=(0.8, 0, 0), zorder=8)
@@ -3766,12 +3832,18 @@ class RS_dcs(object):
             # Uptrend 1
             x = np.concatenate((np.linspace(0, 0, 100), np.linspace(1, 1, 100), np.linspace(2, 2, 100)))
             y = np.concatenate((np.array(standard_pheme_dis[5]), np.array(standard_pheme_dis[6]), np.linspace(pheme_mean[7], pheme_mean[7], 100)))
-            p1, f1 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[0: 17]), pheme_mean[5], 0), bounds=([max(pheme_mean[0: 17])-0.000000001, pheme_mean[5]-0.000000001, -100000], [max(pheme_mean[0: 17])+0.000000001, pheme_mean[5]+0.000000001, 100000]))
+            p1, f1 = curve_fit(system_recovery_function, x, y, p0 = (pheme_bound_pre, pheme_mean[5], 0), bounds=([pheme_bound_pre-0.0000000001, pheme_mean[5]-0.000000001, -100000], [pheme_bound_pre + 0.000000001, pheme_mean[5]+0.000000001, 3]))
             ax.plot(np.linspace(6, 8, 100), system_recovery_function(np.linspace(0, 2, 100), p1[0], p1[1], p1[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
             ax.plot(np.linspace(6, 10, 100), system_recovery_function(np.linspace(0, 4, 100), p1[0], p1[1], p1[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=8)
-            ax.plot(np.linspace(6, 6, 100), np.linspace(pheme_mean[5], max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4,0.4,0.4), zorder=11)
-            ax.plot(np.linspace(10, 10, 100), np.linspace(system_recovery_function(4, p1[0], p1[1], p1[2]), max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4, 0.4, 0.4), zorder=11)
-            ax.arrow(6.05, max(pheme_mean[0: 17]) + 0.03, 3.9, 0, width=0.001, fc="#c30101", ec="#c30101", alpha=1,
+            for _ in range(9999):
+                if (1 * ref[1] - system_recovery_function(np.linspace(0, 4, 10000)[_], p1[0], p1[1], p1[2])) * (1 * ref[1] - system_recovery_function(np.linspace(0, 4, 10000)[_ + 1], p1[0], p1[1], p1[2])) < 0:
+                    resilience[1] = max(np.linspace(0, 4, 10000)[_], 0.5)
+                    resilience[2] = max(np.linspace(0, 4, 10000)[_], 0.5) - 0.00001
+                else:
+                    pass
+            ax.plot(np.linspace(6, 6, 100), np.linspace(pheme_mean[5], pheme_bound_pre + 0.03, 100), lw=2, ls='--', c=(0.4,0.4,0.4), zorder=11)
+            ax.plot(np.linspace(10, 10, 100), np.linspace(system_recovery_function(4, p1[0], p1[1], p1[2]), pheme_bound_pre + 0.03, 100), lw=2, ls='--', c=(0.4, 0.4, 0.4), zorder=11)
+            ax.arrow(6.05, pheme_bound_pre + 0.03, 3.9, 0, width=0.001, fc="#c30101", ec="#c30101", alpha=1,
                      length_includes_head=True, head_width=0.003, head_length=0.56, zorder=11)
             print(f'{str(5 + 1987)}(theta): {str(p1[2])}')
             theta[1] = p1[2]
@@ -3780,7 +3852,13 @@ class RS_dcs(object):
             # Uptrend 2
             x = np.concatenate((np.linspace(0, 0, 100), np.linspace(1, 1, 100)))
             y = np.concatenate((np.array(standard_pheme_dis[9]), np.array(standard_pheme_dis[10])))
-            p2, f2 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[0: 17]), pheme_mean[9], 0), bounds=([max(pheme_mean[0: 17])-0.000000001, pheme_mean[9]-0.000000001, -100000], [max(pheme_mean[0: 17])+0.000000001, pheme_mean[9]+0.000000001, 100000]))
+            p2, f2 = curve_fit(system_recovery_function, x, y, p0 = (pheme_bound_pre, pheme_mean[9], 0), bounds=([pheme_bound_pre-0.0000000001, pheme_mean[9]-0.000000001, -100000], [pheme_bound_pre+0.000000001, pheme_mean[9]+0.000000001, 100000]))
+            for _ in range(9999):
+                if (0.99 * ref[3] - system_recovery_function(np.linspace(0, 3, 10000)[_], p2[0], p2[1], p2[2])) * (0.99 * ref[3] - system_recovery_function(np.linspace(0, 3, 10000)[_ + 1], p2[0], p2[1], p2[2])) < 0:
+                    resilience[3] = max(np.linspace(0, 3, 10000)[_], 0.5)
+                    resilience[4] = max(np.linspace(0, 3, 10000)[_],  0.5) - 0.00001
+                else:
+                    pass
             ax.plot(np.linspace(10, 11, 100), system_recovery_function(np.linspace(0, 1, 100), p2[0], p2[1], p2[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
             ax.plot(np.linspace(10, 13, 100), system_recovery_function(np.linspace(0, 3, 100), p2[0], p2[1], p2[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=8)
             print(f'{str(9 + 1987)}(theta): {str(p2[2])}')
@@ -3791,7 +3869,13 @@ class RS_dcs(object):
             x_temp = tuple([np.linspace(_, _, 100) for _ in range(0, 3)])
             y_temp = tuple([np.array(standard_pheme_dis[_]) if _ < 12 else np.linspace(pheme_mean[_], pheme_mean[_], 100) for _ in range(12, 15)])
             x, y = np.concatenate(x_temp), np.concatenate(y_temp)
-            p3, f3 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[17: ]), pheme_mean[12], 0), bounds=([max(pheme_mean[17: ])-0.000000001, pheme_mean[12]-0.000000001, -100000], [max(pheme_mean[17:])+0.000000001, pheme_mean[12]+0.000000001, 100000]))
+            p3, f3 = curve_fit(system_recovery_function, x, y, p0 = (pheme_bound_post, pheme_mean[12], 0), bounds=([pheme_bound_post-0.000000001, pheme_mean[12]-0.000000001, -100000], [pheme_bound_post+0.000000001, pheme_mean[12]+0.000000001, 3]))
+            for _ in range(9999):
+                if (0.99 * ref[5] - system_recovery_function(np.linspace(0, 10, 10000)[_], p3[0], p3[1], p3[2])) * (0.99 * ref[5] - system_recovery_function(np.linspace(0, 10, 10000)[_ + 1], p3[0], p3[1], p3[2])) < 0:
+                    resilience[5] = max(np.linspace(0, 10, 10000)[_], 0.5)
+                    resilience[6] = max(np.linspace(0, 10, 10000)[_], 0.5) - 0.00001
+                else:
+                    pass
             ax.plot(np.linspace(13, 15, 100), system_recovery_function(np.linspace(0, 2, 100), p3[0], p3[1], p3[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
             # ax.plot(np.linspace(13, 20, 100), system_recovery_function(np.linspace(0, 7, 100), p3[0], p3[1], p3[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=7)
             print(f'{str(12 + 1987)}(theta): {str(p3[2])}')
@@ -3803,7 +3887,12 @@ class RS_dcs(object):
             y_temp = tuple([np.array(standard_pheme_dis[_]) if _ < 19 else np.linspace(pheme_mean[_], pheme_mean[_], 100) for _ in range(15, 21)])
             # y_temp = tuple([np.array(standard_pheme_dis[_])  for _ in range(15, 21)])
             x, y = np.concatenate(x_temp), np.concatenate(y_temp)
-            p4, f4 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[17: ]), pheme_mean[15], 0), bounds=([max(pheme_mean[17:])-0.000000001, pheme_mean[15]-0.000000001, -100000], [max(pheme_mean[17: ])+0.000000001, pheme_mean[15]+0.000000001, 100000]))
+            p4, f4 = curve_fit(system_recovery_function, x, y, p0 = (pheme_bound_post, pheme_mean[15], 0), bounds=([pheme_bound_post*0.95, pheme_mean[15]-0.000000001, -100000], [pheme_bound_post+0.000000001, pheme_mean[15]+0.000000001, 3]))
+            for _ in range(9999):
+                if (1 * ref[7] - system_recovery_function(np.linspace(0, 5, 10000)[_], p4[0], p4[1], p4[2])) * (1 * ref[7] - system_recovery_function(np.linspace(0, 5, 10000)[_ + 1], p4[0], p4[1], p4[2])) < 0:
+                    resilience[7] = max(np.linspace(0, 5, 10000)[_], 0.5)
+                else:
+                    pass
             ax.plot(np.linspace(16, 23, 100), system_recovery_function(np.linspace(0, 7, 100), p4[0], p4[1], p4[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
             ax.plot(np.linspace(16, 24, 100), system_recovery_function(np.linspace(0, 8, 100), p4[0], p4[1], p4[2]),  lw=5, ls='--', c=(0.8, 0, 0), zorder=7)
             print(f'{str(15 + 1987)}(theta): {str(p4[2])}')
@@ -3813,7 +3902,13 @@ class RS_dcs(object):
             x_temp = tuple([np.linspace(_, _, 100) for _ in range(0, 5)])
             y_temp = tuple([np.array(standard_pheme_dis[_])  for _ in range(23, 28)])
             x, y = np.concatenate(x_temp), np.concatenate(y_temp)
-            p5, f5 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[17: ]), pheme_mean[23], 0), bounds=([max(pheme_mean[17:])-0.000000001, pheme_mean[23]-0.000000001, -100000], [max(pheme_mean[17: ])+0.000000001, pheme_mean[23]+0.000000001, 100000]))
+            p5, f5 = curve_fit(system_recovery_function, x, y, p0 = (pheme_bound_post, pheme_mean[23], 0), bounds=([pheme_bound_post-0.000000001, pheme_mean[23]-0.000000001, -100000], [pheme_bound_post+0.000000001, pheme_mean[23]+0.000000001, 3]))
+            for _ in range(9999):
+                if (1 * ref[8] - system_recovery_function(np.linspace(0, 7, 10000)[_], p5[0], p5[1], p5[2])) * (1 * ref[8] - system_recovery_function(np.linspace(0, 7, 10000)[_ + 1], p5[0], p5[1], p5[2])) < 0:
+                    resilience[8] = max(np.linspace(0, 7, 10000)[_], 0.5)
+                else:
+                    pass
+
             ax.plot(np.linspace(24, 29, 100), system_recovery_function(np.linspace(0, 5, 100), p5[0], p5[1], p5[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
             ax.plot(np.linspace(24, 30, 100), system_recovery_function(np.linspace(0, 6, 100), p5[0], p5[1], p5[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=8)
             ax.plot(np.linspace(24, 24, 100), np.linspace(pheme_mean[23], max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4,0.4,0.4), zorder=11)
@@ -3827,7 +3922,12 @@ class RS_dcs(object):
             x_temp = tuple([np.linspace(_, _, 100) for _ in range(0, 4)])
             y_temp = tuple([np.array(standard_pheme_dis[_]) for _ in range(29, 33)])
             x, y = np.concatenate(x_temp), np.concatenate(y_temp)
-            p6, f6 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[17:]), pheme_mean[29], 0), bounds=([max(pheme_mean[17:])-0.000000001, pheme_mean[29]-0.000000001, -100000], [max(pheme_mean[17:])+0.000000001, pheme_mean[29]+0.000000001, 100000]))
+            p6, f6 = curve_fit(system_recovery_function, x, y, p0 = (pheme_bound_post, pheme_mean[29], 0), bounds=([pheme_bound_post-0.000000001, pheme_mean[29]-0.000000001, -100000], [pheme_bound_post+0.000000001, pheme_mean[29]+0.000000001, 3]))
+            for _ in range(9999):
+                if (0.99 * ref[9] - system_recovery_function(np.linspace(0, 7, 10000)[_], p6[0], p6[1], p6[2])) * (0.99 * ref[9] - system_recovery_function(np.linspace(0, 7, 10000)[_ + 1], p6[0], p6[1], p6[2])) < 0:
+                    resilience[9] = max(np.linspace(0, 7, 10000)[_], 0.5)
+                else:
+                    pass
             ax.plot(np.linspace(30, 33, 100), system_recovery_function(np.linspace(0, 3, 100), p6[0], p6[1], p6[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
             ax.plot(np.linspace(30, 34, 100), system_recovery_function(np.linspace(0, 4, 100), p6[0], p6[1], p6[2]), lw=5, ls='--', c=(0.8, 0, 0), zorder=8)
             ax.plot(np.linspace(30, 30, 100), np.linspace(pheme_mean[29], max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4,0.4,0.4), zorder=11)
@@ -3841,7 +3941,12 @@ class RS_dcs(object):
             x_temp = tuple([np.linspace(_, _, 100) for _ in range(0, 4)])
             y_temp = tuple([np.array(standard_pheme_dis[_]) if _ < 35 else np.linspace(pheme_mean[_], pheme_mean[_], 100) for _ in range(33, 37)])
             x, y = np.concatenate(x_temp), np.concatenate(y_temp)
-            p7, f7 = curve_fit(system_recovery_function, x, y, p0 = (max(pheme_mean[28:]), pheme_mean[33], 0), bounds=([max(pheme_mean[28:])-0.000000001, pheme_mean[33]-0.000000001, -100000], [max(pheme_mean[28:])+0.000000001, pheme_mean[33]+0.000000001, 100000]))
+            p7, f7 = curve_fit(system_recovery_function, x, y, p0 = (pheme_bound_post, pheme_mean[33], 0), bounds=([pheme_bound_post-0.000000001, pheme_mean[33]-0.000000001, -100000], [pheme_bound_post+0.000000001, pheme_mean[33]+0.000000001, 3]))
+            for _ in range(9999):
+                if (0.99 * ref[10] - system_recovery_function(np.linspace(0, 7, 10000)[_], p7[0], p7[1], p7[2])) * (0.99 * ref[10] - system_recovery_function(np.linspace(0, 7, 10000)[_ + 1], p7[0], p7[1], p7[2])) < 0:
+                    resilience[10] = max(np.linspace(0, 7, 10000)[_], 0.5)
+                else:
+                    pass
             ax.plot(np.linspace(34, 37, 100), system_recovery_function(np.linspace(0, 3, 100), p7[0], p7[1], p7[2]), lw=5, ls='-', c=(0.8, 0, 0), zorder=8)
             ax.plot(np.linspace(34, 34, 100), np.linspace(pheme_mean[33], max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4,0.4,0.4), zorder=11)
             ax.plot(np.linspace(37, 37, 100), np.linspace(system_recovery_function(3, p7[0], p7[1], p7[2]), max(pheme_mean[0: 17]) + 0.03, 100), lw=2, ls='--', c=(0.4, 0.4, 0.4), zorder=11)
@@ -3849,8 +3954,10 @@ class RS_dcs(object):
                      length_includes_head=True, head_width=0.003, head_length=0.56, zorder=11)
             print(f'{str(33 + 1987)}(theta): {str(p7[2])}')
             theta[10] = p7[2]
-            pd_ = pd.DataFrame({'year': year_l, 'flood_impact': delta, 'flood_impact_percent': delta_per, 'beta': theta})
+
+            pd_ = pd.DataFrame({'year': year_l, 'flood_impact': delta, 'flood_impact_percent': delta_per, 'beta': theta, 'Ref': ref, 'Resistance1': resistance1, 'Resistance2': resistance2, 'Resilience': resilience})
             pd_.to_csv(f'{output_path}{phemetric_}_var\\veg\\fig_{sec}_para.csv')
+
 
             # downarea
             # ax.plot(np.linspace(2,3,100), np.linspace(pheme_mean[1], pheme_mean[1], 100))
@@ -3877,19 +3984,28 @@ class RS_dcs(object):
             #                 facecolor=(1, 1, 1), zorder=7, alpha=1)
 
             # Flood year
-            for x_, y_ in zip([1.5, 4.5, 8.5, 11.5, 33.5, 29.5, 23.5, 15.5], [3.5, 5.5, 10.5, 13.5, 34.5, 30.5, 24.5, 16.5]):
+            for x_, y_ in zip([1.5, 4.5, 8.5, 11.5, 33.5, 29.5, 23.5, 15.5, 25.5], [3.5, 5.5, 10.5, 13.5, 34.5, 30.5, 24.5, 16.5, 26.5]):
                 ax.fill_between(np.linspace(x_, y_, 100), np.linspace(0, 0, 100), np.linspace(1, 1, 100), color="#1750a4", alpha=0.3, zorder=3)
 
             ax.plot(np.linspace(0, 17.35, 100), np.linspace(min(pheme_mean[0: 17]), min(pheme_mean[0: 17]), 100), ls='-.', lw=3, color=(0.0, 0.0, 0), zorder =7)
-            ax.plot(np.linspace(0, 17.35, 100), np.linspace(max(pheme_mean[0: 17]), max(pheme_mean[0: 17]), 100), ls='-', lw=3, color=(0.0, 0.0, 0), zorder = 7)
-            ax.plot(np.linspace(17.65, 37.5, 100), np.linspace(max(pheme_mean[17: ]), max(pheme_mean[17: ]), 100), ls='-', lw=3, color=(0.0, 0.0, 0), zorder = 7)
+            # ax.plot(np.linspace(0, 17.35, 100), np.linspace(max(pheme_mean[0: 17]), max(pheme_mean[0: 17]), 100), ls='-', lw=3, color=(0.0, 0.0, 0), zorder = 7)
+            # ax.plot(np.linspace(17.65, 37.5, 100), np.linspace(max(pheme_mean[17: ]), max(pheme_mean[17: ]), 100), ls='-', lw=3, color=(0.0, 0.0, 0), zorder = 7)
             ax.plot(np.linspace(17.65, 28.5, 100), np.linspace(min(pheme_mean[17: 28]), min(pheme_mean[17: 28]), 100), ls='-.', lw=3, color=(0.0, 0.0, 0), zorder =7)
             ax.plot(np.linspace(28.5, 37.5, 100), np.linspace(min(pheme_mean[28: ]), min(pheme_mean[28: ]), 100), ls='-.', lw=3, color=(0.0, 0.0, 0), zorder =7)
 
             # range
             ax.fill_between(np.linspace(0, 17.35, 100), np.linspace(min(pheme_mean[0: 17]), min(pheme_mean[0: 17]), 100), np.linspace(max(pheme_mean[0: 17]), max(pheme_mean[0: 17]), 100), color=(0.7, 0.7, 0.7), alpha=0.5, zorder=3)
             ax.fill_between(np.linspace(17.66, 28.49, 100), np.linspace(min(pheme_mean[17: 28]), min(pheme_mean[17: 28]), 100), np.linspace(max(pheme_mean[17: ]), max(pheme_mean[17: ]), 100), color=(0.7, 0.7, 0.7), alpha=0.5, zorder=3)
-            ax.fill_between(np.linspace(28.5, 37.5, 100), np.linspace(min(pheme_mean[28: ]), min(pheme_mean[28: ]), 100), np.linspace(max(pheme_mean[17: ]), max(pheme_mean[17:]), 100), color=(0.7, 0.7, 0.7), alpha=0.5, zorder=3)
+            ax.fill_between(np.linspace(28.49, 37.5, 100), np.linspace(min(pheme_mean[28: ]), min(pheme_mean[28: ]), 100), np.linspace(max(pheme_mean[17: ]), max(pheme_mean[17:]), 100), color=(0.7, 0.7, 0.7), alpha=0.5, zorder=3)
+
+
+            ax.fill_between(np.linspace(0, 17.35, 100), np.linspace(min(pheme_mean_unflood_pre), min(pheme_mean_unflood_pre), 100),
+                            np.linspace(max(pheme_mean_unflood_pre), max(pheme_mean_unflood_pre), 100), color=(0.7, 0.7, 0.7), alpha=0.5, zorder=3)
+            ax.fill_between(np.linspace(17.66, 37.5, 100), np.linspace(min(pheme_mean_unflood_post), min(pheme_mean_unflood_post), 100),
+                            np.linspace(max(pheme_mean_unflood_post), max(pheme_mean_unflood_post), 100), color=(0.7, 0.7, 0.7), alpha=0.5, zorder=3)
+            ax.plot(np.linspace(0, 17.35, 100), np.linspace(np.mean(pheme_mean_unflood_pre), np.mean(pheme_mean_unflood_pre), 100), ls='-.', lw=3, color=(0.0, 0.0, 0), zorder =7)
+            ax.plot(np.linspace(17.66, 37.5, 100), np.linspace(np.mean(pheme_mean_unflood_post), np.mean(pheme_mean_unflood_post), 100), ls='-.', lw=3, color=(0.0, 0.0, 0), zorder=7)
+
 
             ax.set_xlim(0.8, 37.2)
             if sec == 'ch':

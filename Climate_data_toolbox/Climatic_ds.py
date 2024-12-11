@@ -21,7 +21,26 @@ import json
 from shapely import Polygon, Point
 import inspect
 global topts
+from tqdm import tqdm
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
+
+
+def separate_month_range(month_list):
+    month_list = sorted(month_list)
+
+    result = []
+    current_sublist = [month_list[0]]
+
+    for i in range(1, len(month_list)):
+
+        if month_list[i] == month_list[i - 1] + 1 or (np.mod(month_list[i - 1], 100) == 12 and month_list[i] - month_list[i - 1] == 89):
+            current_sublist.append(month_list[i])
+        else:
+            result.append(current_sublist)
+            current_sublist = [month_list[i]]
+
+    result.append(current_sublist)
+    return result
 
 
 class NCEI_ds(object):
@@ -594,7 +613,7 @@ class CMA_ds(object):
             self.work_env = bf.Path(work_env).path_name
 
         # Define the metadata folder
-        self.metadata_folder = self.work_env + 'metadata\\'
+        self.metadata_folder = self.work_env + 'Metadata\\'
         bf.create_folder(self.metadata_folder)
 
         # Init _arg
@@ -608,25 +627,22 @@ class CMA_ds(object):
         self.ROI, self.ROI_name = None, None
         self.main_coordinate_system = None
         csv_files = bf.file_filter(file_path, ['SURF_CLI_CHN', '.txt', '.TXT'], exclude_word_list=['log.txt', 'para_file.txt'], subfolder_detection=True, and_or_factor='or')
-        for _ in csv_files:
-            if 'SURF_CLI_CHN_MUL_DAY' not in _:
-                csv_files.remove(_)
-                print(f'{str(_)} is not a valid SURF_CLI_CHN file!')
+        csv_files = [_ for _ in csv_files if 'SURF_CLI_CHN_MUL_DAY' in _]
 
         # Valid zvalue
         self._valid_zvalue = ['EVP', 'PRS', 'WIN', 'TEM', 'GST', 'RHU', 'PRE', 'SSD']
         self._zvalue_csvfile = {'EVP': [], 'PRS': [], 'WIN': [], 'TEM': [], 'GST': [], 'RHU': [], 'PRE': [], 'SSD': []}
         self._zvalue_dic = {'EVP': [(7, 0.1, 'Minor EVP', 32766), (8, 0.1, 'Major EVP', 32766)],
-                           'PRS': [(7, 0.1, 'DAve_Airp', 32766), (8, 0.1, 'DMax_Airp', 32766), (9, 0.1, 'DMin_Airp', 32766)],
-                           'WIN': [(7, 0.1, 'DAve_Winds', 32766), (8, 0.1, 'DMax_Winds', 32766), (10, 0.1, 'DMin_Winds', 32766)],
-                           'TEM': [(7, 0.1, 'DAve_AT', 32766), (8, 0.1, 'DMax_AT', 32766), (9, 0.1, 'DMin_AT', 32766)],
-                           'GST': [(7, 0.1, 'DAve_LST', 32766), (8, 0.1, 'DMax_LST', 32766), (9, 0.1, 'DMin_LST', 32766)],
-                           'RHU': [(7, 0.01, 'DAve_hum', 32766), (8, 0.01, 'Dmin_hum', 32766)],
-                           'PRE': [(7, 0.1, '20-8_prec', 32766), (8, 0.1, '8-20_prec', 32766), (9, 0.1, 'Acc_prec', 32766)],
-                           'SSD': [(7, 0.1, 'SS_hour', 32766)]}
+                            'PRS': [(7, 0.1, 'DAve_Airp', 32766), (8, 0.1, 'DMax_Airp', 32766), (9, 0.1, 'DMin_Airp', 32766)],
+                            'WIN': [(7, 0.1, 'DAve_Winds', 32766), (8, 0.1, 'DMax_Winds', 32766), (10, 0.1, 'DMin_Winds', 32766)],
+                            'TEM': [(7, 0.1, 'DAve_AT', 32766), (8, 0.1, 'DMax_AT', 32766), (9, 0.1, 'DMin_AT', 32766)],
+                            'GST': [(7, 0.1, 'DAve_LST', 32766), (8, 0.1, 'DMax_LST', 32766), (9, 0.1, 'DMin_LST', 32766)],
+                            'RHU': [(7, 0.01, 'DAve_hum', 32766), (8, 0.01, 'Dmin_hum', 32766)],
+                            'PRE': [(7, 0.1, '20-8_prec', 32766), (8, 0.1, '8-20_prec', 32766), (9, 0.1, 'Acc_prec', 32766)],
+                            'SSD': [(7, 0.1, 'SS_hour', 32766)]}
         self._interpolate_zvalue = {'EVP': (8, 0.1, 'Major EVP', 32766), 'PRS': (7, 0.1, 'DAve_Airp', 32766), 'WIN': (7, 0.1, 'DAve_Winds', 32766),
-                                   'TEM': (7, 0.1, 'DAve_AT', 32766), 'GST': (7, 0.1, 'DAve_LST', 32766), 'RHU': (7, 0.01, 'DAve_hum', 32766),
-                                   'PRE': (9, 0.1, 'Acc_prec', 32766), 'SSD': (7, 0.1, 'SS_hour', 32766)}
+                                    'TEM': (7, 0.1, 'DAve_AT', 32766), 'GST': (7, 0.1, 'DAve_LST', 32766), 'RHU': (7, 0.01, 'DAve_hum', 32766),
+                                    'PRE': (9, 0.1, 'Acc_prec', 32766), 'SSD': (7, 0.1, 'SS_hour', 32766)}
         self.zvalue = list(set([_.split('SURF_CLI_CHN_MUL_DAY-')[1].split('-')[0] for _ in csv_files]))
 
         if False in [_ in self._valid_zvalue for _ in self.zvalue]:
@@ -642,50 +658,102 @@ class CMA_ds(object):
 
         # Get the zvalue month and
         self._cma_header_ = ['Station_id', 'Lat', 'Lon', 'Alt', 'YYYY', 'MM', 'DD']
-        station_inform_dic = {'Station_id': [], 'Lon': [], 'Lat': [], 'Alt': []}
         self.date_range = {}
         self.year_range = {}
-        for zvalue_ in self.zvalue:
-            self.date_range[zvalue_] = []
-            if not os.path.exists(os.path.join(self.metadata_folder, f'{zvalue_}.csv')) or not os.path.exists(os.path.join(self.metadata_folder, f'station_inform.csv')):
-                zvalue_month_station = {'Station_id': [], 'Index': [], 'Month': []}
-                for csv_ in csv_files:
-                    if zvalue_ in csv_:
-                        month_ = int(csv_.split('-')[-1].split('.')[0])
-                        df_temp = pd.read_table(csv_, delim_whitespace=True, header=None)
-                        station_all = pd.unique(df_temp[0])
-                        for station_ in station_all:
-                            if station_ not in station_inform_dic['Station_id']:
-                                station_inform_dic['Station_id'].append(station_)
-                                station_inform_dic['Lon'].append(pd.unique(df_temp[df_temp[0] == station_][1])[0] // 100 + np.mod(pd.unique(df_temp[df_temp[0] == station_][1])[0], 100) / 60)
-                                station_inform_dic['Lat'].append(pd.unique(df_temp[df_temp[0] == station_][2])[0] // 100 + np.mod(pd.unique(df_temp[df_temp[0] == station_][2])[0], 100) / 60)
-                                station_inform_dic['Alt'].append(pd.unique(df_temp[df_temp[0] == station_][3])[0] / 100)
 
-                        zvalue_month_station['Station_id'].extend(station_all)
-                        zvalue_month_station['Index'].extend([zvalue_ for _ in range(len(station_all))])
-                        zvalue_month_station['Month'].extend([month_ for _ in range(len(station_all))])
-                zvalue_month_station = pd.DataFrame(zvalue_month_station)
-                zvalue_month_station.to_csv(os.path.join(self.metadata_folder, f'{zvalue_}.csv'))
+        # Generate the station inform df and data range df
+        station_inform_dic = {'Station_id': [], 'Lon': [], 'Lat': [], 'Alt': [], 'Month': [],}
+        self.date_range = {zvalue_: {'Station_id': [], 'Index': [], 'Month': []} for zvalue_ in self.zvalue}
+        zvalue_month_station = {}
+
+        if False in [os.path.exists(os.path.join(self.metadata_folder, f'{zvalue_}.csv')) for zvalue_ in self.zvalue] or not os.path.exists(os.path.join(self.metadata_folder, f'station_inform.csv')):
+            with tqdm(total=len(csv_files), desc=f'Extract the CMA metadata', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for csv_ in csv_files:
+                    zvalue_ = csv_.split('SURF_CLI_CHN_MUL_DAY-')[1].split('-')[0]
+                    month_ = int(csv_.split('SURF_CLI_CHN_MUL_DAY-')[1].split('.')[0].split('-')[-1])
+                    df_temp = pd.read_table(csv_, delim_whitespace=True, header=None)
+
+                    # traverse the station inform
+                    station_inform_df_ = df_temp.iloc[:, :4].drop_duplicates().reset_index(drop=True)
+                    station_inform_dic['Station_id'].extend(list(station_inform_df_.iloc[:, 0]))
+                    lon, lat, alt = list(station_inform_df_.iloc[:, 1]), list(station_inform_df_.iloc[:, 2]), list(station_inform_df_.iloc[:, 3])
+                    station_inform_dic['Lon'].extend(lon)
+                    station_inform_dic['Lat'].extend(lat)
+                    station_inform_dic['Alt'].extend(alt)
+                    station_inform_dic['Month'].extend([month_ for __ in range(len(lon))])
+
+                    # traverse the date range
+                    station_all = list(pd.unique(df_temp.iloc[:, 0]))
+                    self.date_range[zvalue_]['Station_id'].extend(station_all)
+                    self.date_range[zvalue_]['Index'].extend([zvalue_ for _ in range(len(station_all))])
+                    self.date_range[zvalue_]['Month'].extend([month_ for _ in range(len(station_all))])
+                    pbar.update()
+
+            # Generate the station inform.csv
+            if not os.path.exists(os.path.join(self.metadata_folder, f'station_inform.csv')):
+                station_inform_df = pd.DataFrame(station_inform_dic)
+                station_inform_df_ = station_inform_df.iloc[:, :4].drop_duplicates()
+                station_inform_df_.sort_values(by='Station_id', inplace=True)
+                station_inform_df_.reset_index(drop=True, inplace=True)
+                station_inform_df_['Start_YYYYMM'] = None
+                station_inform_df_['End_YYYYMM'] = None
+                shape = len(station_inform_df_)
+                for _ in range(shape):
+                    month_list = list(pd.unique(station_inform_df.loc[(station_inform_df['Station_id'] == station_inform_df_.loc[_, 'Station_id']) &
+                                                                      (station_inform_df['Lon'] == station_inform_df_.loc[_, 'Lon']) &
+                                                                      (station_inform_df['Lat'] == station_inform_df_.loc[_, 'Lat']) &
+                                                                      (station_inform_df['Alt'] == station_inform_df_.loc[_, 'Alt']), 'Month']))
+                    if len(month_list) == (max(month_list) // 100 - min(month_list) // 100) * 12 + np.mod(max(month_list), 100) - np.mod(min(month_list), 100) + 1:
+                        station_inform_df_.loc[_, 'Start_YYYYMM'] = int(min(month_list))
+                        station_inform_df_.loc[_, 'End_YYYYMM'] = int(max(month_list))
+                    else:
+                        data_range = separate_month_range(month_list)
+                        row2copy = station_inform_df_.loc[[_]].reset_index(drop=True)
+                        for __ in range(len(data_range)):
+                            if __ == 0:
+                                station_inform_df_.loc[_, 'Start_YYYYMM'] = int(min(data_range[0]))
+                                station_inform_df_.loc[_, 'End_YYYYMM'] = int(max(data_range[0]))
+                            else:
+                                row2copy_ = copy.deepcopy(row2copy)
+                                row2copy_.loc[0, 'Start_YYYYMM'] = int(min(data_range[__]))
+                                row2copy_.loc[0, 'End_YYYYMM'] = int(max(data_range[__]))
+                                station_inform_df_ = pd.concat([station_inform_df_, row2copy_], ignore_index=True)
+
+                station_inform_df_ = station_inform_df_.sort_values(by=['Station_id', 'Start_YYYYMM']).reset_index(drop=True)
+                station_inform_df_.to_csv(os.path.join(self.metadata_folder, f'station_inform.csv'), index=False)
             else:
-                zvalue_month_station = pd.read_csv(os.path.join(self.metadata_folder, f'{zvalue_}.csv'))
-            self.date_range[zvalue_] = pd.unique(zvalue_month_station['Month'])
+                station_inform_df_ = pd.read_csv(os.path.join(self.metadata_folder, f'station_inform.csv'))
+
+            if False in [os.path.exists(os.path.join(self.metadata_folder, f'{zvalue_}.csv')) for zvalue_ in self.zvalue]:
+                for zvalue_ in self.zvalue:
+                    zvalue_month_station[zvalue_] = pd.DataFrame(self.date_range[zvalue_])
+                    zvalue_month_station[zvalue_].to_csv(os.path.join(self.metadata_folder, f'{zvalue_}.csv'), index=False)
+            else:
+                for zvalue_ in self.zvalue:
+                    zvalue_month_station[zvalue_] = pd.read_csv(os.path.join(self.metadata_folder, f'{zvalue_}.csv'))
+        else:
+            for zvalue_ in self.zvalue:
+                zvalue_month_station[zvalue_] = pd.read_csv(os.path.join(self.metadata_folder, f'{zvalue_}.csv'))
+            station_inform_df_ = pd.read_csv(os.path.join(self.metadata_folder, f'station_inform.csv'))
+
+        station_inform_df_['Lat'] = station_inform_df_['Lat'] // 100 + np.mod(station_inform_df_['Lat'], 100) / 60
+        station_inform_df_['Lon'] = station_inform_df_['Lon'] // 100 + np.mod(station_inform_df_['Lon'], 100) / 60
+        station_inform_df_['Alt'] = station_inform_df_['Alt'] / 100
+        self.station_inform_df = station_inform_df_
+
+        # Generate the year range and date_range
+        for zvalue_ in self.zvalue:
+            self.date_range[zvalue_] = pd.unique(zvalue_month_station[zvalue_]['Month'])
             self.year_range[zvalue_] = pd.unique(np.array([_ // 100 for _ in self.date_range[zvalue_]])).tolist()
 
-        if not os.path.exists(os.path.join(self.metadata_folder, f'station_inform.csv')):
-            self.station_inform_df = pd.DataFrame(station_inform_dic)
-            self.station_inform_df.to_csv(os.path.join(self.metadata_folder, f'station_inform.csv'))
-        else:
-            self.station_inform_df = pd.read_csv(os.path.join(self.metadata_folder, f'station_inform.csv'))
-
         self.csv_files = csv_files
-
         # Define cache folder
         # self.cache_folder, self.trash_folder = self.work_env + 'cache\\', self.work_env + 'trash\\'
         # bf.create_folder(self.cache_folder)
         # bf.create_folder(self.trash_folder)
 
         # Create output path
-        self.output_path, self.log_filepath = f'{os.path.dirname(self.work_env)}\\CMA_OUTPUT\\',  f'{self.work_env}logfile\\'
+        self.output_path, self.log_filepath = f'{os.path.dirname(self.work_env)}\\CMA_OUTPUT\\',  f'{self.work_env}Logfile\\'
         bf.create_folder(self.output_path)
         bf.create_folder(self.log_filepath)
         # bf.create_folder(self.shpfile_path)
@@ -776,6 +844,66 @@ class CMA_ds(object):
                     else:
                         log_file.writelines([f'Status: Error in {func_processing_name}!\n', 'Error information:\n', error_inf + '\n', '#' * 70 + '\n'])
         return wrapper
+
+    def append_ds(self, new_cma_ds, output_folder, inplace=False):
+
+        # Create folder
+        bf.create_folder(output_folder)
+        if os.path.exists(output_folder):
+            new_ds_folder = os.path.join(output_folder, 'Original\\')
+            bf.create_folder(new_ds_folder)
+        else:
+            raise ValueError('The output folder is not valid')
+
+        # Get CMA ds
+        if isinstance(new_cma_ds, CMA_ds):
+
+            # Generate the original and new csv files
+            orids_csv_files = self.csv_files
+            newds_csv_files = new_cma_ds.csv_files
+            ori_filename = [os.path.basename(_).split('.')[0] for _ in orids_csv_files]
+            new_filename = [os.path.basename(_).split('.')[0] for _ in newds_csv_files]
+            ori_filename.extend(new_filename)
+            all_filename = list(set(ori_filename))
+
+            with tqdm(total=len(all_filename), desc=f'Assemble the CMA dataset', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for filename_ in all_filename:
+
+                    # Generate the status
+                    ori_status = [filename_ in _ for _ in orids_csv_files]
+                    new_status = [filename_ in _ for _ in newds_csv_files]
+
+                    # Create output folder
+                    for index_ in self._valid_zvalue:
+                        if index_ in filename_:
+                            new_index_folder = os.path.join(new_ds_folder, f'{index_}\\')
+                            bf.create_folder(new_index_folder)
+
+                    if True in ori_status and True in new_status:
+                        ori_df_temp = pd.read_table(orids_csv_files[ori_status.index(True)], delim_whitespace=True, header=None)
+                        new_df_temp = pd.read_table(newds_csv_files[new_status.index(True)], delim_whitespace=True, header=None)
+                        if len(ori_df_temp.keys()) != len(new_df_temp.keys()):
+                            pass
+                        new_df_ = pd.concat([ori_df_temp, new_df_temp], ignore_index=True)
+                        new_df_ = new_df_.drop_duplicates()
+                        new_df_ = new_df_.sort_values(by=[0,4,5,6])
+                        new_df_ = new_df_.reset_index(drop=True)
+                        new_df_.to_csv(os.path.join(new_index_folder, f'{filename_}.TXT'), sep=' ', index=False, header=False)
+                    elif True in ori_status:
+                        shutil.copy(orids_csv_files[ori_status.index(True)], os.path.join(new_index_folder, f'{filename_}.TXT'))
+                    elif True in new_status:
+                        shutil.copy(newds_csv_files[new_status.index(True)], os.path.join(new_index_folder, f'{filename_}.TXT'))
+                    else:
+                        raise Exception('Code error!')
+                    pbar.update()
+
+        else:
+            raise TypeError('The append ds should under a CMA dataset!')
+
+        if inplace:
+            return CMA_ds(output_folder)
+        else:
+            self = CMA_ds(output_folder)
 
     def _retrieve_para(self, required_para_name_list, protected_var=False, **kwargs):
 
@@ -1765,9 +1893,11 @@ if __name__ == '__main__':
     # station_rec = [Polygon([(441536.34182, 3457208.02321), (1104536.34182, 3457208.02321), (1104536.34182, 3210608.02321), (441536.34182, 3210608.02321)])]
     # geometry = gp.GeoDataFrame({'id':[1]}, geometry=station_rec, crs='EPSG:32649')
     # geometry.to_file('G:\\A_Landsat_Floodplain_veg\\ROI_map\\weather_boundary.shp')
-    ds_temp = CMA_ds('G:\\A_Landsat_Floodplain_veg\\Climatology_data\\Data_cma\\')
-    ds_temp.anusplin('G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_UTM.shp', 'G:\\A_Landsat_Floodplain_veg\\Climatology_data\\DEM\\DEM\\alos_dem300.txt', mask=None, zvalue=['TEM', 'WIN', 'GST', 'PRE', 'PRS', 'RHU'], date_range=[19850101, 20201231], bulk=True)
-    ds_temp.raster2dc(['TEM', 'WIN', 'GST', 'PRE', 'PRS', 'RHU'], ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_UTM.shp', ds2ras_method='ANUSPLIN', temporal_division='year')
+    ds_temp2 = CMA_ds('G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2015\\')
+    ds_temp = CMA_ds('G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\400_control_station_1950_2020\\')
+    ds_temp.append_ds(ds_temp2, 'G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2023\\')
+    ds_temp.anusplin('G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_UTM.shp', 'G:\\A_Landsat_Floodplain_veg\\Climatology_data\\DEM\\DEM\\alos_dem300.txt', mask=None, zvalue=['PRE'], date_range=[20090101, 20201231], bulk=True)
+    ds_temp.raster2dc(['PRE'], ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_UTM.shp', ds2ras_method='ANUSPLIN', temporal_division='year')
 
     # ds_temp = gdal.Open('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')
     # bounds_temp = bf.raster_ds2bounds('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')

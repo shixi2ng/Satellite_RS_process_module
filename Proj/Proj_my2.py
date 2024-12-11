@@ -23,5 +23,4 @@ if __name__ == '__main__':
 
     hc = HydroDatacube()
     hc.merge_hydro_inform(wl1)
-    hc.hydrodc_csv2matrix('D:\\Hydrodatacube\\',
-                          'D:\\Hydrodatacube\\hydro_dc_X_16357_Y_4827_pretgd.csv')
+    hc.hydrodc_csv2matrix('D:\\Hydrodatacube\\',  'D:\\Hydrodatacube\\hydro_dc_X_16357_Y_4827_pretgd.csv')

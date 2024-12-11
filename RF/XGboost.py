@@ -47,6 +47,31 @@ def XGB(x_dataset: np.ndarray, y_dataset: np.ndarray):
     y_pred = xgb_local.predict(x_test)
 
 
+def XGB_contribution(x_dataset: np.ndarray, y_dataset: np.ndarray):
+
+    x_train, x_test, y_train, y_test = train_test_split(x_dataset, y_dataset, test_size=0.3, random_state=None)
+    xgb_local = xgb.XGBRegressor(max_depth=8,
+                                learning_rate=0.05,
+                                n_estimators=100,
+                                silent=True,
+                                objective='reg:squarederror',
+                                nthread=-1,
+                                gamma=0,
+                                min_child_weight=1,
+                                max_delta_step=0,
+                                subsample=0.85,
+                                colsample_bytree=0.7,
+                                colsample_bylevel=1,
+                                reg_alpha=0,
+                                reg_lambda=1,
+                                scale_pos_weight=1,
+                                seed=1440,
+                                missing=None)
+
+    xgb_local.fit(x_train, y_train, eval_metric='rmse', verbose=True, eval_set=[(x_test, y_test)], early_stopping_rounds=100)
+    y_pred = xgb_local.predict(x_test)
+
+
 if __name__ == '__main__':
 
     ###################################################################################################################################

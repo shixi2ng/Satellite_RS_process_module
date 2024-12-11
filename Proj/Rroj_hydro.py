@@ -7,8 +7,8 @@ if __name__ == '__main__':
 
     # Water level import
     wl1 = HydrometricStationData()
-    file_list = bf.file_filter('G:\\A_Landsat_veg\\Water_level_python\\Original_water_level\\', ['.xls'])
-    corr_temp = pd.read_csv('G:\\A_Landsat_veg\\Water_level_python\\Original_water_level\\对应表.csv')
+    file_list = bf.file_filter('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_water_level\\', ['.xls'])
+    corr_temp = pd.read_csv('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_water_level\\对应表.csv')
     cs_list, wl_list = [], []
     for file_ in file_list:
         for hs_num in range(corr_temp.shape[0]):

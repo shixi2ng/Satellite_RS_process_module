@@ -76,11 +76,14 @@ class NDSparseMatrix:
             raise TypeError('ND matrix was under at least three dimension')
 
         arr_list = []
-        if isinstance(z_r, (int, np.int8, np.int16, np.int32, np.int64)):
+        if isinstance(z_r, (int, np.int8, np.int16, np.int32, np.int64)) or z_r.stop - z_r.start == 1 or z_r.stop - z_r.start == 0:
+            if z_r.stop - z_r.start == 1 or z_r.stop - z_r.start == 0:
+                z_r = z_r.start
+
             if isinstance(y_r, (int, np.int8, np.int16, np.int32, np.int64)) and isinstance(x_r, (int, np.int8, np.int16, np.int32, np.int64)):
-                return self.SM_group[self.SM_namelist[z_r]][y_r, x_r]
+                return self.SM_group[self.SM_namelist[z_r]][y_r, x_r].reshape(y_r.stop - y_r.start, x_r.stop - x_r.start, 1)
             else:
-                return self.SM_group[self.SM_namelist[z_r]][y_r, x_r].toarray()
+                return self.SM_group[self.SM_namelist[z_r]][y_r, x_r].toarray().reshape(y_r.stop - y_r.start, x_r.stop - x_r.start, 1)
         else:
             for _ in range(self.shape[2])[z_r]:
                 if isinstance(x_r, (int, np.int8, np.int16, np.int32, np.int64)) and isinstance(y_r, (int, np.int8, np.int16, np.int32, np.int64)):

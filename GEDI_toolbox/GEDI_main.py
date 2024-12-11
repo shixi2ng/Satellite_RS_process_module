@@ -50,9 +50,10 @@ class GEDI_df(object):
     def __init__(self, *args):
 
         self.GEDI_inform_DF = None
-        self._GEDI_fund_att = ['Shot Number', 'Beam', 'Latitude', 'Longitude', 'Tandem-X DEM', 'Elevation (m)',
+        self._GEDI_fund_att = ['Date', 'Shot Number', 'Beam', 'Latitude', 'Longitude', 'Tandem-X DEM', 'Elevation (m)',
                                'Canopy Elevation (m)', 'Canopy Height (rh100)', 'RH 98', 'RH 25', 'Quality Flag',
                                'Degrade Flag', 'Sensitivity', 'Urban rate', 'Landsat water rate', 'Leaf off flag']
+
         for GEDI_inform_xlsx in args:
             if not os.path.exists(GEDI_inform_xlsx):
                 raise Exception(f'The {GEDI_inform_xlsx} is not a valid file name')
@@ -67,7 +68,7 @@ class GEDI_df(object):
                 raise Exception(f'The {GEDI_inform_xlsx} does not contain all the required inform!')
 
             elif self.GEDI_inform_DF is None:
-                self.GEDI_inform_DF = GEDI_df
+                self.GEDI_inform_DF = GEDI_df[self._GEDI_fund_att]
 
             else:
                 key_temp = list(GEDI_df.keys())
@@ -88,6 +89,7 @@ class GEDI_df(object):
             else:
                 raise Exception('Not a valid GEDI dataframe file')
             self.work_env = os.path.dirname(GEDI_inform_xlsx)
+            self.file_name = os.path.basename(GEDI_inform_xlsx).split('.')[0]
 
         self.df_size = self.GEDI_inform_DF.shape[0]
 
@@ -129,7 +131,7 @@ class GEDI_df(object):
 
             # Sort it according to lat and lon
             self.GEDI_inform_DF = self.GEDI_inform_DF.sort_values([f'{xycolumn_start}_lon', f'{xycolumn_start}_lat'], ascending=[True, False])
-            self.GEDI_inform_DF = self.GEDI_inform_DF.reset_index()
+            self.GEDI_inform_DF = self.GEDI_inform_DF.reset_index(drop=True)
 
 
 class GEDI_ds(object):

@@ -47,99 +47,101 @@ def process_denv_via_pheme(denv_dc: str, pheme_dc: str, year, pheme, kwargs):
 
         # Get the base status
         if base_status is True:
+            if not os.path.exists(os.path.join(output_path, f'{str(cal_method)}_{denvname}_{str(year)}_static_{start_pheme}.TIF')):
 
-            # Determine the base time
-            if start_pheme == 'SOY':
-                start_doy = np.zeros([dc_YSize, dc_XSize])
-                end_doy = np.ones([dc_YSize, dc_XSize]) * 10
+                # Determine the base time
+                if start_pheme == 'SOY':
+                    start_doy = np.zeros([dc_YSize, dc_XSize])
+                    end_doy = np.ones([dc_YSize, dc_XSize]) * 10
 
-            elif start_pheme == 'EOY':
-                raise Exception('EOY can not be the start pheme when base status is True')
+                elif start_pheme == 'EOY':
+                    raise Exception('EOY can not be the start pheme when base status is True')
 
-            elif start_pheme in ['SOS', 'peak_doy', 'EOS']:
-                if pheme_sparse_factor:
-                    start_doy = np.round(pheme_dc.SM_group[f'{str(year)}_{start_pheme}'].toarray())
-                    start_doy[start_doy == 0] = np.nan
-                    start_doy = start_doy - 5
-                    end_doy = np.round(pheme_dc.SM_group[f'{str(year)}_{start_pheme}'].toarray())
-                    end_doy[end_doy == 0] = np.nan
-                    end_doy = end_doy + 5
+                elif start_pheme in ['SOS', 'peak_doy', 'EOS']:
+                    if pheme_sparse_factor:
+                        start_doy = np.round(pheme_dc.SM_group[f'{str(year)}_{start_pheme}'].toarray())
+                        start_doy[start_doy == 0] = np.nan
+                        start_doy = start_doy - 5
+                        end_doy = np.round(pheme_dc.SM_group[f'{str(year)}_{start_pheme}'].toarray())
+                        end_doy[end_doy == 0] = np.nan
+                        end_doy = end_doy + 5
+                    else:
+                        raise Exception('Code error')
                 else:
-                    raise Exception('Code error')
-            else:
-                raise Exception('Code Error')
+                    raise Exception('Code Error')
 
-            # Generate the base value
-            start_time = np.nanmin(start_doy).astype(np.int16)
-            end_time = np.nanmax(end_doy).astype(np.int16)
-            acc_static = np.zeros([dc_YSize, dc_XSize])
-            cum_static = np.zeros([dc_YSize, dc_XSize])
-            with tqdm(total=end_time + 1 - start_time, desc=f'Get the static value of {str(year)}',
-                      bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                for _ in range(start_time, end_time + 1):
-                    within_factor = np.logical_and(np.ones([dc_YSize, dc_XSize]) * _ >= start_doy,
-                                                   np.ones([dc_YSize, dc_XSize]) * _ < end_doy)
-                    cum_static = cum_static + within_factor
+                # Generate the base value
+                start_time = np.nanmin(start_doy).astype(np.int16)
+                end_time = np.nanmax(end_doy).astype(np.int16)
+                acc_static = np.zeros([dc_YSize, dc_XSize])
+                cum_static = np.zeros([dc_YSize, dc_XSize])
+                with tqdm(total=end_time + 1 - start_time, desc=f'Get the static value of {str(year)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                    for _ in range(start_time, end_time + 1):
+                        within_factor = np.logical_and(np.ones([dc_YSize, dc_XSize]) * _ >= start_doy,
+                                                       np.ones([dc_YSize, dc_XSize]) * _ < end_doy)
+                        cum_static = cum_static + within_factor
+                        if denv_sparse_factor:
+                            denv_date = int(year * 1000 + _)
+                            denv_arr = denv_dc.SM_group[denv_date].toarray()
+                        else:
+                            raise Exception('Code Error')
+                        denv_doy_arr = denv_arr * within_factor
+                        acc_static = acc_static + denv_doy_arr
+                        pbar.update()
+
+                acc_static = acc_static / cum_static
+                cum_static = None
+                bf.write_raster(ds_temp, acc_static, output_path, f'{str(cal_method)}_{denvname}_{str(year)}_static_{start_pheme}.TIF',
+                                raster_datatype=gdal.GDT_Float32)
+            else:
+                ds_temp = gdal.Open(os.path.join(output_path, f'{str(cal_method)}_{denvname}_{str(year)}_static_{start_pheme}.TIF'))
+                acc_static = ds_temp.GetRasterBand(1).ReadAsArray()
+
+        if not os.path.exists(os.path.join(output_path, f'{str(cal_method)}_{denvname}_{start_pheme}_{end_pheme}_{str(year)}.TIF')):
+            # Get the denv matrix
+            start_arr = np.round(pheme_dc.SM_group[f'{str(year)}_{start_pheme}'].toarray())
+            end_arr = np.round(pheme_dc.SM_group[f'{str(year)}_{end_pheme}'].toarray())
+            start_arr[start_arr == 0] = np.nan
+            end_arr[end_arr == 0] = np.nan
+
+            # Get the unique value
+            start_doy = np.nanmin(np.unique(start_arr)).astype(np.int16)
+            end_doy = np.nanmax(np.unique(end_arr)).astype(np.int16)
+            acc_denv = np.zeros([dc_YSize, dc_XSize])
+            cum_denv = np.zeros([dc_YSize, dc_XSize])
+
+            with tqdm(total=end_doy + 1 - start_doy, desc=f'Get the static value of {str(year)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for _ in range(start_doy, end_doy + 1):
+
                     if denv_sparse_factor:
                         denv_date = int(year * 1000 + _)
                         denv_arr = denv_dc.SM_group[denv_date].toarray()
                     else:
                         raise Exception('Code Error')
-                    denv_doy_arr = denv_arr * within_factor
-                    acc_static = acc_static + denv_doy_arr
+
+                    if base_status:
+                        within_factor = np.logical_and(np.logical_and(np.ones([dc_YSize, dc_XSize]) * _ >= start_doy,
+                                                       np.ones([dc_YSize, dc_XSize]) * _ < end_doy),  denv_arr >= acc_static)
+                        denv_doy_arr = (denv_arr - acc_static) * within_factor
+                    else:
+                        within_factor = np.logical_and(np.ones([dc_YSize, dc_XSize]) * _ >= start_doy,
+                                                       np.ones([dc_YSize, dc_XSize]) * _ < end_doy)
+                        denv_doy_arr = denv_arr * within_factor
+
+                    if cal_method != 'max':
+                        cum_denv = cum_denv + within_factor
+                        acc_denv = acc_denv + denv_doy_arr
+                    else:
+                        acc_denv = np.nanmax(acc_denv, denv_doy_arr)
                     pbar.update()
 
-            acc_static = acc_static / cum_static
-            cum_static = None
-            bf.write_raster(ds_temp, acc_static, output_path, f'{str(cal_method)}_{denvname}_{str(year)}_static.TIF',
-                            raster_datatype=gdal.GDT_Float32)
+            if cal_method == 'mean':
+                acc_denv = acc_denv / cum_denv
 
-        # Get the denv matrix
-        start_arr = np.round(pheme_dc.SM_group[f'{str(year)}_{start_pheme}'].toarray())
-        end_arr = np.round(pheme_dc.SM_group[f'{str(year)}_{end_pheme}'].toarray())
-        start_arr[start_arr == 0] = np.nan
-        end_arr[end_arr == 0] = np.nan
+            if size_control_factor:
+                acc_denv = acc_denv / 100
 
-        # Get the unique value
-        start_doy = np.nanmin(np.unique(start_arr)).astype(np.int16)
-        end_doy = np.nanmax(np.unique(end_arr)).astype(np.int16)
-        acc_denv = np.zeros([dc_YSize, dc_XSize])
-        cum_denv = np.zeros([dc_YSize, dc_XSize])
-
-        with tqdm(total=end_doy + 1 - start_doy, desc=f'Get the static value of {str(year)}',
-                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-            for _ in range(start_doy, end_doy + 1):
-
-                if denv_sparse_factor:
-                    denv_date = int(year * 1000 + _)
-                    denv_arr = denv_dc.SM_group[denv_date].toarray()
-                else:
-                    raise Exception('Code Error')
-
-                if base_status:
-                    within_factor = np.logical_and(np.logical_and(np.ones([dc_YSize, dc_XSize]) * _ >= start_doy,
-                                                   np.ones([dc_YSize, dc_XSize]) * _ < end_doy),
-                                                   denv_arr >= acc_static)
-                    denv_doy_arr = (denv_arr - acc_static) * within_factor
-                else:
-                    within_factor = np.logical_and(np.ones([dc_YSize, dc_XSize]) * _ >= start_doy,
-                                                   np.ones([dc_YSize, dc_XSize]) * _ < end_doy)
-                    denv_doy_arr = denv_arr * within_factor
-
-                if cal_method != 'max':
-                    cum_denv = cum_denv + within_factor
-                    acc_denv = acc_denv + denv_doy_arr
-                else:
-                    acc_denv = np.nanmax(acc_denv, denv_doy_arr)
-                pbar.update()
-
-        if cal_method == 'mean':
-            acc_denv = acc_denv / cum_denv
-
-        if size_control_factor:
-            acc_denv = acc_denv / 100
-
-        bf.write_raster(ds_temp, acc_denv, output_path, f'{str(cal_method)}_{denvname}_{str(year)}.TIF', raster_datatype=gdal.GDT_Float32)
+            bf.write_raster(ds_temp, acc_denv, output_path, f'{str(cal_method)}_{denvname}_{start_pheme}_{end_pheme}_{str(year)}.TIF', raster_datatype=gdal.GDT_Float32)
         print(f'Finish calculate the \033[1;31m{str(cal_method)}\033[0m \033[1;31m{denvname}\033[0m for the year \033[1;34m{str(year)}\033[0m in {str(time.time() - st)}s')
     except:
         print(traceback.format_exc())
