@@ -700,12 +700,12 @@ class Landsat_l2_ds(object):
                         output_array[np.isnan(output_array)] = 0
                         output_array.astype(np.uint16)
                         bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_UInt16)
-                        data_type = gdal.GDT_Int16 = gdal.GDT_UInt16
+                        data_type = gdal.GDT_UInt16
                         nodata_value = 0
                     elif self._size_control_factor:
                         output_array[np.isnan(output_array)] = -3.2768
                         output_array = output_array * 10000
-                        output_array.astype(int)
+                        output_array.astype(np.int16)
                         bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
                         data_type = gdal.GDT_Int16
                         nodata_value = -32768
