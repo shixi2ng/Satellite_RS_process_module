@@ -1,3 +1,4 @@
+import copy
 import os.path
 import pandas as pd
 import requests
@@ -22,11 +23,19 @@ def crawler_qweather_data(station_, date_list, crawler_folder, log_folder, web_u
         if not os.path.exists(f'{log_folder}\\{str(station_)}_log.csv'):
             log_df = pd.DataFrame({'Station': [station_ for _ in range(len(date_list))], 'Date': date_list, 'State': ['Unknown' for _ in range(len(date_list))]})
         else:
-            log_df = pd.read_csv(f'{log_folder}\\{str(station_)}_log.csv')
+            log_df2 = pd.read_csv(f'{log_folder}\\{str(station_)}_log.csv')
+            log_df = pd.DataFrame({'Station': [station_ for _ in range(len(date_list))], 'Date': date_list, 'State': ['Unknown' for _ in range(len(date_list))]})
+            for _ in range(log_df.shape[0]):
+                if log_df2[(log_df2['Station'] == log_df['Station'][_]) & (log_df2['Date'] == log_df['Date'][_])].index.shape[0] == 1:
+                    log_df.loc[_, 'State'] = log_df2[(log_df2['Station'] == log_df['Station'][_]) & (log_df2['Date'] == log_df['Date'][_])]['State'].values
+                elif log_df2[(log_df2['Station'] == log_df['Station'][_]) & (log_df2['Date'] == log_df['Station'][_])].index.shape[0] > 1:
+                    raise Exception('Code Error')
+                else:
+                    pass
 
         with tqdm(total=len(date_list), desc=f'CRAWLER Qweather data 4 Station {str(station_)}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
             for date_ in date_list:
-                if not os.path.exists(f'{crawler_folder}\\{str(station_)}_{str(date_)}.csv') and log_df.loc[log_df['Date'] == date_, 'State'].iloc[0] == 'Unknown':
+                if not os.path.exists(f'{crawler_folder}\\{str(station_)}_{str(date_)}.csv') and (log_df.loc[log_df['Date'] == date_, 'State'].iloc[0] == 'Unknown' or log_df.loc[log_df['Date'] == date_, 'State'].iloc[0] == 'Issued'):
                     station_data_url = f'{web_url}{str(station_)}/history/?date={str(date_)}'
                     response = requests.get(station_data_url)
                     if response.status_code == 200:
@@ -35,10 +44,13 @@ def crawler_qweather_data(station_, date_list, crawler_folder, log_folder, web_u
                             # 使用BeautifulSoup解析页面内容
                             soup = BeautifulSoup(page_content, 'html.parser')
                             content = str(soup)
-                            table_temp = pd.read_html(StringIO(content), flavor='lxml')[0]
-                            table_temp.to_csv(f'{crawler_folder}\\{str(station_)}_{str(date_)}.csv', encoding='GB18030')
-                            log_df.loc[log_df['Date'] == date_, 'State'] = 'Downloaded'
-                            time.sleep(0.1)
+                            if "无历史数据" not in content:
+                                table_temp = pd.read_html(StringIO(content), flavor='lxml')[0]
+                                table_temp.to_csv(f'{crawler_folder}\\{str(station_)}_{str(date_)}.csv', encoding='GB18030')
+                                log_df.loc[log_df['Date'] == date_, 'State'] = 'Downloaded'
+                                time.sleep(0.1)
+                            else:
+                                log_df.loc[log_df['Date'] == date_, 'State'] = 'NoData'
                         except:
                             log_df.loc[log_df['Date'] == date_, 'State'] = 'Issued'
                     else:
@@ -46,7 +58,7 @@ def crawler_qweather_data(station_, date_list, crawler_folder, log_folder, web_u
                 else:
                     log_df.loc[log_df['Date'] == date_, 'State'] = 'Downloaded'
                 pbar.update()
-        log_df.to_csv(f'{log_folder}\\{str(station_)}_log.csv')
+        log_df.to_csv(f'{log_folder}\\{str(station_)}_log.csv', index=False)
     except:
         print(traceback.format_exc())
         pass
@@ -57,9 +69,10 @@ class Qweather_dataset(object):
     def __init__(self, work_env=None):
 
         # Define constant
+        module_path = os.path.dirname(__file__)
         self.web_url = 'https://q-weather.info/weather/'
-        self.station_inform = pd.read_csv('./station_inform.csv')
-        self.support_station_list = list(pd.read_csv('./station_inform.csv')['Station_id'])
+        self.station_inform = pd.read_csv(os.path.join(module_path, 'station_inform.csv'))
+        self.support_station_list = list(pd.read_csv(os.path.join(module_path, 'station_inform.csv'))['Station_id'])
         self.support_date_range = [datetime(1950, 1, 1), datetime.now()]
         self.feature_dic = {'TEM': ['瞬时温度', 2, '12001', 'SURF_CLI_CHN_MUL_DAY-TEM-12001-'],
                             'PRS': ['地面气压', 3, '10004', 'SURF_CLI_CHN_MUL_DAY-PRS-10004-'],
@@ -126,37 +139,104 @@ class Qweather_dataset(object):
                 bf.create_folder(feature_path_dic[_])
 
             month_range = np.unique(np.array(self.date_range) // 100).tolist()
-            for month_ in month_range:
-                feature_state = [os.path.exists(os.path.join(feature_path_dic[feature_], f'{self.feature_dic[feature_][3]}{str(month_)}.TXT')) for feature_ in self.feature_dic.keys()]
-                if False in feature_state:
-                    weather_df_dic = dict.fromkeys(self.feature_dic, [])
-                    for index_ in range(self.Qweather_df.shape[0]):
-                        if int(self.Qweather_df['Year'][index_]) * 100 + int(self.Qweather_df['Month'][index_]) == month_:
-                            csv_file = pd.read_csv(self.Qweather_df['File_name'][index_], encoding='GB18030')
-                            for feature_ in weather_df_dic.keys():
-                                data_arr = np.array(csv_file[self.feature_dic[feature_][0]])
-                                daily_mean, daily_max, daily_min, daily_acc = np.nanmean(data_arr), np.nanmax(data_arr),\
-                                                                              np.nanmin(data_arr), np.nansum(data_arr)
-                                station_id = int(self.Qweather_df['Station_id'][index_])
-                                station_inform = np.array(self.station_inform[self.station_inform['Station_id'] == station_id]).tolist()
-                                lat = 1
-                                lon = 1
-                                alt = 1
-                                year_ = int(self.Qweather_df['Year'][index_])
-                                month_ = int(self.Qweather_df['Month'][index_])
-                                day_ = int(self.Qweather_df['Day'][index_])
+            with (tqdm(total=len(month_range), desc=f'Process Qweather data to standard CMA file', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar):
 
-                                if feature_ == 'TEM':
-                                    weather_df_dic[feature_].append([int(),
-                                                                     int(self.Qweather_df['Station'][index_] * 100),
-                                                                     int(self.Qweather_df['Station'][index_] * 100),])
+                for month_ in month_range:
+                    feature_state = [os.path.exists(os.path.join(feature_path_dic[feature_], f'{self.feature_dic[feature_][3]}{str(month_)}.TXT')) for feature_ in self.feature_dic.keys()]
+                    if False in feature_state:
 
-                                elif feature_ == ['PRS', 'WIN', 'RHU']:
-                                    pass
+                        # Create weather df dic
+                        weather_df_dic = dict.fromkeys(self.feature_dic, None)
+                        for _ in weather_df_dic.keys():
+                            weather_df_dic[_] = []
 
-                                elif feature_ in ['PRE']:
-                                    pass
+                        for index_ in range(self.Qweather_df.shape[0]):
+                            if int(self.Qweather_df['Year'][index_]) * 100 + int(self.Qweather_df['Month'][index_]) == month_:
 
+                                try:
+                                    # Read csv file
+                                    csv_file = pd.read_csv(self.Qweather_df['File_name'][index_], encoding='GB18030')
+
+                                    # Retrieve station inform
+                                    station_ = self.Qweather_df['Station_id'][index_]
+                                    if station_ not in self.station_list:
+                                        print(f'Station {str(station_)} is not in the station inform.csv, it could be a new station!')
+                                    else:
+                                        station_df = self.station_inform[self.station_inform['Station_id'] == station_]
+                                        if month_ > max(station_df['End_YYYYMM']):
+                                            station_inform_ = station_df.loc[station_df['End_YYYYMM'].idxmax()].iloc[:4].values.tolist()
+                                        elif month_ < min(station_df['Start_YYYYMM']):
+                                            station_inform_ = station_df.loc[station_df['Start_YYYYMM'].idxmin()].iloc[:4].values.tolist()
+                                        else:
+                                            station_inform_ = station_df[(station_df['End_YYYYMM'] >= month_) & (station_df['Start_YYYYMM'] <= month_)].iloc[:, :4].values.tolist()[0]
+
+                                        # Retrieve the date inform
+                                        day_list = [self.Qweather_df['Year'][index_], self.Qweather_df['Month'][index_], self.Qweather_df['Day'][index_]]
+
+                                        # Gather as base inform
+                                        station_inform_.extend(day_list)
+                                        if len(station_inform_) != 7:
+                                            raise Exception('The base inform is wrong!')
+
+                                        # Retrieve the feature data
+                                        for feature_ in weather_df_dic.keys():
+                                            feature_list, combine_inform = [], copy.deepcopy(station_inform_)
+                                            if self.feature_dic[feature_][0] not in csv_file.keys():
+                                                data_arr = np.array(csv_file[csv_file.keys()[self.feature_dic[feature_][1]]])
+                                            else:
+                                                data_arr = np.array(csv_file[self.feature_dic[feature_][0]])
+                                            if data_arr.dtype == 'object':
+                                                data_arr_new = []
+                                                for _ in data_arr:
+                                                    try:
+                                                        data_arr_new.append(float(_))
+                                                    except:
+                                                        data_arr_new.append(np.nan)
+                                                data_arr = np.array(data_arr_new)
+
+                                            if np.isnan(data_arr).all():
+                                                daily_mean, daily_max, daily_min, daily_acc,  = 32766, 32766, 32766, 3276.6
+                                            else:
+                                                daily_mean, daily_max, daily_min, daily_acc = np.nanmean(data_arr), np.nanmax(data_arr), np.nanmin(data_arr), np.nansum(data_arr)
+
+                                            if np.isnan(data_arr[0:12]).all():
+                                                daily_acc1 = 3276.6
+                                            else:
+                                                daily_acc1 = np.nansum(data_arr[0:12])
+
+                                            if np.isnan(data_arr[12:]).all():
+                                                daily_acc2 = 3276.6
+                                            else:
+                                                daily_acc2 = np.nansum(data_arr[12:])
+
+                                            if feature_ == 'TEM' or feature_ == 'PRS':
+                                                if np.isnan(data_arr).all():
+                                                    feature_list = [32766, 32766, 32766, 0, 0, 0]
+                                                else:
+                                                    feature_list = [int(daily_mean * 10), int(daily_max * 10), int(daily_min * 10), 0, 0, 0]
+
+                                            elif feature_ == 'RHU':
+                                                feature_list = [int(daily_mean), int(daily_min), 0, 0]
+
+                                            elif feature_ == 'PRE':
+                                                feature_list = [int(daily_acc1 * 10), int(daily_acc2 * 10), int(daily_acc * 10), 0, 0, 0]
+
+                                            elif feature_ == 'WIN':
+                                                if np.isnan(data_arr).all():
+                                                    feature_list = [32766, 32766, 0, 0, 0, 0, 0, 0, 0, 0]
+                                                else:
+                                                    feature_list = [int(daily_mean * 10), int(daily_max * 10), 0, 0, 0, 0, 0, 0, 0, 0]
+                                            else:
+                                                raise Exception('Code Error')
+                                            combine_inform.extend(feature_list)
+                                            weather_df_dic[feature_].append(combine_inform)
+                                except:
+                                    print(f'Failed {str(month_)} {feature_} {str(station_)}')
+
+                        for feature_ in weather_df_dic.keys():
+                            df_ = pd.DataFrame(weather_df_dic[feature_])
+                            df_.to_csv(os.path.join(feature_path_dic[feature_], f'SURF_CLI_CHN_MUL_DAY-{feature_}-{self.feature_dic[feature_][2]}-{str(month_)}.TXT'), sep=' ', index=False, header=False)
+                    pbar.update()
 
     def crawler_weather_data(self, output_folder, station_list: list = None, date_range=None, batch_download=True):
 
@@ -214,4 +294,4 @@ if __name__ == '__main__':
     QW_ds.to_standard_cma_file()
     # QW_ds.crawler_weather_data('G:\\A_Climatology_dataset\\station_dataset\\Qweather_dataset\\',
     #                            station_list=list(pd.read_csv('G:\\A_Climatology_dataset\\station_dataset\\station_profile\\shpfile\\Station_MYR.csv')['Station_id']),
-    #                            date_range=[20200101, 20231231])
+    #                            date_range=[20160101, 20231231])

@@ -38,12 +38,17 @@ if __name__ == '__main__':
     # rs_dc_temp.link_GEDI_RS_dc(GEDI_df('G:\\A_GEDI_Floodplain_vegh\\GEDI_MYR\\L2_vegh\\floodplain_2020_high_quality.xlsx'), index_list, spatial_interpolate_method=['area_average', 'focal'], temporal_interpolate_method = ['linear_interpolation', '24days_max', '24days_ave'])
 
     # Link high quality GEDI data with Pheme dc
-    dc_temp_dic = []
-    for denv_ in ['WIN', 'TEM', 'SSD', 'RHU', 'PRS', 'PRE', 'GST']:
+
+    for denv_ in ['WIN', 'TEM', 'RHU', 'PRS', 'PRE']:
+        dc_temp_dic = []
         for year in [str(_) for _ in range(2018, 2024)]:
-            dc_temp_dic.append(Denv_dc(f'G:\\A_Landsat_Floodplain_veg\\Climatology_data\\Data_cma\\CMA_OUTPUT\\floodplain_2020_UTM_Denv_datacube\\{denv_}\\{year}\\'))
-    rsdc_temp = RS_dcs(*dc_temp_dic)
-    rsdc_temp.link_GEDI_phenology_inform(GEDI_df('G:\\A_GEDI_Floodplain_vegh\\GEDI_MYR\\L2_vegh\\floodplain_2020_high_quality.xlsx'), ['DR', 'DR2', 'EOS', 'GR', 'SOS', 'peak_vi', 'peak_doy', 'trough_vi', 'MAVI'], spatial_interpolate_method=['area_average', 'focal'],)
+            dc_temp_dic.append(Denv_dc(f'G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2023\\CMA_OUTPUT\\floodplain_2020_UTM_Denv_datacube\\{denv_}\\{year}\\'))
+            dc_temp_dic.append(Phemetric_dc(f'G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\{year}\\'))
+        rsdc_temp = RS_dcs(*dc_temp_dic)
+        rsdc_temp.link_GEDI_Denvdc(GEDI_df('G:\\A_GEDI_Floodplain_vegh\\GEDI_MYR\\L2_vegh\\floodplain_2020_high_quality.xlsx'), ['WIN', 'TEM', 'RHU', 'PRS', 'PRE'], spatial_interpolate_method=['area_average', 'focal'],)
+
+    # for year in [str(_) for _ in range(2018, 2024)]:
+    #     dc_temp_dic.append(Denv_dc(f'G:\\A_Climatology_dataset\\gridded_dataset\\MODIS_PAR_V6.2\\MODIS_Output\\floodplain_2020_Denv_datacube\\{year}\\'))
 
     # sample_YTR = GEDI_ds('G:\\\A_GEDI_Floodplain_vegh\\\GEDI_MYR\\Ori_file\\')
     # sample_YTR.generate_metadata()

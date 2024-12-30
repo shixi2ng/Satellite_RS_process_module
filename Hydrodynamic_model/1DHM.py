@@ -12,11 +12,283 @@ import copy
 import shutil
 import time
 import traceback
-
 import numpy as np
 import os
 import pandas as pd
 import basic_function as bf
+
+
+def compute_cof(Bup: float, Bdown: float):
+    """
+    Calculate contraction or expansion coefficient
+    :param Bup: Upstream water surface width
+    :param Bdown: Downstream water surface width
+    :return: Coefficient value
+    """
+    # Constants
+    DB_MIN = 1.5
+    DB_MAX = 4.0
+    COF_1 = 3.0  # Expansion coefficient
+    COF_2 = 1.0  # Contraction coefficient
+
+    if Bdown > Bup:  # Expansion
+        db = Bdown / Bup
+        if db <= DB_MIN:
+            cof = 0.0
+        elif db <= DB_MAX:
+            cof = COF_1 * (db - DB_MIN) / (DB_MAX - DB_MIN)
+        else:
+            cof = COF_1
+
+    else: #Contraction
+        db = Bup / Bdown
+        if db <= DB_MIN:
+            cof = 0.0
+        elif db <= DB_MAX:
+            cof = COF_2 * (db - DB_MIN) / (DB_MAX - DB_MIN)
+        else:
+            cof = COF_2
+
+    return cof
+
+
+def cubic_spline_interpolation(X, Y, T):
+
+    K = -1
+    Z = 0.0
+    if len(X) == 0:
+        raise Exception('The cubic spline interpolation need 3 set of data at least')
+    elif len(X) == 1:
+        return Y[0]
+    elif len(X) == 2:
+        return (Y[0] * (T - X[1]) - Y[1] * (T - X[0])) / (X[0] - X[1])
+    else:
+        if T <= X[1]:
+            K = 1
+        elif T >= X[-2]:
+            K = len(X) - 1
+        else:
+            K = 1
+            M = len(X)
+            while abs(K - M) != 1:
+                L = (K + M) // 2
+                if T < X[L]:
+                    M = L
+                else:
+                    K = L
+        if K >= len(X):
+            K = len(X) - 1
+
+        U3 = (Y[K + 1] - Y[K]) / (X[K + 1] - X[K])
+        if len(X) == 3:
+            if K == 1:
+                U4 = (Y[2] - Y[1]) / (X[2] - X[1])
+                U5 = 2.0 * U4 - U3
+                U2 = 2.0 * U3 - U4
+                U1 = 2.0 * U2 - U3
+            elif K == 2:
+                U2 = (Y[1] - Y[0]) / (X[1] - X[0])
+                U1 = 2.0 * U2 - U3
+                U4 = 2.0 * U3 - U2
+                U5 = 2.0 * U4 - U3
+        else:
+            if K <= 2:
+                U4 = (Y[K + 2] - Y[K + 1]) / (X[K + 2] - X[K + 1])
+                if K == 2:
+                    U2 = (Y[1] - Y[0]) / (X[1] - X[0])
+                    U1 = 2 * U2 - U3
+                    if len(X) == 4:
+                        U5 = 2.0 * U4 - U3
+                    else:
+                        U5 = (Y[4] - Y[3]) / (X[4] - X[3])
+                else:
+                    U2 = 2 * U3 - U4
+                    U1 = 2 * U2 - U3
+                    U5 = (Y[3] - Y[2]) / (X[3] - X[2])
+            elif K >= (len(X) - 2):
+                U2 = (Y[K] - Y[K - 1]) / (X[K] - X[K - 1])
+                if K == (len(X)- 2):
+                    U4 = (Y[len(X) - 1] - Y[len(X) - 2]) / (X[len(X) - 1] - X[len(X) - 2])
+                    U5 = 2 * U4 - U3
+                    if len(X) == 4:
+                        U1 = 2.0 * U2 - U3
+                    else:
+                        U1 = (Y[K - 1] - Y[K - 2]) / (X[K - 1] - X[K - 2])
+                else:
+                    U4 = 2 * U3 - U2
+                    U5 = 2 * U4 - U3
+                U1 = (Y[K - 1] - Y[K - 2]) / (X[K - 1] - X[K - 2])
+            else:
+                U2 = (Y[K] - Y[K - 1]) / (X[K] - X[K - 1])
+                U1 = (Y[K - 1] - Y[K - 2]) / (X[K - 1] - X[K - 2])
+                U4 = (Y[K + 2] - Y[K + 1]) / (X[K + 2] - X[K + 1])
+                U5 = (Y[K + 3] - Y[K + 2]) / (X[K + 3] - X[K + 2])
+
+    A = abs(U4 - U3)
+    B = abs(U1 - U2)
+
+    if (A + 1.0 == 1.0) and (B + 1.0 == 1.0):
+        G1 = (U2 + U3) / 2.0
+    else:
+        G1 = (A * U2 + B * U3) / (A + B)
+
+    A = abs(U4 - U5)
+    B = abs(U3 - U2)
+    if (A + 1.0 == 1.0) and (B + 1.0 == 1.0):
+        G2 = (U3 + U4) / 2.0
+    else:
+        G2 = (A * U3 + B * U4) / (A + B)
+
+    A = Y[K]
+    B = G1
+    D = X[K + 1] - X[K]
+    C = (3 * U3 - 2 * G1 - G2) / D
+    D = (G2 + G1 - 2 * U3) / (D * D)
+    S = T - X[K]
+    Z = A + B * S + C * S * S + D * S * S * S
+
+    return Z
+
+
+def linear_interpolation(X: list, Y: list, T: float):
+
+    Z = None
+    if T < X[0]:
+        Z = Y[0]
+    elif T > X[-1]:
+        Z = Y[-1]
+    elif X[0] <= T <= X[-1]:
+        for i in range(len(X) - 1):
+            if (T - X[i]) * (T - X[i + 1]) <= 0:
+                if (X[i] - X[i + 1]) == 0.0:
+                    Z = Y[i]
+                else:
+                    DK = (Y[i + 1] - Y[i]) / (X[i + 1] - X[i])
+                    Z = Y[i] + DK * (T - X[i])
+                break
+    else:
+        raise Exception('Code Err during the linear interpolation')
+
+    if Z is None:
+        raise Exception('Code Err during the linear interpolation')
+    else:
+        return Z
+
+
+def compute_water_depth(ZBJ, KNJ, ZW, Hmin):
+    # Get the Water depth at each node
+    HHJ = [ZW - ZBJ[_] if ZW > ZBJ[_] + Hmin else 0 for _ in range(len(ZBJ))]
+    for _ in range(len(HHJ)):
+        if HHJ[_] != 0 and (KNJ[_] == 1 or KNJ[_] == 2):
+            left_indi, right_indi = False, False
+            for __ in range(1, len(HHJ)):
+                if _ - __ > 0:
+                    if HHJ[_ - __] == 0:
+                        break
+                    elif HHJ[_ - __] > 0 and KNJ[_ - __] == 0:
+                        left_indi = True
+                    else:
+                        pass
+                else:
+                    break
+
+            for __ in range(1, len(HHJ)):
+                if _ + __ < len(HHJ) + 1:
+                    if HHJ[_ + __] == 0:
+                        break
+                    elif HHJ[_ + __] > 0 and KNJ[_ + __] == 0:
+                        right_indi = True
+                    else:
+                        pass
+                else:
+                    break
+
+            if left_indi or right_indi:
+                pass
+            else:
+                HHJ[_] = 0
+    return HHJ
+
+
+def compute_channel_char(Hmin, DHmin, DBJ, ZBJ, KNJ, RNJ, ZW, simplified_factor = False):
+    """
+
+    :param Hmin:
+    :param DHmin:
+    :param DBJ: Distance between two nodes(i.e, Nij Nij+1) of this cross-section
+    :param ZBJ: Elevation for each node of this cross-section
+    :param KNJ: Channel or floodplain indicator for each node of this cross-section
+    :param RNJ: Roughness for each node of this cross-section
+    :param ZW: Water level at this cross-section
+    :return:
+    """
+
+    # Define arrs
+    kNJ = [0 for _ in range(len(DBJ))]
+    HHJ = compute_water_depth(ZBJ, KNJ, ZW, Hmin)
+
+    # Define the distance, area, wetness area, hydraulic diameter
+    BB = 0.0
+    AA = 0.0
+    DMK = 0.0
+    ALF1 = 0.0
+
+    for _ in range(len(RNJ) - 1):
+        Manning_coef = (RNJ[_] + RNJ[_ + 1]) / 2.0 # Manning_coef
+
+        if HHJ[_] > Hmin and HHJ[_ + 1] > Hmin:
+            DB = DBJ[_]  # 子断面的宽度
+            DA = DB * (HHJ[_] + HHJ[_ + 1]) * 1/2  # 子断面的面积
+            WP = np.sqrt(DB ** 2 + (HHJ[_] - HHJ[_ + 1]) ** 2)  # 子断面的湿周
+            RD = DA / WP  # 子断面的水力半径
+
+        elif HHJ[_] <= Hmin and HHJ[_ + 1] <= Hmin:
+            DB = 0.0
+            DA = 0.0
+            WP = 0.0
+            RD = 0.0
+
+        elif HHJ[_] <= Hmin and HHJ[_ + 1] > Hmin:
+            DB = HHJ[_ + 1] / (ZBJ[_] - ZBJ[_ + 1]) * DBJ[_]
+            DA = DB * HHJ[_ + 1] * 0.5
+            WP = np.sqrt(DB ** 2 + HHJ[_ + 1] ** 2)
+            RD = DA / WP
+
+        elif HHJ[_] > Hmin and HHJ[_ + 1] <= Hmin:
+            DB = HHJ[_] / (ZBJ[_ + 1] - ZBJ[_]) * DBJ[_]
+            DA = DB * HHJ[_] * 0.5
+            WP = np.sqrt(DB ** 2 + HHJ[_] ** 2)
+            RD = DA / WP
+
+        else:
+            raise Exception('Code err during the computation area')
+
+        if RD > 0.0:
+            if (KNJ[_] == 0 or KNJ[_] == 3) and DA / RD <= DHmin:
+                Manning_coef = 0.020
+            DK = (DA / Manning_coef) * (RD ** (2/3)) # 子段面流量模数
+        else:
+            DK = 0.0
+
+        if DA > 0.0:
+            ALF1 += (DK ** 3) / (DA ** 2)
+        else:
+            ALF1 += 0.0
+
+        AA += DA
+        BB += DB
+        DMK += DK
+
+    if AA > 0.0:
+        ALF2 = (DMK**3.0) / (AA**2.0)
+        Alf = ALF1 / ALF2
+    else:
+        Alf = 1.0
+
+    if simplified_factor:
+        return AA
+    else:
+        return AA, BB, DMK, Alf
 
 
 class HydrodynamicModel_1D(object):
@@ -36,23 +308,20 @@ class HydrodynamicModel_1D(object):
 
         # Define the input and output path
         self.input_path = None
-        self.output_path = None
+        self.para_output_path = None
 
         # User-defined para
         self.ROI_name: str = ''
 
         # Define maximum number
         self.MaxNCS = 100  # Maximum number of cross-sections
-        self.MaxNGS = 10  # Maximum number of sediment groups
+        self.MaxNGS = 10  # Maximum number of sediment groups 最大泥沙分组数
         self.MaxStp = 1000  # Maximum number of time steps
         self.MaxCTS = 100  # Maximum number of control cross-sections
         self.MaxTBY = 10  # Maximum number of tributaries
-        self.MaxQN = 10  # Maximum number of flow rates for roughness calculation
-
+        self.MaxQN = 10  # Maximum number of flow rates for roughness calculation 最大数量 (流量与糙率的关系曲线)
         self.MaxNPT = 0  # 最大节点数
         self.MaxNMC = 0  # 断面内的最大主槽划分数 (MaxNMC<=3)
-        self.MaxNGS = 0  # 最大泥沙分组数
-        self.MaxQN = 0  # 最大数量 (流量与糙率的关系曲线)
         self.MaxZQ = 0  # 最大数量 (出口水位流量关系曲线)
 
         # Define the global parameters
@@ -62,13 +331,11 @@ class HydrodynamicModel_1D(object):
         self.NYspin: bool = True
         self.TimeSP: float = 0.0  # 设置好的Spin-up time (hours)
         self.SPTime: float = 0.0  # 计算中的Spin-up time (hours)
-        self.TimeSC = 0.0  # 已计算时间(Second)
-        self.TimeHR = 0.0  # 已计算时间(Hour)
         self.DTstep: int = 30  # 计算固定的时间步长(Unit: Second) 45 不可算
         self.NTRD: int = 480  # 记录计算结果的时间步数
-        self.Num_TBY: int = 0  # 实际支流数量
-        self.Num_Control_CS: int = 0  # 控制断面数量
-        self.Num_GS: int = 12  # 非均匀沙分组数
+        self.NumTBY: int = 0  # 实际支流数量
+        self.NumCCS: int = 0  # 控制断面数量
+        self.NumGS: int = 12  # 非均匀沙分组数
         self.NCPFS: bool = True  # 水沙是否耦合计算(False = 非耦合; True = 耦合)
         self.MDRGH: int = 4  # 糙率计算方法(1 = Q - n; 2 = ZhangHW Eq; 3 = Other Eq; 4 = liu Xin Eq)主槽区域
         self.Nstart: bool = True  # 初始文件(False = 无初始文件; True = 有初始文件)
@@ -84,31 +351,25 @@ class HydrodynamicModel_1D(object):
         self.EPSQD: float = 0.005  # 水流计算Discharge迭代误差
         self.EPSZW: float = 0.005  # 水流计算中的水位迭代误差
 
-        # Flow parameter defined during the outlet import
-        self.KBDout = None  # 下游边界类型
-        self.NumTQint = 0  # 进口Time-Qint过程的个数
-        self.NumTMP = 0  # 进口Time-Wtemp过程的个数
-        self.NumTQout = 0  # 出口Time-Qout过程的个数
-        self.NumTZout = 0  # 出口Time-Zout过程的个数
-        self.NumZQout = 0  # 出口水位流量关系的个数
+        # Parameters during the calculation
+        self.Istep = 0  # 第ISTEP时间步
+        self.NumRem = 0  # Number of times to calculate water and sediment conditions and topography changes
+        self.TimeSC = 0.0  # 已计算时间(Second)
+        self.TimeHR = 0.0  # 已计算时间(Hour)
 
+        #
         self.NumQN = 0  # 实际QN关系的个数
         self.NumTSint = 0  # 主流进口断面T-S个数
         self.NumTdiv = 0  # 沿程Time-Q过程的个数
         self.NumTsdiv = 0  # 沿程Time-S过程的个数 !ZXLPR新加入的 原来只有NumTdiv, !沿程Time-Q/S过程的个数
-        self.Istep = 0  # 第ISTEP时间步
         self.NumOCS = 0  # 要输出结果的断面数量
         self.Wtemp = 0.0
-        self.DQDZout = 0.0
-        self.Qintnew = 0.0
-        self.Zoutnew = 0.0
-        self.Qoutnew = 0.0
         self.VistFW = 0.0
 
         # Define the sediment parameters
-        self.NFLST: bool = True  # 泥沙输移是否计算(True = 不计算 / False = 计算)  Flag for Sediment Transport
-        self.NFLBD: bool = True  # 河床冲淤是否计算(True = 不计算 / False = 计算)  Flag for bed deformation
-        self.NFLGA: bool = True  # 计算过程中床沙级配是否调整(True = 不计算 / False = 计算) Flag for Gradation Adjustment
+        self.SedTrans_flag: bool = True  # 泥沙输移是否计算(True = 不计算 / False = 计算)  Flag for Sediment Transport
+        self.BedDeform_flag: bool = True  # 河床冲淤是否计算(True = 不计算 / False = 计算)  Flag for bed deformation
+        self.GradAdj_flag: bool = True  # 计算过程中床沙级配是否调整(True = 不计算 / False = 计算) Flag for Gradation Adjustment
         self.Pflow: float = 1000.0  # 水流密度(1000 kg / m ^ 3)
         self.Psedi: float = 2650.0  # 泥沙密度(2650 kg / m ^ 3)
         self.Pdry: float = 1400.0  # 床沙干密度(1400 kg / m ^ 3)
@@ -143,41 +404,86 @@ class HydrodynamicModel_1D(object):
         self.THmin: float = 0.00001  # 床沙级配调整计算的临界冲淤厚
 
         # Cross-section profile list / arr
+        self.CS_num = 0
         self.CS_name = []  # Cross-section name
-        self.CS_DistViaRiv = []  # Distance along river for each cross-section
+        self.CS_DistViaRiv = []  # Distance along the river for each cross-section
         self.CS_node_num = []  # Node number for each cross-section
-        self.XXIJ = []  # Distance to the left bank for each node on each cross-section
-        self.ZBIJ = []  # Elevation for each node on each cross-section
-        self.KNIJ = []  # Channel or floodplain indicator for each node on each cross-section
         self.ZBINL = []  # Elevation for each node on each cross-section (Initial value)
-        self.NMC1CS = []  # Number of channel for each cross-section
+        self.NMC1CS = []  # Number of the main channel for each cross-section
         self.NodMCL = []  # Node of left bank for each channel of each cross-section主槽左侧滩地节点号
         self.NodMCR = []  # Node of right bank for each channel of each cross-section 主槽右侧滩地节点号
         self.BWMC = []  # Width of main channel for each cross-section
         self.ZBBF = []  # Bankfull elevation for each cross-section
         self.DX2CS = []  # Distance between two cross-sections
         self.CSZBmn = []  # The lowest elevation (Thalweg) for each cross-section
-        self.CSZBav = []  # The average elevation of main channel
-        self.CSZBav0 = []  # Initial record of the average elevation of main channel
+        self.CSZBav = []  # The average elevation of the main channel
+        self.CSZBav0 = []  # Initial record of the average elevation for the main channel
 
-        # Inform for sub-cross sections
-        self.DBIJ = []  # 各子断面宽度
+        # Cross-section hydraulic para calculated based on CS profile and flow data
+        self.CSZW = []  # Water level for each cross-section
+        self.CSQQ = []  # Discharge for each cross-section
+        self.CSAA = []  # Flow area for each cross-section 过水面积
+        self.CSBB = []  # Flow width for each cross-section 水面宽度
+        self.CSQK = []  # 流量模数 for each cross-section
+        self.CSWP = []  # wetness area for each cross-section 湿周
+        self.CSRD = []  # 水力半径 for each cross-section
+        self.CSHH = []  # Water depth for each cross-section
+        self.CSHC = []  # 形心下水深 for each cross-section
+        self.CSZB = []  # 平均河底高程(水面以下) for each cross-section
+        self.CSUU = []  # Flow velocity for each cross-section
+        self.CSSP = []  # 能坡 for each cross-section
+        self.CSRN = []  # Average roughness for each cross-section
+        self.CSUT = []  # 摩阻流速 for the channel of each cross-section
+        self.CSFR = []  # Froude number of each cross-section
+
+        # Main-channel hydraulic para calculated based on CS profile and flow data
+        self.CSQM = []  # Discharge for the main channel of each cross-section
+        self.CSAM = []  # Flow area for the main channel of each cross-section
+        self.CSBM = []  # Width for the main channel of each cross-section
+        self.CSUM = []  # Flow velocity for the main channel of each cross-section
+        self.CSHM = []  # Water depth for the main channel of each cross-section
+
+        # Floodplain hydraulic para calculated based on CS profile and flow data
+        self.CSQF = []  # Discharge for the FLOODPLAIN of each cross-section
+        self.CSAF = []  # Flow area for the FLOODPLAIN of each cross-section
+        self.CSBF = []  # Width for the FLOODPLAIN of each cross-section
+        self.CSUF = []  # Flow velocity for the FLOODPLAIN of each cross-section
+        self.CSHF = []  # Water depth for the FLOODPLAIN of each cross-section
+
+        # Node-level inform
+        self.XXIJ = []  # Distance to the left bank for each node on each cross-section
+        self.ZBIJ = []  # Elevation for each node on each cross-section
+        self.KNIJ = []  # Channel or floodplain indicator for each node on each cross-section
+        self.RNIJ = []  # Roughness at node level
+        self.DBIJ = []  # Distance between two nodes(i.e, Nij Nij+1) on each cross-section
         self.DKIJ = []  # 各子断面代号(0*1)(0*2)均为主槽
         self.AAIJ = []  # 各子断面的过水面积
         self.QKIJ = []  # 各子断面的流量模数
         self.QQIJ = []  # 各子断面的流量
-        self.UUij = []  # 各子断面的流速
+        self.UUIJ = []  # 各子断面的流速
         self.BBIJ = []  # 各子断面过水的水面宽度
         self.HHij = []  # 各子断面过水的水面水深
         self.UTIJ = []
         self.WPIJ = []  # 各子断面的湿周
         self.RDIJ = []  # 各子断面的水力半径
+        self.Hnode = []  # 各节点水深
+        self.Unode = []  # 各节点流速
+        self.Qnode = []  # 各节点单宽流量
+        self.UTnode = []  # 各节点摩阻流速
+        self.TFnode = []  # 各节点水流切应力
 
         # Control cross-section profile
         self.Control_CS_Id = []  # ID for each control cross-section
         self.Control_CS_Name = [] # Name for each control cross-section
         self.Control_CS_DistViaRiv = []  # Distance along river for each control cross-section
-
+        
+        # Intermediate para
+        self.DQDZoutlet_new = 0.0
+        self.Qinlet_new = 0.0
+        self.Zoutlet_new = 0.0
+        self.Qoutlet_new = 0.0
+        self.QL_new = []  # 侧向来流条件
+        
         # Bed Material Gradation
         self.DMSiev = np.zeros(self.MaxNGS)  # 筛分粒径
         self.NoCSsp = np.zeros(self.MaxNCS, dtype=int)  # Cross-sections with bed gradation
@@ -188,7 +494,13 @@ class HydrodynamicModel_1D(object):
         self.PBEDIK = []  # Interpolated bed material gradation
         self.DM1FRT = np.zeros(self.MaxNGS)  # Group particle size (m)
 
-        # Inlet and outlet flow conditions
+        # Inlet and outlet flow boundary conditions
+        self.KBDout = None  # 下游边界类型
+        self.NumTQint = 0  # 进口Time-Qint过程的个数
+        self.NumTMP = 0  # 进口Time-Wtemp过程的个数
+        self.NumTQout = 0  # 出口Time-Qout过程的个数
+        self.NumTZout = 0  # 出口Time-Zout过程的个数
+        self.NumZQout = 0  # 出口水位流量关系的个数
         self.TimeTQ = []  # 各时段进口 T-Q 关系的T
         self.TimeQint = []  # 各时段进口 T-Q 关系的Q
         self.TimeTMP = []  # 各时段进口 T-Temp 关系的T
@@ -196,14 +508,14 @@ class HydrodynamicModel_1D(object):
         self.TimeTout = []   # 各时段出口 T-ZW 关系的T
         self.TimeZout = []   # 各时段出口 T-ZW 关系的Z
         self.TimeQout = []   # 各时段出口 Q-ZW 关系的Q
-        self.ZRNOUT = []  # 出口断面水位流量关系 ZRNOUT(MaxZQ) dQ/dZ
-        self.QRNOUT = []  # 出口断面水位流量关系 QRNOUT(MaxZQ) dQ/dZ
+        self.ZRNout = []  # 出口断面水位流量关系 ZRNOUT(MaxZQ) dQ/dZ
+        self.QRNout = []  # 出口断面水位流量关系 QRNOUT(MaxZQ) dQ/dZ
         self.DQZRN = []  # 出口断面水位流量关系 DQZRN dQ/dZ
 
-        # Tributary flow conditions
+        # Tributary flow boundary conditions
         self.NcsTBY = []  # 支流所在河段的断面区间号码
         self.NumQtby = []  # 各支流T-Q过程的个数
-        self.TimeTQtby = []  # 各支流的时间与流量过程中的时间
+        self.TimeTtby = []  # 各支流的时间与流量过程中的时间
         self.TimeQtby = []  # 各支流的时间与流量过程中的流量
 
         # 区间引水沙量
@@ -212,18 +524,29 @@ class HydrodynamicModel_1D(object):
         self.TimeTdiv = []  # 引水时刻  (t)
         self.TimeTSdiv = []  # 引沙时刻  (t)  !zxlpr 新加入的
         self.QLold = []  # 侧向来流条件
-        self.QLnew = []  # 侧向来流条件
 
-        # Roughness for Control cross-section
-        self.Control_CS_QD = [] #各控制断面段流量与糙率的关系曲线中的流量
-        self.Control_CS_QDRN = [] #控制断面主槽糙率随流量的变化
-        self.Control_CS_HighFP_Rg = [] #控制断面高低滩糙率
-        self.Control_CS_LowFP_Rg = [] #控制断面高低滩糙率
-        self.DHbed = []  # Roughness increment at control cross-sections 糙率增量
-        self.DNbed = []  # Bed deformation thickness at control cross-sections 冲淤厚度
+        # Roughness and dh/dn for Control cross-section
+        self.Control_CS_QD = []  # 各控制断面段流量与糙率的关系曲线中的流量
+        self.Control_CS_QDRN = []  # 控制断面主槽糙率随流量的变化
+        self.Control_CS_Hfloodplain_RN = []  # 控制断面高低滩糙率
+        self.Control_CS_Lfloodplain_RN = []  # 控制断面高低滩糙率
+        self.Control_CS_DHbed = []  # Roughness increment at control cross-sections 糙率增量
+        self.Control_CS_DNbed = []  # Bed deformation thickness at control cross-sections 冲淤厚度
+        self.Control_CS_Init_Q = [] # Initial discharge (m3/s) at control cross-sections 冲淤厚度
+        self.Control_CS_Init_Z = [] # Initial water level (m) at control cross-sections 冲淤厚度
 
         # Roughness in Main channel
         self.CS_QDRN = []  # Interpolated roughness 4 main channel
+        self.CS_Hfloodplain_RN = []  # Interpolated high floodplain roughness 4 main channel
+        self.CS_Lfloodplain_RN = []  # Interpolated low floodplain roughness 4 main channel
+        self.CS_DHbed = []  # Roughness increment 4 main channel 糙率增量
+        self.CS_DNbed = []  # Bed deformation thickness 4 main channel 冲淤厚度
+
+        # Bed deformation para
+        self.DZMC = [] # Bed deformation for main channel of each cross-section
+        self.DASDT1 = []  #=dA0/dt
+        self.DNBDCS = [] # 各断面的糙率增量
+        self.DHBDCS = []  # 各断面的冲淤幅度增量
 
         # Define arrays
         self.NumStby = np.zeros(self.MaxStp)
@@ -238,7 +561,6 @@ class HydrodynamicModel_1D(object):
         self.NSPtby = np.zeros(self.MaxTBY, dtype=int)  # Number of tributaries
         self.TSPtby = np.zeros((self.MaxTBY, self.MaxStp))  # Time array for suspended sediment in tributaries
         self.TSPKtby = np.zeros((self.MaxTBY, self.MaxStp, self.MaxNGS))  # Suspended sediment gradation in tributaries
-        self.RNCTS = np.zeros((self.MaxCTS, self.MaxQN))  # Roughness of main channel at control cross-sections
 
         self.TempXX = np.zeros(self.MaxNCS)  # Temporary array for coordinates
         self.TempYY = np.zeros(self.MaxNCS)  # Temporary array for coordinates
@@ -251,30 +573,6 @@ class HydrodynamicModel_1D(object):
         self.TimeStby = np.zeros((self.MaxStp, self.MaxTBY))
         self.TimeSKtby = np.zeros((self.MaxNGS, self.MaxStp, self.MaxTBY)) 
         self.TimeQSKtby = np.zeros((self.MaxNGS, self.MaxStp, self.MaxTBY))
-        self.CSZW = np.zeros(self.MaxNCS)
-        self.CSQQ = np.zeros(self.MaxNCS)
-        self.CSUU = np.zeros(self.MaxNCS)
-        self.CSHH = np.zeros(self.MaxNCS)
-        self.CSAA = np.zeros(self.MaxNCS)
-        self.CSBB = np.zeros(self.MaxNCS)
-        self.CSZB = np.zeros(self.MaxNCS)
-        self.CSSP = np.zeros(self.MaxNCS)
-        self.CSRN = np.zeros(self.MaxNCS)
-        self.CSUT = np.zeros(self.MaxNCS)
-        self.CSWP = np.zeros(self.MaxNCS)
-        self.CSRD = np.zeros(self.MaxNCS)
-        self.CSFR = np.zeros(self.MaxNCS)
-        self.CSQK = np.zeros(self.MaxNCS)
-        self.CSQM = np.zeros(self.MaxNCS)
-        self.CSUM = np.zeros(self.MaxNCS)
-        self.CSHM = np.zeros(self.MaxNCS)
-        self.CSAM = np.zeros(self.MaxNCS)
-        self.CSBM = np.zeros(self.MaxNCS)
-        self.CSQf = np.zeros(self.MaxNCS)
-        self.CSUf = np.zeros(self.MaxNCS)
-        self.CSHf = np.zeros(self.MaxNCS)
-        self.CSAf = np.zeros(self.MaxNCS)
-        self.CSBf = np.zeros(self.MaxNCS)
 
         self.CSSUS = np.zeros(self.MaxNCS)
         self.CSSCC = np.zeros(self.MaxNCS)
@@ -326,8 +624,7 @@ class HydrodynamicModel_1D(object):
         self.DAIK = np.zeros((self.MaxNGS, self.MaxNCS))
         self.DHnode = np.zeros((self.MaxNPT, self.MaxNCS))
         self.DZnode = np.zeros((self.MaxNPT, self.MaxNCS))
-        self.DZMC = np.zeros(self.MaxNCS)
-        self.dASdt1 = np.zeros(self.MaxNCS)
+
         self.dASdt2 = np.zeros(self.MaxNCS)
         self.PDASIK1 = np.zeros((self.MaxNGS, self.MaxNCS))
         self.PDASIK2 = np.zeros((self.MaxNGS, self.MaxNCS))
@@ -345,14 +642,11 @@ class HydrodynamicModel_1D(object):
         self.THEML = []
         self.DPEML = []
 
-
         self.RNLFCS = np.zeros(self.MaxNCS)
         self.RNHFCS = np.zeros(self.MaxNCS)
         self.RNMC = np.zeros(self.MaxNCS)
         self.RNMCCS = np.zeros(self.MaxNCS)
         self.RNFPCS = np.zeros(self.MaxNCS)
-        self.DNBDCS = np.zeros(self.MaxNCS)
-        self.DHBDCS = np.zeros(self.MaxNCS)
 
         self.NoutCS = np.zeros(self.MaxNCS)
         self.ZTCSmax = np.zeros(self.MaxNCS)
@@ -361,7 +655,7 @@ class HydrodynamicModel_1D(object):
         self.TQCSmax = np.zeros(self.MaxNCS)
         self.STCSmax = np.zeros(self.MaxNCS)
         self.TSCSmax = np.zeros(self.MaxNCS)
-        self.CSHC = np.zeros(self.MaxNCS)
+
         self.CSpm = np.zeros(self.MaxNCS)
         self.Dsdt = np.zeros(self.MaxNCS)
         self.DAFDT = np.zeros(self.MaxNCS)
@@ -373,25 +667,27 @@ class HydrodynamicModel_1D(object):
         self.STCSmax = np.zeros(self.MaxNCS)
         self.TSCSmax = np.zeros(self.MaxNCS)
 
-    def import_para(self, Global_para_file: str, CS_profile: str, Flow_boundary_file: str, Roughness_file: str):
+    def import_para(self, Global_para_file: str, CS_profile: str,  Flow_boundary_file: str, Roughness_file: str, Bed_material_file: str=None):
 
         # Input global parameters for hydrodynamics model
         print(f'----------------- Key step 1 -----------------\nRead the Global Parameter File')
         if not isinstance(Global_para_file, str):
             raise Exception('The global para file should be a filename under str type!')
-        elif not Global_para_file.endswith('ALPRMT.dat'):
-            raise Exception('The Global parameter file not ends with the ~ALPRMT.dat extension!')
+        elif not Global_para_file.endswith('_GLBpara.dat'):
+            raise Exception('The Global parameter file not ends with the ~GLBpara.dat extension!')
         else:
             self._read_para_file(Global_para_file)
-            self.ROI_name = 'Temp' if '_ALPRMT.dat' not in Global_para_file else os.path.basename(Global_para_file).split('_ALPRMT.dat')[0]
+            if self.ROI_name is None:
+                print('Please define the ROI_name in global para file!')
+            self.ROI_name.replace(' ', '')
             try:
                 self.input_path = os.path.join(self.work_env, self.ROI_name + '_Input\\')
-                if Global_para_file != os.path.join(self.input_path, self.ROI_name + '_ALPRMT.dat':
-                    shutil.copy(Global_para_file, os.path.join(self.input_path, self.ROI_name + '_ALPRMT.dat'))
+                if Global_para_file != os.path.join(self.input_path, self.ROI_name + '_GLBpara.dat'):
+                    shutil.copy(Global_para_file, os.path.join(self.input_path, self.ROI_name + '_GLBpara.dat'))
             except:
                 print(traceback.format_exc())
                 raise Exception('Error during copy global para file!')
-        print(f'{str(self.ROI_name)}_AllPara.dat has been imported\n--------------- Key step 1 Done---------------')
+        print(f'{str(self.ROI_name)}_GLBpara.dat has been imported\n--------------- Key step 1 Done---------------')
 
         # Define the para based on the global parameter
         self.Coks = self.Cokm[self.MDSCC - 1][0]
@@ -405,10 +701,7 @@ class HydrodynamicModel_1D(object):
         elif not CS_profile.endswith('CSProf.csv'):
             raise Exception('The cross section profile not ends with the CSProf.csv extension!')
         else:
-            if (self.ROI_name is 'Temp' and '_CSProf.csv' not in CS_profile) or (self.ROI_name is not 'Temp' and f'{self.ROI_name}_CSProf.csv' in CS_profile):
-                self._read_cs_file(CS_profile)
-            else:
-                raise Exception('The Cross profile does not share the same ROI name with Global parameter file! Double check!')
+            self._read_cs_file(CS_profile)
             try:
                 if CS_profile != os.path.join(self.input_path, f'{self.ROI_name}_CSProf.csv'):
                     shutil.copy(CS_profile, os.path.join(self.input_path, f'{self.ROI_name}_CSProf.csv'))
@@ -421,608 +714,74 @@ class HydrodynamicModel_1D(object):
         print(f'----------------- Key step 3 -----------------\nRead the Flow Boundary Condition')
         if not isinstance(Flow_boundary_file, str):
             raise Exception('The Flow Boundary Condition should be a filename under str type!')
-        elif not Flow_boundary_file.endswith('FlowBD.csv'):
-            raise Exception('The Flow Boundary Condition not ends with the FlowBD.csv extension!')
+        elif not Flow_boundary_file.endswith('_FlwBound.csv'):
+            raise Exception('The Flow Boundary Condition not ends with the _FlowINPUT.csv extension!')
         else:
-            if (self.ROI_name is 'Temp' and '_FlowBD.csv' not in Flow_boundary_file) or (self.ROI_name is not 'Temp' and f'{self.ROI_name}_FlowBD.csv' in Flow_boundary_file):
-                self._read_flow_file(Flow_boundary_file)
-            else:
-                raise Exception('The Flow boundary does not share the same ROI name with Global parameter file! Double check!')
+            self._read_flow_input(Flow_boundary_file)
             try:
-                if Flow_boundary_file != os.path.join(self.input_path, f'{self.ROI_name}_FlowBD.csv'):
-                    shutil.copy(Flow_boundary_file, os.path.join(self.input_path, f'{self.ROI_name}_FlowBD.csv'))
+                if Flow_boundary_file != os.path.join(self.input_path, f'{self.ROI_name}_FlwBound.csv'):
+                    shutil.copy(Flow_boundary_file, os.path.join(self.input_path, f'{self.ROI_name}_FlwBound.csv'))
             except:
                 print(traceback.format_exc())
                 raise Exception('Error during copy Flow Boundary Condition!')
-        print(f'{str(self.ROI_name)}_FlowBD.csv has been import\n--------------- Key step 3 Done---------------')
+
+        # 初始值设定侧向入流条件 Initiate the side inflow
+        self.QL_new = [0.0 for _ in range(self.Imax-1)]
+        self.QLold = [0.0 for _ in range(self.Imax-1)]
+        print(f'{str(self.ROI_name)}_FlwBound.csv has been import\n--------------- Key step 3 Done---------------')
 
         # Input the roughness file
         print(f'----------------- Key step 4 -----------------\nRead the {str(self.ROI_name)} roughness profile')
         if not isinstance(Roughness_file, str):
             raise Exception('The Roughness Profile should be a filename under str type!')
-        elif not Roughness_file.endswith('Roughness.csv'):
-            raise Exception('The Roughness Profile not ends with the Roughness.csv extension!')
+        elif not Roughness_file.endswith('_QNRelt.csv'):
+            raise Exception('The Roughness Profile not ends with the _QNRelt.csv extension!')
         else:
-            if (self.ROI_name is 'Temp' and '_Roughness.csv' not in Roughness_file) or (self.ROI_name is not 'Temp' and f'{self.ROI_name}_Roughness.csv' in Roughness_file):
-                self._read_roughness_file(Roughness_file)
-            else:
-                raise Exception('The Roughness Profile does not share the same ROI name with Global parameter file! Double check!')
+            self._read_roughness_file(Roughness_file)
             try:
-                if Roughness_file != os.path.join(self.input_path, f'{self.ROI_name}_Roughness.csv'):
-                    shutil.copy(Roughness_file, os.path.join(self.input_path, f'{self.ROI_name}_Roughness.csv'))
+                if Roughness_file != os.path.join(self.input_path, f'{self.ROI_name}_QNRelt.csv'):
+                    shutil.copy(Roughness_file, os.path.join(self.input_path, f'{self.ROI_name}_QNRelt.csv'))
             except:
                 print(traceback.format_exc())
                 raise Exception('Error during copy Roughness Profile!')
-        print(f'{str(self.ROI_name)}_Roughness.csv has been input\n--------------- Key step 4 Done---------------')
+        print(f'{str(self.ROI_name)}_QNRelt.csv has been input\n--------------- Key step 4 Done---------------')
 
-    def _read_para_file(self, para_file):
-        with open(para_file, 'r') as f:
-            file_inform = f.readlines()
-            file_dic = {}
-            for inform in file_inform:
-                inform = inform.split('\n')[0].split(' #')[0]
-                if ':' in inform:
-                    file_dic[inform.split(':')[0]] = inform.split(':')[1]
-                else:
-                    print(str(inform))
-
-        for _ in file_dic.keys():
-            if _ in self.__dict__.keys():
-                self.__dict__[_] = type(self.__dict__[_])(file_dic[_])
+        # Input bed material
+        if Bed_material_file is not None:
+            print(f'----------------- Optional step 1 -----------------\nRead the Bed material')
+            if not isinstance(Bed_material_file, str):
+                raise Exception('The Bed_material_file should be a filename under str type!')
+            elif not Bed_material_file.endswith('_BMGrad.csv'):
+                raise Exception('The Bed_material_file not ends with the BMGrad.csv extension!')
             else:
-                raise ValueError(f'The input {str(_)} is not valid parameter!')
-
-    def _read_cs_file(self, cs_file):
-
-        # Read the cs file
-        cs_num, cs_name_list, cs_control_list, cs_hydro, cs_id_all = 0, [], [], [], []
-        pd_temp = pd.read_csv(cs_file, encoding='gbk', header=None)
-        if len(pd_temp.keys()) > 4:
-            pd_temp = pd_temp[pd_temp.keys()[0:4]]
-            print('Only the first 4 columns were read')
-        elif len(pd_temp.keys()) < 4:
-            print('Not sufficient information in the cross section profile')
-        pd_temp.columns = ['Id', 'Distance to left node', 'Ele', 'Type']
-
-        # Get the profile of each cross-section
-        _, cs_name_, maximum_node = 0, None, 0
-        while _ < pd_temp.shape[0]:
-
-            if str(pd_temp['Id'][_]).isnumeric():
+                self._read_flow_file(Bed_material_file)
                 try:
-                    cs_ = int(pd_temp['Id'][_])
-                    cs_id_list.append(int(pd_temp['Id'][_]))
-                    cs_dis2left_list.append(float(pd_temp['Distance to left node'][_]))
-                    cs_ele_list.append(float(pd_temp['Ele'][_]))
-                    cs_type_list.append(int(float(pd_temp['Type'][_])))
+                    if Bed_material_file != os.path.join(self.input_path, f'{self.ROI_name}_BMGrad.csv'):
+                        shutil.copy(Bed_material_file, os.path.join(self.input_path, f'{self.ROI_name}_BMGrad.csv'))
                 except:
-                    raise TypeError(f'The {str(cs_)} node of CSProf for {cs_name_} might be incorrect!')
+                    print(traceback.format_exc())
+                    raise Exception('Error during copy BMGrad Condition!')
+            print(f'{str(self.ROI_name)}_QNRelt.csv has been import\n--------------- Optional step 1 Done---------------')
+
+        # Input sediment
+        if Bed_material_file is not None:
+            print(f'----------------- Optional step 2 -----------------\nRead the sediment')
+            if not isinstance(Bed_material_file, str):
+                raise Exception('The Bed_material_file should be a filename under str type!')
+            elif not Bed_material_file.endswith('_BMGrad.csv'):
+                raise Exception('The Bed_material_file not ends with the BMGrad.csv extension!')
             else:
-                if pd_temp['Id'][_] != 'Id':
-                    if cs_name_ is not None:
-                        cs_id_all.append(cs_id_list)
-                        self.XXIJ.append(cs_dis2left_list)
-                        self.ZBIJ.append(cs_ele_list)
-                        self.KNIJ.append(cs_type_list)
-                        self.CS_node_num.append(len(cs_id_list))
-                        maximum_node = max(maximum_node, len(cs_id_list))
-
-                    cs_num += 1
-                    cs_name_ = pd_temp['Id'][_]
-                    cs_name_list.append(cs_name_)
-                    try:
-                        if len(self.CS_DistViaRiv) > 0 and self.CS_DistViaRiv[-1] > float(pd_temp['Distance to left node'][_]):
-                            raise Exception(f'The sequence of the cross section {cs_name_} is not appropriate!')
-                        self.CS_DistViaRiv.append(float(pd_temp['Distance to left node'][_]))
-                    except:
-                        raise Exception(f'Cross section Header for {cs_name_} is not appropriate!')
-
-                    try:
-                        cs_control_temp = bool(pd_temp['Ele'][_])
-                        cs_control_list.append(cs_control_temp)
-                    except:
-                        raise Exception(f'The control indicator is not under the right type!')
-                elif pd_temp['Id'][_] == 'Id':
-                    cs_id_list, cs_dis2left_list, cs_ele_list, cs_type_list = [], [], [], []
-
-            _ += 1
-
-        # Check the consistency between different list
-        if len(self.CS_DistViaRiv) != len(self.XXIJ) != len(self.ZBIJ) != len(self.KNIJ) != len(self.CS_node_num):
-            raise Exception('The code error during input the cross section profile!')
-
-        # Update the cross-section profile
-        self.CS_name = cs_name_list
-        self.Imax = cs_num
-        self.MaxNCS = cs_num
-        self.Jmax = maximum_node
-        self.MaxNPT = maximum_node
-        self.ZBINL = copy.deepcopy(self.ZBIJ)
-
-        # Profile for control cross-sections
-        self.Num_Control_CS = int(np.sum(np.array(cs_control_list).astype(np.int16)))
-        self.MaxCTS = self.Num_Control_CS
-        self.Control_CS_Id = [_ for _ in range(len(cs_control_list)) if cs_control_list[_]]
-        self.Control_CS_DistViaRiv = [self.CS_DistViaRiv[_] for _ in self.Control_CS_Id]
-
-        # Get the distance between the cross-section
-        self.DX2CS = [self.CS_DistViaRiv[_ + 1] - self.CS_DistViaRiv[_] for _ in range(len(self.CS_DistViaRiv) - 1)]
-
-        # Get the left right bank and channel number for each cross-section
-        for _ in range(len(self.CS_node_num)):
-            NMC_l, NMC_r, NodMCL, NodMCR = 0, 0, [], []
-            for __ in range(self.CS_node_num[_] - 1):
-                if (self.KNIJ[_][__] == 1 or self.KNIJ[_][__] == 2) and (self.KNIJ[_][__ + 1] == 0 or self.KNIJ[_][__ + 1] == 3):
-                    NMC_l += 1
-                    NodMCL.append(__)  # 主槽左侧滩地节点号
-                elif (self.KNIJ[_][__] == 0 or self.KNIJ[_][__] == 3) and (self.KNIJ[_][__ + 1] == 1 or self.KNIJ[_][__ + 1] == 2):
-                    NMC_r += 1
-                    NodMCR.append(__)  # 主槽右侧滩地节点号
-            self.NodMCL.append(NodMCL)
-            self.NodMCR.append(NodMCR)
-
-            if NMC_l < NMC_r:
-                raise Exception(f'The channel {self.cs_name[_]} has no left bank')
-            elif NMC_l < NMC_r:
-                raise Exception(f'The channel {self.cs_name[_]} has no right bank')
-            elif NMC_l == 0:
-                raise Exception(f'The left low floodplain of {self.cs_name[_]} might be missing')
-            elif NMC_r == 0:
-                raise Exception(f'The right low floodplain of {self.cs_name[_]} might be missing')
-            elif NMC_l != NMC_r:
-                raise Exception(f'The type of {self.cs_name[_]} is wrong')
-            self.NMC1CS.append(NMC_l)
-
-        # Check if the cross-section terrain is invalid
-        # Generate the information of sub-reach
-        for _ in range(self.Imax):
-            DBIJ, DKIJ, SUMB = [], [], 0
-            for __ in range(self.CS_node_num[_] - 1):
-                DXJ = self.XXIJ[_][__ + 1] - self.XXIJ[_][__]
-                if DXJ < 0:
-                    raise Exception(f'The cross section {self.cs_name[_]} profile has invalid distance to left node!')
-                elif DXJ < 0.01:
-                    self.XXIJ[_][__ + 1] = self.XXIJ[_][__] + 0.01
-                DBIJ.append(self.XXIJ[_][__ + 1] - self.XXIJ[_][__])
-                DKIJ.append(self.KNIJ[_][__ + 1] * self.KNIJ[_][__])
-                if self.KNIJ[_][__ + 1] * self.KNIJ[_][__] != 2 and self.KNIJ[_][__ + 1] * self.KNIJ[_][__] != 4:
-                    SUMB += self.XXIJ[_][__ + 1] - self.XXIJ[_][__]
-            self.DBIJ.append(DBIJ)
-            self.DKIJ.append(DKIJ)
-            self.BWMC.append(SUMB)
-
-        # Compute the bankfull elevation
-        zlbk = np.zeros(self.Imax)
-        zrbk = np.zeros(self.Imax)
-        for _ in range(self.Imax):  # 左侧滩地高程
-            for __ in range(self.CS_node_num[_] - 1):
-                if (self.KNIJ[_][__] + self.KNIJ[_][__ + 1] == 1) or (self.KNIJ[_][__] + self.KNIJ[_][__ + 1] == 4):  # (1,0) Or(1,3)
-                    zbtc = max(self.ZBIJ[_][__], self.ZBIJ[_][__ + 1])  # 滩槽平均高程
-                    zlbk[_] = zbtc
-                    break
-
-        for _ in range(self.Imax):  # 右侧滩地高程
-            for __ in range(self.CS_node_num[_] - 1, 0, -1):
-                if (self.KNIJ[_][__] + self.KNIJ[_][__ - 1] == 1) or (self.KNIJ[_][__] + self.KNIJ[_][__ - 1] == 4):  # (0,1) Or(3,1)
-                    zbtc = max(self.ZBIJ[_][__], self.ZBIJ[_][__ - 1]) # 滩槽平均高程
-                    zrbk[_] = zbtc
-                    break
-
-        for i in range(self.Imax):
-            self.ZBBF.append(min(zlbk[i], zrbk[i]))
-
-        # Compute the lowest elevation for each cross-section
-        for _ in range(self.Imax):
-            ZB, = 10000.0
-            for __ in range(self.CS_node_num[_]):
-                if (self.KNIJ[_][__] == 0 or self.KNIJ[_][__] == 3) and self.ZBIJ[_][__] < ZB:
-                    ZB = self.ZBIJ[_][__]
-            self.CSZBMN.append(ZB)  # For Main Channel
-
-        for _ in range(self.Imax):
-            SUMA, SUMB = 0.0, 0.0
-            for __ in range(self.CS_node_num[_] - 1):
-                if self.KNIJ[_][__] * self.KNIJ[_][__ + 1] != 2 and self.KNIJ[_][__] * self.KNIJ[_][__ + 1] != 4:
-                    DZ1 = self.ZBIJ[_][__] - self.CSZBMN[_]
-                    DZ2 = self.ZBIJ[_][__ + 1] - self.CSZBMN[_]
-                    SUMA += 0.5 * (DZ1 + DZ2) * self.DBIJ[_][__]
-                    SUMB += self.DBIJ[_][__]
-            self.CSZBav.append(self.CSZBMN[_] + SUMA / SUMB)
-            self.CSZBav0.append(copy.deepcopy(self.CSZBav[_]))  # Initial record
-
-        # Output section starting distance and elevation
-        node_list, dis2left_list, elevation_list, type_list = [], [], [], []
-        for _ in range(self.Imax):
-            node_list.append(f'CS name: {cs_name_list[_]}')
-            dis2left_list.append(f'Distance: {self.CS_DistViaRiv[_]} km')
-            elevation_list.append(f'Main channel width: {self.BWMC[_]} m')
-            type_list.append(f'Mean channel ele: {self.CSZBav[_]} m')
-
-            for __ in range(self.CS_node_num[_]):
-                node_list.append([__ + 1])
-                dis2left_list.append(self.XXIJ[_][__])
-                elevation_list.append(self.ZBIJ[_][__])
-                type_list.append(self.KNIJ[_][__])
-        output_section_ele = pd.DataFrame({'Column1': node_list, 'Column2': dis2left_list, 'Column3': elevation_list, 'Column4': type_list})
-        output_section_ele.to_csv(os.path.join(self.output_path, f'{self.ROI_name}_INICSProf.csv'), index=False, header=False)
-
-        # Output section main channel area starting distance and elevation zxl
-        cs_list, DIST_list, BMC_list, ZBk_list, ZBav_list = [], [], [], [], []
-        for I in range(0, self.Imax):
-            cs_list.append(I)
-            DIST_list.append(self.CS_DistViaRiv[_])
-            BMC_list.append(self.BWMC[_])
-            ZBk_list.append(self.ZBBF[_])
-            ZBav_list.append(self.CSZBav[_])
-
-        output_section_ele = pd.DataFrame({'I': cs_list, 'DIST(km)': DIST_list, 'BMC(m)': BMC_list, 'ZBk(m)': ZBk_list, 'ZBav(m)': ZBav_list})
-        output_section_ele.to_csv(os.path.join(self.output_path, f'{self.ROI_name}_INICSZBMC.csv'), index=False, header=True)
-
-    def _read_flow_file(self, flowfile):
-
-        pd_temp = pd.read_csv(flowfile, encoding='gbk', header=None)
-        if len(pd_temp.keys()) > 4:
-            pd_temp = pd_temp[pd_temp.keys()[0:4]]
-            print('Only the first 4 columns were read')
-        elif len(pd_temp.keys()) < 4:
-            print('Not sufficient information in the cross section profile')
-        pd_temp.columns = ['Time_step', 'Hour', 'Q&Z', 'Tributary']
-
-        # Get the profile of each cross-section
-        _, tri_cs_list = 0, []
-        tri_all_id, tri_all_time, tri_all_qt = [], [], []
-        nfl_all_id, nfl_all_time, nfl_all_qt = [], [], []
-        inlet_factor, inlet_temp_factor, outlet_factor = False, False, False
-        while _ < pd_temp.shape[0]:
-
-            # 入口流量-时间关系
-            if pd_temp['Time_step'][_] == 'inlet-Q':
-
-                if inlet_factor:
-                    raise Exception('Two inlet flow conditions were imported twice!')
-
-                inlet_id, inlet_time, inlet_q = [], [], []
-                if pd_temp['Hour'][_] not in self.cs_name:
-                    raise Exception(f"The profile of inlet cross-section {pd_temp['Hour'][_]} is not imported")
-                elif pd_temp['Hour'][_] != self.cs_name[0]:
-                    raise Exception(f"The profile of inlet cross-section {pd_temp['Hour'][_]} is not consistent with the first section {self.cs_name[0]} of dem")
-
-                if pd_temp['Q&Z'][_] == 'h':
-                    simu_factor = 3600
-                elif pd_temp['Q&Z'][_] == 'min':
-                    simu_factor = 60
-                elif pd_temp['Q&Z'][_] == 's':
-                    simu_factor = 1
-                else:
-                    raise Exception(f"The simulation time scale {str(pd_temp['Q&Z'][_])} is not supported!")
-
-                __ = copy.deepcopy(_) + 2
+                self._read_flow_file(Bed_material_file)
                 try:
-                    t = int(pd_temp['Time_step'][__])
+                    if Bed_material_file != os.path.join(self.input_path, f'{self.ROI_name}_BMGrad.csv'):
+                        shutil.copy(Bed_material_file, os.path.join(self.input_path, f'{self.ROI_name}_BMGrad.csv'))
                 except:
-                    raise TypeError('The inlet-Q should under the standard format!')
+                    print(traceback.format_exc())
+                    raise Exception('Error during copy BMGrad Condition!')
+            print(f'{str(self.ROI_name)}_QNRelt.csv has been import\n--------------- Optional step 2 Done---------------')
 
-                while __ < pd_temp.shape[0]:
-                    try:
-                        inlet_id.append(int(pd_temp['Time_step'][__]))
-                        inlet_time.append(float(pd_temp['Hour'][__]) * simu_factor)
-                        inlet_q.append(float(pd_temp['Q&Z'][__]))
-                        __ += 1
-                    except:
-                        self.TimeTQ = inlet_time
-                        self.TimeQint = inlet_q
-                        self.NumTQint = len(inlet_id)
-                        inlet_factor = True
-                        break
-
-            # 入口水温-时间关系
-            elif pd_temp['Time_step'][_] == 'inlet-T':
-
-                if inlet_temp_factor:
-                    raise Exception('Two inlet temperature flow conditions were imported twice!')
-
-                inlet_TEM_id, inlet_TEM_time, inlet_TEM = [], [], []
-                if pd_temp['Hour'][_] not in self.cs_name:
-                    raise Exception(f"The profile of inlet-T cross-section {pd_temp['Hour'][_]} is not imported")
-                elif pd_temp['Hour'][_] != self.cs_name[0]:
-                    raise Exception(f"The profile of inlet-T cross-section {pd_temp['Hour'][_]} is not consistent with the first section {self.cs_name[0]} of dem")
-
-                if pd_temp['Q&Z'][_] == 'h':
-                    simu_factor = 3600
-                elif pd_temp['Q&Z'][_] == 'min':
-                    simu_factor = 60
-                elif pd_temp['Q&Z'][_] == 's':
-                    simu_factor = 1
-                else:
-                    raise Exception(f"The simulation time scale {str(pd_temp['Q&Z'][_])} is not supported!")
-
-                __ = copy.deepcopy(_) + 2
-                try:
-                    t = int(pd_temp['Time_step'][__])
-                except:
-                    raise TypeError('The inlet-T should under the standard format!')
-
-                while __ < pd_temp.shape[0]:
-                    try:
-                        inlet_TEM_id.append(int(pd_temp['Time_step'][__]))
-                        inlet_TEM_time.append(float(pd_temp['Hour'][__])  * simu_factor)
-                        inlet_TEM.append(float(pd_temp['Q&Z'][__]))
-                        __ += 1
-                    except:
-                        self.TimeTMP = inlet_TEM_time
-                        self.TimeWTemp = inlet_TEM
-                        self.NumTMP = len(inlet_TEM_id)
-                        inlet_temp_factor = True
-                        break
-
-            # 出口水位-流量-时间关系
-            elif pd_temp['Time_step'][_] == 'outlet-Z':
-
-                if outlet_factor:
-                    raise Exception('Two outlet flow conditions were imported twice!')
-
-                if pd_temp['Hour'][_] not in self.cs_name:
-                    raise Exception(f"The profile of outlet-Z cross-section {pd_temp['Hour'][_]} is not imported")
-                elif pd_temp['Hour'][_] != self.cs_name[-1]:
-                    raise Exception( f"The profile of outlet-Z cross-section {pd_temp['Hour'][_]} is not consistent with the last cross section {self.cs_name[0]} of dem")
-
-                if pd_temp['Q&Z'][_] == 'h':
-                    simu_factor = 3600
-                elif pd_temp['Q&Z'][_] == 'min':
-                    simu_factor = 60
-                elif pd_temp['Q&Z'][_] == 's':
-                    simu_factor = 1
-                else:
-                    raise Exception(f"The simulation time scale {str(pd_temp['Q&Z'][_])} is not supported!")
-
-                if pd_temp['Tributary'][_] in ['T-Q', 'T-Z', 'Q-Z']:
-                    self.KBDout, outlet_id, outlet_time, outlet_Q, outlet_Z = pd_temp['Tributary'][_], [], [], [], []
-                else:
-                    raise Exception(f"The input relationship {str(pd_temp['Tributary'][_])} is not supported!")
-
-                __ = copy.deepcopy(_) + 2
-                try:
-                    t = int(pd_temp['Time_step'][__])
-                except:
-                    raise TypeError('The inlet-T should under the standard format!')
-
-                while __ < pd_temp.shape[0]:
-                    try:
-                        outlet_id.append(int(pd_temp['Time_step'][__]))
-                        if self.KBDout == 'T-Q':
-                            outlet_time.append(float(pd_temp['Hour'][__]) * simu_factor)
-                            outlet_Q.append(float(pd_temp['Q&Z'][__]))
-                        elif self.KBDout == 'T-Z':
-                            outlet_time.append(float(pd_temp['Hour'][__]) * simu_factor)
-                            outlet_Z.append(float(pd_temp['Q&Z'][__]))
-                        elif self.KBDout == 'Q-Z':
-                            outlet_Q.append(float(pd_temp['Hour'][__]))
-                            outlet_Z.append(float(pd_temp['Q&Z'][__]))
-                        __ += 1
-                    except:
-                        if self.KBDout == 'T-Q':
-                            self.TimeTout = outlet_time
-                            self.TimeQout = outlet_Q
-                        elif self.KBDout == 'T-Z':
-                            self.TimeTout = outlet_time
-                            self.TimeZout = outlet_Z
-                        elif self.KBDout == 'Q-Z':
-                            self.ZRNOUT = outlet_Z
-                            self.QRNOUT = outlet_Q
-
-                        self.NumTQout = len(outlet_time)
-                        self.NumTZout = len(outlet_time)
-                        self.NumZQout = len(outlet_Z)
-                        outlet_factor = True
-
-                        if self.KBDout == 'Q-Z':
-                            self.DQZRN = []
-                            for _ in range(self.NumZQout):
-                                if _ == 0:
-                                    DZ12 = self.ZRNout[_ + 1] - self.ZRNout[_]
-                                    if DZ12 <= 1.0E-3:
-                                        print(f'k,DZ12={str(_)}, {str(DZ12)} in Sub_inputdata')
-                                    self.DQZRN.append((self.QRNout[_ + 1] - self.QRNout[_]) / (self.ZRNout[_ + 1] - self.ZRNout[_]))
-                                elif 0 < _ < self.NumZQout - 1:
-                                    DZ12 = self.ZRNout[_ + 1] - self.ZRNout[_ - 1]
-                                    if DZ12 <= 1.0E-3:
-                                        print(f'k,DZ12={str(_)}, {str(DZ12)} in Sub_inputdata')
-                                    self.DQZRN.append((self.QRNout[_ + 1] - self.QRNout[_ - 1]) / (self.ZRNout[_ + 1] - self.ZRNout[_ - 1]))
-                                elif _ == self.NumZQout - 1:
-                                    DZ12 = self.ZRNout[_] - self.ZRNout[_ - 1]
-                                    if DZ12 <= 1.0E-3:
-                                        print(f'k,DZ12={str(_)}, {str(DZ12)} in Sub_inputdata')
-                                    self.DQZRN.append((self.QRNout[_] - self.QRNout[_ - 1]) / (self.ZRNout[_] - self.ZRNout[_ - 1]))
-                        break
-
-            # 支流流量-时间情况
-            elif pd_temp['Time_step'][_] == 'Tribu-Z':
-
-                if pd_temp['Hour'][_] in self.cs_name:
-                    tri_cs_name = pd_temp['Time_step'][_]
-                    tri_cs_list.append(self.cs_name.index(tri_cs_name))
-                else:
-                    raise Exception(f"The profile of Tribu-Z cross-section {pd_temp['Hour'][_]} is not imported")
-
-                if pd_temp['Q&Z'][_] == 'h':
-                    simu_factor = 3600
-                elif pd_temp['Q&Z'][_] == 'min':
-                    simu_factor = 60
-                elif pd_temp['Q&Z'][_] == 's':
-                    simu_factor = 1
-                else:
-                    raise Exception(f"The simulation time scale {str(pd_temp['Q&Z'][_])} is not supported!")
-
-                tri_id, tri_T, tri_qt = [], [], []
-                __ = copy.deepcopy(_) + 2
-                try:
-                    t = int(pd_temp['Time_step'][__])
-                except:
-                    raise TypeError('The Tribu-Z should under the standard format!')
-
-                while __ < pd_temp.shape[0]:
-                    try:
-                        tri_id.append(int(pd_temp['Time_step'][__]))
-                        tri_T.append(float(pd_temp['Hour'][__])  * simu_factor)
-                        tri_qt.append(float(pd_temp['Q&Z'][__]))
-                        __ += 1
-                    except:
-                        tri_all_id.append(tri_id)
-                        tri_all_time.append(tri_all_time)
-                        tri_all_qt.append(tri_qt)
-                        break
-
-            # 区间引水-时间信息
-            elif pd_temp['Time_step'][_] == 'NFL-Q':
-                raise Exception('The NFL part has not been transformed yet.')
-
-            _ += 1
-
-        # Update the flow parameter
-        self.Num_TBY = len(tri_all_id)
-        self.NcsTBY = tri_cs_list
-        self.NFLDiv = False # 引水引沙参数=0(不考虑),=1(考虑)
-        self.TimeTQtby = tri_all_time
-        self.TimeQtby = tri_all_qt
-        self.NumQtby = [len(_) for _ in tri_all_id]
-        self.QLnew = [0.0 for _ in range(self.Imax)]
-        self.QLold = [0.0 for _ in range(self.Imax)]
-
-        if 'T' in self.KBDout and self.TimeTout != self.TimeQint:
-            raise ValueError('The time for inlet and outlet flow conditions were not consistent!')
-        if self.NcsTBY > 0 and False in [_ == self.TimeTQtby[0] for _ in self.TimeTQtby]:
-            raise ValueError('The tributary flow conditions were not consistent!')
-        if self.NcsTBY > 0 and self.TimeTQtby[0] != self.TimeQint:
-            raise ValueError('The tributary flow conditions and inlet time were not consistent!')
-
-    def _read_roughness_file(self, roughness_file):
-
-        # Read the roughness file
-        try:
-            pd_temp = pd.read_csv(roughness_file, header=None)
-        except:
-            print(traceback.format_exc())
-            raise Exception('Some error occurred during reading the roughness file!')
-
-        if len(pd_temp.keys()) < self.Num_Control_CS + 1:
-            raise Exception('Not sufficient information in the roughness profile')
-
-        # Generate the columns name
-        columns_t = ['Factor']
-        for _ in range(len(pd_temp.keys()) - 1):
-            columns_t.append(f'cs_{str(_)}')
-        pd_temp.columns = columns_t
-
-        _ = 0
-        self.Control_CS_QDRN = [[] for _ in range(len(self.Control_CS_Name))]
-        self.Control_CS_LowFP_Rg = [None for _ in range(len(self.Control_CS_Name))]
-        self.Control_CS_HighFP_Rg = [None for _ in range(len(self.Control_CS_Name))]
-        while _ < pd_temp.shape[0]:
-            if str(pd_temp['Factor'][_]) == 'Qcon-R':
-
-                # Check the consistency between control cs name and roughness cs
-                control_cs_list = list(pd_temp[_]).remove('Qcon-R')
-                consis_list = [__ in control_cs_list for __ in self.Control_CS_Name]
-
-                if False in consis_list:
-                    raise Exception(f'The Roughness for control cross section {self.Control_CS_Name[consis_list.index(False)]} is missing!')
-                while True:
-                    _ += 1
-                    if not str(pd_temp['Factor'][_]).isnumeric() or _ >= pd_temp.shape[0]:
-                        break
-                    else:
-                        self.Control_CS_QD.append(float(pd_temp['Factor'][_]))
-                        for __ in self.Control_CS_Name:
-                            if str(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_]).isnumeric():
-                                self.Control_CS_QDRN[self.Control_CS_Name.index(__)].append(float(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_]))
-                            else:
-                                raise Exception('Non number shown in control cs roughness file')
-
-            elif str(pd_temp['Factor'][_]) == 'Type-R':
-                FP1_factor, FP2_factor = False, False
-                control_cs_list = list(pd_temp[_]).remove('Type-R')
-                consis_list = [__ in control_cs_list for __ in self.Control_CS_Name]
-
-                if False in consis_list:
-                    raise Exception(f'The roughness of high and low floodplains for control cross section {self.Control_CS_Name[consis_list.index(False)]} are missing!')
-                while True:
-                    _ += 1
-                    if str(pd_temp['Factor'][_]) == 'FP1':
-                        for __ in self.Control_CS_Name:
-                            if str(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_]).isnumeric():
-                                self.Control_CS_HighFP_Rg[self.Control_CS_Name.index(__)] = float(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_])
-                            else:
-                                raise Exception('Non number shown in control cs roughness file')
-                        FP1_factor = True
-
-                    elif str(pd_temp['Factor'][_]) == 'FP2':
-                        for __ in self.Control_CS_Name:
-                            if str(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_]).isnumeric():
-                                self.Control_CS_LowFP_Rg[self.Control_CS_Name.index(__)] = float(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_])
-                            else:
-                                raise Exception('Non number shown in control cs roughness file')
-                        FP2_factor = True
-
-                    else:
-                        if FP1_factor and FP2_factor:
-                            break
-                        else:
-                            raise Exception('The roughness for high or low floodplain were missed!')
-
-            elif str(pd_temp['Factor'][_]) == 'DRN-DH':
-                DRN_factor, DH_factor = False, False
-                control_cs_list = list(pd_temp[_]).remove('DRN-DH')
-                consis_list = [__ in control_cs_list for __ in self.Control_CS_Name]
-
-                if False in consis_list:
-                    raise Exception(f'The roughness of high and low floodplains for control cross section {self.Control_CS_Name[consis_list.index(False)]} are missing!')
-                while True:
-                    _ += 1
-                    if str(pd_temp['Factor'][_]) == 'DRN':
-                        for __ in self.Control_CS_Name:
-                            if str(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_]).isnumeric():
-                                self.DNbed[self.Control_CS_Name.index(__)] = float(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_])
-                            else:
-                                raise Exception('Non number shown in control cs roughness file')
-                        DRN_factor = True
-
-                    elif str(pd_temp['Factor'][_]) == 'DH(m)':
-                        for __ in self.Control_CS_Name:
-                            if str(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_]).isnumeric():
-                                self.DHbed[self.Control_CS_Name.index(__)] = float(pd_temp[f'cs_{str(control_cs_list.index(__))}'][_])
-                            else:
-                                raise Exception('Non number shown in control cs roughness file')
-                        DH_factor = True
-
-                    else:
-                        if DRN_factor and DH_factor:
-                            break
-                        else:
-                            raise Exception('The DRN or DH were missed!')
-
-        # Roughness in Main Channel
-        for _ in range(len(self.CS_DistViaRiv)):
-            for _ in range(len(self.Control_CS_QD)):
-            self.
-        for k in range(num_qn):
-            temp_yy = [rncts[n][k] for n in range(nctcs)]
-            for i in range(imax):
-                rnmncs[i, k] = np.interp(dist_lg[i], temp_xx, temp_yy)
-
-        # Roughness on low floodplain
-        rnlfcs = np.interp(dist_lg[:imax], temp_xx, rnlwfp)
-
-        # Roughness on high floodplain
-        rnhfcs = np.interp(dist_lg[:imax], temp_xx, rnhgfp)
-        #
-        # # Roughness increment
-        # dnbdcs = np.interp(dist_lg[:imax], temp_xx, dnbed)        self.RNMNCS = []
-        #
-        # # Erosion/deposition increment
-        # dhbdcs = np.interp(dist_lg[:imax], temp_xx, dhbed)
-        #
-        # print("7---File=*_QNReLT.Dat has been input")
-        #
+    def write_para(self):
+        pass
         # if num_qn >= max_qn:
         #     print(f"Maximum number of Q-N relationships: {max_qn}")
         #     print(f"Actual number of Q-N relationships: {num_qn}")
@@ -1045,223 +804,1483 @@ class HydrodynamicModel_1D(object):
         # stcs_max = np.full(imax, -10000.0)
         # tscs_max = np.zeros(imax)
 
-    def calculate(self):
+    def _read_para_file(self, para_file):
+        with open(para_file, 'r') as f:
+            file_inform = f.readlines()
+            file_dic = {}
+            for inform in file_inform:
+                inform = inform.split('\n')[0].split(' #')[0]
+                if ':' in inform:
+                    file_dic[inform.split(':')[0]] = inform.split(':')[1]
+                else:
+                    print(str(inform))
 
-        # Initialize parameters
-        Istep = 0
-        NumRem = 0  # Number of times to calculate water and sediment conditions and topography changes
-        TimeSC = 0.0  # Total calculation time (seconds)
-        TimeHR = 0.0  # Total calculation time (hours)
+        for _ in file_dic.keys():
+            if _ in self.__dict__.keys():
+                self.__dict__[_] = type(self.__dict__[_])(file_dic[_])
+            else:
+                raise ValueError(f'The input {str(_)} is not valid parameter!')
 
-        # Calculate initial riverbed elevation and output results
-        def OutputCSProfiles(NumRem):
-            pass
+    def _read_cs_file(self, cs_file):
 
-        OutputCSProfiles(NumRem)
-        print("1----------OutputCSProfiles")
+        # Read the cs file and Update the cross-section profile
+        cs_name_list, cs_control_list, cs_hydro, cs_id_all, cs_control_station = [], [], [], [], []
+        try:
+            pd_temp = pd.read_csv(cs_file, header=None, encoding='gbk')
+        except UnicodeError:
+            pd_temp = pd.read_csv(cs_file, header=None)
+        except:
+            raise Exception('The cs profile cannot be read')
 
-        # Record bed sediment gradation and output results
-        def OutputBEDMTGRAD(NumRem):
-            pass
+        if len(pd_temp.keys()) > 4:
+            pd_temp = pd_temp[pd_temp.keys()[0:4]]
+            print('Only the first 4 columns were read')
+        elif len(pd_temp.keys()) < 4:
+            print('Not sufficient information in the cross section profile')
+        pd_temp.columns = ['Id', 'Distance to left node', 'Ele', 'Type']
 
-        OutputBEDMTGRAD(NumRem)
-        print("3----------OutputBEDMTGRAD")
+        # Get the profile of each cross-section
+        maximum_node = 0
+        cs_start_index = list(pd_temp[pd_temp['Id'] == 'Id'].index)
 
-        # Set-up for the spin-up period
-        if NYspin == 1:
-            NFLBDtp = NFLBD
-            NFLGAtp = NFLGA
-            SPtime = 0.0  # Initial simulation time
+        # Check the cs profile
+        if len(cs_start_index) == 0:
+            raise Exception('No valid cs profile is imported')
+        else:
+            self.Imax = len(cs_start_index)
+            self.MaxNCS = len(cs_start_index)
 
-        # Input initial cross-section flow and water level
-        def Initialdata():
-            pass
+        # Derive the profile
+        cs_id_list = []
+        for _ in cs_start_index:
+            if not 0 <= _ - 1 <= pd_temp.shape[0]:
+                raise Exception('The CSProfile ID is not in the right format!')
+            else:
+                try:
+                    cs_name_list.append(str(pd_temp['Id'][_ - 1]))
+                    if len(self.CS_DistViaRiv) > 0 and self.CS_DistViaRiv[-1] > float(pd_temp['Distance to left node'][_ - 1]):
+                        raise Exception(f'The sequence of the cross section {cs_name_list[-1]} is not appropriate!')
+                    self.CS_DistViaRiv.append(float(pd_temp['Distance to left node'][_ - 1]))
+                    cs_control_list.append(pd_temp['Ele'][_ - 1].upper() == 'TRUE')
+                    cs_control_station.append(pd_temp['Type'][_ - 1])
+                except:
+                    raise TypeError(f'The header of CSProf for cross section {str(_)} might be incorrect!')
 
-        Initialdata()
-        print("4----------Initialdata")
+                try:
+                    if cs_start_index.index(_) == len(cs_start_index) - 1:
+                        end_index = pd_temp.shape[0]
+                    else:
+                        end_index = cs_start_index[cs_start_index.index(_) + 1] - 1
 
-        # Calculate sediment transport capacity under initial water and sediment conditions
-        def CompVISCOS(TimeWtemp, ViSTFW):
-            pass
+                    cs_id_list.append([int(__) for __ in pd_temp['Id'][_ + 1: end_index]])
+                    self.XXIJ.append([float(__) for __ in pd_temp['Distance to left node'][_ + 1: end_index]])
+                    self.ZBIJ.append([float(__) for __ in pd_temp['Ele'][_ + 1: end_index]])
+                    self.KNIJ.append([int(float(__)) for __ in pd_temp['Type'][_ + 1: end_index]])
+                    self.CS_node_num.append(len(cs_id_list[-1]))
+                    maximum_node = max(maximum_node, len(cs_id_list[-1]))
+                except:
+                    raise TypeError(f'The file of CSProf for cross section {str(_)} might be incorrect!')
 
-        def CompSETVEL():
-            pass
+        # Check the consistency between different list
+        if len(self.CS_DistViaRiv) != len(self.XXIJ) != len(self.ZBIJ) != len(self.KNIJ) != len(self.CS_node_num):
+            raise Exception('The code error during input the cross section profile!')
 
-        def COMPCHBEDSZ():
-            pass
+        # Update the cross-section profile
+        self.CS_num = len(cs_name_list)
+        self.CS_name = cs_name_list
+        self.Jmax = maximum_node
+        self.MaxNPT = maximum_node
+        self.ZBINL = copy.deepcopy(self.ZBIJ)
 
-        def Comp1DSEDCC():
-            pass
+        # Profile for control cross-sections
+        self.NumCCS = int(np.sum(np.array(cs_control_list).astype(np.int16)))
+        self.MaxCTS = self.NumCCS
+        self.Control_CS_Name = [self.CS_name[_] for _ in range(len(cs_control_list)) if cs_control_list[_]]
+        self.Control_CS_Id = [_ for _ in range(len(cs_control_list)) if cs_control_list[_]]
+        self.Control_CS_DistViaRiv = [self.CS_DistViaRiv[_] for _ in self.Control_CS_Id]
+        self.Control_CS_station = [cs_control_station[_] for _ in range(len(cs_control_list)) if cs_control_list[_]]
 
-        def COMPSUSnd():
-            pass
+        # Get the distance between the cross-section
+        self.DX2CS = [self.CS_DistViaRiv[_ + 1] - self.CS_DistViaRiv[_] for _ in range(len(self.CS_DistViaRiv) - 1)]
 
-        CompVISCOS(TimeWtemp[0], ViSTFW)
-        CompSETVEL()
-        COMPCHBEDSZ()
-        Comp1DSEDCC()
-        COMPSUSnd()
+        # Get the left right bank and channel number for each cross-section
+        for _ in range(len(self.CS_node_num)):
+            NMC_l, NMC_r, NodMCL, NodMCR = 0, 0, [], []
+            for __ in range(self.CS_node_num[_] - 1):
+                if (self.KNIJ[_][__] == 1 or self.KNIJ[_][__] == 2) and (self.KNIJ[_][__ + 1] == 0 or self.KNIJ[_][__ + 1] == 3):
+                    NMC_l += 1
+                    NodMCL.append(__)  # 主槽左侧滩地节点号
+                elif (self.KNIJ[_][__] == 0 or self.KNIJ[_][__] == 3) and (self.KNIJ[_][__ + 1] == 1 or self.KNIJ[_][__ + 1] == 2):
+                    NMC_r += 1
+                    NodMCR.append(__)  # 主槽右侧滩地节点号
+            self.NodMCL.extend(NodMCL)
+            self.NodMCR.extend(NodMCR)
 
-        if NYSpin == 0:
-            def WriteCSsedi():
-                pass
+            if NMC_l < NMC_r:
+                raise Exception(f'The channel {self.CS_name[_]} has no left bank')
+            elif NMC_l < NMC_r:
+                raise Exception(f'The channel {self.CS_name[_]} has no right bank')
+            elif NMC_l == 0:
+                raise Exception(f'The left low floodplain of {self.CS_name[_]} might be missing')
+            elif NMC_r == 0:
+                raise Exception(f'The right low floodplain of {self.CS_name[_]} might be missing')
+            elif NMC_l != NMC_r:
+                raise Exception(f'The type of {self.CS_name[_]} is wrong')
+            self.NMC1CS.append(NMC_l)
 
-            WriteCSsedi()
+        # Check if the cross-section terrain is invalid
+        # Generate the information of sub-reach
+        for _ in range(self.Imax):
+            DBIJ, DKIJ, SUMB, RNIJ = [], [], 0, []  # 各子断面宽度, 各子断面代号(0*1)(0*2)均为主槽, Width of main channel for each cross-section
+            for __ in range(self.CS_node_num[_] - 1):
 
-        # Main calculation loop for water and sediment changes and riverbed deformation
-        for Istep in range(1, NStep + 1):
-            # Code for the spin-up period
-            if NYspin == 1:
-                SPtime += DTStep / 3600.0
+                DXJ = self.XXIJ[_][__ + 1] - self.XXIJ[_][__]
+                if DXJ < 0:
+                    raise Exception(f'The cross section {self.CS_name[_]} profile has invalid distance to left node!')
+                elif DXJ < 0.01:
+                    self.XXIJ[_][__ + 1] = self.XXIJ[_][__] + 0.01
+                DBIJ.append(self.XXIJ[_][__ + 1] - self.XXIJ[_][__])
+                DKIJ.append(self.KNIJ[_][__ + 1] * self.KNIJ[_][__])
 
-            if NYspin == 1 and SPtime <= TimeSP:
-                NFLBD = 0
-                NFLGA = 0
-                Pleft = 100.0 - 100 * SPtime / Timesp
-                print(f"Spin-up Period, SPtime,Left={SPtime},{Pleft}%")
+                if self.KNIJ[_][__ + 1] * self.KNIJ[_][__] != 2 and self.KNIJ[_][__ + 1] * self.KNIJ[_][__] != 4:
+                    SUMB += self.XXIJ[_][__ + 1] - self.XXIJ[_][__]
 
-            if NYspin == 1 and SPtime > TimeSP:
-                NFLBD = NFLBDtp
-                NFLGA = NFLGAtp
+                if self.KNIJ[_][__] == 0 or self.KNIJ[_][__] == 3:
+                    RNIJ.append(0.020)
+                elif self.KNIJ[_][__] == 1:
+                    RNIJ.append(0.030)
+                elif self.KNIJ[_][__] == 2:
+                    RNIJ.append(0.040)
 
-            NFLRD = 0
-            TimeSC = DTStep * Istep  # Cumulative calculation time (seconds)
-            TimeHR = TimeSC / 3600.0  # Cumulative calculation time (hours)
+            self.DBIJ.append(DBIJ)
+            self.DKIJ.append(DKIJ)
+            self.BWMC.append(SUMB)
+            self.RNIJ.append(RNIJ)
 
-            # Determine whether to record calculation results
-            if Istep % NtRD == 0:
-                NumRem += 1
-                NFLRD = 1
+        # Compute the bank-full elevation
+        zlbk = np.zeros(self.Imax)
+        zrbk = np.zeros(self.Imax)
+        for _ in range(self.Imax):  # 左侧滩地高程
+            for __ in range(self.CS_node_num[_] - 1):
+                if (self.KNIJ[_][__] + self.KNIJ[_][__ + 1] == 1) or (self.KNIJ[_][__] + self.KNIJ[_][__ + 1] == 4):  # (1,0) Or(1,3)
+                    zbtc = max(self.ZBIJ[_][__], self.ZBIJ[_][__ + 1])  # 滩槽平均高程
+                    zlbk[_] = zbtc
+                    break
 
-            # Determine boundary conditions for 1D flow calculation
-            if Nshow == 1:
-                print("1 COMP1DFLOWBD")
-
-            def COMP1DFLOWBD():
-                pass
-
-            COMP1DFLOWBD()
-
-            # Calculate 1D steady water surface profile
-            if Nshow == 1:
-                print("2 COMP1DFLOWRT")
-
-            def SOL1DFLOWRT():
-                pass
-
-            SOL1DFLOWRT()
-
-            # Record flow conditions if needed
-            if NFLRD == 1:
-                def OUTPUT1DFLOW(NumRem):
-                    pass
-
-                OUTPUT1DFLOW(NumRem)
-
-            if int(TimeSC) % (3600 * 24) == 0:
-                def WriteCSflow():
-                    pass
-
-                WriteCSflow()
-
-            # Just After the spin-up period
-            if NYspin == 1:
-                if SPtime <= TimeSP and (SPtime + DTStep / 3600.0) > TimeSP:
-                    OUTPUT1DFLOW(0)
-                    WriteCSflow()
-
-            # Sediment transport calculation
-            if Nshow == 1:
-                print("Into Sub-SedBD")
-
-            if NFLST == 1:
-                def COMP1DSEDBD():
-                    pass
-
-                def CompVISCOS(Wtemp, ViSTFW):
-                    pass
-
-                def CompSETVEL():
-                    pass
-
-                COMP1DSEDBD()
-                CompVISCOS(Wtemp, ViSTFW)
-                CompSETVEL()
-
-            if Nshow == 1:
-                print("3  SOL1DSEDTPEQ ")
-
-            if NFLST == 1:
-                def SOL1DSEDTPEQ():
-                    pass
-
-                def COMPSUSnd():
-                    pass
-
-                SOL1DSEDTPEQ()
-                COMPSUSnd()
-
-            if Nshow == 1:
-                print("31  Comp1DSEDCC/CompDASDT(2)  ")
-
-            if NFLST == 1:
-                def Comp1DSEDCC():
-                    pass
-
-                def CompDASDT(n):
-                    pass
-
-                Comp1DSEDCC()
-                CompDASDT(2)
-
-            if Nshow == 1:
-                print("32 COMPSUSnd/SCND ")
-
-            if NFLST == 1 and NFLRD == 1:
-                def Output1DSed(NumRem):
-                    pass
-
-                Output1DSed(NumRem)
-
-            if NFLST == 1:
-                if int(TimeSC) % (3600 * 24) == 0:
-                    WriteCSsedi()
-
-            # Just After the spin-up period
-            if NYspin == 1:
-                if SPtime <= TimeSP and (SPtime + DTStep / 3600.0) > TimeSP:
-                    Output1DSed(0)
-                    WriteCSsedi()
-
-            if NFLST == 1 and NFLBD == 1 and MDLDA == 4:
-                COMPSUSnd()
-
-        # Note: Many functions are defined as pass statements as their implementations are not provided in the original code.
-        # You may need to implement these functions based on your specific requirements.
-
-    def SOL1DFLOWRT(self, Hmin, DTStep, CitaFw, QinT, QLnew, Zout, Qout, DQdZout, Npoint, XXIJ, ZBIJ,
-                    DistLG, DX2CS, KNIJ, RNIJ, Zbmin, Qold, Zold, Aold, Bold, DMKold, ALFold):
-
-        Qnew = np.zeros(self.Imax)
-        Znew = np.zeros(self.Imax)
+        for _ in range(self.Imax):  # 右侧滩地高程
+            for __ in range(self.CS_node_num[_] - 1, 0, -1):
+                if (self.KNIJ[_][__] + self.KNIJ[_][__ - 1] == 1) or (self.KNIJ[_][__] + self.KNIJ[_][__ - 1] == 4):  # (0,1) Or(3,1)
+                    zbtc = max(self.ZBIJ[_][__], self.ZBIJ[_][__ - 1]) # 滩槽平均高程
+                    zrbk[_] = zbtc
+                    break
 
         for i in range(self.Imax):
-            Zold[i] = self.CSZW[i]
-            Qold[i] = self.CSQQ[i]
+            self.ZBBF.append(min(zlbk[i], zrbk[i]))  # bank full elevation
 
-        # CompQZBA1(Hmin, DHmin, CitaFw, Imax, Jmax, NPT1CS, KNIJ, RNIJ, DBIJ, ZBIJ, Zbmin, DX2CS, Zold, Aold, Bold,
-        #           DMKold, ALFold)
+        # Compute the lowest elevation for each cross-section
+        for _ in range(self.Imax):
+            ZB = 10000.0
+            for __ in range(self.CS_node_num[_]):
+                if (self.KNIJ[_][__] == 0 or self.KNIJ[_][__] == 3) and self.ZBIJ[_][__] < ZB:
+                    ZB = self.ZBIJ[_][__]
+            self.CSZBmn.append(ZB)  # For Main Channel # Thalweg elevation
+
+        # Compute the average elevation of the channel
+        for _ in range(self.Imax):
+            SUMA, SUMB = 0.0, 0.0
+            for __ in range(self.CS_node_num[_] - 1):
+                if self.KNIJ[_][__] * self.KNIJ[_][__ + 1] != 2 and self.KNIJ[_][__] * self.KNIJ[_][__ + 1] != 4:
+                    DZ1 = self.ZBIJ[_][__] - self.CSZBmn[_]
+                    DZ2 = self.ZBIJ[_][__ + 1] - self.CSZBmn[_]
+                    SUMA += 0.5 * (DZ1 + DZ2) * self.DBIJ[_][__]
+                    SUMB += self.DBIJ[_][__]
+            self.CSZBav.append(self.CSZBmn[_] + SUMA / SUMB)
+        self.CSZBav0 = copy.deepcopy(self.CSZBav) # Initial record
+
+    def _read_flow_input(self, flowfile):
+
+        # Read the flow boundary condition
+        try:
+            pd_temp = pd.read_csv(flowfile, header=None, encoding='gbk')
+        except UnicodeError:
+            pd_temp = pd.read_csv(flowfile, header=None)
+        except:
+            raise Exception('The flow boundary condition cannot be read')
+
+        if len(pd_temp.keys()) > 4:
+            pd_temp = pd_temp[pd_temp.keys()[0:4]]
+            print('Only the first 4 columns were read')
+        elif len(pd_temp.keys()) < 4:
+            print('Not sufficient information in the cross section profile')
+        pd_temp.columns = ['Time_step', 'Hour', 'Q&Z', 'Tributary']
+
+        # Get the flow profile of inlet
+        tri_cs_list = []
+        tri_all_id, tri_all_time, tri_all_q = [], [], []
+        nfl_all_id, nfl_all_time, nfl_all_qt = [], [], []
+        inlet_factor, inlet_temp_factor, outlet_factor, distance_inflow_factor, station_init_factor = False, False, False, False, False
+        id_index = list(pd_temp[pd_temp['Time_step'] == 'k'].index)
+        for _ in id_index:
+
+            # Import the inlet discharge - time
+            if pd_temp['Time_step'][_ - 1] == 'inlet_Q-T':
+
+                # Check if inlet cs is valid
+                if inlet_factor:
+                    raise Exception('Two inlet flow conditions were imported twice!')
+
+                if pd_temp['Hour'][_ - 1] not in self.CS_name:
+                    raise Exception(f"The profile of inlet cross-section {pd_temp['Hour'][_ - 1]} is not imported")
+                elif pd_temp['Hour'][_ - 1] != self.CS_name[0]:
+                    raise Exception(f"The profile of inlet cross-section {pd_temp['Hour'][_ - 1]} is not consistent with the first section {self.CS_name[0]} of dem")
+
+                # Derive the Q-T
+                start_index = _ + 1
+                end_index = pd_temp.shape[0] if id_index.index(_) == len(id_index) - 1 else id_index[id_index.index(_) + 1] - 1
+                try:
+                    inlet_id = [int(pd_temp['Time_step'][__]) for __ in range(start_index, end_index)]
+                    self.TimeTQ = [float(pd_temp['Hour'][__]) * 3600 for __ in range(start_index, end_index)]
+                    self.TimeQint = [float(pd_temp['Q&Z'][__]) for __ in range(start_index, end_index)]
+                    self.NumTQint = len(inlet_id)
+                    inlet_factor = True
+                except:
+                    raise TypeError('The inlet_Q-T should under the standard format!')
+
+            # Import the inlet water temperature - time
+            elif pd_temp['Time_step'][_ - 1] == 'inlet-T-T':
+
+                if inlet_temp_factor:
+                    raise Exception('Two inlet temperature flow conditions were imported twice!')
+
+                if pd_temp['Hour'][_ - 1] not in self.CS_name:
+                    raise Exception(f"The profile of inlet-T {pd_temp['Hour'][_ - 1]} is not imported")
+                elif pd_temp['Hour'][_ - 1] != self.CS_name[0]:
+                    raise Exception(f"The profile of inlet-T {pd_temp['Hour'][_ - 1]} is not consistent with the first section {self.CS_name[0]} of dem")
+
+                # Derive the T-T
+                start_index = _ + 1
+                end_index = pd_temp.shape[0] if id_index.index(_) == len(id_index) - 1 else id_index[id_index.index(_) + 1] - 1
+
+                try:
+                    inlet_TEM_id = [int(pd_temp['Time_step'][__]) for __ in range(start_index, end_index)]
+                    self.TimeTMP = [float(pd_temp['Hour'][__]) * 3600 for __ in range(start_index, end_index)]
+                    self.TimeWTemp = [float(pd_temp['Q&Z'][__]) for __ in range(start_index, end_index)]
+                    self.NumTMP = len(inlet_TEM_id)
+                    inlet_temp_factor = True
+                except:
+                    raise TypeError('The inlet_T-T should under the standard format!')
+
+            # Import the outlet water lvl - discharge - time
+            elif pd_temp['Time_step'][_ - 1].startswith('outlet_'):
+
+                # Check if the outlet data is valid
+                if outlet_factor:
+                    raise Exception('Two outlet flow conditions were imported twice!')
+
+                if pd_temp['Hour'][_ - 1] not in self.CS_name:
+                    raise Exception(f"The profile of outlet cross-section {pd_temp['Hour'][_ - 1]} is not imported")
+                elif pd_temp['Hour'][_ - 1] != self.CS_name[-1]:
+                    raise Exception(f"The profile of outlet cross-section {pd_temp['Hour'][_ - 1]} is not consistent with the first section {self.CS_name[-1]} of dem")
+
+                outlet_type = pd_temp['Time_step'][_ - 1].split('_')[1]
+                if outlet_type in ['Q-T', 'Z-T', 'Q-Z']:
+                    self.KBDout, outlet_id, outlet_time, outlet_Q, outlet_Z = outlet_type, [], [], [], []
+                else:
+                    raise Exception(f"The input relationship {str(outlet_type)} is not supported!")
+
+                # Derive the outlet Q-Z-T
+                start_index = _ + 1
+                end_index = pd_temp.shape[0] if id_index.index(_) == len(id_index) - 1 else id_index[id_index.index(_) + 1] - 1
+
+                try:
+                    time_step = [int(pd_temp['Time_step'][__]) for __ in range(start_index, end_index)]
+                    self.TimeTout = [float(pd_temp['Hour'][__]) * 3600 for __ in range(start_index, end_index)]
+
+                    if self.KBDout == 'Q-T':
+                        self.TimeQout = [float(pd_temp['Q&Z'][__]) for __ in range(start_index, end_index)]
+                        self.NumTQout = len(self.TimeQout)
+
+                    elif self.KBDout == 'Z-T':
+                        self.TimeZout = [float(pd_temp['Q&Z'][__]) for __ in range(start_index, end_index)]
+                        self.NumTZout = len(self.TimeZout)
+
+                    elif self.KBDout == 'Q-Z':
+                        self.QRNout = [float(pd_temp['Q&Z'][__]) for __ in range(start_index, end_index)]
+                        self.ZRNout = [float(pd_temp['Tributary'][__]) for __ in range(start_index, end_index)]
+                        self.NumZQout = len(self.QRNout)
+
+                        # Generate the dQ/dZ Relation
+                        self.DQZRN = []
+                        for _ in range(self.NumZQout):
+                            if _ == 0:
+                                DZ12 = self.ZRNout[_ + 1] - self.ZRNout[_]
+                                if DZ12 <= 1.0E-3:
+                                    raise ValueError(f'Given the interval in water level is too small dQ/dz relationship is not valid')
+                                self.DQZRN.append((self.QRNout[_ + 1] - self.QRNout[_]) / (self.ZRNout[_ + 1] - self.ZRNout[_]))
+                            elif 0 < _ < self.NumZQout - 1:
+                                DZ12 = self.ZRNout[_ + 1] - self.ZRNout[_ - 1]
+                                if DZ12 <= 1.0E-3:
+                                    raise ValueError(f'Given the interval in water level is too small dQ/dz relationship is not valid')
+                                self.DQZRN.append((self.QRNout[_ + 1] - self.QRNout[_ - 1]) / (self.ZRNout[_ + 1] - self.ZRNout[_ - 1]))
+                            elif _ == self.NumZQout - 1:
+                                DZ12 = self.ZRNout[_] - self.ZRNout[_ - 1]
+                                if DZ12 <= 1.0E-3:
+                                    raise ValueError(f'Given the interval in water level is too small dQ/dz relationship is not valid')
+                                self.DQZRN.append((self.QRNout[_] - self.QRNout[_ - 1]) / (self.ZRNout[_] - self.ZRNout[_ - 1]))
+                    outlet_factor = True
+                except:
+                    raise TypeError('The outlet_Q-Z-T should under the standard format!')
+
+            # Import all tributary Discharge - T (Optional)
+            elif pd_temp['Time_step'][_ - 1] == 'tribu-Q':
+
+                if pd_temp['Hour'][_] in self.CS_name:
+                    tri_cs_name = pd_temp['Time_step'][_]
+                    tri_cs_list.append(self.CS_name.index(tri_cs_name))
+                else:
+                    raise Exception(f"The profile of tribu-Q cross-section {pd_temp['Hour'][_]} is not imported")
+
+                # Derive the tributary discharge - T
+                start_index = _ + 1
+                end_index = pd_temp.shape[0] if id_index.index(_) == len(id_index) - 1 else id_index[id_index.index(_) + 1] - 1
+
+                try:
+                    tri_all_id.append([int(pd_temp['Time_step'][__]) for __ in range(start_index, end_index)])
+                    tri_all_time.append([float(pd_temp['Hour'][__]) * 3600 for __ in range(start_index, end_index)])
+                    tri_all_q.append([float(pd_temp['Q&Z'][__]) for __ in range(start_index, end_index)])
+                except:
+                    raise TypeError('The tribu-Z should under the standard format!')
+
+                self.TimeTtby.append(tri_all_time)
+                self.TimeQtby.append(tri_all_q)
+
+            # Import all station Q - Z at time 0
+            elif pd_temp['Time_step'][_ - 1] == 'init_station_Q-Z':
+
+                # Check if inlet cs is valid
+                if station_init_factor:
+                    raise Exception('Two init station conditions were imported twice!')
+
+                # Derive the index of CCS in CCS list and CS list
+                start_index = _ + 1
+                end_index = pd_temp.shape[0] if id_index.index(_) == len(id_index) - 1 else id_index[id_index.index(_) + 1] - 1
+                station_list = list(pd_temp['Hour'][start_index: end_index])
+                if pd_temp['Hour'][_] == 'Hydrostation':
+                    init_ccs_index = [self.Control_CS_station.index(_) for _ in station_list]
+                elif pd_temp['Hour'][_] == 'Cross-section':
+                    init_ccs_index = [self.Control_CS_Name.index(_) for _ in station_list]
+                else:
+                    raise Exception('The input station name is not valid')
+
+                # Derive all station Q - Z at time 0
+                try:
+                    q_list, z_list = [float(__) for __ in pd_temp['Q&Z'][start_index: end_index]], [float(__) for __ in pd_temp['Tributary'][start_index: end_index]]
+                    self.Control_CS_Init_Q, self.Control_CS_Init_Z = [np.nan for _ in range(len(self.Control_CS_station))], [np.nan for _ in range(len(self.Control_CS_station))]
+                    for ccs_ in init_ccs_index:
+                        self.Control_CS_Init_Q[ccs_] = q_list[init_ccs_index.index(ccs_)]
+                        self.Control_CS_Init_Z[ccs_] = z_list[init_ccs_index.index(ccs_)]
+                    if np.isnan(self.Control_CS_Init_Z[0]) or np.isnan(self.Control_CS_Init_Z[-1]):
+                        raise ValueError('The inlet or outlet Z trend is missing')
+                    if np.isnan(self.Control_CS_Init_Z[0]) or np.isnan(self.Control_CS_Init_Z[-1]):
+                        raise ValueError('The inlet or outlet Q trend is missing')
+                    station_init_factor = True
+                except:
+                    raise TypeError('The init_station_Q-Z should under the standard format!')
+
+            # Distance input discharge - T (Optional)
+            elif pd_temp['Time_step'][_ - 1] == 'NFL-Q':
+                distance_inflow_factor = True
+                raise Exception('The NFL part was not supported yet.')
+
+        # Update the flow parameter
+        self.NumTBY = len(self.TimeTtby)
+        self.NcsTBY = copy.deepcopy(tri_cs_list)
+        self.NumQtby = [len(_) for _ in self.TimeTtby]
+        self.NFLDiv = distance_inflow_factor # 引水引沙参数=0(不考虑),=1(考虑)
+
+        # Check the consistency of flow input
+        if not inlet_factor:
+            raise ValueError('The inlet flow boundary has not successfully imported')
+        elif not outlet_factor:
+            raise ValueError('The outlet flow boundary has not successfully imported')
+        elif not station_init_factor:
+            raise ValueError('The initial flow boundary of each station has not successfully imported')
+        else:
+            if '-T' in self.KBDout and self.TimeTout[1:] != self.TimeTQ[1:]:
+                raise ValueError('The time for inlet and outlet flow conditions were not consistent!')
+
+        # Check the consistency of tributary input
+        if self.NumTBY > 0:
+            if False in [__ == self.TimeTQtby[0] for __ in self.TimeTQtby]:
+                raise ValueError('The tributary flow conditions were not consistent!')
+            elif self.TimeTQtby[0][1:] != self.TimeTQ[1:]:
+                raise ValueError('The tributary flow conditions and inlet time were not consistent!')
+
+        # Linear interpolate the initial water level and discharge to each cross-section
+        for cs_ in range(len(self.CS_name)):
+            if cs_ > max(self.Control_CS_Id) or cs_ < min(self.Control_CS_Id):
+                raise Exception('Code err during the interpolation of flow')
+            else:
+                try:
+                    ccs_id_temp = copy.deepcopy(self.Control_CS_Id)
+                    ccs_id_temp.sort()
+                    dis_current = self.CS_DistViaRiv[cs_]
+                    ccs_q_upstream, ccs_q_downstream, dis_q_upstream, dis_q_downstream = None, None, None, None
+                    ccs_z_upstream, ccs_z_downstream, dis_z_upstream, dis_z_downstream = None, None, None, None
+
+                    for ccs_ in range(len(ccs_id_temp)):
+                        if (cs_ - ccs_id_temp[ccs_]) * (cs_ - ccs_id_temp[ccs_ + 1]) <= 0:
+                            ccs_q_upstream, ccs_q_downstream = ccs_, ccs_ + 1
+                            ccs_z_upstream, ccs_z_downstream = ccs_, ccs_ + 1
+                            while True:
+                                if np.isnan(self.Control_CS_Init_Q[ccs_q_upstream]):
+                                    ccs_q_upstream -= 1
+                                else:
+                                    break
+                            while True:
+                                if np.isnan(self.Control_CS_Init_Z[ccs_z_upstream]):
+                                    ccs_z_upstream -= 1
+                                else:
+                                    break
+                            while True:
+                                if np.isnan(self.Control_CS_Init_Q[ccs_q_downstream]):
+                                    ccs_q_downstream += 1
+                                else:
+                                    break
+                            while True:
+                                if np.isnan(self.Control_CS_Init_Z[ccs_z_downstream]):
+                                    ccs_z_downstream += 1
+                                else:
+                                    break
+                            dis_q_upstream, dis_q_downstream = self.CS_DistViaRiv[self.Control_CS_Id[ccs_q_upstream]], self.CS_DistViaRiv[self.Control_CS_Id[ccs_q_downstream]]
+                            dis_z_upstream, dis_z_downstream = self.CS_DistViaRiv[self.Control_CS_Id[ccs_z_upstream]], self.CS_DistViaRiv[self.Control_CS_Id[ccs_z_downstream]]
+                            break
+
+                    if None in [ccs_q_upstream, ccs_q_downstream, ccs_z_upstream, ccs_z_downstream]:
+                        raise Exception('Code err during the linear interpolation!')
+
+                    if dis_q_upstream == 0:
+                        self.CSQQ.append(self.Control_CS_Init_Q[ccs_q_upstream])
+                    else:
+                        self.CSQQ.append(self.Control_CS_Init_Q[ccs_q_upstream] + (self.Control_CS_Init_Q[ccs_q_downstream] - self.Control_CS_Init_Q[ccs_q_upstream]) * (dis_current - dis_q_upstream) / (dis_q_downstream - dis_q_upstream))
+
+                    if dis_z_upstream == 0:
+                        self.CSZW.append(self.Control_CS_Init_Z[ccs_z_upstream])
+                    else:
+                        self.CSZW.append(self.Control_CS_Init_Z[ccs_z_upstream] + (self.Control_CS_Init_Z[ccs_z_downstream] - self.Control_CS_Init_Z[ccs_z_upstream]) * (dis_current - dis_z_upstream) / (dis_z_downstream - dis_z_upstream))
+                except:
+                    print(traceback.format_exc())
+                    raise Exception('Code err during the linear interpolation of initial Q&Z')
+        pass
+
+    def _read_roughness_file(self, roughness_file):
+
+        # Read the roughness file
+        try:
+            pd_temp = pd.read_csv(roughness_file, header=None, encoding='gbk')
+        except UnicodeError:
+            pd_temp = pd.read_csv(roughness_file, header=None)
+        except:
+            print(traceback.format_exc())
+            raise Exception('Some error occurred during reading the roughness file!')
+
+        # Check if roughness data for all control cross-section is imported
+        if len(pd_temp.keys()) - 2 < self.NumCCS:
+            raise Exception('The roughness profile of all cross section is not imported')
+
+        # Generate the column name
+        columns_t = ['Type', 'var']
+        for _ in range(len(pd_temp.keys()) - 2):
+            columns_t.append(f'cs_{str(_)}')
+        pd_temp.columns = columns_t
+
+        # Generate the control CS roughness list
+        self.Control_CS_QDRN = []
+        self.Control_CS_Lfloodplain_RN = []
+        self.Control_CS_Hfloodplain_RN = []
+
+        # Identify the start index
+        id_index = list(pd_temp[pd_temp['Type'] == 'No'].index)
+        for _ in id_index:
+
+            # Derive the CS name
+            if pd_temp['var'][_ - 1] == 'Hydrostation':
+                cs_list = []
+                hydro_list = list(pd_temp.iloc[_ - 1, 2:])
+                for hydro_ in hydro_list:
+                    hydro_factor = False
+                    for cs_index in range(len(self.Control_CS_station)):
+                        if hydro_ in self.Control_CS_station[cs_index]:
+                            cs_list.append(self.Control_CS_Name[cs_index])
+                            hydro_factor = True
+                            break
+                    if not hydro_factor:
+                        raise ValueError(f'The CSProf of hydrostation {hydro_} is missing! Please check the _CSProf.csv')
+
+            elif pd_temp['var'][_ - 1] == 'Crosssection':
+                cs_list = list(pd_temp.iloc[_ - 1, 2:])
+                if False in [__ in self.CS_name for __ in cs_list]:
+                    raise Exception(f'The Roughness of {self.CS_name[[__ in self.CS_name for __ in cs_list].index(False)]} is not imported')
+            else:
+                raise ValueError('The roughness file should clarify the type of section is Hydrostation or cross-section')
+
+            # Generate the range of current
+            start_index = _ + 1
+            end_index = id_index[id_index.index(_) + 1] - 1 if id_index.index(_) != len(id_index) - 1 else pd_temp.shape[0]
+
+            # Check if the cs list
+            if len(cs_list) != len(self.Control_CS_Name):
+                raise ValueError('The roughness of control station is not consistent with the control station in CSProf!')
+            elif True in [__ not in self.Control_CS_Name for __ in cs_list]:
+                raise ValueError(f'The roughness of control station {cs_list[[__ not in self.Control_CS_Name for __ in cs_list].index(True)]} is not control station for CSProf')
+
+            # Read the Qcon-RN
+            if str(pd_temp['Type'][_ - 1]) == 'Qcon-RN':
+
+                # Read the RN under different Qcon for each control cross-section
+                self.Control_CS_QD = [float(q_) for q_ in list(pd_temp['var'][start_index: end_index])]
+                for __ in range(len(self.Control_CS_Name)):
+                    try:
+                        self.Control_CS_QDRN.append([float(pd_temp[f'cs_{str(cs_list.index(self.Control_CS_Name[__]))}'][___]) for ___ in range(start_index, end_index)])
+                    except:
+                        raise Exception(f'Non number shown in roughness file for cross section {self.Control_CS_Name[__]}')
+
+                # Check the consistency of Control section Qd and Rn
+                for __ in self.Control_CS_QDRN:
+                    if len(__) != len(self.Control_CS_QD):
+                        raise Exception(f'The QD and RN for control cross section {self.Control_CS_Name[self.Control_CS_QDRN.index(__)]} is not consistent!')
+
+            # Read the FP RN
+            elif str(pd_temp['Type'][_ - 1]) == 'FP-RN':
+
+                # Define the FP factor
+                FP1_factor, FP2_factor = False, False
+
+                # Get the high and low floodplain roughness
+                for index_ in range(start_index, end_index):
+                    # Read the RN under different floodplain for each control cross-section
+                    if str(pd_temp['var'][index_]) == 'FP1':
+                        for __ in range(len(self.Control_CS_Name)):
+                            try:
+                                self.Control_CS_Hfloodplain_RN.append(float(pd_temp[f'cs_{str(cs_list.index(self.Control_CS_Name[__]))}'][index_]))
+                            except:
+                                raise Exception(f'The high floodplain roughness file for cross section {self.Control_CS_Name[__]} is missing')
+                        FP1_factor = True
+
+                    elif str(pd_temp['var'][index_]) == 'FP2':
+                        for __ in range(len(self.Control_CS_Name)):
+                            try:
+                                self.Control_CS_Lfloodplain_RN.append(float(pd_temp[f'cs_{str(cs_list.index(self.Control_CS_Name[__]))}'][index_]))
+                            except:
+                                raise Exception(f'The low floodplain roughness file for cross section {self.Control_CS_Name[__]} is missing')
+                        FP2_factor = True
+
+                # Check the floodplain factor missed or not
+                if not FP1_factor:
+                    raise Exception('The roughness for high floodplain were missed!')
+                elif not FP2_factor:
+                    raise Exception('The roughness for low floodplain were missed!')
+
+                # Check the consistency of Control section LowFP and high FP
+                if len(self.Control_CS_Lfloodplain_RN) != len(self.Control_CS_Hfloodplain_RN) or len(self.Control_CS_Lfloodplain_RN) != len(self.Control_CS_Name):
+                    raise Exception(f'The high and low floodplain roughness for control cross section is not consistent!')
+
+            elif str(pd_temp['Type'][_ - 1]) == 'DRN-DH':
+
+                # Define the dRN dH factor
+                DRN_factor, DH_factor = False, False
+
+                # Get the dRN dH
+                for index_ in range(start_index, end_index):
+                    if str(pd_temp['var'][index_]) == 'DRN':
+                        for __ in range(len(self.Control_CS_Name)):
+                            try:
+                                self.Control_CS_DNbed.append(float(pd_temp[f'cs_{str(cs_list.index(self.Control_CS_Name[__]))}'][index_]))
+                            except:
+                                raise Exception(f'The DNbed for cross section {self.Control_CS_Name[__]} is missing')
+                        DRN_factor = True
+
+                    elif str(pd_temp['var'][index_]) == 'DH(m)':
+                        for __ in range(len(self.Control_CS_Name)):
+                            try:
+                                self.Control_CS_DHbed.append(float(pd_temp[f'cs_{str(cs_list.index(self.Control_CS_Name[__]))}'][index_]))
+                            except:
+                                raise Exception(f'The DNbed for cross section {self.Control_CS_Name[__]} is missing')
+                        DH_factor = True
+
+                # Check the floodplain factor missed or not
+                if not DRN_factor:
+                    raise Exception('The DRN profiles were missed!')
+
+                elif not DH_factor:
+                    raise Exception('The DG profiles were missed!')
+
+        # Linear interpolate the roughness to each cross-section
+        for cs_ in range(len(self.CS_name)):
+            if cs_ > max(self.Control_CS_Id) or cs_ < min(self.Control_CS_Id):
+                raise Exception('Code err during the interpolation of roughness')
+            elif cs_ in self.Control_CS_Id:
+                ccs_index = self.Control_CS_Id.index(cs_)
+                self.CS_QDRN.append(self.Control_CS_QDRN[ccs_index])
+                self.CS_Hfloodplain_RN.append(self.Control_CS_Hfloodplain_RN[ccs_index])
+                self.CS_Lfloodplain_RN.append(self.Control_CS_Lfloodplain_RN[ccs_index])
+                self.CS_DHbed.append(self.Control_CS_DHbed[ccs_index])
+                self.CS_DNbed.append(self.Control_CS_DNbed[ccs_index])
+            else:
+                ccs_id_temp = copy.deepcopy(self.Control_CS_Id)
+                ccs_id_temp.sort()
+                dis_current = self.CS_DistViaRiv[cs_]
+                ccs_upstream, ccs_downstream, dis_upstream, dis_downstream = None, None, None, None
+
+                for ccs_ in range(len(ccs_id_temp) - 1):
+                    if (cs_ - ccs_id_temp[ccs_]) * (cs_ - ccs_id_temp[ccs_ + 1]) < 0:
+                        ccs_upstream, ccs_downstream = ccs_, ccs_ + 1
+                        ccs_id_upstream, ccs_id_downstream = ccs_id_temp[ccs_], ccs_id_temp[ccs_ + 1]
+                        dis_upstream, dis_downstream = self.CS_DistViaRiv[ccs_id_upstream], self.CS_DistViaRiv[ccs_id_downstream]
+                        break
+
+                if ccs_upstream is None:
+                    raise Exception('Code err during the linear interpolation!')
+
+                self.CS_QDRN.append([self.Control_CS_QDRN[ccs_upstream][qcon_] + (self.Control_CS_QDRN[ccs_downstream][qcon_] - self.Control_CS_QDRN[ccs_upstream][qcon_]) * (dis_current - dis_upstream) / (dis_downstream - dis_upstream) for qcon_ in range(len(self.Control_CS_QD))])
+                self.CS_Hfloodplain_RN.append(self.Control_CS_Hfloodplain_RN[ccs_upstream] + (self.Control_CS_Hfloodplain_RN[ccs_downstream] - self.Control_CS_Hfloodplain_RN[ccs_upstream]) * (dis_current - dis_upstream) / (dis_downstream - dis_upstream))
+                self.CS_Lfloodplain_RN.append(self.Control_CS_Lfloodplain_RN[ccs_upstream] + (self.Control_CS_Lfloodplain_RN[ccs_downstream] - self.Control_CS_Lfloodplain_RN[ccs_upstream]) * (dis_current - dis_upstream) / (dis_downstream - dis_upstream))
+                self.CS_DHbed.append(self.Control_CS_DHbed[ccs_upstream] + (self.Control_CS_DHbed[ccs_downstream] - self.Control_CS_DHbed[ccs_upstream]) * (dis_current - dis_upstream) / (dis_downstream - dis_upstream))
+                self.CS_DNbed.append(self.Control_CS_DNbed[ccs_upstream] + (self.Control_CS_DNbed[ccs_downstream] - self.Control_CS_DNbed[ccs_upstream]) * (dis_current - dis_upstream) / (dis_downstream - dis_upstream))
+
+    def _read_bed_material_file(self):
+        pass
+
+    def _write_CSProf(self):
+
+        self.input_path = 'G:\\A_1Dflow_sed\\Hydrodynamic_model\\MYR_input\\'
+        # Output section starting distance and elevation
+        node_list, dis2left_list, elevation_list, type_list = [], [], [], []
+        for _ in range(self.Imax):
+            node_list.append(f'CS name: {cs_name_list[_]}')
+            dis2left_list.append(f'Distance: {self.CS_DistViaRiv[_]} km')
+            elevation_list.append(f'Main channel width: {self.BWMC[_]} m')
+            type_list.append(f'Mean channel ele: {self.CSZBav[_]} m')
+
+            for __ in range(self.CS_node_num[_]):
+                node_list.append(__ + 1)
+                dis2left_list.append(self.XXIJ[_][__])
+                elevation_list.append(self.ZBIJ[_][__])
+                type_list.append(self.KNIJ[_][__])
+        output_section_ele = pd.DataFrame({'Column1': node_list, 'Column2': dis2left_list, 'Column3': elevation_list, 'Column4': type_list})
+        output_section_ele.to_csv(os.path.join(self.input_path, f'{self.ROI_name}_init_CSProf.csv'), index=False, header=False, encoding='gbk')
+
+        # Output section main channel area starting distance and elevation zxl
+        cs_list, DIST_list, BMC_list, ZBk_list, ZBav_list = [], [], [], [], []
+        for _ in range(self.Imax):
+            cs_list.append(_)
+            DIST_list.append(self.CS_DistViaRiv[_])
+            BMC_list.append(self.BWMC[_])
+            ZBk_list.append(self.ZBBF[_])
+            ZBav_list.append(self.CSZBav[_])
+
+        output_section_ele = pd.DataFrame({'I': cs_list, 'DIST(km)': DIST_list, 'BMC(m)': BMC_list, 'ZBk(m)': ZBk_list, 'ZBav(m)': ZBav_list})
+        output_section_ele.to_csv(os.path.join(self.input_path, f'{self.ROI_name}_init_CSZBMC.csv'), index=False, header=True, encoding='gbk')
+
+    def _write_CSProf(self, itr):
+        pass
+        # if no == 0:
+        #     fullnam = f"{directory[:dir_lnt]}_CSZBnd.TXT"
+        #     with open(fullnam, 'w') as f:
+        #         f.write('Each Cross-Sectional Profile in the LYR\n')
         #
-        # PreissmannScheme(Qold, Zold, Bold, Aold, DMKold, ALFold, Qnew, Znew)
+        # if int(time_sc) % (24 * 3600) == 0:
+        #     with open(fullnam, 'a') as f:
+        #         f.write('---------------------------------------------\n')
+        #         f.write(f'计算时段 K={i_step:8d} 记录时段 N={no:3d} 总计算时间 Time={time_hr:8.2f} Hour\n')
+        #         f.write('---------------------------------------------\n')
+        #         for i in range(1, i_max + 1):
+        #             f.write(f'第 {i:4d} 断面河底高程\n')
+        #             for j in range(1, npt1cs[i - 1] + 1):
+        #                 f.write(f'{i:3d} {j:3d} {xxij[i - 1][j - 1]:8.1f} {zbinl[i - 1][j - 1]:8.2f} {zbij[i - 1][j - 1]:8.2f} {zbij[i - 1][j - 1] - zbinl[i - 1][j - 1]:8.3f}\n')
         #
-        # CompFlowPRMTs(Znew, Qnew)
+        # fullnam_final = f"{directory[:dir_lnt]}_CSZBnd-FINAL.TXT"
+        # with open(fullnam_final, 'w') as f:
+        #     f.write('断面地形输入\n')
+        #     f.write(f'{i_max:8d}\n')
+        #     if time_sc == time_sm * 3600:
+        #         for i in range(1, i_max + 1):
+        #             f.write(f'{csznum[i - 1]}\n')
+        #             f.write('2015年无护岸\n')
+        #             f.write(f'{npt1cs[i - 1]}\n')
+        #             f.write('序号 起点距 高程\n')
+        #             for j in range(1, npt1cs[i - 1] + 1):
+        #                 f.write(f'{j} {xxij[i - 1][j - 1]} {zbij[i - 1][j - 1]} {knij[i - 1][j - 1]}\n')
         #
-        # for i in range(Imax):
-        #     DAFDT[i] = (CSAA[i] - Aold[i]) / DTstep
+        # if no == 0:
+        #     fullnam_avg = f"{directory[:dir_lnt]}_CSZBav.TXT"
+        #     with open(fullnam_avg, 'w') as f:
+        #         f.write('Lowest and mean bed elevation in the LYR\n')
         #
-        # return Qnew, Znew
+        # if int(time_sc) % (24 * 3600) == 0:
+        #     with open(fullnam_avg, 'a') as f:
+        #         f.write(f'计算时段 K={i_step:4d} 记录时段 N={no:3d} 总计算时间 Time={time_hr:8.2f} Hour\n')
+        #         f.write('i Dist ZBmin ZBav\n')
+        #         for i in range(1, i_max + 1):
+        #             f.write(f'{i:4d} {distlg[i - 1]:8.2f} {cszbmn[i - 1]:10.2f} {cszbav[i - 1]:10.2f}\n')
+
+    def _write_BedProf(self, itr):
+        pass
+        # # Call to compute size of bed material
+        # compsizebm()
+        #
+        # if No == 0:  # Initial time file format
+        #     fullnam = f"{Directory[:Dirlnt]}_BMGrad.TXT"
+        #     with open(fullnam, 'w') as file:
+        #         file.write('Median and Mean Diameters of Bed Material in LYR\n')
+        #
+        # if Istep == 0 or Istep == Nstep:
+        #     # If mod(int(TimeSC), 24*3600) == 0:  # Record results every 24 hours
+        #     with open(fullnam, 'a') as file:
+        #         file.write('---------------------------------------------------\n')
+        #         file.write(f'计算时段 K={Istep:8d} 记录时段 N={No:3d} 总计算时间 Time={TimeHR:8.2f} Hour\n')
+        #         file.write('---------------------------------------------------\n')
+        #         file.write('断面号 记忆层数 床沙中值粒径(mm) 床沙平均粒径(mm)\n')
+        #         for I in range(1, Imax + 1):
+        #             file.write(f'{I:4d} {NTPML[I]:7d} {BED50[I] * 1000.0:10.4f} {BEDPJ[I] * 1000.0:9.4f}\n')
+
+    def _init_flow_boundary(self):
+
+        # Initiate the flow boundary
+        for _ in range(len(self.CSQQ)):
+            AAi, BBi, DMKi, alfi = compute_channel_char(self.Hmin, self.DHmin, self.DBIJ[_], self.ZBIJ[_], self.KNIJ[_], self.RNIJ[_],  self.CSZW[_])
+
+            if AAi > 0.0:
+                self.CSUM.append(self.CSQQ[_]/AAi)
+                self.CSHM.append(AAi / BBi)
+            else:
+                self.CSUM.append(0.0)
+                self.CSHM.append(self.Hmin)
+
+        # Initiate the bed deform para
+        if self.BedDeform_flag:
+            self.DZMC = [0 for _ in range(self.CS_num)] # 主槽最大冲刷厚度(与初始时刻相比)
+            self.DSDt = [0 for _ in range(self.CS_num)] # 含沙量大小随时间变化项
+            self.DASDt1 = [0 for _ in range(self.CS_num)]
+        else:
+            self.DZMC = [np.nan for _ in range(self.CS_num)] # 主槽最大冲刷厚度(与初始时刻相比)
+            self.DSDt = [np.nan for _ in range(self.CS_num)] # 含沙量大小随时间变化项
+            self.DASDt1 = [np.nan for _ in range(self.CS_num)]
+
+        # Initiate the flow para
+        self.update_flow_para(self.CSZW, self.CSQQ)
+
+    def _compute_rn4channel_floodplain_method1(self):
+
+        self.RNIJ = []
+        for _ in range(len(self.CS_QDRN)):
+
+            # Get the Q-RN for the cross-section _
+            Q_ = copy.deepcopy(self.Control_CS_QD)
+            Q_.sort()
+            RN = copy.deepcopy(self.CS_QDRN[_])
+
+            # Linear interpolate the roughness of main channel at discharge CSQQ
+            RNIJ = []
+            RNmain = None
+            for q_ in range(len(Q_) - 1):
+                if (Q_[q_] - self.CSQQ[_]) * (Q_[q_ + 1] - self.CSQQ[_]) < 0:
+                    rn_up, q_up, rn_low, q_low = RN[self.Control_CS_QD.index(Q_[q_ + 1])], Q_[q_ + 1], RN[self.Control_CS_QD.index(Q_[q_])], Q_[q_]
+                    RNmain = rn_low + (rn_up - rn_low) * (self.CSQQ[_] - q_low) / (q_up - q_low)
+                elif self.CSQQ[_] < min(Q_):
+                    RNmain = RN[self.Control_CS_QD.index(min(Q_))]
+                    break
+                elif self.CSQQ[_] > max(Q_):
+                    RNmain = RN[self.Control_CS_QD.index(max(Q_))]
+                    break
+
+            # Adjust the roughness after bed deformation
+            if self.BedDeform_flag:
+                RNmain = RNmain + self.DZMC[_] * (self.DNBDCS[_] / self.DHBDCS[_])
+                RNmain = min(0.060, RNmain)
+                RNmain = max(0.008, RNmain)
+
+            # Reassign the roughness based on the discharge
+            if RNmain is None:
+                raise Exception('Code error DURING THE roughness computation')
+            else:
+                for __ in range(self.CS_node_num[_]):
+                    if self.KNIJ[_][__] == 0 or self.KNIJ[_][__] == 3:
+                        RNIJ.append(RNmain)
+                    elif self.KNIJ[_][__] == 1:
+                        RNIJ.append(self.CS_Lfloodplain_RN[_])
+                    elif self.KNIJ[_][__] == 2:
+                        RNIJ.append(self.CS_Lfloodplain_RN[__])
+            self.RNIJ.append(RNIJ)
+
+    def _compute_rn4channel_floodplain_method2(self):
+
+        # Calculate the main channel roughness
+        self.RNIJ = []
+        self._compute_rn4channel()
+
+        # Reassign the roughness
+        for _ in range(len(self.CS_QDRN)):
+            RNQ = self.CS_QDRN[_]
+            RNIJ = []
+            for __ in range(self.CS_node_num[_]):
+                if self.KNIJ[_][__] == 0 or self.KNIJ[_][__] == 3:
+                    RNIJ.append(self.RNMC[_])
+                elif self.KNIJ[_][__] == 1:
+                    RNIJ.append(self.CS_Lfloodplain_RN[_])
+                elif self.KNIJ[_][__] == 2:
+                    RNIJ.append(self.CS_Lfloodplain_RN[__])
+
+    def _compute_rn4channel(self):
+
+        # Compute the roughness 4 channel
+        self.RNMC = []
+        for _ in range(self.CS_num):
+
+            # Compute the Froude number
+            if self.CSUM[_] > self.Hmin:
+                Fr = self.CSUM[_] / np.sqrt(self.Grav * self.CSHM[_])
+                Fr = max(0.10, Fr)
+                Fr = min(0.80, Fr)
+            else:
+                Fr = 0.001
+
+            # Using Zhang HW Equation to compute roughness (赵连军，张红武．黄河下游河道水流摩阻特性的研究 ［J］．人民黄河1997（9）)
+            if self.MDRGH == 2:
+                if self.CSUM[_] > self.Hmin:
+                    DELT = self.BED50[_] * 10 ** (10 * (1.0 - np.sqrt(np.sin(np.pi * Fr))))
+                    CN = 0.15 * (1.0 - 4.2 * np.sqrt(self.CSSVL[_]) * (0.365 - self.CSSVL[_]))
+                    DELTH = DELT / self.CSHM[_]
+                    DELTH = min(0.8, DELTH)
+
+                    RN1 = (CN * DELT) / (np.sqrt(self.Grav) * self.CSHM[_] ** (5/6))
+                    RN2 = 0.49 * DELTH ** 0.77 + 0.375 * np.pi * (1.0 - DELTH) * (np.sin(DELTH ** 0.2) ** 5.0)
+
+                    RM = RN1 / RN2
+                    RM = min(0.04, RM)
+                    RM = max(0.01, RM)
+                    self.RNMC.append(RM)
+                else:  # Water depth less than virtual water depth
+                    self.RNMC.append(0.040)
+
+                if self.CSUM[_] <= 0.00010:  # Very low flow velocity
+                    self.RNMC.append(0.040)
+
+            elif self.MDRGH == 3:  # Using other EQ
+                RM = 0.005 * (Fr ** -0.8939)
+                RM = min(0.04, RM)
+                RM = max(0.01, RM)
+                self.RNMC.append(RM)
+
+            elif self.MDRGH == 4:  # Using Liu Xin EQ
+                if self.CSHH[_] > self.Hmin:
+                    RM = 1.2 * 0.29 * self.CSHH[_] ** (1.0 / 6.0) / np.sqrt(8.0 * self.Grav) * Fr ** (-0.893) * (self.CSHH[_] / self.BED50[_]) ** (-0.24)
+                    RM = min(0.06, RM)
+                    RM = max(0.008, RM)
+                    self.RNMC.append(RM)
+                else:  # Water depth less than virtual water depth
+                    self.RNMC.append(0.060)
+
+                if self.CSUM[_] <= 0.00010:  # Very low flow velocity
+                    self.RNMC.append(0.060)
+
+    def update_flow_para(self, Z, Q):
+
+        # Reassign the Z and Q into the model
+        self.CSZW = copy.deepcopy(Z)
+        self.CSQQ = copy.deepcopy(Q)
+
+        # Calculate the roughness
+        if self.MDRGH == 4: # Liu Xin Eq to calculate the roughness
+            self._compute_rn4channel_floodplain_method2()
+
+        if self.Istep == 1 and self.SPTime < 2.0 * self.DTstep:
+            self._compute_rn4channel_floodplain_method2()
+
+        # Calculate the para
+        for i in range(self.CS_num):
+            BBJ, QQJ = [], []  # 各子断面的过水宽度/ 过流流量
+            HHJ, WPJ, RDJ = [], [], []  # 各子断面的平均水深/ 湿周/ 水力半径
+            RNJ, UUJ, UTJ = [], [], []  # 各子断面的平均糙率/ 流速/ 摩阻流速
+            AAJ, QKJ = [], []  # 各子段面过水面积/ 流量模数
+            HCJ = []  # 子段面的形心
+            HH = compute_water_depth(self.ZBIJ[i], self.KNIJ[i], self.CSZW[i], self.Hmin)
+
+            # Compute the hydraulic para of subsections
+            for _ in range(len(HH) - 1):
+
+                # Right trapezoid subsection
+                if HH[_] > self.Hmin and HH[_ + 1] > self.Hmin:
+                    BBJ.append(self.DBIJ[i][_])
+                    HHJ.append((HH[_] + HH[_ + 1]) / 2)
+                    RNJ.append((self.RNIJ[i][_] + self.RNIJ[i][_ + 1]) / 2)
+                    WPJ.append(np.sqrt(BBJ[-1] ** 2 + (HH[_] + HH[_ + 1]) ** 2))
+                    AAJ.append(HHJ[-1] * BBJ[-1])
+                    RDJ.append(AAJ[-1] / WPJ[-1])
+                    QKJ.append(AAJ[-1] * (RDJ[-1] ** (2 / 3)) / RNJ[-1])
+
+                    a0 = HH[_]
+                    b0 = HH[_ + 1]
+                    h0 = BBJ[-1]
+
+                # Non-flooded subsection
+                elif HH[_] <= self.Hmin and HH[_ + 1] <= self.Hmin:
+                    BBJ.append(0.0)
+                    HHJ.append(0.0)
+                    RNJ.append((self.RNIJ[i][_] + self.RNIJ[i][_ + 1]) / 2)
+                    WPJ.append(0.0)
+                    AAJ.append(0.0)
+                    RDJ.append(0.0)
+                    QKJ.append(0.0)
+
+                    a0 = 0.0
+                    b0 = 0.0
+                    h0 = 0.0
+
+                # Right triangular subsection
+                elif HH[_] <= self.Hmin and HH[_ + 1] > self.Hmin:  # CASE-3
+                    dx = self.DBIJ[i][_]
+                    hh_ = self.ZBIJ[i][_] - self.CSZW[i]
+                    hh_ = 0.0 if hh_ <= self.Hmin else hh_
+
+                    BBJ.append(dx * HH[_ + 1] / (hh_ + HH[_ + 1]))
+                    HHJ.append(0.5 * HH[_ + 1])
+                    RNJ.append((self.RNIJ[i][_] + self.RNIJ[i][_ + 1]) / 2)
+                    WPJ.append(np.sqrt(BBJ[-1] ** 2.0 + HH[_ + 1] ** 2.0))
+                    AAJ.append(HHJ[-1] * BBJ[-1])
+                    RDJ.append(AAJ[-1] / WPJ[-1])
+                    QKJ.append(AAJ[-1] * (RDJ[-1] ** (2 / 3)) / RNJ[-1])
+
+                    a0 = 0.0
+                    b0 = HH[_ + 1]
+                    h0 = BBJ[-1]
+
+                # Right triangular subsection
+                elif HH[_] > self.Hmin and HH[_ + 1] <= self.Hmin:  # CASE-4
+                    dx = self.DBIJ[i][_]
+                    hh_ = self.ZBIJ[i][_ + 1] - self.CSZW[i]
+                    hh_ = 0.0 if hh_ <= self.Hmin else hh_
+
+                    BBJ.append(dx * HH[_] / (hh_ + HH[_]))
+                    HHJ.append(0.5 * HH[_])
+                    RNJ.append((self.RNIJ[i][_] + self.RNIJ[i][_ + 1]) / 2)
+                    WPJ.append(np.sqrt(BBJ[-1] ** 2.0 + HH[_] ** 2.0))
+                    AAJ.append(HHJ[-1] * BBJ[-1])
+                    RDJ.append(AAJ[-1] / WPJ[-1])
+                    QKJ.append(AAJ[-1] * (RDJ[-1] ** (2 / 3)) / RNJ[-1])
+
+                    a0 = HH[_]
+                    b0 = 0
+                    h0 = BBJ[-1]
+
+                else:
+                    raise Exception('Code err during the calculation of hydraulic para')
+
+                # Calculate centroid of subsection
+                if (a0 + b0) > 0.0:
+                    HCJ.append((a0 ** 2 + b0 ** 2 + a0 * b0) / (a0 + b0) / 3.0)
+                else:
+                    HCJ.append(0.0)
+
+            # Sum the para of subsection, and get the para of each cross-section
+            CSAA = sum(AAJ)  # 过水面积
+            CSQK = sum(QKJ)  # 流量模数
+            CSBB = sum(BBJ)  # 水面宽度
+            CSWP = sum(WPJ)  # 湿周
+            ahc = sum([HCJ[j] * AAJ[j] for j in range(len(AAJ))])
+
+            CSHH = CSAA / CSBB if CSBB > 0 else 0  # 水深
+            CSRD = CSAA / CSWP if CSWP > 0 else 0  # 水力半径
+            CSHC = ahc / CSAA if CSAA > 0 else 0  # 形心下水深
+            CSZB = self.CSZW[i] - CSHH  # 平均河底高程
+
+            CSUU = self.CSQQ[i] / CSAA if CSAA > 0 else 0  # 流速
+            CSSP = (self.CSQQ[i] ** 2) / (CSQK ** 2) if CSQK > 0 else 0  # 能坡
+            CSRN = (CSRD ** (2 / 3)) * (CSSP ** 0.5) / CSUU if CSUU > 0 else 0  # 糙率
+            CSUT = (self.Grav ** 0.5) * CSRN * CSUU / (CSRD ** (1.0 / 6.0))  # 摩阻流速
+
+            # Calculate the hydraulic feature for MAIN CHANNEL and FLOODPLAIN
+            CSQM, CSAM, CSBM = 0.0, 0.0, 0.0
+            CSQF, CSAF, CSBF = 0.0, 0.0, 0.0
+            CSBD = 0.0
+            UUJ, UTJ, QQJ = [], [], []
+            for _ in range(len(HH) - 1):
+                if HH[_] > 0.0:
+                    UUJ.append((RDJ[_] ** (2.0 / 3.0)) * (CSSP ** 0.5) / RNJ[_])
+                    UTJ.append((self.Grav ** 0.5) * RNJ[_] * UUJ[-1] / (RDJ[_] ** (1.0 / 6.0)))
+                else:
+                    UUJ.append(0.0)
+                    UTJ.append(0.0)
+
+                QQJ.append(self.CSQQ[_] * (QKJ[_] / CSQK))
+
+                if self.KNIJ[i][_] * self.KNIJ[i][_ + 1] != 2 and self.KNIJ[i][_] * self.KNIJ[i][_ + 1] != 4:
+                    CSQM += QQJ[-1]
+                    CSAM += AAJ[-1]
+                    CSBM += BBJ[-1]
+
+                if self.KNIJ[i][_] * self.KNIJ[i][_ + 1] == 0:
+                    CSBD += BBJ[-1]
+
+                if self.KNIJ[i][_] * self.KNIJ[i][_ + 1] == 3 or self.KNIJ[i][_] * self.KNIJ[i][_ + 1] == 9:
+                    if tzbij[_] > tzbinl[_]:
+                        CSBD += BBJ[-1]
+
+                if self.KNIJ[i][_] == 1 or self.KNIJ[i][_] == 2:
+                    CSQF += QQJ[-1]
+                    CSAF += AAJ[-1]
+                    CSBF += BBJ[-1]
+
+            CSHM = CSAM / CSBM if CSBM > 0.0 else 0.0
+            CSHF = CSAF / CSBF if CSBF > 0.0 else 0.0
+            CSUM = CSQM / CSAM if CSAM > 0.0 else 0.0
+            CSUF = CSQF / CSAF if CSAF > 0.0 else 0.0
+
+            # Calculate Froude number
+            sumka = sum([QKJ[j] ** 3.0 / AAJ[j] ** 2.0 if AAJ[j] > 0.0 else 0.0 for j in range(len(AAJ))])
+            if CSAA > 0.0:
+                CSALF = sumka / (CSQK ** 3.0 / CSAA ** 2.0)
+            else:
+                CSALF = 1.0
+
+            if CSAA > 0.0:
+                CSFR = CSUU * (CSALF ** 0.5) / (self.Grav * CSHH) ** 0.5
+            else:
+                CSFR = 1.01
+
+            # Calculate the hydraulic feature for each node
+            Unode, Hnode, Qnode, UTnode, TFnode = [], [], [], [], []
+            for _ in range(len(HH)):
+                Hnode.append(HH[_])
+                if HH[_] > self.Hmin:
+                    Unode.append((Hnode[-1] ** (2.0 / 3.0)) * (CSSP ** 0.5) / self.RNIJ[i][_])
+                    Qnode.append(Hnode[-1] * Unode[-1])
+                    UTnode.append((self.Grav ** 0.5) * self.RNIJ[i][_] * Unode[-1] / (Hnode[-1] ** (1.0 / 6.0)))
+                    TFnode.append((UTnode[-1] ** 2.0) * 1000.0)
+                else:
+                    Unode.append(0.0)
+                    Qnode.append(0.0)
+                    UTnode.append(0.0)
+                    TFnode.append(0.0)
+
+    def run_model(self):
+
+        # Run the 1D model
+        print('------- Run the 1D Hydrodynamics model -------')
+
+        # Initialize parameter
+        self.Istep = 0
+        self.NumRem = 0  # Number of times to calculate water and sediment conditions and topography changes
+        self.TimeSC = 0.0  # Total calculation time (seconds)
+        self.TimeHR = 0.0  # Total calculation time (hours)
+
+        # Input initial cross-section flow and water level
+        self._init_flow_boundary()
+
+        # Write the initial CSProfile and Bed degradation
+        if self.BedDeform_flag and self.SedTrans_flag:
+            print('------- The sediment transport model will be executed -------')
+            print("------- Write the OutputCSProfiles -------")
+            self._write_CSProf(self.NumRem)
+            print("-------    Write the BedProfiles   -------")
+            self._write_BedProf(self.NumRem)
+            print("-------  Setup the spin-up period  -------")
+            if self.NYspin:
+                NFLBDtp = self.BedDeform_flag
+                NFLGAtp = self.GradAdj_flag
+                SPtime = 0.0  # Initial simulation time
+
+        # Iterate the Nstep
+        for self.Istep in range(1, self.Nstep):
+
+            # Code for the spin-up period
+            if self.NYspin == 1:
+                sptime += dtstep / 3600.0
+
+            if self.NYspin == 1 and sptime <= timesp:
+                nflbd = 0
+                nflga = 0
+                pleft = 100.0 - 100 * sptime / timesp
+                print(f'Spin-up Period, SPtime,Left= {sptime} {pleft}%')
+
+            if nyspin == 1 and sptime > timesp:
+                nflbd = nflbdtp
+                nflga = nflgatp
+
+            nflrd = 0
+            timesc = dtstep * istep  # Accumulated calculation time (Second)
+            timehr = timesc / 3600.0  # Accumulated calculation time (Hour)
+
+            # Determine whether to record calculation results
+            if istep % ntrd == 0:
+                numrem += 1  # Number of result records
+                nflrd = 1  # Result recording parameter
+
+            # Determine boundary conditions for one-dimensional flow calculation
+            print('Hydromodel ---- Start computing 1D flow boundary ------')
+            self.compute_1D_flowbound()  # Interpolate flow boundary conditions to the calculation time
+            print('Hydromodel ---- Finish computing 1D flow boundary ------')
+
+            # Calculate one-dimensional constant water surface line (considering tributary inflow and outflow)
+            print('Hydromodel ---- Start computing 1D constant water surface line ------')
+            self.solve_1D_flow_RT()  # Push water surface line
+            print('Hydromodel ---- Finish computing 1D constant water surface line ------')
+
+            # Record the hydro condition
+
+    def compute_1D_flowbound(self):
+
+        # Calculate the Discharge, roughness and water level along the channel at the time self.TimeSC
+        TTT = []
+        QQQ = []
+
+        # Take Flow at Time 0 as BOUNDARY
+        TimeSC0 = self.TimeSC
+        if self.NYspin == 1 and self.SPtime <= self.TimeSP:
+            TimeSC0 = 0.0  #
+
+        # Calculate the minimum bed elevation at the outlet
+        Zbout = 10000.0
+        for _ in range(self.CS_node_num[-1]):
+            if (self.KNIJ[-1][_] == 0 or self.KNIJ[-1][_] == 3) and self.ZBIJ[-1][_] <= Zbout:
+                Zbout = self.ZBIJ[-1][_]
+
+        # Interpolate the inlet Q and T to TimeSC0
+        self.Qinlet_new = linear_interpolation(self.TimeTQ, self.TimeQint, TimeSC0)
+        WTemp = linear_interpolation(self.TimeTMP, self.TimeWTemp, TimeSC0)
+
+        # Interpolate the outlet Q, Z, T to TimeSC0
+        if self.KBDout == 1:  # t-Q Relation
+            self.Qoutlet_new = linear_interpolation(self.TimeTout, self.TimeQout,  TimeSC0)
+        elif self.KBDout == 2:  # t-Z Relation
+            self.Zoutlet_new = linear_interpolation(self.TimeTout, self.TimeZout, TimeSC0)
+            if self.Zoutlet_new <= Zbout:
+                self.Zoutlet_new = Zbout  # 防止水位过低
+        elif self.KBDout == 3:  # Z-Q Relation
+            self.DQDZoutlet_new = cubic_spline_interpolation(self.ZRNout, self.DQZRN, self.CSZW[-1])  # 出口处水位流量关系的导数
+
+        # Calculate the lateral input
+        if self.NYspin == 0:  # For the compute period
+            for _ in range(self.CS_num - 1):
+                if self.Istep == 1:
+                    self.QLold[_] = 0.0
+                else:
+                    self.QLold[_] = self.QL_new[_]
+                self.QL_new[_] = 0.0  # 侧向出入流量(m3/s.m)
+
+        elif self.NYspin == 1:  # For the Spin-up period
+            for _ in range(self.CS_num - 1):
+                self.QLold[_] = self.QL_new[_]
+                self.QL_new[_] = 0.0
+
+        # Tributary
+        if self.NumTBY > 0:  # 存在支流入汇(+)或流出(-)
+            for _ in range(self.NumTBY):
+                for k in range(self.NumQtby[_]):
+                    TTT[k] = self.TimeTtby[_][k]
+                    QQQ[k] = self.TimeQtby[_][k]  # No-时间-支流N的 流量
+
+                QL = linear_interpolation(TTT, QQQ, TimeSC0)  # m3/s
+                ICS = self.NcsTBY[_]  # 支流支流所在河段的断面区间号码
+                self.QL_new[ICS] = self.QL_new[ICS] + QL / self.DX2CS[ICS]  # m3/s.m
+
+        #  在区间考虑沿程引水
+        if self.NFLDIV > 0:  # 存在沿程引水
+            for i in range(self.CS_num - 1):
+                for k in range(self.NumTdiv):
+                    QQQ[k] = self.TimeWdiv[k][i]  # m3/s.m   两断面间的引水流量(单位长度)
+
+                QL = linear_interpolation(self.TimeTdiv, QQQ, TimeSC0)  # m3/s.m
+                self.QL_new[i] = self.QL_new[i] - QL  # m3/s.m   沿程引水取负值
+
+        # Compute the roughness of each subsection
+        if self.MDRGH == 1:
+            self._compute_rn4channel_floodplain_method1()  # Using Q-N Relation
+        elif self.MDRGH in [2, 3, 4]:
+            self._compute_rn4channel_floodplain_method2()  # Using ZhangHW Eq or other EQ
+
+    def solve_1D_flow_RT(self):
+
+        # Get the Qold Zold
+        Qold, Zold = copy.deepcopy(self.CSZW), copy.deepcopy(self.CSQQ)
+
+        # Retrieve the A B DMK ALF at current time
+        Aold, Bold, DMKold, ALFold = [], [], [], []
+
+        for _ in range(0, self.Imax):
+            ZWL = Zold[_]
+            NMC = self.NMC1CS[_]  # Number of main channels in the section
+            AAi, BBi, DMKi, alfi = compute_channel_char(self.Hmin, self.DHmin, self.DBIJ[_], self.ZBIJ[_], self.KNIJ[_], self.RNIJ[_], self.CSZW[_])
+            Aold.append(AAi)
+            Bold.append(BBi)
+            DMKold.append(DMKi)
+            ALFold.append(alfi)
+
+        # Calculate the Qnew Znew
+        Qnew, Znew = self.PreissmannScheme(Qold, Zold, Bold, Aold, DMKold, ALFold)
+
+        # Update the hydraulic para
+        self.update_flow_para(Znew, Qnew)
+
+        #
+        for _ in range(self.Imax):
+            self.DAFDT[_] = (self.CSAA[_] - Aold[_]) / self.DTstep
+
+    def PreissmannScheme(self, Qold, Zold, Bold, Aold, DMKold, ALFold):
+
+        # Initialize arrays for calculations
+        Qnew, Znew = [0.0 for _ in range(self.Imax)], [0.0 for _ in range(self.Imax)]
+
+        # Arrays for hydraulic parameters at the mid-point
+        DADXmid, QLmid, Qmid, Zmid, Amid, Bmid, DMKmid, ALFmid = [], [], [], [], [], [], [], []
+
+        # additional terms in momentum and continuity equations
+        Add_ContinueEq, Add_momentumEq = [], []
+
+        # 中间点出的侧向来流
+        for _ in range(self.Imax - 1):
+            QLmid.append(self.CitaFW * self.QL_new[_] + (1.0 - self.CitaFW) * self.QLold[_])
+
+        for itr in range(self.ITSUMF):
+            if itr == 1:
+                Qnew_itr = copy.deepcopy(Qold)
+                Znew_itr = copy.deepcopy(Zold)
+            else:
+                Qnew_itr = copy.deepcopy(Qnew)
+                Znew_itr = copy.deepcopy(Znew)
+
+            # Compute hydraulic para at the mid-point
+            Anew, Bnew, DMKnew, ALFnew, DADXmid = self.comp_qzba2(Zold, Znew_itr)
+
+            for _ in range(self.Imax - 1):
+                Amid.append(0.5 * self.CitaFW * (Anew[_ + 1] + Anew[_]) + 0.5 * (1.0 - self.CitaFW) * (Aold[_ + 1] + Aold[_]))
+                Bmid.append(0.5 * self.CitaFW * (Bnew[_ + 1] + Bnew[_]) + 0.5 * (1.0 - self.CitaFW) * (Bold[_ + 1] + Bold[_]))
+                DMKmid.append(0.5 * self.CitaFW * (DMKnew[_ + 1] + DMKnew[_]) + 0.5 * (1.0 - self.CitaFW) * (DMKold[_ + 1] + DMKold[_]))
+                ALFmid.append(0.5 * self.CitaFW * (ALFnew[_ + 1] + ALFnew[_]) + 0.5 * (1.0 - self.CitaFW) * (ALFold[_ + 1] + ALFold[_]))
+                Qmid.append(0.5 * self.CitaFW * (Qnew_itr[_ + 1] + Qnew_itr[_]) + 0.5 * (1.0 - self.CitaFW) * (Qold[_ + 1] + Qold[_]))
+
+            # Compute additional terms in momentum and continuity equations
+            if not self.NCPFS or not self.SedTrans_flag:
+                Add_ContinueEq = [0 for _ in range(self.Imax - 1)]
+                Add_momentumEq = [0 for _ in range(self.Imax - 1)]
+            elif self.NCPFS and self.SedTrans_flag:
+                Dp = self.Psedi - self.Pflow
+                P0 = (1.0 - self.Pdry / self.Psedi) * self.Pflow + self.Pdry
+
+                for i in range(self.Imax - 1):
+                    pm = 0.5 * (self.CSPM[i] + self.CSPM[i + 1])
+                    Hcm = 0.5 * (self.CSHC[i] + self.CSHC[i + 1])
+                    dsdtm = 0.5 * (self.dSdt[i] + self.dSdt[i + 1])
+                    dsdxm = (self.CSSUS[i + 1] - self.CSSUS[i]) / self.DX2CS[i]
+                    DA0dtm = 0.5 * (self.DASDt1[i] + self.DASDt1[i + 1])
+
+                    # Compute Adtm terms
+                    Adtm1 = 0.0
+                    Adtm2 = -(Dp * Qmid[i] * dsdtm) / (pm * self.Psedi)  # From md1
+                    Adtm3 = -(Dp * (Qmid[i] ** 2 / Amid[i] + self.Grav * Hcm * Amid[i]) * dsdxm) / (pm * self.Psedi)
+
+                    # Optionally modify Adtm2 and Adtm3 based on comments
+                    # Uncomment and adjust if necessary
+                    # Adtm2 += parameters['CSUU'][i] * (P0 / pm) * DA0dtm
+                    # Adtm3 -= (Dp * grav * Hcm * Amid[i] * dsdxm) / (pm * Psedi)
+
+                    Add_momentumEq.append(Adtm1 + Adtm2 + Adtm3)
+                    Add_ContinueEq.append(-DA0dtm)
+
+            # 计算连续方程离散后的系数矩阵
+            aa1, bb1, cc1, dd1, ee1 = [], [], [], [], []
+            for _ in range(self.Imax - 1):
+                aa1.append(0.5 * Bmid[_] / self.DTstep)
+                bb1.append(-self.CitaFW / self.DX2CS[_])
+                cc1.append(aa1[_])
+                dd1.append(-bb1[_])
+                ee1.append(QLmid[_] - (1.0 - self.CitaFW) * (Qold[_ + 1] - Qold[_]) / self.DX2CS[_] + 0.5 * Bmid[_] * (Zold[_ + 1] + Zold[_]) / self.DTstep + Add_ContinueEq[_])
+
+            # 计算动量方程离散后的系数矩阵
+            aa2, bb2, cc2, dd2, ee2 = [], [], [], [], []
+            for _ in range(self.Imax - 1):
+                CF1 = self.Grav * Amid[_] - ALFmid[_] * Bmid[_] * Qmid[_] ** 2.0 / Amid[_] ** 2.0
+                CF2 = 2.0 * ALFmid[_] * Qmid[_] / Amid[_]
+                CF3 = 2.0 * self.DTstep * self.CitaFW / self.DX2CS[_]
+
+                aa2.append(-CF1 * CF3)
+                bb2.append(1.0 - CF2 * CF3)
+                cc2.append(CF1 * CF3)
+                dd2.append(1.0 + CF2 * CF3)
+
+                e21 = Qold[_ + 1] + Qold[_]
+                e22 = -2.0 * self.DTstep * CF1 * (1.0 - self.CitaFW) * (Zold[_ + 1] - Zold[_]) / self.DX2CS[_]
+                e23 = -2.0 * self.DTstep * CF2 * (1.0 - self.CitaFW) * (Qold[_ + 1] - Qold[_]) / self.DX2CS[_]
+                e24 = (2.0 * self.DTstep) * 0.0
+                e25 = 2.0 * self.DTstep * ((Qmid[_] / Amid[_]) ** 2.0) * DADXmid[_]
+                e26 = -(2.0 * self.DTstep) * self.Grav * Amid[_] * abs(Qmid[_]) * Qmid[_] / (DMKmid[_] ** 2.0)
+
+                uup = Qold[_] / Aold[_]
+                ulw = Qold[_ + 1] / Aold[_ + 1]
+                cof = compute_cof(Bold[_], Bold[_ + 1])
+                e27 = -self.DTstep * Amid[_] * cof * abs(uup ** 2.0 - ulw ** 2.0) / self.DX2CS[_]
+
+                ee2.append(e21 + e22 + e23 + e24 + e25 + e26 + e27 + Add_momentumEq[_] * 2.0 * self.DTstep)
+
+            # 确定来流过程
+            if self.Qinlet_new:
+                raise Exception('Code err the inlet flow boundary is not computed!')
+
+            PPP, RRR, Qnew = [copy.deepcopy(self.Qinlet_new)], [0.0], [copy.deepcopy(self.Qinlet_new)]
+            for _ in range(self.Imax - 1):
+                Abr1 = aa1[_] + bb1[_] * RRR[_]
+                Abr2 = aa2[_] + bb2[_] * RRR[_]
+                RR1 = -cc2[_] * Abr1 + cc1[_] * Abr2
+                RR2 = dd2[_] * Abr1 - dd1[_] * Abr2
+
+                if abs(RR2) <= 0.0001:
+                    print(f'CS=i,i+1: {str(_)}, {str(_ + 1)}')
+                    print('rr2.le.0.0')
+                    print(f'DXcs= {str(self.DX2CS[_] / 1000.0)} km')
+                    input("Press Enter to continue...")
+
+                RRR.append(RR1 / RR2)
+                PP1 = (ee2[_] - bb2[_] * PPP[_]) * Abr1 - (ee1[_] - bb1[_] * PPP[_]) * Abr2
+                PP2 = RR2
+                PPP.append(PP1 / PP2)
+
+            # 确定出口流量过程
+            # Q-T outlet relationship
+            if self.KBDout == 1:
+                if self.Qoutlet_new == 0:
+                    raise Exception('Code err the outlet flow boundary is not computed!')
+                Qnew[self.Imax] = copy.deepcopy(self.Qoutlet_new)
+                if abs(RRR[self.Imax]) > 1.0E-6:
+                    Znew[self.Imax] = (self.Qoutlet_new - PPP[self.Imax]) / RRR[self.Imax]
+                else:
+                    print(f'RRR(imax)=0 {str(RRR[self.Imax])}')
+                    input("Press Enter to continue...")
+
+            # Z-T outlet relationship
+            if self.KBDout == 2:
+                if self.Zoutlet_new == 0:
+                    raise Exception('Code err the outlet flow boundary is not computed!')
+                Znew[self.Imax] = copy.deepcopy(self.Zoutlet_new)
+                Qnew[self.Imax] = PPP[self.Imax] + RRR[self.Imax] * copy.deepcopy(self.Zoutlet_new)
+
+            # Case 3: Determination of the Downstream boundary
+            if self.KBDout == 3:  # Z-Q Relation
+                if self.DQDZoutlet_new == 0:
+                    raise Exception('Code err the outlet flow boundary is not computed!')
+                DZNout = (PPP[self.Imax] - Qold[self.Imax] + RRR[self.Imax] * Zold[self.Imax]) / (self.DQDZoutlet_new - RRR[self.Imax])
+                Znew[self.Imax] = Zold[self.Imax] + DZNout
+                Qnew[self.Imax] = Qold[self.Imax] + self.DQDZoutlet_new * DZNout
+
+                if Znew[self.Imax] < self.CSZBmn[self.Imax]:
+                    Znew[self.Imax] = self.CSZBmn[self.Imax] + self.DHmin
+                    Qnew[self.Imax] = self.Qmin
+
+            # 回溯计算水位
+            for _ in range(self.Imax - 1, 0, -1):
+                DZ11 = (ee2[_] - bb2[_] * PPP[_]) * dd1[_] - (ee1[_] - bb1[_] * PPP[_]) * dd2[_]
+                DZ12 = dd1[_] * (aa2[_] + bb2[_] * RRR[_]) - dd2[_] * (aa1[_] + bb1[_] * RRR[_])
+
+                if abs(DZ12) <= 0.0001:
+                    print(f'CS=i,i+1 {str(_)} {str(_ + 1)}')
+                    print(f'DX2cs= {str(self.DX2CS[_] / 1000.0)} km')
+                    input("Press Enter to continue...")
+
+                DZ1 = DZ11 / DZ12
+                DZ21 = -cc2[_] * dd1[_] + cc1[_] * dd2[_]
+                DZ22 = DZ12
+                DZ2 = DZ21 / DZ22
+                Znew[_] = DZ1 + DZ2 * Znew[_ + 1]
+
+                # Do not calculate the flow increment at the inlet boundary
+                if _ != 0:
+                    Qnew[_] = PPP[_] + RRR[_] * Znew[_]
+
+            # Calculate the itr error
+            errQ, errZ, MDQZ = 0.0, 0.0, 1
+            
+            # Process each point
+            for _ in range(self.Imax):
+                if MDQZ == 1:  # Relative value
+                    if abs(Qnew[_]) > 1.0E-3:
+                        erq = abs((Qnew_itr[_] - Qnew[_]) / Qnew[_])
+                    else:
+                        erq = 0.0
+
+                    Hnew = Znew[_] - self.CSZBmn[_]
+                    Hnewt = Znew_itr[_] - self.CSZBmn[_]
+
+                    if Hnew > self.Hmin:
+                        erZ = abs((Hnewt - Hnew) / Hnew)
+                    else:
+                        erZ = 0.0
+
+                elif MDQZ == 2:  # Absolute value
+                    erq = abs(Qnew_itr[_] - Qnew[_])
+                    erZ = abs(Znew_itr[_] - Znew[_])
+                else:
+                    raise Exception('Code err')
+
+                if erq > errQ:
+                    errQ = erq
+                if erZ > errZ:
+                    errZ = erZ
+
+                # Ensure THE CHANNEL IS INUNDATED
+                if Znew[_] <= self.CSZBmn[_]:
+                    Znew[_] = self.CSZBmn[_] + self.DHmin
+
+            if errQ <= self.EPSQD and errZ <= self.EPSZW:
+                break
+
+            if itr == self.ITSUMF - 1:
+                break
+
+        # Process the result
+        Qend = copy.deepcopy(Qnew)
+        Zend = copy.deepcopy(Znew)
+
+        # Ensure minimum water levels and flow rates
+        for _ in range(self.Imax):
+            if Zend[_] < self.CSZBmn[_]:  # Ensure water presence
+                Zend[_] = self.CSZBmn[_] + self.DHmin
+                Qend[_] = self.Qmin
+            if Qend[_] < self.Qmin:
+                Qend[_] = self.Qmin
+                Zend[_] = self.CSZBmn[_] + self.DHmin
+
+        return Qend, Zend
+
+    def comp_qzba2(self, Zold, Znew):
+
+        # Retrieve the A B DMK ALF at current itr
+        AACS, BBCS, DMKCS, ALFCS = [], [], [], []
+        Zmid, DADXCS = [], []
+
+        for _ in range(self.Imax):
+            ZWL = Znew[_]
+            NMC = self.NMC1CS[_]  # Number of main channels in the section
+            AAi, BBi, DMKi, alfi = compute_channel_char(self.Hmin, self.DHmin, self.DBIJ[_], self.ZBIJ[_], self.KNIJ[_], self.RNIJ[_], self.CSZW[_])
+            AACS.append(AAi)
+            BBCS.append(BBi)
+            DMKCS.append(DMKi)
+            ALFCS.append(alfi)
+
+        for _ in range(self.Imax - 1):
+            Zmid.append(0.5 * self.CitaFW * (Znew[_ + 1] + Znew[_]) + 0.5 * (1.0 - self.CitaFW) * (Zold[_ + 1] + Zold[_]))
+
+        for _ in range(self.Imax - 1):
+            Zmd = Zmid[_]
+            AACS1 = compute_channel_char(self.Hmin, self.DHmin, self.DBIJ[_], self.ZBIJ[_], self.KNIJ[_], self.RNIJ[_], Zmd, simplified_factor=True)
+            AACS2 = compute_channel_char(self.Hmin, self.DHmin, self.DBIJ[_ + 1], self.ZBIJ[_ + 1], self.KNIJ[_ + 1], self.RNIJ[_ + 1], Zmd, simplified_factor=True)
+            DADXCS.append((AACS2 - AACS1) / self.DX2CS[_])
+
+        return AACS, BBCS, DMKCS, ALFCS, DADXCS
 
 
 if __name__ == "__main__":
-    model = Morphodynamic_Model1D()
-    model.input_data('G:\\A_Landsat_Floodplain_veg\\Hydrodynamic_model\\')
+    model = HydrodynamicModel_1D('G:\\A_1Dflow_sed\\Hydrodynamic_model\\')
+    model.import_para('G:\\A_1Dflow_sed\\Hydrodynamic_model\\para\\MYR_GLBpara.dat',
+                      'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_csv\\CSProf.csv',
+                      'G:\\A_1Dflow_sed\\Hydrodynamic_model\\para\\MYR_FlwBound.csv',
+                      'G:\\A_1Dflow_sed\\Hydrodynamic_model\\para\\MYR_QNRelt.csv')
+    model._init_flow_boundary()

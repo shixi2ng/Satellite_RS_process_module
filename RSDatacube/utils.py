@@ -10,8 +10,110 @@ import basic_function as bf
 from Landsat_toolbox.utils import *
 from scipy.optimize import curve_fit
 import psutil
-import numpy as np
 import json
+import shapely
+from osgeo import ogr
+
+
+def create_circle_polygon(center_coordinate: list, diameter):
+
+    n_points = 3600
+    angles = np.linspace(0, 360, n_points)
+    x, y = [], []
+    for ang_temp in angles:
+        x.append(center_coordinate[0] + (diameter / 2) * np.sin(ang_temp * 2 * np.pi / 360))
+        y.append(center_coordinate[1] + (diameter / 2) * np.cos(ang_temp * 2 * np.pi / 360))
+    x.append(x[0])
+    y.append(y[0])
+    return shapely.geometry.Polygon(zip(x, y))
+
+
+def extract_value2shpfile(raster: np.ndarray, raster_gt: tuple, shpfile: shapely.geometry.Polygon, epsg_id: int,
+                          factor: int = 10, nodatavalue=-32768):
+    # Retrieve vars
+    xsize, ysize = raster.shape[1], raster.shape[0]
+    ulx, uly, lrx, lry, xres, yres = raster_gt[0], raster_gt[3], raster_gt[0] + raster.shape[1] * raster_gt[1], \
+                                                                 raster_gt[3] + raster.shape[0] * raster_gt[5], \
+    raster_gt[1], -raster_gt[5]
+
+    xres_min = float(xres / factor)
+    yres_min = float(yres / factor)
+
+    if (uly - lry) / yres != ysize or (lrx - ulx) / xres != xsize:
+        raise ValueError('The raster and proj is not compatible!')
+
+    # Define the combined raster size
+    shp_xmax, shp_xmin, shp_ymax, shp_ymin = shpfile.bounds[2], shpfile.bounds[0], shpfile.bounds[3], shpfile.bounds[1]
+    out_xmax, out_xmin, out_ymax, out_ymin = None, None, None, None
+    ras_xmax_indi, ras_xmin_indi, ras_ymax_indi, ras_ymin_indi = None, None, None, None
+
+    for i in range(xsize):
+        if ulx + i * xres < shp_xmin < ulx + (i + 1) * xres:
+            out_xmin = (i * xres) + ulx
+            ras_xmin_indi = i
+        if ulx + i * xres < shp_xmax < ulx + (i + 1) * xres:
+            out_xmax = (i + 1) * xres + ulx
+            ras_xmax_indi = i + 1
+            break
+
+    for q in range(ysize):
+        if uly - q * yres > shp_ymax > uly - (q + 1) * yres:
+            out_ymax = uly - (q * yres)
+            ras_ymin_indi = q
+        if uly - q * yres > shp_ymin > uly - (q + 1) * yres:
+            out_ymin = uly - (q + 1) * yres
+            ras_ymax_indi = q + 1
+            break
+
+    if out_ymin is None or out_ymax is None or out_xmin is None or out_xmax is None:
+        return np.nan
+
+    if not isinstance(raster, np.ndarray):
+        raster_temp = raster.toarray()[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].astype(np.float64)
+    else:
+        raster_temp = raster[ras_ymin_indi: ras_ymax_indi, ras_xmin_indi: ras_xmax_indi].astype(np.float64)
+
+    rasterize_Xsize, rasterize_Ysize = int((out_xmax - out_xmin) / xres_min), int((out_ymax - out_ymin) / yres_min)
+    raster_temp = np.broadcast_to(raster_temp[:, None, :, None],
+                                  (raster_temp.shape[0], factor, raster_temp.shape[1], factor)).reshape(
+        np.int64(factor * raster_temp.shape[0]), np.int64(factor * raster_temp.shape[1])).copy()
+
+    if [raster_temp == nodatavalue][0].all():
+        return np.nan
+    elif ~np.isnan(nodatavalue):
+
+        raster_temp[raster_temp == nodatavalue] = np.nan
+
+    if raster_temp.shape[0] != rasterize_Ysize or raster_temp.shape[1] != rasterize_Xsize:
+        raise ValueError('The output raster and rasterise raster are not consistent!')
+
+    new_gt = [out_xmin, xres_min, 0, out_ymax, 0, -yres_min]
+    ogr_geom_type = shapely_to_ogr_type(shpfile.geom_type)
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(epsg_id)
+
+    # Create a temporary vector layer in memory
+    mem_drv = ogr.GetDriverByName(str("Memory"))
+    mem_ds = mem_drv.CreateDataSource(str('out'))
+    mem_layer = mem_ds.CreateLayer(str('out'), srs, ogr_geom_type)
+    ogr_feature = ogr.Feature(feature_def=mem_layer.GetLayerDefn())
+    ogr_geom = ogr.CreateGeometryFromWkt(shpfile.wkt)
+    ogr_feature.SetGeometryDirectly(ogr_geom)
+    mem_layer.CreateFeature(ogr_feature)
+
+    # Rasterize it
+    driver = gdal.GetDriverByName(str('MEM'))
+    rvds = driver.Create(str('rvds'), rasterize_Xsize, rasterize_Ysize, 1, gdal.GDT_Byte)
+    rvds.SetGeoTransform(new_gt)
+    file_temp = gdal.RasterizeLayer(rvds, [1], mem_layer, None, None, burn_values=[1], options=['ALL_TOUCHED=True'])
+    info_temp = rvds.GetRasterBand(1).ReadAsArray()
+    raster_temp[info_temp == 0] = np.nan
+
+    # Return the value
+    if np.sum(~np.isnan(raster_temp)) / np.sum(info_temp == 1) > 0.5:
+        return np.nansum(raster_temp) / np.sum(~np.isnan(raster_temp))
+    else:
+        return np.nan
 
 
 def process_denv_via_pheme(denv_dc: str, pheme_dc: str, year, pheme, kwargs):
@@ -905,3 +1007,472 @@ def retrieve_correct_filename(file_name: str):
                 return None
 
 
+def link_GEDI_Phedc_inform(Phemedc, Pheme_year_list, Pheme_index, Phemedc_GeoTransform, gedi_df, furname,
+                           GEDI_link_Pheme_spatial_interpolate_method_list, GEDI_circle_diameter: int = 25):
+
+    df_size = gedi_df.shape[0]
+    furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
+    for spatial_method in GEDI_link_Pheme_spatial_interpolate_method_list:
+        gedi_df.insert(loc=len(gedi_df.columns), column=f'Pheme_{Pheme_index}_{spatial_method}', value=np.nan)
+        gedi_df.insert(loc=len(gedi_df.columns), column=f'Pheme_{Pheme_index}_{spatial_method}_reliability', value=np.nan)
+    gedi_df = gedi_df.reset_index()
+    sparse_matrix = True if isinstance(Phemedc, NDSparseMatrix) else False
+
+    # itr through the gedi_df
+    for i in range(df_size):
+        # Timing
+        t1 = time.time()
+        print(f'Start linking the Pheme {Pheme_index} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
+        try:
+            lat, lon, date_temp, year_temp = gedi_df[furlat][i], gedi_df[furlon][i], gedi_df['Date'][i], int(np.floor(gedi_df['Date'][i]/1000))
+            point_coords = [lon, lat]
+
+            if year_temp in Pheme_year_list:
+                centre_pixel_xy = [int(np.floor((point_coords[0] - Phemedc_GeoTransform[0]) / Phemedc_GeoTransform[1])),
+                                   int(np.floor((point_coords[1] - Phemedc_GeoTransform[3]) / Phemedc_GeoTransform[5]))]
+                if 0 <= centre_pixel_xy[1] <= Phemedc.shape[0] and 0 <= centre_pixel_xy[0] <= Phemedc.shape[1]:
+                    spatial_dic, spatial_weight = {}, {}
+                    for spatial_method in GEDI_link_Pheme_spatial_interpolate_method_list:
+                        if spatial_method == 'nearest_neighbor':
+                            spatial_dic['nearest_neighbor'] = [centre_pixel_xy[1], centre_pixel_xy[1] + 1,
+                                                               centre_pixel_xy[0], centre_pixel_xy[0] + 1]
+                            spatial_weight['nearest_neighbor'] = np.ones([1, 1])
+                        elif spatial_method == 'focal':
+                            spatial_dic['focal'] = [max(centre_pixel_xy[1] - 1, 0), min(centre_pixel_xy[1] + 2, Phemedc.shape[0]),
+                                                    max(centre_pixel_xy[0] - 1, 0), min(centre_pixel_xy[0] + 2, Phemedc.shape[1])]
+                            spatial_weight['focal'] = np.ones([3, 3]) / 9
+                        elif spatial_method == 'area_average':
+                            GEDI_circle = create_circle_polygon(point_coords, GEDI_circle_diameter)
+                            min_x, min_y, max_x, max_y = GEDI_circle.bounds
+                            ul_corner = [int(np.floor((min_x - Phemedc_GeoTransform[0]) / Phemedc_GeoTransform[1])),
+                                         int(np.floor((max_y - Phemedc_GeoTransform[3]) / Phemedc_GeoTransform[5]))]
+                            lr_corner = [int(np.ceil((max_x - Phemedc_GeoTransform[0]) / Phemedc_GeoTransform[1])),
+                                         int(np.ceil((min_y - Phemedc_GeoTransform[3]) / Phemedc_GeoTransform[5]))]
+                            spatial_dic['area_average'] = [max(ul_corner[1], 0), min(lr_corner[1] + 1, Phemedc.shape[0]),
+                                                           max(ul_corner[0], 0), min(lr_corner[0] + 1, Phemedc.shape[1])]
+                            spatial_weight['area_average'] = np.zeros([spatial_dic['area_average'][1] - spatial_dic['area_average'][0],
+                                                                       spatial_dic['area_average'][3] - spatial_dic['area_average'][2]])
+                            entire_area = GEDI_circle.intersection(shapely.geometry.Polygon([(Phemedc_GeoTransform[0], Phemedc_GeoTransform[3]),
+                                                                                             (Phemedc_GeoTransform[0] + Phemedc_GeoTransform[1] * Phemedc.shape[1], Phemedc_GeoTransform[3]),
+                                                                                             (Phemedc_GeoTransform[0] + Phemedc_GeoTransform[1] * Phemedc.shape[1],  Phemedc_GeoTransform[3] + Phemedc_GeoTransform[5] * Phemedc.shape[0]),
+                                                                                             (Phemedc_GeoTransform[0], Phemedc_GeoTransform[3] + Phemedc_GeoTransform[5] * Phemedc.shape[0])])).area
+                            for y_ in range(spatial_weight['area_average'].shape[0]):
+                                for x_ in range(spatial_weight['area_average'].shape[1]):
+                                    square_ulcorner_x, square_ulcorner_y = Phemedc_GeoTransform[0] + Phemedc_GeoTransform[1] * (ul_corner[0] + x_),\
+                                                                           Phemedc_GeoTransform[3] + Phemedc_GeoTransform[5] * (ul_corner[1] + y_)
+                                    square_polygon = shapely.geometry.Polygon([(square_ulcorner_x, square_ulcorner_y),
+                                                                               (square_ulcorner_x + Phemedc_GeoTransform[1], square_ulcorner_y),
+                                                                               (square_ulcorner_x + Phemedc_GeoTransform[1], square_ulcorner_y + Phemedc_GeoTransform[5]),
+                                                                               (square_ulcorner_x, square_ulcorner_y + Phemedc_GeoTransform[5])])
+                                    intersection = square_polygon.intersection(GEDI_circle)
+                                    spatial_weight['area_average'][y_, x_] = intersection.area / entire_area
+                        else:
+                            raise Exception('The spatial interpolation method is not supported!')
+                else:
+                    spatial_dic = None
+
+                # Get the maximum range in spatial and temporal
+                if spatial_dic is None:
+                    pass
+                else:
+                    max_spatial_range = [Phemedc.shape[0], 0, Phemedc.shape[1], 0]
+                    for spatial_ in spatial_dic.keys():
+                        max_spatial_range = [min(max_spatial_range[0], spatial_dic[spatial_][0]),
+                                             max(max_spatial_range[1], spatial_dic[spatial_][1]),
+                                             min(max_spatial_range[2], spatial_dic[spatial_][2]),
+                                             max(max_spatial_range[3], spatial_dic[spatial_][3])]
+                    for spatial_ in spatial_dic.keys():
+                        spatial_dic[spatial_] = [spatial_dic[spatial_][0] - max_spatial_range[0],
+                                                 spatial_dic[spatial_][1] - max_spatial_range[0],
+                                                 spatial_dic[spatial_][2] - max_spatial_range[2],
+                                                 spatial_dic[spatial_][3] - max_spatial_range[2]]
+
+                # Extract the RSdc
+                if spatial_dic is None:
+                    RSdc_temp = None
+                elif isinstance(Phemedc, NDSparseMatrix):
+                    RSdc_temp = Phemedc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], Pheme_year_list.index(year_temp): Pheme_year_list.index(year_temp) + 1].reshape(max_spatial_range[1]-max_spatial_range[0], max_spatial_range[3]-max_spatial_range[2])
+                    RSdc_temp = RSdc_temp.astype(np.float32)
+                    RSdc_temp[RSdc_temp == 0] = np.nan
+                elif isinstance(Phemedc, np.ndarray):
+                    RSdc_temp = Phemedc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], Pheme_year_list.index(year_temp)].reshape(max_spatial_range[1]-max_spatial_range[0], max_spatial_range[3]-max_spatial_range[2])
+                else:
+                    raise Exception('The RSdc is not under the right type!')
+
+                if RSdc_temp is not None and ~np.all(np.isnan(RSdc_temp)):
+                    for spatial_method in GEDI_link_Pheme_spatial_interpolate_method_list:
+                        spatial_temp = spatial_dic[spatial_method]
+                        dc_temp = RSdc_temp[spatial_temp[0]: spatial_temp[1], spatial_temp[2]: spatial_temp[3]]
+                        if ~np.all(np.isnan(RSdc_temp)):
+                            inform_value = np.nansum(spatial_weight[spatial_method] * dc_temp.reshape(dc_temp.shape[0], dc_temp.shape[1]))
+                            reliability_value = np.nansum(spatial_weight[spatial_method] * ~np.isnan(dc_temp[:, :].reshape(dc_temp.shape[0], dc_temp.shape[1])))
+                        else:
+                            inform_value = np.nan
+                            reliability_value = np.nan
+                        gedi_df.loc[i, f'Pheme_{Pheme_index}_{spatial_method}'] = inform_value
+                        gedi_df.loc[i, f'Pheme_{Pheme_index}_{spatial_method}_reliability'] = reliability_value
+                    print(f'Finish linking the Pheme {Pheme_index} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+                else:
+                    print(f'Invalid value for {Pheme_index} linking with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+            else:
+                print(f'Unsupported year not import in the Pheme dc! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+        except:
+            print(traceback.format_exc())
+            print(f'Failed linking the Pheme {Pheme_index} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+
+    return gedi_df
+
+
+def link_GEDI_Denvdc_inform(Denvdc, Denv_index, Denv_doy_list, Denvdc_GeoTransform, Phemedc, gedi_df, furname,
+                            GEDI_link_Denvdc_spatial_interpolate_method_list: list, accumulated_period, threshold_method, GEDI_circle_diameter: int = 25):
+
+    df_size = gedi_df.shape[0]
+    furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
+    for spatial_method in GEDI_link_Denvdc_spatial_interpolate_method_list:
+        gedi_df.insert(loc=len(gedi_df.columns), column=f'Denv_{Denv_index}_{spatial_method}_{accumulated_period}_{threshold_method[0]}', value=np.nan)
+        gedi_df.insert(loc=len(gedi_df.columns), column=f'Denv_{Denv_index}_{spatial_method}_{accumulated_period}_{threshold_method[0]}_reliability', value=np.nan)
+    sparse_matrix = True if isinstance(Denvdc, NDSparseMatrix) else False
+    gedi_df = gedi_df.reset_index()
+
+    # itr through the gedi_df
+    for i in range(df_size):
+
+        # Timing
+        t1 = time.time()
+        print(f'Start linking the Denv {str(Denv_index)} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
+
+        try:
+            lat, lon, year_temp, GEDI_doy = gedi_df[furlat][i], gedi_df[furlon][i], int(np.floor(gedi_df['Date'][i]/1000)), gedi_df['Date'][i]
+            point_coords = [lon, lat]
+
+            # Check if the year in the Phemedc
+            if year_temp not in Phemedc.pheyear:
+                raise Exception(f'Unsupported year not import in the Pheme dc! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+
+            # Process the spatial range
+            centre_pixel_xy = [int(np.floor((point_coords[0] - Denvdc_GeoTransform[0]) / Denvdc_GeoTransform[1])),
+                               int(np.floor((point_coords[1] - Denvdc_GeoTransform[3]) / Denvdc_GeoTransform[5]))]
+
+            if 0 <= centre_pixel_xy[1] <= Denvdc.shape[0] and 0 <= centre_pixel_xy[0] <= Denvdc.shape[1]:
+                spatial_dic, spatial_weight = {}, {}
+                for spatial_method in GEDI_link_Denvdc_spatial_interpolate_method_list:
+                    if spatial_method == 'nearest_neighbor':
+                        spatial_dic['nearest_neighbor'] = [centre_pixel_xy[1], centre_pixel_xy[1] + 1,
+                                                           centre_pixel_xy[0], centre_pixel_xy[0] + 1]
+                        spatial_weight['nearest_neighbor'] = np.ones([1, 1])
+                    elif spatial_method == 'focal':
+                        spatial_dic['focal'] = [max(centre_pixel_xy[1] - 1, 0),
+                                                min(centre_pixel_xy[1] + 2, Denvdc.shape[0]),
+                                                max(centre_pixel_xy[0] - 1, 0),
+                                                min(centre_pixel_xy[0] + 2, Denvdc.shape[1])]
+                        spatial_weight['focal'] = np.ones([3, 3]) / 9
+                    elif spatial_method == 'area_average':
+                        GEDI_circle = create_circle_polygon(point_coords, GEDI_circle_diameter)
+                        min_x, min_y, max_x, max_y = GEDI_circle.bounds
+                        ul_corner = [int(np.floor((min_x - Denvdc_GeoTransform[0]) / Denvdc_GeoTransform[1])),
+                                     int(np.floor((max_y - Denvdc_GeoTransform[3]) / Denvdc_GeoTransform[5]))]
+                        lr_corner = [int(np.ceil((max_x - Denvdc_GeoTransform[0]) / Denvdc_GeoTransform[1])),
+                                     int(np.ceil((min_y - Denvdc_GeoTransform[3]) / Denvdc_GeoTransform[5]))]
+                        spatial_dic['area_average'] = [max(ul_corner[1], 0), min(lr_corner[1] + 1, Denvdc.shape[0]),
+                                                       max(ul_corner[0], 0), min(lr_corner[0] + 1, Denvdc.shape[1])]
+                        spatial_weight['area_average'] = np.zeros([spatial_dic['area_average'][1] - spatial_dic['area_average'][0],
+                                                                   spatial_dic['area_average'][3] - spatial_dic['area_average'][2]])
+                        entire_area = GEDI_circle.intersection(shapely.geometry.Polygon([(Denvdc_GeoTransform[0], Denvdc_GeoTransform[3]), (Denvdc_GeoTransform[0] + Denvdc_GeoTransform[1] * Denvdc.shape[1], Denvdc_GeoTransform[3]),
+                                                                                         (Denvdc_GeoTransform[0] + Denvdc_GeoTransform[1] * Denvdc.shape[1],Denvdc_GeoTransform[3] + Denvdc_GeoTransform[5] * Denvdc.shape[0]),
+                                                                                         (Denvdc_GeoTransform[0], Denvdc_GeoTransform[3] + Denvdc_GeoTransform[5] * Denvdc.shape[0])])).area
+                        for y_ in range(spatial_weight['area_average'].shape[0]):
+                            for x_ in range(spatial_weight['area_average'].shape[1]):
+                                square_ulcorner_x, square_ulcorner_y = Denvdc_GeoTransform[0] + Denvdc_GeoTransform[1] * (ul_corner[0] + x_), \
+                                                                       Denvdc_GeoTransform[3] + Denvdc_GeoTransform[5] * (ul_corner[1] + y_)
+                                square_polygon = shapely.geometry.Polygon([(square_ulcorner_x, square_ulcorner_y),
+                                                                           (square_ulcorner_x + Denvdc_GeoTransform[1], square_ulcorner_y),
+                                                                           (square_ulcorner_x + Denvdc_GeoTransform[1], square_ulcorner_y + Denvdc_GeoTransform[5]),
+                                                                           (square_ulcorner_x, square_ulcorner_y + Denvdc_GeoTransform[5])])
+                                intersection = square_polygon.intersection(GEDI_circle)
+                                spatial_weight['area_average'][y_, x_] = intersection.area / entire_area
+                    else:
+                        raise Exception('The spatial interpolation method is not supported!')
+            else:
+                spatial_dic = None
+
+            # Get the maximum range in spatial
+            if spatial_dic is None:
+                pass
+            else:
+                max_spatial_range = [Denvdc.shape[0], 0, Denvdc.shape[1], 0]
+
+                for spatial_ in spatial_dic.keys():
+                    max_spatial_range = [min(max_spatial_range[0], spatial_dic[spatial_][0]), max(max_spatial_range[1], spatial_dic[spatial_][1]),
+                                         min(max_spatial_range[2], spatial_dic[spatial_][2]), max(max_spatial_range[3], spatial_dic[spatial_][3])]
+                for spatial_ in spatial_dic.keys():
+                    spatial_dic[spatial_] = [spatial_dic[spatial_][0] - max_spatial_range[0], spatial_dic[spatial_][1] - max_spatial_range[0],
+                                             spatial_dic[spatial_][2] - max_spatial_range[2], spatial_dic[spatial_][3] - max_spatial_range[2]]
+
+            # Process the temporal range
+            if GEDI_doy > np.max(np.array(Denv_doy_list)) or GEDI_doy < np.min(np.array(Denv_doy_list)):
+                temporal_dic = None
+            else:
+                # Generate the temporal range
+                if accumulated_period.startswith('SOS'):
+                    yearly_pheme = Phemedc[1]
+                elif accumulated_period.startswith('SOS'):
+                    pass
+
+
+            print(f'Finish linking the Denv {Denv_index} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+        except:
+            print(traceback.format_exc())
+            print(f'Failed linking the Denv {Denv_index} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+
+
+
+    return gedi_df
+
+
+def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, gedi_df, furname, GEDI_link_RS_temporal_interpolate_method_list,
+                          GEDI_link_RS_spatial_interpolate_method_list, temporal_search_window: int = 48, GEDI_circle_diameter: int = 25):
+
+    """
+    This function is used to link GEDI and RSdc inform. It will draw a circle around the central point and extract the corresponding RSdc value using the given spatial and temporal interpolation methods.
+
+    Parameters:
+    RSdc (NDSparseMatrix/np.ndarray): The RSdc datacube
+    RSdc_GeoTransform (list): The geotransform of the RSdc datacube
+    RSdc_doy_list (list): The list of doy for the RSdc datacube
+    RSdc_index (str): The index of the RSdc datacube
+    gedi_df (pd.DataFrame): The GEDI dataframe
+    furname (str): The name of the firmware
+    GEDI_link_RS_temporal_interpolate_method_list (list): The list of temporal interpolation methods
+    GEDI_link_RS_spatial_interpolate_method_list (list): The list of spatial interpolation methods
+    temporal_search_window (int): The search window for the temporal interpolation
+    GEDI_circle_diameter (int): The diameter of the circle
+
+    Returns:
+    pd.DataFrame: The linked GEDI dataframe
+    """
+    df_size = gedi_df.shape[0]
+    furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
+    gedi_df = gedi_df.reset_index()
+    temporal_search_window = 16 if temporal_search_window <= 16 else temporal_search_window
+
+    # Insert new column for GEDI_df based on spatial methods and temporal methods
+    for spatial_method in GEDI_link_RS_spatial_interpolate_method_list:
+        for temporal_method in GEDI_link_RS_temporal_interpolate_method_list:
+            gedi_df.insert(loc=len(gedi_df.columns), column=f'{RSdc_index}_{spatial_method}_{temporal_method}', value=np.nan)
+            gedi_df.insert(loc=len(gedi_df.columns), column=f'{RSdc_index}_{spatial_method}_{temporal_method}_reliability', value=np.nan)
+
+    # itr through the gedi_df
+    for i in range(df_size):
+
+        # Timing
+        t1 = time.time()
+        print(f'Start linking the {RSdc_index} value with the GEDI dataframe!({str(i)} of {str(df_size)})')
+        try:
+            # Draw a circle around the central point
+            lat, lon, GEDI_doy = gedi_df[furlat][i], gedi_df[furlon][i], gedi_df['Date'][i]
+            point_coords = [lon, lat]
+
+            # Process the temporal range
+            if GEDI_doy > np.max(np.array(RSdc_doy_list)) or GEDI_doy < np.min(np.array(RSdc_doy_list)):
+                temporal_dic = None
+            else:
+                # Generate the temporal range
+                temporal_dic, doy_dic = {}, {}
+                for temporal_method in GEDI_link_RS_temporal_interpolate_method_list:
+                    if '24days' in temporal_method:
+                        temporal_threshold = 24
+                    elif temporal_method == 'linear_interpolation':
+                        temporal_threshold = temporal_search_window
+                    else:
+                        raise Exception('Not supported temporal interpolation method!')
+
+                    if np.mod(GEDI_doy, 1000) <= temporal_threshold:
+                        doy_lower_limit = GEDI_doy - 1000 + 365 - (temporal_threshold - np.mod(GEDI_doy, 1000))
+                    else:
+                        doy_lower_limit = GEDI_doy - temporal_threshold
+
+                    if np.mod(GEDI_doy, 1000) + temporal_threshold > 365:
+                        doy_upper_limit = GEDI_doy + 1000 + (temporal_threshold + np.mod(GEDI_doy, 1000) - 365)
+                    else:
+                        doy_upper_limit = GEDI_doy + temporal_threshold
+
+                    lower_range, upper_range = 0, len(RSdc_doy_list)
+                    for _ in range(1, len(RSdc_doy_list)):
+                        if RSdc_doy_list[_] >= doy_lower_limit > RSdc_doy_list[_ - 1]:
+                            lower_range = _
+                            break
+                    for _ in range(1, len(RSdc_doy_list)):
+                        if RSdc_doy_list[_] > doy_upper_limit >= RSdc_doy_list[_ - 1]:
+                            upper_range = _
+                            break
+                    temporal_dic[temporal_method] = [lower_range, upper_range]
+                    doy_dic[temporal_method] = [RSdc_doy_list[__] for __ in range(lower_range, upper_range)]
+
+            # Process the spatial range
+            centre_pixel_xy = [int(np.floor((point_coords[0] - RSdc_GeoTransform[0]) / RSdc_GeoTransform[1])), int(np.floor((point_coords[1] - RSdc_GeoTransform[3]) / RSdc_GeoTransform[5]))]
+            if 0 <= centre_pixel_xy[1] <= RSdc.shape[0] and 0 <= centre_pixel_xy[0] <= RSdc.shape[1]:
+                spatial_dic, spatial_weight = {}, {}
+                for spatial_method in GEDI_link_RS_spatial_interpolate_method_list:
+                    if spatial_method == 'nearest_neighbor':
+                        spatial_dic['nearest_neighbor'] = [centre_pixel_xy[1], centre_pixel_xy[1] + 1, centre_pixel_xy[0], centre_pixel_xy[0] + 1]
+                        spatial_weight['nearest_neighbor'] = np.ones([1, 1])
+                    elif spatial_method == 'focal':
+                        spatial_dic['focal'] = [max(centre_pixel_xy[1] - 1, 0), min(centre_pixel_xy[1] + 2, RSdc.shape[0]), max(centre_pixel_xy[0] - 1, 0), min(centre_pixel_xy[0] + 2, RSdc.shape[1])]
+                        spatial_weight['focal'] = np.ones([3, 3]) / 9
+                    elif spatial_method == 'area_average':
+                        GEDI_circle = create_circle_polygon(point_coords, GEDI_circle_diameter)
+                        min_x, min_y, max_x, max_y = GEDI_circle.bounds
+                        ul_corner = [int(np.floor((min_x - RSdc_GeoTransform[0]) / RSdc_GeoTransform[1])), int(np.floor((max_y - RSdc_GeoTransform[3]) / RSdc_GeoTransform[5]))]
+                        lr_corner = [int(np.ceil((max_x - RSdc_GeoTransform[0]) / RSdc_GeoTransform[1])), int(np.ceil((min_y - RSdc_GeoTransform[3]) / RSdc_GeoTransform[5]))]
+                        spatial_dic['area_average'] = [max(ul_corner[1], 0), min(lr_corner[1] + 1, RSdc.shape[0]), max(ul_corner[0], 0), min(lr_corner[0] + 1, RSdc.shape[1])]
+                        spatial_weight['area_average'] = np.zeros([spatial_dic['area_average'][1] - spatial_dic['area_average'][0], spatial_dic['area_average'][3] - spatial_dic['area_average'][2]])
+                        entire_area = GEDI_circle.intersection(shapely.geometry.Polygon([(RSdc_GeoTransform[0],  RSdc_GeoTransform[3]), (RSdc_GeoTransform[0] + RSdc_GeoTransform[1] * RSdc.shape[1],  RSdc_GeoTransform[3]),
+                                                                                         (RSdc_GeoTransform[0] + RSdc_GeoTransform[1] * RSdc.shape[1],  RSdc_GeoTransform[3] + RSdc_GeoTransform[5] * RSdc.shape[0]), (RSdc_GeoTransform[0], RSdc_GeoTransform[3] + RSdc_GeoTransform[5] * RSdc.shape[0])])).area
+                        for y_ in range(spatial_weight['area_average'].shape[0]):
+                            for x_ in range(spatial_weight['area_average'].shape[1]):
+                                square_ulcorner_x, square_ulcorner_y = RSdc_GeoTransform[0] + RSdc_GeoTransform[1] * (ul_corner[0] + x_), RSdc_GeoTransform[3] + RSdc_GeoTransform[5] * (ul_corner[1] + y_)
+                                square_polygon = shapely.geometry.Polygon([(square_ulcorner_x, square_ulcorner_y), (square_ulcorner_x + RSdc_GeoTransform[1], square_ulcorner_y),
+                                                                           (square_ulcorner_x + RSdc_GeoTransform[1], square_ulcorner_y + RSdc_GeoTransform[5]), (square_ulcorner_x, square_ulcorner_y + RSdc_GeoTransform[5])])
+                                intersection = square_polygon.intersection(GEDI_circle)
+                                spatial_weight['area_average'][y_, x_] = intersection.area / entire_area
+                    else:
+                        raise Exception('The spatial interpolation method is not supported!')
+            else:
+                spatial_dic = None
+
+            # Get the maximum range in spatial and temporal
+            if spatial_dic is None or temporal_dic is None:
+                pass
+            else:
+                max_temporal_range = [len(RSdc_doy_list), 0]
+                max_spatial_range = [RSdc.shape[0], 0, RSdc.shape[1], 0]
+
+                for temporal_ in temporal_dic.keys():
+                    max_temporal_range = [min(max_temporal_range[0], temporal_dic[temporal_][0]), max(max_temporal_range[1], temporal_dic[temporal_][1])]
+
+                for temporal_ in temporal_dic.keys():
+                    temporal_dic[temporal_] = [temporal_dic[temporal_][0] - max_temporal_range[0], temporal_dic[temporal_][1] - max_temporal_range[0]]
+
+                for spatial_ in spatial_dic.keys():
+                    max_spatial_range = [min(max_spatial_range[0], spatial_dic[spatial_][0]), max(max_spatial_range[1], spatial_dic[spatial_][1]),
+                                         min(max_spatial_range[2], spatial_dic[spatial_][2]), max(max_spatial_range[3], spatial_dic[spatial_][3])]
+                for spatial_ in spatial_dic.keys():
+                    spatial_dic[spatial_] = [spatial_dic[spatial_][0] - max_spatial_range[0], spatial_dic[spatial_][1] - max_spatial_range[0],
+                                             spatial_dic[spatial_][2] - max_spatial_range[2], spatial_dic[spatial_][3] - max_spatial_range[2]]
+
+            # Extract the RSdc
+            if spatial_dic is None or temporal_dic is None:
+                RSdc_temp = None
+            elif isinstance(RSdc, NDSparseMatrix):
+                RSdc_temp = RSdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], max_temporal_range[0]: max_temporal_range[1]]
+                RSdc_temp = RSdc_temp.astype(np.float32)
+                RSdc_temp[RSdc_temp == 0] = np.nan
+            elif isinstance(RSdc, np.ndarray):
+                RSdc_temp = RSdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], max_temporal_range[0]: max_temporal_range[1]]
+            else:
+                raise Exception('The RSdc is not under the right type!')
+
+            # Execute the weight
+            if RSdc_temp is not None and ~np.all(np.isnan(RSdc_temp)):
+                for spatial_method in GEDI_link_RS_spatial_interpolate_method_list:
+                    spatial_temp = spatial_dic[spatial_method]
+                    dc_temp = RSdc_temp[spatial_temp[0]: spatial_temp[1], spatial_temp[2]: spatial_temp[3], :]
+                    spatial_interpolated_arr = np.zeros(dc_temp.shape[2]) * np.nan
+                    reliability_arr = np.zeros(dc_temp.shape[2]) * 0
+                    for __ in range(dc_temp.shape[2]):
+                        if ~np.all(np.isnan(dc_temp[:, :, __])):
+                            spatial_interpolated_arr[__] = np.nansum(spatial_weight[spatial_method] * dc_temp[:, :, __].reshape(dc_temp.shape[0], dc_temp.shape[1]))
+                            reliability_arr[__] = np.nansum(spatial_weight[spatial_method] * ~np.isnan(dc_temp[:, :, __].reshape(dc_temp.shape[0], dc_temp.shape[1])))
+                        else:
+                            spatial_interpolated_arr[__] = np.nan
+                            reliability_arr[__] = 0
+
+                    for temporal_method in GEDI_link_RS_temporal_interpolate_method_list:
+                        temporal_temp = temporal_dic[temporal_method]
+                        spatial_interpolated_arr_t = spatial_interpolated_arr[temporal_temp[0]: temporal_temp[1]]
+                        reliability_arr_t = reliability_arr[temporal_temp[0]: temporal_temp[1]]
+                        spatial_interpolated_arr_t[reliability_arr_t < 0.1] = np.nan
+                        reliability_arr_t[reliability_arr_t < 0.1] = np.nan
+
+                        if temporal_method == "24days_max":
+                            inform_value = np.nan if np.all(np.isnan(spatial_interpolated_arr_t)) else np.nanmax(spatial_interpolated_arr_t)
+                            reliability_value = np.nan if np.all(np.isnan(reliability_arr_t)) else reliability_arr_t[np.argwhere(spatial_interpolated_arr_t == inform_value)[0]][0]
+                        elif temporal_method == '24days_ave':
+                            inform_value = np.nan if np.all(np.isnan(spatial_interpolated_arr_t)) else np.nanmean(spatial_interpolated_arr_t)
+                            reliability_value = np.nan if np.all(np.isnan(reliability_arr_t)) else np.nanmean(reliability_arr_t)
+                        elif temporal_method == 'linear_interpolation':
+                            date_negative, date_positive, value_negative, value_positive, reliability_negative, reliability_positive = -temporal_search_window, temporal_search_window, np.nan, np.nan, np.nan, np.nan
+                            for date_t in doy_dic[temporal_method]:
+                                if date_t <= GEDI_doy and date_t - GEDI_doy >= date_negative and ~np.isnan(spatial_interpolated_arr_t[doy_dic[temporal_method].index(date_t)]):
+                                    date_negative = np.abs(date_t - GEDI_doy)
+                                    value_negative = spatial_interpolated_arr_t[doy_dic[temporal_method].index(date_t)]
+                                    reliability_negative = reliability_arr_t[doy_dic[temporal_method].index(date_t)]
+
+                                if date_t >= GEDI_doy and date_t - GEDI_doy <= date_positive and ~np.isnan(spatial_interpolated_arr_t[doy_dic[temporal_method].index(date_t)]):
+                                    date_positive = np.abs(date_t - GEDI_doy)
+                                    value_positive = spatial_interpolated_arr_t[doy_dic[temporal_method].index(date_t)]
+                                    reliability_positive = reliability_arr_t[doy_dic[temporal_method].index(date_t)]
+
+                            if np.isnan(value_positive) or np.isnan(value_negative):
+                                inform_value = np.nan
+                                reliability_value = np.nan
+                            else:
+                                inform_value = value_negative + (value_positive - value_negative) * date_negative / (date_positive + date_negative)
+                                reliability_value = (reliability_negative + reliability_positive) / 2
+                        else:
+                            raise Exception('Not supported temporal method')
+
+                        if np.isnan(inform_value):
+                            pass
+                        else:
+                            gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{temporal_method}'] = inform_value
+                            gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{temporal_method}_reliability'] = reliability_value
+                print(f'Finish linking the {RSdc_index} with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+            else:
+                print(f'Invalid value for {RSdc_index} linking with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+        except:
+            print(traceback.format_exc())
+            print(f'Failed linking the {RSdc_index} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+
+            # # Link GEDI and S2 inform using linear_interpolation
+            # data_positive, date_positive, data_negative, date_negative = None, None, None, None
+            # gedi_df.loc[i, f'S2_{RSdc_index}_{GEDI_link_RS_temporal_interpolate_method_list}'] = np.nan
+            # gedi_df.loc[i, f'S2_{RSdc_index}_{GEDI_link_RS_temporal_interpolate_method_list}_reliability'] = np.nan
+            #
+            # for date_interval in range(temporal_search_window):
+            #     if date_interval == 0 and date_interval + GEDI_doy in RSdc_doy_list:
+            #         if sparse_matrix:
+            #             array_temp = RSdc.SM_group[bf.doy2date(GEDI_doy)]
+            #             info_temp = extract_value2shpfile(array_temp, RSdc_GeoTransform, polygon, 32649, nodatavalue=0)
+            #
+            #         if ~np.isnan(info_temp):
+            #             gedi_df.loc[i, f'S2_{RSdc_index}_{GEDI_link_RS_temporal_interpolate_method_list}'] = info_temp
+            #             gedi_df.loc[i, f'S2_{RSdc_index}_{GEDI_link_RS_temporal_interpolate_method_list}_reliability'] = 1
+            #             break
+            #
+            #     else:
+            #         if data_negative is None and GEDI_doy - date_interval in RSdc_doy_list:
+            #             date_temp_temp = GEDI_doy - date_interval
+            #
+            #             if ~np.isnan(info_temp):
+            #                 data_negative = info_temp
+            #                 date_negative = date_temp_temp
+            #
+            #         if data_positive is None and GEDI_doy + date_interval in RSdc_doy_list:
+            #             date_temp_temp = GEDI_doy + date_interval
+            #             if sparse_matrix:
+            #                 array_temp = RSdc.SM_group[bf.doy2date(date_temp_temp)]
+            #                 info_temp = extract_value2shpfile(array_temp, RSdc_GeoTransform, polygon, 32649, nodatavalue=0)
+            #
+            #             if ~np.isnan(info_temp):
+            #                 data_positive = info_temp
+            #                 date_positive = date_temp_temp
+            #
+            #         if data_positive is not None and data_negative is not None:
+            #             gedi_df.loc[i, f'S2_{RSdc_index}_{GEDI_link_RS_temporal_interpolate_method_list}'] = data_negative + (GEDI_doy - date_negative) * (data_positive - data_negative) / (date_positive - date_negative)
+            #             gedi_df.loc[i, f'S2_{RSdc_index}_{GEDI_link_RS_temporal_interpolate_method_list}_reliability'] = 1 - ((date_positive - date_negative) / (2 * temporal_search_window))
+            #             break
+
+            print(f'Finish linking the {RSdc_index} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+
+    return gedi_df

@@ -59,7 +59,7 @@ class DEM(object):
             pass
 
 
-class HydrometricStationData(object):
+class HydroStationDS (object):
 
     def __init__(self):
 
@@ -67,152 +67,219 @@ class HydrometricStationData(object):
         self.work_env = None
 
         # Define the property
-        self.hydrometric_id = []
-        self.station_namelist = []
-        self.cross_section_namelist = []
-        self.water_level_offset = {}
-        self.hydrological_inform_dic = {}
+        self.hydrostation_id_list = []
+        self.hydrostation_name_list = []
+        self.crosssection_name_list = []
+        self.waterlevel_offset_list = []
+        self.tributary_list = []
+        self.measured_metric_list = []
+        self.hydro_date_coverage = []
 
-    def import_from_standard_excel(self, file_name: str, cross_section_name: str, water_level_offset = None):
+        # Define the metadata dic
+        self.hydrostation_inform_df = {}
+        self.hydrostation_mtdata_df = {}
 
-        self.work_env = bf.Path(os.path.dirname(file_name)).path_name
-        hydrometric_id, station_name, cs_name, wl_offset = None, None, None, None
+        # Metadata key
+        self._metadata_key = ['hydrostation_name', 'crosssection_name', 'waterlevel_offset', 'measured_metric', 'tributary_indicator']
 
-        if isinstance(file_name, str) and os.path.exists(file_name):
-            if file_name.endswith('.xlsx') or file_name.endswith('.xls'):
-                df_temp = pd.read_excel(file_name)
-            elif file_name.endswith('.csv'):
-                df_temp = pd.read_csv(file_name)
-            else:
-                raise TypeError('Please make sure the standard file is csv or excel file')
+    def import_from_standard_files(self, standard_file_folder: str, metadata_file: str, work_env: str= None):
+        """
+        Import the hydrostation data from standard files
+        :param standard_file_folder: folders including the standard files
+        :param metadata_file: metadata file including the water level offset, corresponding cross-section, hydrological or hydrometric station indicator
+        :param work_env: Folder for output or the default folder from standard file folder is generated
+        """
 
-            file_name = file_name.split('\\')[-1]
-            if '_' not in file_name or len(file_name.split('_')) < 3:
-                raise ValueError('Please make sure the filename is under id_stationname_startyear_endyear.xlsx format!')
-            else:
-                if file_name.split('_')[0].isnumeric():
-                    hydrometric_id = file_name.split('_')[0]
-                else:
-                    raise ValueError('Please make sure the hydrometric station id is firstly presented!')
-                station_name = file_name.split('_')[1]
-                cs_name = cross_section_name
-
-            if water_level_offset is None:
-                water_level_offset = np.nan
-            elif isinstance(water_level_offset, float):
-                water_level_offset = water_level_offset
-            elif isinstance(water_level_offset, str) and water_level_offset.isnumeric():
-                water_level_offset = np.float(water_level_offset)
-            else:
-                raise TypeError('The water level offset not under right type!')
-
-            wl_start_index = df_temp.loc[df_temp[df_temp.keys()[0]] == station_name].index
-            year_list_, month_list_, day_list_, doy_list_, flow_list_, sed_con_list_, sed_flux_list_, water_level_list_ = [], [], [], [], [], [], [], []
-            for _ in wl_start_index:
-                itr = 1
-                year_list, month_list, day_list, doy_list, flow_list, sed_con_list, sed_flux_list, water_level_list = [], [], [], [], [], [], [], []
-                while itr <= 366:
-                    if _ + itr <= df_temp.shape[0] - 1 and df_temp[df_temp.keys()[0]][_ + itr] <= 366:
-                        try:
-                            if df_temp[df_temp.keys()[1]][_ + itr] in range(1900, 2100) and df_temp[df_temp.keys()[2]][_ + itr] in range(1, 13) and df_temp[df_temp.keys()[2]][_ + itr] in range(1, 32):
-                                year_list.append(df_temp[df_temp.keys()[1]][_ + itr])
-                                month_list.append(df_temp[df_temp.keys()[2]][_ + itr])
-                                day_list.append(df_temp[df_temp.keys()[3]][_ + itr])
-                                doy_list.append(df_temp[df_temp.keys()[1]][_ + itr] * 1000 + (datetime(year=df_temp[df_temp.keys()[1]][_ + itr], month=df_temp[df_temp.keys()[2]][_ + itr], day=df_temp[df_temp.keys()[3]][_ + itr]).toordinal()
-                                                                                              - datetime(year=df_temp[df_temp.keys()[1]][_ + itr], month=1, day=1).toordinal() + 1))
-                                try:
-                                    value_up = float(df_temp[df_temp.keys()[4]][_ + itr - 1])
-                                except (ValueError, KeyError):
-                                    value_up = np.nan
-                                try:
-                                    value_down = float(df_temp[df_temp.keys()[4]][_ + itr + 1])
-                                except (ValueError, KeyError):
-                                    value_down = np.nan
-                                try:
-                                    value_mid = float(df_temp[df_temp.keys()[4]][_ + itr])
-                                except ValueError:
-                                    value_mid = np.nan
-
-                                if value_mid == 0 and (value_up == 0 or value_down == 0) or np.isnan(value_mid) and (np.isnan(value_up) or np.isnan(value_down)):
-                                    flow_list.append(np.nan)
-                                else:
-                                    flow_list.append(np.float32(value_mid))
-
-                                try:
-                                    value_up = float(df_temp[df_temp.keys()[5]][_ + itr - 1])
-                                except (ValueError, KeyError):
-                                    value_up = np.nan
-                                try:
-                                    value_down = float(df_temp[df_temp.keys()[5]][_ + itr + 1])
-                                except (ValueError, KeyError):
-                                    value_down = np.nan
-                                try:
-                                    value_mid = float(df_temp[df_temp.keys()[5]][_ + itr])
-                                except ValueError:
-                                    value_mid = np.nan
-
-                                if value_mid == 0 and (value_up == 0 or value_down == 0) or np.isnan(value_mid) and (np.isnan(value_up) or np.isnan(value_down)):
-                                    sed_con_list.append(np.nan)
-                                else:
-                                    sed_con_list.append(np.float32(value_mid))
-
-                                try:
-                                    value_up = float(df_temp[df_temp.keys()[6]][_ + itr - 1])
-                                except (ValueError, KeyError):
-                                    value_up = np.nan
-                                try:
-                                    value_down = float(df_temp[df_temp.keys()[6]][_ + itr + 1])
-                                except (ValueError, KeyError):
-                                    value_down = np.nan
-                                try:
-                                    value_mid = float(df_temp[df_temp.keys()[6]][_ + itr])
-                                except ValueError:
-                                    value_mid = np.nan
-                                if value_mid == 0 and (value_up == 0 or value_down == 0) or np.isnan(value_mid) and (np.isnan(value_up) or np.isnan(value_down)):
-                                    sed_flux_list.append(np.nan)
-                                else:
-                                    sed_flux_list.append(np.float32(value_mid))
-
-                                try:
-                                    value_up = float(df_temp[df_temp.keys()[7]][_ + itr - 1])
-                                except (ValueError, KeyError):
-                                    value_up = np.nan
-                                try:
-                                    value_down = float(df_temp[df_temp.keys()[7]][_ + itr + 1])
-                                except (ValueError, KeyError):
-                                    value_down = np.nan
-                                try:
-                                    value_mid = float(df_temp[df_temp.keys()[7]][_ + itr])
-                                except ValueError :
-                                    value_mid = np.nan
-                                if value_mid == 0 and (value_up == 0 or value_down == 0) or np.isnan(value_mid) and (np.isnan(value_up) or np.isnan(value_down)):
-                                    water_level_list.append(np.nan)
-                                else:
-                                    water_level_list.append(np.float32(value_mid))
-                        except:
-                            print(traceback.format_exc())
-                            print(f'The column {str(_)} for {station_name} is not imported')
-
-                    itr += 1
-                year_list_.extend(year_list)
-                month_list_.extend(month_list)
-                day_list_.extend(day_list)
-                doy_list_.extend(doy_list)
-                flow_list_.extend(flow_list)
-                sed_con_list_.extend(sed_con_list)
-                sed_flux_list_.extend(sed_flux_list)
-                water_level_list_.extend(water_level_list)
-            dic = {'year': year_list_, 'month': month_list_, 'day': day_list_, 'doy': doy_list_,
-                   'flow/m3/s': flow_list_, 'sediment_concentration/kg/m3': sed_con_list_, 'sediment_fluxes': sed_flux_list_,
-                   'water_level/m': water_level_list_}
-            hydrological_inform_df = pd.DataFrame(dic)
-            self.hydrometric_id.append(hydrometric_id)
-            self.station_namelist.append(station_name)
-            self.cross_section_namelist.append(cs_name)
-            self.water_level_offset[station_name] = water_level_offset
-            self.hydrological_inform_dic[station_name] = hydrological_inform_df
+        # Generate the output path
+        if work_env is not None and os.path.isdir(work_env):
+            bf.create_folder(work_env)
+            self.work_env = work_env
         else:
-            raise Exception('Please input an existing file')
+            self.work_env = bf.Path(os.path.dirname(standard_file_folder)).path_name
+
+        # Identify if the metadata file is valid or not
+        if os.path.exists(metadata_file):
+            if metadata_file.endswith('.xlsx') or metadata_file.endswith('.xls'):
+                self.hydrostation_mtdata_df = pd.read_excel(metadata_file)
+            elif metadata_file.endswith('.csv'):
+                self.hydrostation_mtdata_df = pd.read_csv(metadata_file)
+            else:
+                raise TypeError('Please make sure the metadata_file is csv or excel file')
+        else:
+            raise ValueError('The metadata file is not existed!')
+
+        # Check the keys of metadata
+        if False in [_ in self.hydrostation_mtdata_df.keys() for _ in self._metadata_key]:
+            raise Exception('The metadata file does not contain all the essential inform!')
+        else:
+            self.hydrostation_mtdata_df = self.hydrostation_mtdata_df[self._metadata_key]
+
+        # Get all the standard file from standard file folder
+        standard_files = bf.file_filter(standard_file_folder, ['.csv', '.xls'], and_or_factor='or', subfolder_detection=False)
+        for file_name in standard_files:
+            try:
+                # Read the sheet
+                if file_name.endswith('.xlsx') or file_name.endswith('.xls'):
+                    df_temp = pd.read_excel(file_name)
+                elif file_name.endswith('.csv'):
+                    df_temp = pd.read_csv(file_name)
+                else:
+                    raise TypeError('Please make sure the standard file is csv or excel file')
+
+                # Get the station id and name
+                file_name = file_name.split('\\')[-1]
+                if '_' not in file_name or len(file_name.split('_')) < 3:
+                    raise ValueError('Please make sure the filename is under id_stationname_startyear_endyear.xlsx format!')
+                else:
+                    if file_name.split('_')[0].isnumeric():
+                        hydrometric_id = file_name.split('_')[0]
+                    elif file_name.split('_')[0] == 'tri':
+                        hydrometric_id = 0
+                    else:
+                        raise ValueError('Please make sure the hydrometric station id is firstly presented!')
+                    station_name = file_name.split('_')[1]
+
+                # Read the cs name, water level offset, tributary and QZ
+                if station_name not in list(self.hydrostation_mtdata_df['hydrostation_name']):
+                    raise ValueError(f'The metadata of station {station_name} is not recorded in the metadata file!')
+                else:
+                    water_level_offset = self.hydrostation_mtdata_df[self.hydrostation_mtdata_df['hydrostation_name'] == station_name]['waterlevel_offset'].values[0]
+                    cs_name = self.hydrostation_mtdata_df[self.hydrostation_mtdata_df['hydrostation_name'] == station_name]['crosssection_name'].values[0]
+                    metrics = self.hydrostation_mtdata_df[self.hydrostation_mtdata_df['hydrostation_name'] == station_name]['measured_metric'].values[0]
+                    tribu = self.hydrostation_mtdata_df[self.hydrostation_mtdata_df['hydrostation_name'] == station_name]['tributary_indicator'].values[0]
+
+                # Check the metadata is under the correct type
+                if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
+                    water_level_offset = np.nan
+                else:
+                    raise TypeError('The water level offset not under right type!')
+
+                # Check the metadata is under the correct type
+                if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
+                    water_level_offset = np.nan
+                else:
+                    raise TypeError('The water level offset not under right type!')
+
+                # Check the metadata is under the correct type
+                if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
+                    water_level_offset = np.nan
+                else:
+                    raise TypeError('The water level offset not under right type!')
+
+                # Check the metadata is under the correct type
+                if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
+                    water_level_offset = np.nan
+                else:
+                    raise TypeError('The water level offset not under right type!')
+
+                wl_start_index = df_temp.loc[df_temp[df_temp.keys()[0]] == station_name].index
+                year_list_, month_list_, day_list_, doy_list_, flow_list_, sed_con_list_, sed_flux_list_, water_level_list_ = [], [], [], [], [], [], [], []
+                for _ in wl_start_index:
+                    itr = 1
+                    year_list, month_list, day_list, doy_list, flow_list, sed_con_list, sed_flux_list, water_level_list = [], [], [], [], [], [], [], []
+                    while itr <= 366:
+                        if _ + itr <= df_temp.shape[0] - 1 and df_temp[df_temp.keys()[0]][_ + itr] <= 366:
+                            try:
+                                if df_temp[df_temp.keys()[1]][_ + itr] in range(1900, 2100) and df_temp[df_temp.keys()[2]][_ + itr] in range(1, 13) and df_temp[df_temp.keys()[2]][_ + itr] in range(1, 32):
+                                    year_list.append(df_temp[df_temp.keys()[1]][_ + itr])
+                                    month_list.append(df_temp[df_temp.keys()[2]][_ + itr])
+                                    day_list.append(df_temp[df_temp.keys()[3]][_ + itr])
+                                    doy_list.append(df_temp[df_temp.keys()[1]][_ + itr] * 1000 + (datetime(year=df_temp[df_temp.keys()[1]][_ + itr], month=df_temp[df_temp.keys()[2]][_ + itr], day=df_temp[df_temp.keys()[3]][_ + itr]).toordinal()
+                                                                                                  - datetime(year=df_temp[df_temp.keys()[1]][_ + itr], month=1, day=1).toordinal() + 1))
+                                    try:
+                                        value_up = float(df_temp[df_temp.keys()[4]][_ + itr - 1])
+                                    except (ValueError, KeyError):
+                                        value_up = np.nan
+                                    try:
+                                        value_down = float(df_temp[df_temp.keys()[4]][_ + itr + 1])
+                                    except (ValueError, KeyError):
+                                        value_down = np.nan
+                                    try:
+                                        value_mid = float(df_temp[df_temp.keys()[4]][_ + itr])
+                                    except ValueError:
+                                        value_mid = np.nan
+
+                                    if value_mid == 0 and (value_up == 0 or value_down == 0) or np.isnan(value_mid) and (np.isnan(value_up) or np.isnan(value_down)):
+                                        flow_list.append(np.nan)
+                                    else:
+                                        flow_list.append(np.float32(value_mid))
+
+                                    try:
+                                        value_up = float(df_temp[df_temp.keys()[5]][_ + itr - 1])
+                                    except (ValueError, KeyError):
+                                        value_up = np.nan
+                                    try:
+                                        value_down = float(df_temp[df_temp.keys()[5]][_ + itr + 1])
+                                    except (ValueError, KeyError):
+                                        value_down = np.nan
+                                    try:
+                                        value_mid = float(df_temp[df_temp.keys()[5]][_ + itr])
+                                    except ValueError:
+                                        value_mid = np.nan
+
+                                    if value_mid == 0 and (value_up == 0 or value_down == 0) or np.isnan(value_mid) and (np.isnan(value_up) or np.isnan(value_down)):
+                                        sed_con_list.append(np.nan)
+                                    else:
+                                        sed_con_list.append(np.float32(value_mid))
+
+                                    try:
+                                        value_up = float(df_temp[df_temp.keys()[6]][_ + itr - 1])
+                                    except (ValueError, KeyError):
+                                        value_up = np.nan
+                                    try:
+                                        value_down = float(df_temp[df_temp.keys()[6]][_ + itr + 1])
+                                    except (ValueError, KeyError):
+                                        value_down = np.nan
+                                    try:
+                                        value_mid = float(df_temp[df_temp.keys()[6]][_ + itr])
+                                    except ValueError:
+                                        value_mid = np.nan
+                                    if value_mid == 0 and (value_up == 0 or value_down == 0) or np.isnan(value_mid) and (np.isnan(value_up) or np.isnan(value_down)):
+                                        sed_flux_list.append(np.nan)
+                                    else:
+                                        sed_flux_list.append(np.float32(value_mid))
+
+                                    try:
+                                        value_up = float(df_temp[df_temp.keys()[7]][_ + itr - 1])
+                                    except (ValueError, KeyError):
+                                        value_up = np.nan
+                                    try:
+                                        value_down = float(df_temp[df_temp.keys()[7]][_ + itr + 1])
+                                    except (ValueError, KeyError):
+                                        value_down = np.nan
+                                    try:
+                                        value_mid = float(df_temp[df_temp.keys()[7]][_ + itr])
+                                    except ValueError :
+                                        value_mid = np.nan
+                                    if value_mid == 0 and (value_up == 0 or value_down == 0) or np.isnan(value_mid) and (np.isnan(value_up) or np.isnan(value_down)):
+                                        water_level_list.append(np.nan)
+                                    else:
+                                        water_level_list.append(np.float32(value_mid))
+                            except:
+                                print(traceback.format_exc())
+                                print(f'The column {str(_)} for {station_name} is not imported')
+                        itr += 1
+
+                    year_list_.extend(year_list)
+                    month_list_.extend(month_list)
+                    day_list_.extend(day_list)
+                    doy_list_.extend(doy_list)
+                    flow_list_.extend(flow_list)
+                    sed_con_list_.extend(sed_con_list)
+                    sed_flux_list_.extend(sed_flux_list)
+                    water_level_list_.extend(water_level_list)
+                dic = {'year': year_list_, 'month': month_list_, 'day': day_list_, 'doy': doy_list_,
+                       'flow/m3/s': flow_list_, 'sediment_concentration/kg/m3': sed_con_list_, 'sediment_fluxes': sed_flux_list_,
+                       'water_level/m': water_level_list_}
+                hydrological_inform_df = pd.DataFrame(dic)
+                self.hydrostation_id_list.append(hydrometric_id)
+                self.hydrostation_name_list.append(station_name)
+                self.crosssection_name_list.append(cs_name)
+                self.waterlevel_offset_list[station_name] = water_level_offset
+                self.hydrostation_inform_df[station_name] = hydrological_inform_df
+            except:
+                print(traceback.format_exc())
+                print(f'Err during process the {str(file_name)}')
 
     def to_csvs(self, output_path: str = None):
 
@@ -223,12 +290,12 @@ class HydrometricStationData(object):
             output_path = bf.Path(output_path).path_name
         bf.create_folder(output_path)
 
-        for _ in range(len(self.hydrometric_id)):
-            hydrometric_id_temp = self.hydrometric_id[_]
-            station_name_temp = self.station_namelist[_]
-            cross_section_temp = self.cross_section_namelist[_]
-            water_level_offset = self.water_level_offset[station_name_temp]
-            hydrological_inform = self.hydrological_inform_dic[station_name_temp]
+        for _ in range(len(self.hydrostation_id_list)):
+            hydrometric_id_temp = self.hydrostation_id_list[_]
+            station_name_temp = self.hydrostation_name_list[_]
+            cross_section_temp = self.crosssection_name_list[_]
+            water_level_offset = self.waterlevel_offset_list[station_name_temp]
+            hydrological_inform = self.hydrostation_inform_df[station_name_temp]
 
             if isinstance(hydrological_inform, pd.DataFrame):
                 hydrological_inform.to_csv(f'{output_path}{str(hydrometric_id_temp)}_{str(station_name_temp)}_{str(cross_section_temp)}_{str(water_level_offset)}.csv', encoding='utf-8', index=False)
@@ -237,6 +304,7 @@ class HydrometricStationData(object):
 
     def cs_wl(self, thal, cs_name, date_, ):
 
+        global wl_st_dis
         if isinstance(date_, int) and 19000000 < date_ < 21000000:
             year_ = date_ // 10000
             month_ = (date_ - year_ * 10000) // 100
@@ -253,12 +321,12 @@ class HydrometricStationData(object):
             _ = copy.deepcopy(cs_pos) - 1
 
             while _ >= 0:
-                if thal.Thalweg_cs_namelist[_] in self.cross_section_namelist:
-                    station_name = self.station_namelist[self.cross_section_namelist.index(thal.Thalweg_cs_namelist[_])]
-                    hydro_doy = np.array(self.hydrological_inform_dic[station_name]['doy'])
+                if thal.Thalweg_cs_namelist[_] in self.crosssection_name_list:
+                    station_name = self.hydrostation_name_list[self.crosssection_name_list.index(thal.Thalweg_cs_namelist[_])]
+                    hydro_doy = np.array(self.hydrostation_inform_df[station_name]['doy'])
                     if doy in hydro_doy:
-                        wl_st = np.array(self.hydrological_inform_dic[station_name][self.hydrological_inform_dic[station_name]['doy'] == doy]['water_level/m'])[0]
-                        wl_st = wl_st + self.water_level_offset[station_name]
+                        wl_st = np.array(self.hydrostation_inform_df[station_name][self.hydrostation_inform_df[station_name]['doy'] == doy]['water_level/m'])[0]
+                        wl_st = wl_st + self.waterlevel_offset_list[station_name]
                         if thal.smoothed_Thalweg is not None:
                             wl_st_dis = dis2points_via_line(thal.smoothed_Thalweg.coords[thal.smoothed_cs_index[cs_pos]], thal.smoothed_Thalweg.coords[thal.smoothed_cs_index[_]], thal.smoothed_Thalweg)
                         else:
@@ -268,12 +336,12 @@ class HydrometricStationData(object):
 
             _ = copy.deepcopy(cs_pos) + 1
             while _ <= len(thal.Thalweg_cs_namelist):
-                if thal.Thalweg_cs_namelist[_] in self.cross_section_namelist:
-                    station_name = self.station_namelist[self.cross_section_namelist.index(thal.Thalweg_cs_namelist[_])]
-                    hydro_doy = np.array(self.hydrological_inform_dic[station_name]['doy'])
+                if thal.Thalweg_cs_namelist[_] in self.crosssection_name_list:
+                    station_name = self.hydrostation_name_list[self.crosssection_name_list.index(thal.Thalweg_cs_namelist[_])]
+                    hydro_doy = np.array(self.hydrostation_inform_df[station_name]['doy'])
                     if doy in hydro_doy:
-                        wl_ed = np.array(self.hydrological_inform_dic[station_name][self.hydrological_inform_dic[station_name]['doy'] == doy]['water_level/m'])[0]
-                        wl_ed = wl_ed + self.water_level_offset[station_name]
+                        wl_ed = np.array(self.hydrostation_inform_df[station_name][self.hydrostation_inform_df[station_name]['doy'] == doy]['water_level/m'])[0]
+                        wl_ed = wl_ed + self.waterlevel_offset_list[station_name]
                         if thal.smoothed_Thalweg is not None:
                             wl_ed_dis = dis2points_via_line(thal.smoothed_Thalweg.coords[thal.smoothed_cs_index[cs_pos]], thal.smoothed_Thalweg.coords[thal.smoothed_cs_index[_]], thal.smoothed_Thalweg)
                         else:
@@ -287,53 +355,53 @@ class HydrometricStationData(object):
 
     def linear_comparison(self, station_name, thal, year,):
 
-        s = [int(_) for _ in self.hydrometric_id]
+        s = [int(_) for _ in self.hydrostation_id_list]
 
-        if station_name not in self.station_namelist:
+        if station_name not in self.hydrostation_name_list:
             raise Exception('Please input the right station!')
-        elif int(self.hydrometric_id[self.station_namelist.index(station_name)]) == min(s) or int(self.hydrometric_id[self.station_namelist.index(station_name)]) == max(s):
+        elif int(self.hydrostation_id_list[self.hydrostation_name_list.index(station_name)]) == min(s) or int(self.hydrostation_id_list[self.hydrostation_name_list.index(station_name)]) == max(s):
             raise Exception('Linear comparison is not supported for start and end station!')
         else:
 
             interpolated_list = []
             guaged_list = []
-            if isinstance(year, int) and year in self.hydrological_inform_dic[station_name]['year']:
+            if isinstance(year, int) and year in self.hydrostation_inform_df[station_name]['year']:
                 year = [year]
             elif isinstance(year, list):
                 for _ in year:
-                    if _ not in self.hydrological_inform_dic[station_name]['year']:
+                    if _ not in self.hydrostation_inform_df[station_name]['year']:
                         print('The year is not valid')
                         return
 
             for year_ in year:
-                if year_ in np.array(self.hydrological_inform_dic[station_name]['year']):
-                    cs = self.cross_section_namelist[self.station_namelist.index(station_name)]
-                    cs_wl = np.array(self.hydrological_inform_dic[station_name][self.hydrological_inform_dic[station_name]['year'] == year_]['water_level/m'])
+                if year_ in np.array(self.hydrostation_inform_df[station_name]['year']):
+                    cs = self.crosssection_name_list[self.hydrostation_name_list.index(station_name)]
+                    cs_wl = np.array(self.hydrostation_inform_df[station_name][self.hydrostation_inform_df[station_name]['year'] == year_]['water_level/m'])
                 else:
                     print('The year is not valid')
                     return
 
-                station_id = int(self.hydrometric_id[self.station_namelist.index(station_name)])
-                station_minr = [int(_) for _ in self.hydrometric_id if int(_) < station_id]
-                station_maxr = [int(_) for _ in self.hydrometric_id if int(_) > station_id]
+                station_id = int(self.hydrostation_id_list[self.hydrostation_name_list.index(station_name)])
+                station_minr = [int(_) for _ in self.hydrostation_id_list if int(_) < station_id]
+                station_maxr = [int(_) for _ in self.hydrostation_id_list if int(_) > station_id]
                 station_minr = -np.sort(-np.array(station_minr))
                 station_maxr = np.sort(np.array(station_maxr))
 
                 for _ in station_minr:
-                    station_name_ = self.station_namelist[self.hydrometric_id.index(str(_))]
-                    if year_ in np.array(self.hydrological_inform_dic[station_name_]['year']):
-                        start_cs = self.cross_section_namelist[self.station_namelist.index(station_name_)]
-                        start_cs_wl = np.array(self.hydrological_inform_dic[station_name_][self.hydrological_inform_dic[station_name_]['year'] == year_]['water_level/m'])
+                    station_name_ = self.hydrostation_name_list[self.hydrostation_id_list.index(str(_))]
+                    if year_ in np.array(self.hydrostation_inform_df[station_name_]['year']):
+                        start_cs = self.crosssection_name_list[self.hydrostation_name_list.index(station_name_)]
+                        start_cs_wl = np.array(self.hydrostation_inform_df[station_name_][self.hydrostation_inform_df[station_name_]['year'] == year_]['water_level/m'])
                         break
 
                     if _ == station_minr[-1]:
                         raise Exception('No valid start cs')
 
                 for _ in station_maxr:
-                    station_name_ = self.station_namelist[self.hydrometric_id.index(str(_))]
-                    if year_ in np.array(self.hydrological_inform_dic[station_name_]['year']):
-                        end_cs = self.cross_section_namelist[self.station_namelist.index(station_name_)]
-                        end_cs_wl = np.array(self.hydrological_inform_dic[station_name_][self.hydrological_inform_dic[station_name_]['year'] == year_]['water_level/m'])
+                    station_name_ = self.hydrostation_name_list[self.hydrostation_id_list.index(str(_))]
+                    if year_ in np.array(self.hydrostation_inform_df[station_name_]['year']):
+                        end_cs = self.crosssection_name_list[self.hydrostation_name_list.index(station_name_)]
+                        end_cs_wl = np.array(self.hydrostation_inform_df[station_name_][self.hydrostation_inform_df[station_name_]['year'] == year_]['water_level/m'])
                         break
 
                     if _ == station_maxr[-1]:
@@ -424,6 +492,144 @@ class HydrometricStationData(object):
         for _ in csv_filelist:
             pass
 
+    def to_FlwBound41DHM(self, output_csv: str, date_range: list, inlet_station: str, outlet_station: str, outlet_type: str, tributary_index: bool = True):
+
+        # Check the output file
+        if not output_csv.endswith('_FlwBound.csv'):
+            raise ValueError('The output CSV is not meet the requirement!')
+        elif not os.path.exists(os.path.dirname(output_csv)):
+            raise ValueError('The output folder is not generated!')
+
+        # Check the availability of station
+        if not inlet_station in self.hydrostation_name_list:
+            raise ValueError('The inlet station is not valid!')
+        else:
+            inlet_date_range = [bf.doy2date(min(self.hydrostation_inform_df[inlet_station]['doy'])),
+                                bf.doy2date(max(self.hydrostation_inform_df[inlet_station]['doy']))]
+            if inlet_date_range[0] > date_range[0] or inlet_date_range[1] < date_range[1]:
+                raise ValueError('the date range is not valid for the inlet station!')
+            inlet_id = int(self.hydrostation_id_list[self.hydrostation_name_list.index(inlet_station)])
+
+        if not outlet_station in self.hydrostation_name_list:
+            raise ValueError('The outlet station is not valid!')
+        else:
+            outlet_date_range = [bf.doy2date(min(self.hydrostation_inform_df[outlet_station]['doy'])),
+                                 bf.doy2date(max(self.hydrostation_inform_df[outlet_station]['doy']))]
+            if outlet_date_range[0] > date_range[0] or outlet_date_range[1] < date_range[1]:
+                raise ValueError('the date range is not valid for the outlet station!')
+            outlet_id = int(self.hydrostation_id_list[self.hydrostation_name_list.index(outlet_station)])
+
+        if inlet_id >= outlet_id:
+            raise ValueError('The inlet station is upstream the outlet station!')
+        else:
+            station_name_range = [self.hydrostation_name_list[self.hydrostation_id_list.index(str(_))] for _ in range(inlet_id, outlet_id + 1) if str(_) in self.hydrostation_id_list]
+        date_range = bf.date2datetime(date_range)
+
+        # Check the outlet type
+        if outlet_type not in ['Q-Z', 'Q-T', 'Z-T']:
+            raise ValueError('The outlet type is not supported!')
+
+        # Write into a new pandas dataframe
+        id_list, hour_list, qz_list, tri_list = [], [], [], []
+
+        # Input inlet Q-T
+        id_list.extend(['inlet_Q-T', 'k'])
+        hour_list.extend([self.crosssection_name_list[self.hydrostation_name_list.index(inlet_station)], 'Time'])
+        qz_list.extend([False, 'Q'])
+        tri_list.extend([False, None])
+
+        for _ in range(date_range[1].toordinal() + 1 - date_range[0].toordinal()):
+            date_ = datetime.fromordinal(date_range[0].toordinal() + _)
+            doy_ = bf.date2doy(date_.year * 10000 + date_.month * 100 + date_.day)
+            id_list.append(_ + 1)
+            if _ != 0:
+                hour_list.append(_ * 24)
+            else:
+                hour_list.append(1/3)
+            qz_list.append(self.hydrostation_inform_df[inlet_station][self.hydrostation_inform_df[inlet_station]['doy'] == doy_]['flow/m3/s'].values[0])
+            tri_list.append(None)
+
+        # Write outlet flow boundary
+        id_list.extend([f'outlet_{outlet_type}', 'k'])
+        hour_list.extend([self.crosssection_name_list[self.hydrostation_name_list.index(outlet_station)], 'Time'])
+        if outlet_type == 'Q-Z':
+            qz_list.extend([False, 'Q'])
+            tri_list.extend([False, 'Z'])
+        elif outlet_type == 'Q-T':
+            qz_list.extend([False, 'Q'])
+            tri_list.extend([False, None])
+        elif outlet_type == 'Z-T':
+            qz_list.extend([False, 'Z'])
+            tri_list.extend([False, None])
+
+        for _ in range(date_range[1].toordinal() + 1 - date_range[0].toordinal()):
+            date_ = datetime.fromordinal(date_range[0].toordinal() + _)
+            doy_ = bf.date2doy(date_.year * 10000 + date_.month * 100 + date_.day)
+            id_list.append(_ + 1)
+            if _ != 0:
+                hour_list.append(_ * 24)
+            else:
+                hour_list.append(1/3)
+
+            if outlet_type == 'Q-Z':
+                qz_list.append(self.hydrostation_inform_df[outlet_station][self.hydrostation_inform_df[outlet_station]['doy'] == doy_]['flow/m3/s'].values[0])
+                tri_list.append(self.hydrostation_inform_df[outlet_station][self.hydrostation_inform_df[outlet_station]['doy'] == doy_]['water_level/m'].values[0] - self.waterlevel_offset_list[outlet_station])
+            elif outlet_type == 'Q-T':
+                qz_list.append(self.hydrostation_inform_df[outlet_station][self.hydrostation_inform_df[outlet_station]['doy'] == doy_]['flow/m3/s'].values[0])
+                tri_list.append(None)
+            elif outlet_type == 'Z-T':
+                qz_list.append(self.hydrostation_inform_df[outlet_station][self.hydrostation_inform_df[outlet_station]['doy'] == doy_]['water_level/m'].values[0] - self.waterlevel_offset_list[outlet_station])
+                tri_list.append(None)
+
+        # Write init water level and discharge for control cross section
+        id_list.extend([f'init_station_Q-Z', 'k'])
+        hour_list.extend([None, 'Hydrostation'])
+        qz_list.extend([None, 'Q'])
+        tri_list.extend([None, 'Z'])
+        id_ = 1
+        for station_name_ in station_name_range:
+            station_date_range = [bf.date2datetime(bf.doy2date(min(self.hydrostation_inform_df[station_name_]['doy']))), bf.date2datetime(bf.doy2date(max(self.hydrostation_inform_df[station_name_]['doy'])))]
+            if date_range[0].toordinal() > station_date_range[1].toordinal() or date_range[0].toordinal() < station_date_range[0].toordinal():
+                pass
+            else:
+                id_list.append(id_)
+                hour_list.append(station_name_)
+                qz_list.append(self.hydrostation_inform_df[station_name_][self.hydrostation_inform_df[station_name_]['doy'] == bf.date2doy(date_range[0].year * 10000 + date_range[0].month * 100 + date_range[0].day)]['flow/m3/s'].values[0])
+                tri_list.append(self.hydrostation_inform_df[station_name_][self.hydrostation_inform_df[station_name_]['doy'] == bf.date2doy(date_range[0].year * 10000 + date_range[0].month * 100 + date_range[0].day)]['water_level/m'].values[0] - self.waterlevel_offset_list[station_name_])
+                id_ += 1
+
+        df_ = pd.DataFrame({'Time_step': id_list, 'Hour': hour_list, 'Q&Z': qz_list, 'Tributary': tri_list})
+        df_.to_csv(output_csv, index=False, header=False, encoding='gbk')
+
+        # # Generate the initiate flow condition for all control cross sections
+        # keys = ['Hydrostation', 'Q(m3/s)', 'Z(m)', 'S*(kg/m3)', 'S(kg/m3)', 'Sk', 'Dk=0.001', 'Dk=0.003', 'Dk=0.006',
+        #         'Dk=0.012', 'Dk=0.024', 'Dk=0.046', 'Dk=0.093', 'Dk=0.188', 'Dk=0.375', 'Dk=0.750', 'Dk=1.500',
+        #         'Dk=3.000', 'Dk=6.000', 'Dk=12.000', 'Dk=24.000', 'Dk=48.000', 'Dk=96.000']
+        # init_dic = {}
+        # for _ in keys:
+        #     init_dic[_] = []
+        #
+        # for station_name_ in station_name_range:
+        #     init_dic['Hydrostation'].append(station_name_)
+        #     station_date_range = [bf.date2datetime(bf.doy2date(min(self.hydrostation_inform_df[station_name_]['doy']))), bf.date2datetime(bf.doy2date(max(self.hydrostation_inform_df[station_name_]['doy'])))]
+        #     if date_range[0].toordinal() > station_date_range[1].toordinal() or date_range[0].toordinal() < station_date_range[0].toordinal():
+        #         for key_ in keys:
+        #             if key_ != 'Hydrostation':
+        #                 init_dic[key_].append(np.nan)
+        #     else:
+        #         flow_ = self.hydrostation_inform_df[station_name_][self.hydrostation_inform_df[station_name_]['doy'] == bf.date2doy(date_range[0].year * 10000 + date_range[0].month * 100 + date_range[0].day)]['flow/m3/s'].values[0]
+        #         waterlvl_ = self.hydrostation_inform_df[station_name_][self.hydrostation_inform_df[station_name_]['doy'] == bf.date2doy(date_range[0].year * 10000 + date_range[0].month * 100 + date_range[0].day)]['water_level/m'].values[0] - self.waterlevel_offset_list[station_name_]
+        #         sedconc_ = self.hydrostation_inform_df[station_name_][self.hydrostation_inform_df[station_name_]['doy'] == bf.date2doy(date_range[0].year * 10000 + date_range[0].month * 100 + date_range[0].day)]['sediment_concentration/kg/m3'].values[0]
+        #         init_dic['Q(m3/s)'].append(flow_)
+        #         init_dic['Z(m)'].append(waterlvl_)
+        #         init_dic['S(kg/m3)'].append(sedconc_)
+        #         for key_ in ['S*(kg/m3)', 'Sk', 'Dk=0.001', 'Dk=0.003', 'Dk=0.006', 'Dk=0.012', 'Dk=0.024', 'Dk=0.046',
+        #                      'Dk=0.093', 'Dk=0.188', 'Dk=0.375', 'Dk=0.750', 'Dk=1.500', 'Dk=3.000', 'Dk=6.000', 'Dk=12.000', 'Dk=24.000', 'Dk=48.000', 'Dk=96.000']:
+        #             init_dic[key_].append(np.nan)
+        #
+        # df_ = pd.DataFrame(init_dic)
+        # df_.to_csv(initflow_csv, index=False, encoding='gbk')
+
 
 class HydroDatacube(object):
 
@@ -437,19 +643,19 @@ class HydroDatacube(object):
         self.year = None
         self.sparse_factor = None
 
-    def merge_hydro_inform(self, hydro_ds: HydrometricStationData):
+    def merge_hydro_inform(self, hydro_ds: HydroStationDS):
 
         # Create the hydro inform dic
         self.hydro_inform_dic = {}
 
         # Detect the datatype
-        if not isinstance(hydro_ds, HydrometricStationData):
+        if not isinstance(hydro_ds, HydroStationDS):
             raise TypeError('The hydro ds is not a standard hydrometric station data!')
 
         # Merge hydro inform
-        for _ in hydro_ds.cross_section_namelist:
-            wl_offset = hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
-            self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
+        for _ in hydro_ds.crosssection_name_list:
+            wl_offset = hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
+            self.hydro_inform_dic[_] = hydro_ds.hydrostation_inform_df[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
             self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
 
     def hydrodc_csv2matrix(self, outputfolder, hydroinform_csv):
@@ -1440,20 +1646,20 @@ class Thalweg(object):
         if isinstance(self.original_cs, CrossSection):
             self.original_cs.to_shpfile(output_path)
 
-    def merged_hydro_inform(self, hydro_ds: HydrometricStationData):
+    def merged_hydro_inform(self, hydro_ds: HydroStationDS):
 
         # Create the hydro inform dic
         self.hydro_inform_dic = {}
 
         # Detect the datatype
-        if not isinstance(hydro_ds, HydrometricStationData):
+        if not isinstance(hydro_ds, HydroStationDS):
             raise TypeError('The hydrods is not a standard hydrometric station data!')
 
         # Merge hydro inform
-        for _ in hydro_ds.cross_section_namelist:
-            if _ in self.Thalweg_cs_namelist and ~np.isnan(hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]):
-                wl_offset = hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
-                self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
+        for _ in hydro_ds.crosssection_name_list:
+            if _ in self.Thalweg_cs_namelist and ~np.isnan(hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]):
+                wl_offset = hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
+                self.hydro_inform_dic[_] = hydro_ds.hydrostation_inform_df[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
                 self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
 
 
@@ -2082,23 +2288,25 @@ class CrossSection(object):
 
         self._construct_geodf()
 
-    def merge_Hydrods(self, hydro_ds: HydrometricStationData):
+    def merge_Hydrods(self, hydro_ds: HydroStationDS):
 
         # Create the hydro inform dic
         self.hydro_inform_dic = {}
 
         # Detect the datatype
-        if not isinstance(hydro_ds, HydrometricStationData):
+        if not isinstance(hydro_ds, HydroStationDS):
             raise TypeError('The hydro ds is not a standard hydrometric station data!')
 
         # Merge hydro inform
-        for _ in hydro_ds.cross_section_namelist:
-            if _ in self.cross_section_name and ~np.isnan(hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]):
-                wl_offset = hydro_ds.water_level_offset[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
-                self.hydro_inform_dic[_] = hydro_ds.hydrological_inform_dic[hydro_ds.station_namelist[hydro_ds.cross_section_namelist.index(_)]]
+        for _ in hydro_ds.crosssection_name_list:
+            if _ in self.cross_section_name and ~np.isnan(hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]):
+                wl_offset = hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
+                self.hydro_inform_dic[_] = hydro_ds.hydrostation_inform_df[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
                 self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
                 self.cross_section_cntrl[_] = True
 
+        # Link the station and cross-section name list
+        self.control_station_cs_list = [hydro_ds.hydrostation_name_list, hydro_ds.crosssection_name_list]
         self._construct_geodf()
 
     def automatic_label_cs(self, inundation_frequency_tif: str):
@@ -2117,20 +2325,23 @@ class CrossSection(object):
         else:
             raise TypeError(f'The {str(tributary_files)} should be a str!')
 
-
-
-    def generate_CSProf41DHM(self, output_path, ROI_name = None):
+    def to_CSProf41DHM(self, output_path, ROI_name: str=None):
 
         geodf4csprof = self.cross_section_geodf.sort_values(by='cs_DistLgRiv', ascending=True).reset_index(drop=True)
         if len(self.cross_section_name) == 0:
             raise Exception('No valid cross section is imported!')
+        elif ~geodf4csprof['control_section'].any():
+            raise Exception('No control cross section is imported!')
         else:
             output_dic = {'Id': [], 'Distance to left node': [], 'Ele': [], 'Type': []}
             for _ in range(geodf4csprof.shape[0]):
                 output_dic['Id'].extend([geodf4csprof['cs_name'][_], 'Id'])
-                output_dic['Distance to left node'].extend([geodf4csprof['cs_DistLgRiv'][_],'Distance to left node'])
+                output_dic['Distance to left node'].extend([geodf4csprof['cs_DistLgRiv'][_], 'Distance to left node'])
                 output_dic['Ele'].extend([geodf4csprof['control_section'][_], 'Ele'])
-                output_dic['Type'].extend([None, 'Type'])
+                if geodf4csprof['control_section'][_]:
+                    output_dic['Type'].extend([self.control_station_cs_list[0][self.control_station_cs_list[1].index(geodf4csprof['cs_name'][_])], 'Type'])
+                else:
+                    output_dic['Type'].extend([None, 'Type'])
                 for __ in range(len(geodf4csprof['cs_dem'][_])):
                     output_dic['Id'].append(__ + 1)
                     output_dic['Distance to left node'].append(geodf4csprof['cs_dem'][_][__][0])

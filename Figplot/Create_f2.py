@@ -1742,7 +1742,7 @@ def fig15_func():
     corr_temp = pd.read_csv('G:\A_Landsat_veg\Water_level_python\original_water_level\\对应表.csv')
     cs_list, wl_list = [], []
 
-    wl1 = HydrometricStationData()
+    wl1 = HydroStationDS()
     for file_ in file_list:
         for hs_num in range(corr_temp.shape[0]):
             hs = corr_temp[corr_temp.keys()[1]][hs_num]
@@ -1754,7 +1754,7 @@ def fig15_func():
         wl1.import_from_standard_excel(fn_, cs_, water_level_offset=wl_)
 
     for sec, r1, l1, ytick, in zip(['宜昌', '枝城', '莲花塘', '汉口'], [(38, 56), (36, 52), (18, 36), (12, 32)], [49, 46, 31, 25], [[38, 41, 44, 47, 50, 53, 56], [36, 40, 44, 48, 52], [18, 21, 24, 27, 30, 33, 36], [12, 17, 22, 27, 32]]):
-        fig14_df = wl1.hydrological_inform_dic[sec]
+        fig14_df = wl1.hydrostation_inform_df[sec]
         year_dic = {}
         wl_pri, wl_post = [], []
         sd_pri, sd_post = [], []

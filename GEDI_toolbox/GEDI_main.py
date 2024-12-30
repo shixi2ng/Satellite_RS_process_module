@@ -49,6 +49,27 @@ class GEDI_df(object):
 
     def __init__(self, *args):
 
+        """
+        This function is used to initialize the GEDI_df class. The GEDI_df class is used to store the GEDI data in a pandas dataframe format.
+
+        Parameters
+        ----------
+        *args: str
+            The file path of the GEDI data in excel or csv format.
+
+        Notes
+        -----
+        This function will check if the file exists and if it contains all the required information. If not, it will raise an exception.
+
+        Returns
+        -------
+        GEDI_df: object
+            A GEDI_df class object.
+
+        Examples
+        --------
+        GEDI_df('GEDI_inform.xlsx')
+        """
         self.GEDI_inform_DF = None
         self._GEDI_fund_att = ['Date', 'Shot Number', 'Beam', 'Latitude', 'Longitude', 'Tandem-X DEM', 'Elevation (m)',
                                'Canopy Elevation (m)', 'Canopy Height (rh100)', 'RH 98', 'RH 25', 'Quality Flag',
@@ -92,6 +113,7 @@ class GEDI_df(object):
             self.file_name = os.path.basename(GEDI_inform_xlsx).split('.')[0]
 
         self.df_size = self.GEDI_inform_DF.shape[0]
+        self.year_list = list(set([_ // 1000 for _ in self.GEDI_inform_DF['Date']]))
 
     def save(self, output_filename: str):
         if output_filename.endswith('.csv'):

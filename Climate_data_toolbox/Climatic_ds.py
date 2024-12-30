@@ -25,6 +25,14 @@ from tqdm import tqdm
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
 
 
+def isfloat(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
 def separate_month_range(month_list):
     month_list = sorted(month_list)
 
@@ -972,38 +980,47 @@ class CMA_ds(object):
         """
 
         # Check the ANUSPLIN program
-        if 'splina.exe' not in os.listdir(os.getcwd()) or 'lapgrd.exe' not in os.listdir(os.getcwd()):
+        module_dir = os.path.dirname(__file__)
+        if 'splina.exe' not in os.listdir(module_dir) or 'lapgrd.exe' not in os.listdir(module_dir):
             raise Exception('The splina.exe or lapgrd.exe was missing!')
         else:
-            self._splina_program = os.path.join(os.getcwd(), 'splina.exe')
-            self._lapgrd_program = os.path.join(os.getcwd(), 'lapgrd.exe')
+            self._splina_program = os.path.join(module_dir, 'splina.exe')
+            self._lapgrd_program = os.path.join(module_dir, 'lapgrd.exe')
 
         # Identify the DEM bounds
         if DEM.endswith('.txt') or DEM.endswith('.TXT'):
-            with open(DEM, 'r') as f:
-                dem_content = f.read()
-                dem_content = dem_content.split('\n')[0:6]
-                dem_content = [(str(_.split(' ')[0]), float(_.split(' ')[-1])) for _ in dem_content]
-                dem_bound = [dem_content[2][1], dem_content[3][1] + dem_content[1][1] * dem_content[4][1],
-                             dem_content[2][1] + dem_content[0][1] * dem_content[4][1], dem_content[3][1]]
-                dem_cellsize = dem_content[4][1]
-                dem_nodata = dem_content[5][1]
-                f.close()
+            try:
+                with open(DEM, 'r') as f:
+                    dem_content = f.read()
+                    dem_content = dem_content.split('\n')[0:6]
+                    dem_content = [(str(_.split(' ')[0]), float(_.split(' ')[-1])) for _ in dem_content]
+                    dem_bound = [dem_content[2][1], dem_content[3][1] + dem_content[1][1] * dem_content[4][1],
+                                 dem_content[2][1] + dem_content[0][1] * dem_content[4][1], dem_content[3][1]]
+                    dem_cellsize = dem_content[4][1]
+                    dem_nodata = dem_content[5][1]
+                    f.close()
+            except:
+                print(traceback.format_exc())
+                raise Exception('Invalid DEM during the anusplin')
         else:
-            raise TypeError('Please convert the dem into txt file')
+            raise TypeError('Please convert the dem into txt file using ArcMap or other Geo-software!')
 
         # Identify the mask bounds
         if mask is not None:
             if mask.endswith('.txt') or mask.endswith('.TXT'):
-                with open(mask, 'r') as f:
-                    mask_content = f.read()
-                    mask_content = mask_content.split('\n')[0:6]
-                    mask_content = [(str(_.split(' ')[0]), float(_.split(' ')[-1])) for _ in mask_content]
-                    mask_bound = [mask_content[2][1], mask_content[3][1] + mask_content[1][1] * mask_content[4][1],
-                                  mask_content[2][1] + mask_content[0][1] * mask_content[4][1], mask_content[3][1]]
-                    mask_cellsize = mask_content[4][1]
-                    mask_nodata = mask_content[5][1]
-                    f.close()
+                try:
+                    with open(mask, 'r') as f:
+                        mask_content = f.read()
+                        mask_content = mask_content.split('\n')[0:6]
+                        mask_content = [(str(_.split(' ')[0]), float(_.split(' ')[-1])) for _ in mask_content]
+                        mask_bound = [mask_content[2][1], mask_content[3][1] + mask_content[1][1] * mask_content[4][1],
+                                      mask_content[2][1] + mask_content[0][1] * mask_content[4][1], mask_content[3][1]]
+                        mask_cellsize = mask_content[4][1]
+                        mask_nodata = mask_content[5][1]
+                        f.close()
+                except:
+                    print(traceback.format_exc())
+                    raise Exception('Invalid mask during the anusplin')
             else:
                 raise TypeError('Please convert the MASK into ASCII txt file')
 
@@ -1052,6 +1069,7 @@ class CMA_ds(object):
         if (roi_bounds[0] < anusplin_bounds[0] or roi_bounds[1] > anusplin_bounds[1]
                 or roi_bounds[2] > anusplin_bounds[2] or roi_bounds[3] < anusplin_bounds[3]):
             raise Exception('The ROI is outside the DEM and Mask')
+
         # Identify the output cell size
         if cell_size is None:
             output_cellsize = 30
@@ -1094,7 +1112,16 @@ class CMA_ds(object):
             zvalue_date_range = date_range[zvalue_]
             if bulk is True:
                 with concurrent.futures.ProcessPoolExecutor() as exe:
-                    exe.map(self.execute_splin, repeat(zvalue_), zvalue_date_range, repeat(anusplin_bounds), repeat(output_crs))
+                    res = exe.map(self.execute_splin, repeat(zvalue_), zvalue_date_range, repeat(anusplin_bounds), repeat(output_crs))
+
+                # Export the error res
+                err_list = []
+                res = list(res)
+                for res_ in res:
+                    err_list.extend(res_)
+                err_df_ = pd.DataFrame(err_list)
+                err_df_.to_csv(f'{self.output_path}{str(self.ROI_name)}_Denv_raster\\ANUSPLIN_SPLIN\\{zvalue_}\\err.csv')
+
             else:
                 for zvalue_month in zvalue_date_range:
                     self.execute_splin(zvalue_, zvalue_month,  anusplin_bounds, output_crs)
@@ -1114,7 +1141,8 @@ class CMA_ds(object):
             bf.create_folder(splin_path)
 
             # Define the standard lapgrd conf file
-            self._splin_conf = '{}\n1\n2\n1\n0\n0\n{}\n{}\n-400 9000 1 1\n1000.0\n0\n3\n1\n0\n1\n1\n{}.dat\n300\n6\n(a6,2f14.6,f6.2,f4.1)\n{}.res\n{}.opt\n{}.sur\n{}.lis\n{}.cov\n\n\n\n\n\n'
+            self._splin_conf = '{}\n1\n2\n1\n0\n0\n{}\n{}\n-400 9000 1 1\n1000.0\n0\n4\n1\n0\n1\n1\n{}.dat\n300\n6\n(a6,2f14.6,f6.2,f4.1)\n{}.res\n{}.opt\n{}.sur\n{}.lis\n{}.cov\n\n\n\n\n\n'
+            self._splin_conf_rootsquare = '{}\n1\n2\n1\n0\n0\n{}\n{}\n-400 9000 1 1\n1000.0\n2\n4\n1\n0\n1\n1\n{}.dat\n300\n6\n(a6,2f14.6,f6.2,f4.1)\n{}.res\n{}.opt\n{}.sur\n{}.lis\n{}.cov\n\n\n\n\n\n'
 
             # Identify the output path
             if not os.path.exists(splin_path):
@@ -1127,9 +1155,8 @@ class CMA_ds(object):
             if not os.path.exists(zvalue_splina):
                 shutil.copy(self._splina_program, zvalue_splina)
 
+            # Read the df from csv file
             csv_file = [csv_ for csv_ in self.csv_files if str(year_month) in csv_ and zvalue in csv_]
-            df_name_list = ['Station_id', 'Lat', 'Lon', 'Alt', 'DOY']
-            df_name_list.extend([__[2] for __ in self._zvalue_dic[zvalue]])
             df_temp = pd.read_table(csv_file[0], delim_whitespace=True, header=None)
             column_name_all = [_[2] for _ in self._zvalue_dic[zvalue]]
             column_name_list = ['None' for _ in range(len(df_temp.columns))]
@@ -1149,6 +1176,7 @@ class CMA_ds(object):
                 doy_list.append(df_temp['YYYY'][row] * 1000 + datetime.date(year=df_temp['YYYY'][row], month=df_temp['MM'][row], day=df_temp['DD'][row]).toordinal()
                                 - datetime.date(year=df_temp['YYYY'][row], month=1, day=1).toordinal() + 1)
             df_temp['DOY'] = doy_list
+            doy_list = pd.unique(df_temp['DOY'])
 
             # Process lat lon and alt
             df_temp['Lon'] = df_temp['Lon'] // 100 + (np.mod(df_temp['Lon'], 100) / 60)
@@ -1159,17 +1187,27 @@ class CMA_ds(object):
             header = ['Station_id', 'Lon', 'Lat', 'Alt', self._interpolate_zvalue[zvalue][2]]
 
             # Get the geodf itr through date
-            doy_list = pd.unique(df_temp['DOY'])
+            # Create Res result
+            err_list = []
             for doy in doy_list:
                 try:
                     t1 = time.time()
                     print(f'Start executing the SPLINA for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m!')
                     if not os.path.exists(os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}.dat')):
                         pd_temp = df_temp[df_temp['DOY'] == doy][header]
+
+                        # Change the datatype
                         pd_temp[self._interpolate_zvalue[zvalue][2]] = pd_temp[self._interpolate_zvalue[zvalue][2]].astype(np.float32)
-                        pd_temp[self._interpolate_zvalue[zvalue][2]] = pd_temp[self._interpolate_zvalue[zvalue][2]].replace(self._interpolate_zvalue[zvalue][3], np.nan)
+
+                        # Process the invalid value
+                        if zvalue == 'PRE':
+                            pd_temp.loc[pd_temp[self._interpolate_zvalue[zvalue][2]] > 30000, self._interpolate_zvalue[zvalue][2]] = np.nan
+                        else:
+                            pd_temp.loc[pd_temp[self._interpolate_zvalue[zvalue][2]] == self._interpolate_zvalue[zvalue][3], self._interpolate_zvalue[zvalue][2]] = np.nan
+
+                        # Resize the value
                         pd_temp[self._interpolate_zvalue[zvalue][2]] = pd_temp[self._interpolate_zvalue[zvalue][2]] * self._interpolate_zvalue[zvalue][1]
-                        pd_temp = pd_temp.reset_index(drop = True)
+                        pd_temp = pd_temp.reset_index(drop=True)
                         geodf_temp = gp.GeoDataFrame(pd_temp, geometry=[Point(xy) for xy in zip(pd_temp['Lon'], pd_temp['Lat'])], crs='EPSG:4326')
 
                         # Transform into destination crs
@@ -1201,17 +1239,35 @@ class CMA_ds(object):
                         f = open(os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}.conf'), 'w')
                         lon_coord = f'{str(splin_bounds[0])} {str(splin_bounds[2])} 0 1'
                         lat_coord = f'{str(splin_bounds[3])} {str(splin_bounds[1])} 0 1'
-                        f.writelines(self._splin_conf.format(file_name, lon_coord, lat_coord, file_name,file_name,file_name,file_name,file_name,file_name))
+                        if zvalue != 'PRE':
+                            f.writelines(self._splin_conf.format(file_name, lon_coord, lat_coord, file_name, file_name, file_name, file_name, file_name, file_name))
+                        else:
+                            f.writelines(self._splin_conf_rootsquare.format(file_name, lon_coord, lat_coord, file_name, file_name, file_name, file_name, file_name, file_name))
                         f.close()
 
                     # Generate the surf file
                     if not os.path.exists(file_name + '.sur'):
                         cmd_ = zvalue_splina + ' <{}> {}.log'.format(os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}.conf'), os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}'))
                         os.system(cmd_)
+                    
+                    # Generate the error
+                    doy_err_ = [doy, zvalue, np.nan, np.nan, np.nan]
+                    txt = open(os.path.join(zvalue_splin_path, f'{str(zvalue)}_{str(doy)}.log'))
+                    log = txt.readlines()
+                    for _ in range(len(log)):
+                        if log[_].startswith('SURFACE STATISTICS'):
+                            error_ = [__ for __ in log[_ + 3].split(' ') if isfloat(__)]
+                            if len(error_) == 8:
+                                doy_err_[2], doy_err_[3], doy_err_[4] = [float(error_[3]), float(error_[4]), float(error_[-1])]
                     print(f'Finish executing the SPLINA procedure for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
                 except:
                     print(traceback.format_exc())
                     print(f'Failed to execute the SPLINA procedure for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m.')
+                    doy_err_ = [doy, zvalue, np.nan, np.nan, np.nan]
+                
+                # Append the daily error into the result list
+                err_list.append(doy_err_)
+            return err_list    
         except:
             print(traceback.format_exc())
 
@@ -1226,8 +1282,10 @@ class CMA_ds(object):
             # Define the standard lapgrd conf file
             if lapgrd_maskfile is None:
                 self._lapgrd_conf = '{}\n1\n1\n{}\n2\n\n1\n1\n{}\n2\n{}\n0\n2\n{}\n2\n{}\n{}\n{}\n2\n{}\n{}\n{}\n\n\n\n\n\n'
+                self._lapgrd_conf_rootsquare = '{}\n1\n1\n1\n{}\n2\n\n1\n1\n{}\n2\n{}\n0\n2\n{}\n2\n{}\n{}\n{}\n2\n{}\n{}\n{}\n\n\n\n\n\n'
             else:
                 self._lapgrd_conf = '{}\n1\n1\n{}\n2\n\n1\n1\n{}\n2\n{}\n2\n{}\n2\n{}\n2\n{}\n{}\n{}\n2\n{}\n{}\n{}\n\n\n\n\n\n'
+                self._lapgrd_conf_rootsquare = '{}\n1\n1\n1\n{}\n2\n\n1\n1\n{}\n2\n{}\n2\n{}\n2\n{}\n2\n{}\n{}\n{}\n2\n{}\n{}\n{}\n\n\n\n\n\n'
 
             # Identify the output LAPGRD path and Input splin path
             if not os.path.exists(lapgrd_path):
@@ -1276,7 +1334,7 @@ class CMA_ds(object):
                     print(f'Start executing the LAPGRD for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m!')
                     if (not os.path.exists(os.path.join(splin_path, f'{str(zvalue)}_{str(doy)}.cov')) or
                             not os.path.exists(os.path.join(splin_path, f'{str(zvalue)}_{str(doy)}.sur'))):
-                        raise Exception('.cov file for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m is missing!')
+                        raise Exception(f'.cov file for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m is missing!')
 
                     # Generate the conf file
                     output_grd = os.path.join(zvalue_lapgrd_path, f'{str(zvalue)}_{str(doy)}.grd')
@@ -1299,9 +1357,15 @@ class CMA_ds(object):
                                 y_limit = f"{surf_content[1].split(' ')[1]} {surf_content[1].split(' ')[3]} {str(lapgrd_cellsize)}"
 
                         if lapgrd_maskfile is None:
-                            f.writelines(self._lapgrd_conf.format(sur_file, cov_file, x_limit, y_limit, lapgrd_demfile, str(lapgrd_nodata), output_grd, '(1f6.2)', str(lapgrd_nodata), output_res, '(1f8.2)'))
+                            if zvalue == 'PRE':
+                                f.writelines(self._lapgrd_conf_rootsquare.format(sur_file, cov_file, x_limit, y_limit, lapgrd_demfile, str(lapgrd_nodata), output_grd, '(1f6.2)', str(lapgrd_nodata), output_res, '(1f8.2)'))
+                            else:
+                                f.writelines(self._lapgrd_conf.format(sur_file, cov_file, x_limit, y_limit, lapgrd_demfile, str(lapgrd_nodata), output_grd, '(1f6.2)', str(lapgrd_nodata), output_res, '(1f8.2)'))
                         else:
-                            f.writelines(self._lapgrd_conf.format(sur_file, cov_file, x_limit, y_limit, lapgrd_maskfile, lapgrd_demfile, str(lapgrd_nodata), output_grd, '(1f6.2)', str(lapgrd_nodata), output_res, '(1f8.2)'))
+                            if zvalue == 'PRE':
+                                f.writelines(self._lapgrd_conf_rootsquare.format(sur_file, cov_file, x_limit, y_limit, lapgrd_maskfile, lapgrd_demfile, str(lapgrd_nodata), output_grd, '(1f6.2)', str(lapgrd_nodata), output_res, '(1f8.2)'))
+                            else:
+                                f.writelines(self._lapgrd_conf.format(sur_file, cov_file, x_limit, y_limit, lapgrd_maskfile, lapgrd_demfile, str(lapgrd_nodata), output_grd, '(1f6.2)', str(lapgrd_nodata), output_res, '(1f8.2)'))
                         f.close()
 
                     # Execute the lapgrd
@@ -1323,11 +1387,11 @@ class CMA_ds(object):
                         temp_ds3 = None
 
                     # Remove redundant fileD
-                    # try:
-                    #     os.remove(output_res)
-                    #     os.remove(output_grd)
-                    # except:
-                    #     print('Failed to delete file')
+                    try:
+                        os.remove(output_res)
+                        os.remove(output_grd)
+                    except:
+                        print('Failed to delete file')
 
                     print(f'Finish executing the LAPGRD procedure for {str(zvalue)} of \033[1;31m{str(doy)}\033[0m in \033[1;34m{str(time.time() - t1)[0:7]}\033[0m s')
                 except:
@@ -1893,11 +1957,19 @@ if __name__ == '__main__':
     # station_rec = [Polygon([(441536.34182, 3457208.02321), (1104536.34182, 3457208.02321), (1104536.34182, 3210608.02321), (441536.34182, 3210608.02321)])]
     # geometry = gp.GeoDataFrame({'id':[1]}, geometry=station_rec, crs='EPSG:32649')
     # geometry.to_file('G:\\A_Landsat_Floodplain_veg\\ROI_map\\weather_boundary.shp')
-    ds_temp2 = CMA_ds('G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2015\\')
-    ds_temp = CMA_ds('G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\400_control_station_1950_2020\\')
-    ds_temp.append_ds(ds_temp2, 'G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2023\\')
-    ds_temp.anusplin('G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_UTM.shp', 'G:\\A_Landsat_Floodplain_veg\\Climatology_data\\DEM\\DEM\\alos_dem300.txt', mask=None, zvalue=['PRE'], date_range=[20090101, 20201231], bulk=True)
-    ds_temp.raster2dc(['PRE'], ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_UTM.shp', ds2ras_method='ANUSPLIN', temporal_division='year')
+
+    # Climate ds
+    # ds_temp2 = CMA_ds('G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2015\\')
+    # ds_temp = CMA_ds('G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\400_control_station_1950_2020\\')
+    # ds_temp.append_ds(ds_temp2, 'G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2020\\')
+    # ds_temp = CMA_ds('G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2020\\')
+    # ds_temp2 = CMA_ds('G:\\A_Climatology_dataset\\station_dataset\\Qweather_dataset\\Qweather_CMA_standard\\')
+    # ds_temp.append_ds(ds_temp2, 'G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2023\\')
+
+    ds_temp = CMA_ds('G:\\A_Climatology_dataset\\station_dataset\\CMA_dataset\\2400_all_station_1950_2023\\')
+    ds_temp.anusplin('G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_UTM.shp', 'G:\\A_Climatology_dataset\\supplement_DEM\\DEM\\alos_dem300.txt',
+                     mask=None, zvalue=['PRE'], date_range=[19850101, 20231231], bulk=True)
+    ds_temp.raster2dc(['TEM', 'PRS', 'WIN', 'SSD', 'GST', 'PRE', 'RHU'], ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020_UTM.shp', ds2ras_method='ANUSPLIN', temporal_division='year')
 
     # ds_temp = gdal.Open('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')
     # bounds_temp = bf.raster_ds2bounds('G:\\A_GEDI_Floodplain_vegh\\S2_all\\Sentinel2_L2A_Output\\ROI_map\\MYZR_FP_2020_map.TIF')

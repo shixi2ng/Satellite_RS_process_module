@@ -1,7 +1,9 @@
 import concurrent.futures
 import numpy as np
+import pandas as pd
+
 import basic_function as bf
-from osgeo import gdal, ogr
+from osgeo import gdal, ogr, osr
 import os
 from itertools import repeat
 import time
@@ -12,10 +14,225 @@ from NDsm import NDSparseMatrix
 import scipy.sparse as sm
 import psutil
 import json
+from datetime import datetime
 
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
+
+
+class ISCCP_PAR(object):
+    def __init__(self, file_path, work_env=None):
+        if work_env is None:
+            try:
+                self.work_env = bf.Path(os.path.dirname(os.path.dirname(file_path)) + '\\').path_name
+            except:
+                print('There has no base dir for the ori_folder and the ori_folder will be treated as the work env')
+                self.work_env = bf.Path(file_path).path_name
+        else:
+            self.work_env = bf.Path(work_env).path_name
+
+        # Init key variable
+        self.ROI, self.ROI_name = None, None
+        self.main_coordinate_system = None
+        self.nc_files = bf.file_filter(file_path, ['.nc'], subfolder_detection=True)
+
+        # Generate the metadata
+        self.metadata_df = {'FileDir': [], 'DOY': [], 'Hour': [], 'Datatype': []}
+        for file in self.nc_files:
+            try:
+                filename = os.path.basename(file)
+                if 'ISCCP_HXG_total_PAR' in file:
+                    datatype = 'PAR'
+                    doy = bf.date2doy(int(filename.split('_')[4]) * 10000 + int(filename.split('_')[5]) * 100 + int(filename.split('_')[6]))
+                    hour = filename.split('_')[7]
+
+                    self.metadata_df['FileDir'].append(file)
+                    self.metadata_df['DOY'].append(doy)
+                    self.metadata_df['Datatype'].append(datatype)
+                    self.metadata_df['Hour'].append(hour)
+                else:
+                    print(f'The {file} is not a standard ISCCP file!')
+            except:
+                print(f'The {file} is not a standard ISCCP file!')
+
+        self.doy_list = set(list(self.metadata_df['DOY']))
+        self.year_range = set([int(np.floor(temp/1000)) for temp in self.doy_list])
+
+        # Define cache folder
+        self.cache_folder, self.trash_folder = self.work_env + 'cache\\', self.work_env + 'trash\\'
+        bf.create_folder(self.cache_folder)
+        bf.create_folder(self.trash_folder)
+
+        # Create the output path
+        self.output_path, self.shpfile_path, self.log_filepath = f'{self.work_env}ISCCP_Output\\', f'{self.work_env}shpfile\\', f'{self.work_env}logfile\\'
+        bf.create_folder(self.output_path)
+        bf.create_folder(self.log_filepath)
+        bf.create_folder(self.shpfile_path)
+
+    def save_log_file(func):
+        def wrapper(self, *args, **kwargs):
+
+            ############################################################################################################
+            # Document the log file and para file
+            # The log file contained the information for each run and para file documented the args of each func
+            ############################################################################################################
+
+            time_start = time.time()
+            c_time = time.ctime()
+            log_file = open(f"{self.log_filepath}log.txt", "a+")
+            if os.path.exists(f"{self.log_filepath}para_file.txt"):
+                para_file = open(f"{self.log_filepath}para_file.txt", "r+")
+            else:
+                para_file = open(f"{self.log_filepath}para_file.txt", "w+")
+            error_inf = None
+
+            para_txt_all = para_file.read()
+            para_ori_txt = para_txt_all.split('#' * 70 + '\n')
+            para_txt = para_txt_all.split('\n')
+            contain_func = [txt for txt in para_txt if txt.startswith('Process Func:')]
+
+            try:
+                func(self, *args, **kwargs)
+            except:
+                error_inf = traceback.format_exc()
+                print(error_inf)
+
+            # Header for the log file
+            log_temp = ['#' * 70 + '\n', f'Process Func: {func.__name__}\n', f'Start time: {c_time}\n',
+                        f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
+
+            # Create args and kwargs list
+            args_f = 0
+            args_list = ['*' * 25 + 'Arguments' + '*' * 25 + '\n']
+            kwargs_list = []
+            for i in args:
+                args_list.extend([f"args{str(args_f)}:{str(i)}\n"])
+            for k_key in kwargs.keys():
+                kwargs_list.extend([f"{str(k_key)}:{str(kwargs[k_key])}\n"])
+            para_temp = ['#' * 70 + '\n', f'Process Func: {func.__name__}\n', f'Start time: {c_time}\n',
+                         f'End time: {time.ctime()}\n', f'Total processing time: {str(time.time() - time_start)}\n']
+            para_temp.extend(args_list)
+            para_temp.extend(kwargs_list)
+            para_temp.append('#' * 70 + '\n')
+
+            log_temp.extend(args_list)
+            log_temp.extend(kwargs_list)
+            log_file.writelines(log_temp)
+            for func_key, func_processing_name in zip(['nc2tif', 'cal_dailyPAR', 'ds2sdc', 'extract_with_ROI'],
+                                                      ['convert nc to tif file', 'calculate daily PAR', '2sdc', 'ROI extraction']):
+                if func_key in func.__name__:
+                    if error_inf is None:
+                        log_file.writelines([f'Status: Finished {func_processing_name}!\n', '#' * 70 + '\n'])
+                        metadata_line = [q for q in contain_func if func_key in q]
+                        if len(metadata_line) == 0:
+                            para_file.writelines(para_temp)
+                            para_file.close()
+                        elif len(metadata_line) == 1:
+                            for para_ori_temp in para_ori_txt:
+                                if para_ori_temp != '' and metadata_line[0] not in para_ori_temp:
+                                    para_temp.extend(['#' * 70 + '\n', para_ori_temp, '#' * 70 + '\n'])
+                                    para_file.close()
+                                    para_file = open(f"{self.log_filepath}para_file.txt", "w+")
+                                    para_file.writelines(para_temp)
+                                    para_file.close()
+                        elif len(metadata_line) > 1:
+                            print('Code error! ')
+                            sys.exit(-1)
+                    else:
+                        log_file.writelines(
+                            [f'Status: Error in {func_processing_name}!\n', 'Error information:\n', error_inf + '\n',
+                             '#' * 70 + '\n'])
+
+        return wrapper
+
+    @save_log_file
+    def seq_nc2tif(self,):
+        for i in self.doy_list:
+            self._nc2tif(self.output_path, i)
+
+    @save_log_file
+    def mp_nc2tif(self, ):
+        # Create the file list based on the doy
+        doyly_filelist = []
+        for doy in self.doy_list:
+            doy_filelist = []
+            for file in self.nc_files:
+                if f'.A{str(doy)}.' in file:
+                    doy_filelist.append(file)
+            doyly_filelist.append(doy_filelist)
+
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            executor.map(self._nc2tif, self.doy_list)
+
+    def _nc2tif(self, doy: int, crs: str = None):
+
+        # Process the nc file
+        files = list(self.metadata_df[self.metadata_df['DOY'] == doy])
+
+        if crs is None:
+            crs = 'EPSG:32649'
+        elif not isinstance(crs, str):
+            raise TypeError(f'The csr should under str type!')
+
+        # Create output folder
+        ori_vrt_output_folder = f'{self.output_path}Ori_Denv_raster\\Hourly_VRT\\'
+        ori_tif_output_folder = f'{self.output_path}Ori_Denv_raster\\Hourly_TIF\\'
+        bf.create_folder(ori_vrt_output_folder)
+        bf.create_folder(ori_tif_output_folder)
+
+        roi_output_folder = f'{self.output_path}{str(self.ROI_name)}\\' if self.ROI_name is not None else None
+        if roi_output_folder is not None:
+            bf.create_folder(roi_output_folder)
+
+        # Determine the sub-dataset
+        src_ds = gdal.Open(files[0])
+
+        # 获取投影信息，如果NetCDF中已有投影，可以直接使用
+        projection = src_ds.GetProjection()
+        if not projection:
+            # 如果NetCDF中没有投影信息，手动设置WGS84
+            srs = osr.SpatialReference()
+            srs.ImportFromEPSG(4326)  # WGS84
+            projection = srs.ExportToWkt()
+
+        # 获取仿射变换参数
+        geotransform = src_ds.GetGeoTransform()
+        if not geotransform:
+            # 如果NetCDF中没有仿射变换信息，手动定义
+            # 假设数据覆盖全球，分辨率为0.1度
+            geotransform = (-180, 0.1, 0, 90, 0, -0.1)
+
+        # 定义驱动
+        driver = gdal.GetDriverByName('GTiff')
+
+        # 创建目标数据集
+        dst_ds = driver.Create(
+            output_tif,
+            src_ds.RasterXSize,
+            src_ds.RasterYSize,
+            1,  # 波段数
+            src_ds.GetRasterBand(1).DataType
+        )
+
+        # 设置地理参考
+        dst_ds.SetGeoTransform(geotransform)
+        dst_ds.SetProjection(projection)
+
+        # 读取数据并写入
+        data = src_ds.GetRasterBand(1).ReadAsArray()
+        dst_ds.GetRasterBand(1).WriteArray(data)
+
+        # 设置NoData值（可选）
+        nodata = src_ds.GetRasterBand(1).GetNoDataValue()
+        if nodata is not None:
+            dst_ds.GetRasterBand(1).SetNoDataValue(nodata)
+
+        # 关闭数据集
+        dst_ds = None
+        src_ds = None
+
+        print(f"GeoTIFF已保存为 {output_tif}")
 
 
 class MODIS_ds(object):
@@ -39,18 +256,24 @@ class MODIS_ds(object):
         # ras2dc
         self._temporal_div_str = ['year', 'month']
 
-        # Obtain the doy list
-        self.doy_list = []
+        # Generate the df
+        self.metadata_df = {'FileDir': [], 'DOY': [], 'Datatype': [], 'Tile': []}
         for file in self.hdf_files:
-            eles = file.split('\\')[-1].split('.')
-            for ele in eles:
-                if ele.startswith('A'):
-                    self.doy_list.append(int(ele.split('A')[-1]))
+            try:
+                filename = os.path.basename(file)
+                datatype = filename.split('.')[0]
+                doy = int(filename.split('.')[1].split('A')[-1])
+                tile = filename.split('.')[2]
 
-        if len(self.doy_list) != len(self.hdf_files):
-            raise Exception('Code Error when obtaining the doy list!')
+                self.metadata_df['FileDir'].append(file)
+                self.metadata_df['DOY'].append(doy)
+                self.metadata_df['Datatype'].append(datatype)
+                self.metadata_df['Tile'].append(tile)
 
-        self.doy_list = set(self.doy_list)
+            except:
+                print(f'The {file} is not a standard MODIS file!')
+        self.metadata_df = pd.DataFrame(self.metadata_df)
+        self.doy_list = set(list(self.metadata_df['DOY']))
         self.year_range = set([int(np.floor(temp/1000)) for temp in self.doy_list])
 
         # Define cache folder
@@ -58,7 +281,7 @@ class MODIS_ds(object):
         bf.create_folder(self.cache_folder)
         bf.create_folder(self.trash_folder)
 
-        # Create output path
+        # Create the output path
         self.output_path, self.shpfile_path, self.log_filepath = f'{self.work_env}MODIS_Output\\', f'{self.work_env}shpfile\\', f'{self.work_env}logfile\\'
         bf.create_folder(self.output_path)
         bf.create_folder(self.log_filepath)
@@ -191,30 +414,20 @@ class MODIS_ds(object):
         return wrapper
 
     @save_log_file
-    def seq_hdf2tif(self, subname):
+    def seq_hdf2tif(self, subindex):
         for i in self.doy_list:
-            self._hdf2tif(self.output_path, [q for q in self.hdf_files if f'.A{str(i)}.' in q], i, subname)
+            self._hdf2tif(i, subindex)
 
     @save_log_file
-    def mp_hdf2tif(self, subname):
+    def mp_hdf2tif(self, subindex):
         # Create the file list based on the doy
-        doyly_filelist = []
-        for doy in self.doy_list:
-            doy_filelist = []
-            for file in self.hdf_files:
-                if f'.A{str(doy)}.' in file:
-                    doy_filelist.append(file)
-            doyly_filelist.append(doy_filelist)
-
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            executor.map(self._hdf2tif, repeat(self.output_path), doyly_filelist, self.doy_list, repeat(subname))
+            executor.map(self._hdf2tif, self.doy_list, repeat(subindex))
 
-    def _hdf2tif(self, output_path: str, files: list, doy: int, subname_list: list, crs: str = None):
+    def _hdf2tif(self, doy: int, subindex_list: list, crs: str = None):
 
-        # Process the hdf file
-        for file in files:
-            if str(doy) not in file:
-                raise TypeError(f'The {str(file)} does not belong to {str(doy)}!')
+        # Get the hdf file under doy
+        files = list(self.metadata_df[self.metadata_df['DOY'] == doy]['FileDir'])
 
         if crs is None:
             crs = 'EPSG:32649'
@@ -222,44 +435,44 @@ class MODIS_ds(object):
             raise TypeError(f'The csr should under str type!')
 
         # Create output folder
-        ori_vrt_output_folder = f'{output_path}Ori_Denv_raster\\Hourly_VRT\\'
-        ori_tif_output_folder = f'{output_path}Ori_Denv_raster\\Hourly_TIF\\'
+        ori_vrt_output_folder = f'{self.output_path}Ori_Denv_raster\\Hourly_VRT\\'
+        ori_tif_output_folder = f'{self.output_path}Ori_Denv_raster\\Hourly_TIF\\'
         bf.create_folder(ori_vrt_output_folder)
         bf.create_folder(ori_tif_output_folder)
 
-        roi_output_folder = f'{output_path}{str(self.ROI_name)}\\' if self.ROI_name is not None else None
+        roi_output_folder = f'{self.output_path}{str(self.ROI_name)}\\' if self.ROI_name is not None else None
         if roi_output_folder is not None:
             bf.create_folder(roi_output_folder)
 
-        # Determine the subdataset
+        # Determine the sub-dataset
         ds_temp = gdal.Open(files[0])
         subset_ds = ds_temp.GetSubDatasets()
-        subname_supported = [subset[0].split(':')[-1] for subset in subset_ds]
-        subname_dic = {}
-        for subname in subname_list:
-            if subname not in subname_supported:
-                raise TypeError(f'{subname} is not supported!')
+        subindex_supported = [subset[0].split(':')[-1] for subset in subset_ds]
+        subindex_dic = {}
+        for subindex in subindex_list:
+            if subindex not in subindex_supported:
+                raise TypeError(f'{subindex} is not supported!')
             else:
-                subname_dic[subname] = []
+                subindex_dic[subindex] = []
 
-        # Separate all the hdffiles through the index
+        # Separate all the hdf files through the index
         for file in files:
             ds_temp = gdal.Open(file)
             subset_ds = ds_temp.GetSubDatasets()
-            subname_temp = [subset[0].split(':')[-1] for subset in subset_ds]
-            for subname in subname_list:
-                if subname not in subname_temp:
+            subindex_temp = [subset[0].split(':')[-1] for subset in subset_ds]
+            for subindex in subindex_list:
+                if subindex not in subindex_temp:
                     raise TypeError(f'The file {file} is not consistency compared to other files in the ds!')
                 else:
-                    subname_dic[subname].append(subset_ds[subname_temp.index(subname)][0])
+                    subindex_dic[subindex].append(subset_ds[subindex_temp.index(subindex)][0])
 
         # Create the tiffiles based on each index
-        for subname in subname_list:
-            if not os.path.exists(f'{ori_tif_output_folder}{str(subname)}_{str(doy)}.tif'):
+        for subindex in subindex_list:
+            if not os.path.exists(f'{ori_tif_output_folder}{str(subindex)}_{str(doy)}.tif'):
                 s_t = time.time()
-                print(f'Start generating the {subname} tiffile of {str(doy)}')
+                print(f'Start generating the {subindex} tiffile of {str(doy)}')
                 tiffile_list = []
-                for file in subname_dic[subname]:
+                for file in subindex_dic[subindex]:
                     # Generate tiffile_list
                     filename = file.split('\\')[-1].split('.hdf')[0]
                     tiffile_list.append(f'/vsimem/{filename}.TIF')
@@ -269,22 +482,20 @@ class MODIS_ds(object):
                     gdal.Warp(f'/vsimem/{filename}.TIF', ds_temp, dstSRS=crs)
 
                 # BuildVRT
-                vrt = gdal.BuildVRT(f'{ori_vrt_output_folder}{str(subname)}_{str(doy)}.vrt', tiffile_list)
-                gdal.Translate(f'{ori_tif_output_folder}{str(subname)}_{str(doy)}.tif', vrt, options=topts)
+                vrt = gdal.BuildVRT(f'{ori_vrt_output_folder}{str(subindex)}_{str(doy)}.vrt', tiffile_list)
+                gdal.Translate(f'{ori_tif_output_folder}{str(subindex)}_{str(doy)}.tif', vrt, options=topts)
 
                 for file in tiffile_list:
                     gdal.Unlink(file)
-                print(f'Finish processing the {subname} tiffile of {str(doy)} in {str(time.time()-s_t)[:6]}s')
+                print(f'Finish processing the {subindex} tiffile of {str(doy)} in {str(time.time()-s_t)[:6]}s')
 
     @save_log_file
     def seq_cal_dailyPAR(self, method='mean'):
-
         for doy in self.doy_list:
             self._cal_dailyPAR(doy, method=method)
 
     @save_log_file
     def mp_cal_dailyPAR(self, method: str = 'mean'):
-
         with concurrent.futures.ProcessPoolExecutor() as executor:
             executor.map(self._cal_dailyPAR, self.doy_list, repeat(method))
 
@@ -315,7 +526,7 @@ class MODIS_ds(object):
                     nodatavalue = ds_temp.GetRasterBand(1).GetNoDataValue()
 
             if method == 'mean':
-                array_temp = np.nanmean(array_temp, axis=2)
+                array_temp = np.nanmean(array_temp, axis=2) * 86.4
                 bf.write_raster(ds_temp, array_temp, output_path, f'{str(doy)}_DPAR.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=nodatavalue)
             else:
                 pass
@@ -370,7 +581,7 @@ class MODIS_ds(object):
         elif len(ras_res) != 2:
             raise TypeError(f'The ras res should under list type (Ysize, Xsize)!')
 
-        bf.create_folder(f'{self.output_path}{self.ROI_name}_Denv_raster\\')
+        bf.create_folder(f'{self.output_path}{self.ROI_name}_Denv_raster\\DPAR\\')
 
         # Cut using the para
         if self.ROI is not None:
@@ -600,7 +811,7 @@ class MODIS_ds(object):
                             array_temp = array_temp.GetRasterBand(1).ReadAsArray()
 
                         data_cube[:, :, i] = array_temp
-                        data_valid_array[i] = [array_temp == nodata_value].all()
+                        data_valid_array[i] = np.all(array_temp == nodata_value)
 
                         print(f'Assemble the {str(doy_list[i])} into the sdc using {str(time.time() - t1)[0:5]}s (layer {str(i)} of {str(len(doy_list))})')
                         i += 1
@@ -631,9 +842,9 @@ class MODIS_ds(object):
 
 
 if __name__ == '__main__':
-    MD_ds = MODIS_ds('G:\\A_veg\\MODIS_FPAR\\Ori\\')
-    MD_ds.mp_hdf2tif(['PAR_Quality', 'GMT_0000_PAR', 'GMT_0300_PAR', 'GMT_0600_PAR', 'GMT_0900_PAR', 'GMT_1200_PAR', 'GMT_1500_PAR', 'GMT_1800_PAR', 'GMT_2100_PAR'])
-    MD_ds.seq_cal_dailyPAR()
-    bounds_temp = bf.raster_ds2bounds('G:\\A_veg\\MODIS_FPAR\\MODIS_Output\\\ROI_map\\floodplain_2020.TIF')
-    MD_ds.mp_extract_with_ROI('G:\\A_veg\MODIS_FPAR\\shpfile\\floodplain_2020.shp', ['DPAR'], bounds=bounds_temp, ras_res=[30, 30])
+    MD_ds = MODIS_ds('G:\\A_Climatology_dataset\\gridded_dataset\\MODIS_PAR_V6.2\\Ori\\')
+    # MD_ds.mp_hdf2tif(['PAR_Quality', 'GMT_0000_PAR', 'GMT_0300_PAR', 'GMT_0600_PAR', 'GMT_0900_PAR', 'GMT_1200_PAR', 'GMT_1500_PAR', 'GMT_1800_PAR', 'GMT_2100_PAR'])
+    # MD_ds.mp_cal_dailyPAR()
+    # bounds_temp = bf.raster_ds2bounds('G:\\A_Climatology_dataset\\gridded_dataset\\MODIS_PAR_V6.2\\ROI_map\\floodplain_2020.TIF')
+    # MD_ds.mp_extract_with_ROI('G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020.shp', ['DPAR'], bounds=bounds_temp, ras_res=[30, 30])
     MD_ds.raster2dc(['DPAR'], ROI='G:\\A_veg\\MODIS_FPAR\\shpfile\\floodplain_2020.shp', temporal_division='year', inherit_from_logfile=True)

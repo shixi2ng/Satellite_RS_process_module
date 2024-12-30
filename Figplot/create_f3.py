@@ -1435,7 +1435,7 @@ def fig7_func():
     corr_temp = pd.read_csv('G:\A_Landsat_Floodplain_veg\Water_level_python\original_water_level\\对应表.csv')
     cs_list, wl_list = [], []
 
-    wl1 = HydrometricStationData()
+    wl1 = HydroStationDS()
     for file_ in file_list:
         for hs_num in range(corr_temp.shape[0]):
             hs = corr_temp[corr_temp.keys()[1]][hs_num]
@@ -1447,7 +1447,7 @@ def fig7_func():
         wl1.import_from_standard_excel(fn_, cs_, water_level_offset=wl_)
 
     for sec, r1, l1, ytick, in zip(['宜昌', '枝城', '莲花塘', '汉口'], [(38, 56), (36, 52), (18, 36), (12, 32)], [49, 46, 31, 25], [[38, 41, 44, 47, 50, 53, 56], [36, 40, 44, 48, 52], [18, 21, 24, 27, 30, 33, 36], [12, 17, 22, 27, 32]]):
-        fig14_df = wl1.hydrological_inform_dic[sec]
+        fig14_df = wl1.hydrostation_inform_df[sec]
         year_dic = {}
         wl_pri, wl_post = [], []
         sd_pri, sd_post = [], []
@@ -1735,7 +1735,7 @@ def fig7nc_func():
     corr_temp = pd.read_csv('G:\A_Landsat_Floodplain_veg\Water_level_python\original_water_level\\对应表.csv')
     cs_list, wl_list = [], []
 
-    wl1 = HydrometricStationData()
+    wl1 = HydroStationDS()
     for file_ in file_list:
         for hs_num in range(corr_temp.shape[0]):
             hs = corr_temp[corr_temp.keys()[1]][hs_num]
@@ -1750,7 +1750,7 @@ def fig7nc_func():
     sec_dis = [0, 63.83, 153.87, 306.77, 384.16, 423.15, 653.115, 955]
     sec_name = ['宜昌', '枝城', '沙市', '监利', '莲花塘', '螺山', '汉口', '九江']
     for sec in sec_name:
-        fig14_df = wl1.hydrological_inform_dic[sec]
+        fig14_df = wl1.hydrostation_inform_df[sec]
         wl_pri, wl_post = [], []
         sd_pri, sd_post = [], []
         ds_pri, ds_post = [], []
@@ -1833,7 +1833,7 @@ def fig7nc_func():
     wl_pri3, wl_post3 = [], []
 
     for sec, r1, l1, ytick, in zip(['宜昌', '枝城', '莲花塘', '汉口'], [(38, 56), (36, 52), (18, 36), (12, 32)], [49, 46, 31, 25], [[38, 41, 44, 47, 50, 53, 56], [36, 40, 44, 48, 52], [18, 21, 24, 27, 30, 33, 36], [12, 17, 22, 27, 32]]):
-        fig14_df = wl1.hydrological_inform_dic[sec]
+        fig14_df = wl1.hydrostation_inform_df[sec]
         year_dic = {}
         wl_pri, wl_post = [], []
         sd_pri, sd_post = [], []
@@ -3426,7 +3426,7 @@ def fig_wl_func():
     corr_temp = pd.read_csv('G:\A_Landsat_Floodplain_veg\Water_level_python\original_water_level\\对应表.csv')
     cs_list, wl_list = [], []
 
-    wl1 = HydrometricStationData()
+    wl1 = HydroStationDS()
     for file_ in file_list:
         for hs_num in range(corr_temp.shape[0]):
             hs = corr_temp[corr_temp.keys()[1]][hs_num]
@@ -3438,13 +3438,13 @@ def fig_wl_func():
         wl1.import_from_standard_excel(fn_, cs_, water_level_offset=wl_)
 
     for sec, wl_level in zip(['沙市', '宜昌', '监利'], [40.50, 47, 30]):
-        fig14_df = wl1.hydrological_inform_dic[sec]
+        fig14_df = wl1.hydrostation_inform_df[sec]
         year_dic = {}
         wl_pri, wl_post = [], []
         sd_pri, sd_post = [], []
         for year in range(1985, 2021):
             year_temp = fig14_df['year'] == year
-            flow_temp = fig14_df['water_level/m'][year_temp].tolist() - wl1.water_level_offset[sec]
+            flow_temp = fig14_df['water_level/m'][year_temp].tolist() - wl1.waterlevel_offset_list[sec]
             sed_temp = fig14_df['sediment_concentration/kg/m3'][year_temp].tolist()
             year_dic[f'{str(year)}_wl'] = flow_temp[0:365]
             year_dic[f'{str(year)}_sed'] = sed_temp[0:365]

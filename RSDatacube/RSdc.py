@@ -307,11 +307,9 @@ class Denv_dc(object):
         metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI,
                         'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
                         'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix,
-                        'huge_matrix': self.huge_matrix,
-                        'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder,
-                        'dc_group_list': self.dc_group_list,
-                        'tiles': self.tiles, 'timescale': self.timescale, 'timerange': self.timerange,
-                        'Denv_factor': self.Denv_factor}
+                        'huge_matrix': self.huge_matrix,'size_control_factor': self.size_control_factor,
+                        'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles,
+                        'timescale': self.timescale, 'timerange': self.timerange, 'Denv_factor': self.Denv_factor}
         doy = self.sdc_doylist
         np.save(f'{output_path}doy.npy', doy)
         with open(f'{output_path}metadata.json', 'w') as js_temp:
@@ -2181,8 +2179,7 @@ class RS_dcs(object):
         bf.create_folder(phemetric_output_path)
         bf.create_folder(csv_para_output_path)
         bf.create_folder(tif_para_output_path)
-        self._curve_fitting_dic[
-            str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = para_output_path
+        self._curve_fitting_dic[str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = para_output_path
 
         # Define the cache folder
         cache_folder = f'{para_output_path}cache\\'
@@ -2259,10 +2256,9 @@ class RS_dcs(object):
 
         # Create tif file based on phenological parameter
         with concurrent.futures.ProcessPoolExecutor() as executor:
-            res = list(
-                tq(executor.map(curfit_pd2tif, repeat(tif_para_output_path), df_list, key_list, repeat(self.ROI_tif)),
-                   total=len(key_list), desc=f'Curve fitting result to tif file',
-                   bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}'))
+            res = list(tq(executor.map(curfit_pd2tif, repeat(tif_para_output_path), df_list, key_list, repeat(self.ROI_tif)),
+                          total=len(key_list), desc=f'Curve fitting result to tif file',
+                          bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}'))
 
         # Create Phemetric dc
         year_list = set([int(np.floor(temp / 10000)) for temp in doy_list])
@@ -2278,41 +2274,60 @@ class RS_dcs(object):
             executor.map(cf2phemetric_dc, repeat(tif_para_output_path), repeat(phemetric_output_path), year_list,
                          repeat(index), repeat(metadata_dic))
 
-    def _process_link_GEDI_Denv(self, **kwargs):
+    def _process_link_GEDI_Denv_para(self, **kwargs):
         # Detect whether all the indicators are valid
         for kwarg_indicator in kwargs.keys():
-            if kwarg_indicator not in ['accumulated_method', 'static_thr', 'phemetric_window']:
+            if kwarg_indicator not in ['accumulated_method', 'static_thr', 'phemetric_window', 'spatial_interpolate_method']:
                 raise NameError(f'{kwarg_indicator} is not supported kwargs! Please double check!')
 
+        # process interpolation method
+        if 'spatial_interpolate_method' in kwargs.keys():
+            if isinstance(kwargs['spatial_interpolate_method'], str) and kwargs['spatial_interpolate_method'] in ['nearest_neighbor', 'area_average', 'focal']:
+                self._GEDI_link_Denv_spatial_interpolate_method = [kwargs['spatial_interpolate_method']]
+            elif isinstance(kwargs['spatial_interpolate_method'], list) and True in [_ in ['nearest_neighbor', 'area_average', 'focal'] for _ in kwargs['spatial_interpolate_method']]:
+                self._GEDI_link_Denv_spatial_interpolate_method = [_ for _ in kwargs['spatial_interpolate_method'] if _ in ['nearest_neighbor', 'area_average', 'focal']]
+            else:
+                raise TypeError('The spatial_interpolate_method was problematic!')
+        else:
+            self._GEDI_link_Denv_spatial_interpolate_method = ['nearest_neighbor']
+
         # process accumulated_method
-        if 'accumulated_method' in kwargs.keys():
-            if isinstance(kwargs['accumulated_method'], str) and kwargs['accumulated_method'] in ['static_thr', 'phemetric_thr']:
-                self._GEDI_link_S2_retrieval_method = kwargs['accumulated_method']
+        if 'accumulated_period' in kwargs.keys():
+            if isinstance(kwargs['accumulated_period'], str) and kwargs['accumulated_period'] in ['SOY2DOY', 'SOS2DOY', 'SOY2PEAK', 'SOS2PEAK']:
+                self._GEDI_link_S2_accumulated_period = kwargs['accumulated_period']
             else:
                 raise TypeError('Please mention the dc_overwritten_para should be str type!')
         else:
-            self._GEDI_link_S2_retrieval_method = 'phemetric_thr'
+            self._GEDI_link_S2_accumulated_period = 'SOY2DOY'
 
-        if 'static_thr' in kwargs.keys():
-            if isinstance(kwargs['static_thr'], (int, float, complex)):
-                self._link_GEDI_denv_method = ['static_thr', kwargs['static_thr']]
-            else:
-                raise TypeError('Please mention the static_thr should be a number!')
-        elif self._GEDI_link_S2_retrieval_method == 'static_thr':
-            self._link_GEDI_denv_method = ['phemetric_thr', 10]
+        if 'threshold' in kwargs.keys():
+            if isinstance(kwargs['threshold'], list) and kwargs['threshold'] == 2:
+                if kwargs['threshold'][0] == 'static_thr':
+                    self._link_GEDI_threshold = 'static_thr'
+                    if isinstance(kwargs['threshold'][1], (np.float32, np.float64, float)):
+                        self._thr = kwargs['threshold'][1]
+                    else:
+                        raise Exception('The threshold should be a float type!')
 
-        if 'phemetric_window' in kwargs.keys():
-            if isinstance(kwargs['phemetric_window'], int):
-                self._link_GEDI_denv_method = ['phemetric_thr', kwargs['phemetric_window']]
+                elif kwargs['threshold'][0] == 'phemetric_thr':
+                    self._link_GEDI_threshold = 'phemetric_thr'
+                    if isinstance(kwargs['threshold'][1], (np.int16, np.int32, int)):
+                        self._thr = kwargs['threshold'][1]
+                        self._thr = min(self._thr, 10)
+                        self._thr = max(self._thr, 1)
+                    else:
+                        raise Exception('The threshold should be a int type!')
             else:
-                raise TypeError('Please mention the phemetric_window should be int type!')
+                raise TypeError('Please mention the threshold should be a list type with two elements!')
+
         else:
-            self._link_GEDI_denv_method = ['phemetric_thr', 10]
+            self._link_GEDI_threshold = 'phemetric_thr'
+            self._thr = 5
 
-    def link_GEDI_accumulated_Denv(self, GEDI_df_, denv_list, **kwargs):
+    def link_GEDI_Denvdc(self, GEDI_df_, denv_list, **kwargs):
 
         # Process para
-        self._process_link_GEDI_Denv(**kwargs)
+        self._process_link_GEDI_Denv_para(**kwargs)
 
         # Retrieve the GeoTransform
         raster_gt = gdal.Open(self.ROI_tif).GetGeoTransform()
@@ -2327,6 +2342,11 @@ class RS_dcs(object):
         gedi_list_folder = os.path.join(GEDI_df_.work_env, 'GEDI_link_RS\\')
         bf.create_folder(gedi_list_folder)
 
+        # Get the phemetricdc under the year list
+        for _ in GEDI_df_.year_list:
+            if _ not in self._pheyear_list:
+                raise TypeError(f'The phemetric datacube for year {str(_)} is not imported into the RSdc!')
+
         # Construct Denv list
         for denv_temp in denv_list:
             if os.path.exists(gedi_list_folder + f'{GEDI_df_.file_name}_{denv_temp}.csv'):
@@ -2337,22 +2357,44 @@ class RS_dcs(object):
 
                 # Divide the GEDI and dc into different blocks
                 block_amount = os.cpu_count()
-                indi_block_size = int(np.ceil(GEDI_list.df_size / block_amount))
+                indi_block_size = int(np.ceil(GEDI_df_.df_size / block_amount))
 
                 # Allocate the GEDI_df and dc
-                GEDI_df_blocked, denvdc_blocked, raster_gt_list, doy_list_integrated = [], [], [], []
+                GEDI_df_blocked, denvdc_blocked, phedc_blocked, raster_gt_list, doy_list_integrated = [], [], [], [], []
+                buffer_diamter = max(25, raster_gt[1])
 
-                # Phe dc count and pos
+                # Denvdc count and pos
                 denvdc_count = len([_ for _ in self._index_list if _ == denv_temp])
                 denvdc_pos = [_ for _ in range(len(self._index_list)) if self._index_list[_] == denv_temp]
 
-                # Reconstruct the phenology dc
+                # Phemedc pos
+                phemedc_pos = [_ for _ in range(len(self._pheyear_list)) if self._pheyear_list[_] in GEDI_df_.year_list]
+
+                # Reconstruct the phemetric dc
+                phemedc_reconstructed = None
+                for _ in phemedc_pos:
+                    if f'{str(self._pheyear_list[_])}_SOS' not in self._doys_backup_[_] or f'{str(self._pheyear_list[_])}_peak_doy' not in self._doys_backup_[_]:
+                        raise TypeError(f'The phemetric SOS or peak doy for year {str(self._pheyear_list[_])} is not properly imported!')
+                    if phemedc_reconstructed is None:
+                        if self._sparse_matrix_list[_]:
+                            phemedc_reconstructed = NDSparseMatrix(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_SOS'], SM_namelist=[f'{str(self._pheyear_list[_])}_SOS'])
+                            phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_peak_doy'], f'{str(self._pheyear_list[_])}_peak_doy', phemedc_reconstructed.shape[2] + 1)
+                        else:
+                            phemedc_reconstructed = self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_SOS'])]]
+                            phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_peak_doy'])]]), axis=2)
+                    else:
+                        if self._sparse_matrix_list[_]:
+                            phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_SOS'], f'{str(self._pheyear_list[_])}_SOS', phemedc_reconstructed.shape[2] + 1)
+                            phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_peak_doy'], f'{str(self._pheyear_list[_])}_peak_doy', phemedc_reconstructed.shape[2] + 1)
+                        else:
+                            phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_{phemetric_temp}'])]]), axis=2)
+                            phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_peak_doy'])]]), axis=2)
+
+                # Reconstruct the denv dc
                 denvdc_reconstructed = None
                 for _ in range(denvdc_count):
                     if denvdc_reconstructed is None:
                         if self._sparse_matrix_list[denvdc_pos[_]]:
-                            denvdc_reconstructed = NDSparseMatrix(self.dcs[denvdc_pos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'],
-                                                                  SM_namelist=[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])
                             denvdc_reconstructed = self.dcs[denvdc_pos[_]]
                         else:
                             denvdc_reconstructed = self.dcs[denvdc_pos[_]]
@@ -2365,9 +2407,9 @@ class RS_dcs(object):
 
                 for i in range(block_amount):
                     if i != block_amount - 1:
-                        GEDI_df_blocked.append(GEDI_list.GEDI_inform_DF[i * indi_block_size: (i + 1) * indi_block_size])
+                        GEDI_df_blocked.append(GEDI_df_reset[i * indi_block_size: (i + 1) * indi_block_size])
                     else:
-                        GEDI_df_blocked.append(GEDI_list.GEDI_inform_DF[i * indi_block_size: -1])
+                        GEDI_df_blocked.append(GEDI_df_reset[i * indi_block_size: -1])
 
                     ymin_temp, ymax_temp, xmin_temp, xmax_temp = GEDI_df_blocked[-1].EPSG_lat.max() + 12.5, \
                                                                  GEDI_df_blocked[-1].EPSG_lat.min() - 12.5, \
@@ -2386,16 +2428,22 @@ class RS_dcs(object):
                         sm_temp = denvdc_reconstructed.extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
                         denvdc_blocked.append(sm_temp)
                     else:
-                        denvdc_blocked.append(
-                            denvdc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
+                        denvdc_blocked.append(denvdc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
+
+                    if isinstance(phemedc_reconstructed, NDSparseMatrix):
+                        sm_temp = phemedc_reconstructed.extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
+                        phedc_blocked.append(sm_temp)
+                    else:
+                        phedc_blocked.append(phemedc_reconstructed[cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
 
                 try:
                     # Sequenced code for debug
-                    # for i in range(block_amount):
-                    #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
+                    for i in range(block_amount):
+                        result = link_GEDI_Denvdc_inform(denvdc_blocked[i], denv_temp, doy_list_integrated, raster_gt, phemedc_block[i], GEDI_df_blocked[i], 'EPSG',
+                                                         ['linear_interpolation'], self._GEDI_link_S2_accumulated_period, [self._link_GEDI_threshold, self._thr])
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                        result = executor.map(link_GEDI_accdenvinform, denvdc_blocked, GEDI_df_blocked,
-                                              repeat(doy_list_integrated), raster_gt_list, repeat('EPSG'),
+                        result = executor.map(link_GEDI_Denvdc_inform, denvdc_blocked, GEDI_df_blocked,
+                                              repeat(doy_list_integrated), doy_list_integrated, raster_gt_list, repeat('EPSG'),
                                               repeat(denv_temp))
                 except:
                     raise Exception('The s2pheme-GEDI link procedure was interrupted by unknown error!')
@@ -2431,7 +2479,7 @@ class RS_dcs(object):
         else:
             self._GEDI_link_Pheme_spatial_interpolate_method = ['nearest_neighbor']
 
-    def link_GEDI_phenology_inform(self, GEDI_df_, phemetric_list, **kwargs):
+    def link_GEDI_Phemedc(self, GEDI_df_, phemetric_list, **kwargs):
 
         # Process para
         self._process_link_GEDI_phenology_para(**kwargs)
@@ -2515,9 +2563,9 @@ class RS_dcs(object):
                 try:
                     # Sequenced code for debug
                     # for i in range(block_amount):
-                    #     result = link_GEDI_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
+                    #     result = link_GEDI_Phedc_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                        result = executor.map(link_GEDI_pheinform, phedc_blocked, repeat(year_list_temp), repeat(phemetric_temp),
+                        result = executor.map(link_GEDI_Phedc_inform, phedc_blocked, repeat(year_list_temp), repeat(phemetric_temp),
                                               raster_gt_list, GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_Pheme_spatial_interpolate_method))
                 except:
                     raise Exception('The s2pheme-GEDI link procedure was interrupted by unknown error!')
@@ -2542,6 +2590,8 @@ class RS_dcs(object):
         # Output to a single file
         if not os.path.exists(gedi_list_folder + f'{GEDI_df_.file_name}_all_Phemetrics.csv') and len(phemetric_list) > 1:
             GEDI_df_.GEDI_inform_DF.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_all_Phemetrics.csv')
+
+
 
     def _process_link_GEDI_RS_para(self, **kwargs):
 
@@ -2572,7 +2622,7 @@ class RS_dcs(object):
         else:
             self._GEDI_link_RS_temporal_interpolate_method = ['linear_interpolation']
 
-    def link_GEDI_RS_dc(self, GEDI_df_, index_list, **kwargs):
+    def link_GEDI_RS_dc(self, GEDI_df_, index_list, phemetric, **kwargs):
 
         # Two different method Nearest neighbor and linear interpolation
         self._process_link_GEDI_RS_para(**kwargs)
@@ -2632,11 +2682,11 @@ class RS_dcs(object):
                 try:
                     # Sequenced code for debug
                     # for i in range(block_amount):
-                    #     result = link_GEDI_inform(dc_blocked[i], raster_gt_list[i], doy_list_temp[i], index_temp,
+                    #     result = link_GEDI_RSdc_inform(dc_blocked[i], raster_gt_list[i], doy_list_temp[i], index_temp,
                     #                           GEDI_df_blocked[i], 'EPSG', self._GEDI_link_RS_temporal_interpolate_method,
                     #                           self._GEDI_link_RS_spatial_interpolate_method)
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                        result = executor.map(link_GEDI_inform, dc_blocked, raster_gt_list, doy_list_temp, repeat(index_temp),
+                        result = executor.map(link_GEDI_RSdc_inform, dc_blocked, raster_gt_list, doy_list_temp, repeat(index_temp),
                                               GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_RS_temporal_interpolate_method),
                                               repeat(self._GEDI_link_RS_spatial_interpolate_method))
                 except:
@@ -2734,8 +2784,6 @@ class RS_dcs(object):
                 process_denv_via_pheme(self._dcs_backup_[self._pheyear_list.index(year_)].dc_filename,
                                        self._dcs_backup_[[_ for _ in range(len(self._index_list)) if self._index_list[_] == denvname and self._timerange_list[_] == year_][0]].dc_filename,
                                        year_, pheme_, para_list)
-
-
 
 
         #

@@ -262,6 +262,37 @@ def date2doy(self):
         raise TypeError('The date2doy method did not support this data type')
 
 
+def date2datetime(self):
+
+    self_temp = copy.deepcopy(self)
+    if type(self_temp) == str:
+        try:
+            return date2datetime(int(self_temp))
+        except:
+            raise TypeError('The date2datetime method did not support this data type')
+    elif type(self_temp) == int or type(self_temp) == np.int32 or type(self_temp) == np.int16 or type(self_temp) == np.int64:
+        if len(str(self_temp)) == 8:
+            year_temp = self_temp // 10000
+        else:
+            raise ValueError('The date length is not correct!')
+        date_temp = datetime.date(year=year_temp, month= np.mod(self_temp, 10000) // 100, day=np.mod(self_temp, 100))
+        return date_temp
+    elif type(self_temp) == list:
+        i = 0
+        while i < len(self_temp):
+            self_temp[i] = date2datetime(self_temp[i])
+            i += 1
+        return self_temp
+    elif type(self_temp) is np.ndarray:
+        i = 0
+        while i < self_temp.shape[0]:
+            self_temp[i] = date2datetime(self_temp[i])
+            i += 1
+        return self_temp
+    else:
+        raise TypeError('The date2datetime method did not support this data type')
+
+
 def file_filter(file_path_temp, containing_word_list: list, subfolder_detection=False, and_or_factor=None, exclude_word_list=[]):
 
     file_path_temp = Path(file_path_temp).path_name
@@ -476,3 +507,10 @@ def arr2tif(output_folder: str, output_name: str, arr: np.ndarray, transform: tu
     outband = None
     outRaster = None
 
+
+def isfloat(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False

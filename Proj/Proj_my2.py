@@ -6,7 +6,7 @@ from River_GIS.River_GIS import *
 if __name__ == '__main__':
 
     # Water level import
-    wl1 = HydrometricStationData()
+    wl1 = HydroStationDS()
     file_list = bf.file_filter('D:\\Hydrodatacube\\water_level\\', ['.xls'])
     corr_temp = pd.read_csv('D:\\Hydrodatacube\\water_level\\对应表.csv')
     cs_list, wl_list = [], []

@@ -1,9 +1,18 @@
 from Landsat_toolbox.Landsat_main_v2 import *
 from RSDatacube.RSdc import *
 from River_GIS.River_GIS import *
-
+from Crawler.crawler_weatherdata import Qweather_dataset
 
 if __name__ == '__main__':
+
+    # Water level import
+    wl1 = HydroStationDS()
+    wl1.import_from_standard_files('G:\\A_1Dflow_sed\\Hydrodynamic_model\\Original_water_level\\', 'G:\\A_1Dflow_sed\\Hydrodynamic_model\\Original_water_level\\对应表.csv')
+    wl1.to_csvs()
+
+    # Process the climate date
+    QW_ds = Qweather_dataset('G:\\A_Climatology_dataset\\station_dataset\\Qweather_dataset\\')
+    QW_ds.to_standard_cma_file()
 
     landsat_temp = Landsat_l2_ds('G:\\A_Landsat_Floodplain_veg\\Landsat_YZR_2023\\Ori_zipfile\\')
     landsat_temp.construct_metadata(unzipped_para=False)
@@ -72,21 +81,7 @@ if __name__ == '__main__':
     for itr_ in np.linspace(10, 60, 11):
         thal1.straighten_river_through_thalweg('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\veg_diff.TIF', itr=int(itr_))
 
-    # Water level import
-    wl1 = HydrometricStationData()
-    file_list = bf.file_filter('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_water_level\\', ['.xls'])
-    corr_temp = pd.read_csv('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_water_level\\对应表.csv')
-    cs_list, wl_list = [], []
-    for file_ in file_list:
-        for hs_num in range(corr_temp.shape[0]):
-            hs = corr_temp[corr_temp.keys()[1]][hs_num]
-            if hs in file_:
-                cs_list.append(corr_temp[corr_temp.keys()[0]][hs_num])
-                wl_list.append(corr_temp[corr_temp.keys()[2]][hs_num])
 
-    for fn_, cs_, wl_ in zip(file_list, cs_list, wl_list):
-        wl1.import_from_standard_excel(fn_, cs_, water_level_offset=wl_)
-    wl1.to_csvs()
 
     # for cs, date in zip(['界Z3+3', 'CZ63', 'CZ63', 'CZ89', 'CZ118', ], [20200816, 20130710, 20190804, 20120915, 20170828]):
     #     wl1.cs_wl(thal1, cs, date)

@@ -15,7 +15,6 @@ class Varandarray:
         self.Namlen = 0
         self.Dirlnt = 0
 
-
         self.Coks = 0.0
         self.Coms = 0.0
 

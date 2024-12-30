@@ -6,7 +6,7 @@ from River_GIS.River_GIS import *
 if __name__ == '__main__':
 
     # Water level import
-    wl1 = HydrometricStationData()
+    wl1 = HydroStationDS()
     file_list = bf.file_filter('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_water_level\\', ['.xls'])
     corr_temp = pd.read_csv('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_water_level\\对应表.csv')
     cs_list, wl_list = [], []
@@ -21,7 +21,7 @@ if __name__ == '__main__':
         wl1.import_from_standard_excel(fn_, cs_, water_level_offset=wl_)
     wl1.to_csvs()
 
-    # Cross section construction POST-TGD
+    # Cross-section construction POST-TGD
     cs1 = CrossSection('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\')
     cs1.from_stdCSfiles('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_DEM_2019_all.csv')
     cs1.import_CS_coords('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_coordinates_wgs84.csv', epsg_crs='epsg:32649')
@@ -60,8 +60,7 @@ if __name__ == '__main__':
                     arr_all += arr.astype(np.uint32)
             bf.write_raster(ds, arr_all/file_len, dir, 'inundation_freq.TIF', raster_datatype=gdal.GDT_Float32)
 
-    if not os.path.exists('G:\A_Landsat_veg\Water_level_python\Post_TGD\\ele_posttgd4model.TIF') or \
-            not os.path.exists('G:\A_Landsat_veg\Water_level_python\Post_TGD\\ele_pretgd4model.TIF'):
+    if not os.path.exists('G:\A_Landsat_veg\Water_level_python\Post_TGD\\ele_posttgd4model.TIF') or not os.path.exists('G:\A_Landsat_veg\Water_level_python\Post_TGD\\ele_pretgd4model.TIF'):
         pre_ele_ds = gdal.Open('G:\A_Landsat_veg\Water_level_python\Post_TGD\\ele_DT_inundation_frequency_pretgd.TIF')
         pre_inun_ds = gdal.Open('G:\A_Landsat_veg\Water_level_python\Post_TGD\\inun_DT_inundation_frequency_pretgd.TIF')
         post_ele_ds = gdal.Open('G:\A_Landsat_veg\Water_level_python\Post_TGD\\ele_DT_inundation_frequency_posttgd.TIF')
@@ -77,8 +76,6 @@ if __name__ == '__main__':
 
         bf.write_raster(pre_ele_ds, pre_ele_arr, 'G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\', 'ele_pretgd4model.TIF')
         bf.write_raster(post_ele_ds, post_ele_arr, 'G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\', 'ele_posttgd4model.TIF')
-
-
 
     thal1 = cs1.generate_Thalweg()
 
@@ -104,8 +101,6 @@ if __name__ == '__main__':
         hydrodc1 = HydroDatacube()
         hydrodc1.from_hydromatrix(f'G:\\A_Landsat_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
         hydrodc1.seq_simplified_conceptual_inundation_model('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\ele_posttgd4model.TIF', thal1, 'G:\A_Landsat_veg\Water_level_python\inundation_status\\postwl_postdem\\')
-
-
 
     # Cross section construction POST-TGD
     cs1 = CrossSection('G:\\A_Landsat_veg\\Water_level_python\\Post_TGD\\')
