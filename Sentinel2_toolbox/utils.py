@@ -128,19 +128,6 @@ def two_term_fourier(x, a0, a1, b1, a2, b2, w):
     return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x)+b2 * np.sin(2 * w * x)
 
 
-def shapely_to_ogr_type(shapely_type):
-    from osgeo import ogr
-    if shapely_type == "Polygon":
-        return ogr.wkbPolygon
-    elif shapely_type == "LineString":
-        return ogr.wkbLineString
-    elif shapely_type == "MultiPolygon":
-        return ogr.wkbMultiPolygon
-    elif shapely_type == "MultiLineString":
-        return ogr.wkbLineString
-    raise TypeError("shapely type %s not supported" % shapely_type)
-
-
 def no_nan_mean(x):
     return np.nanmean(x)
 

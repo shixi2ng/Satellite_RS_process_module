@@ -1,7 +1,7 @@
 #############################################################################################
-# 1D Morphodynamic Model for the Yellow River  using a coupled approach
-#                         Developed by Junqiang Xia
-#     						   May-July 2010
+# 1D Hydrodynamic Model for the Yangtze River
+#  Developed by Junqiang Xia and recoded by Xi SHI
+#  Jan 2025
 #  Characteristics of this model:
 #  (1) Quasi-2D or 1D,Different Roughness between Main Channel and Flood Plain
 #  (2) Nonequlibrium transport of nonuniform Suspended Sediments

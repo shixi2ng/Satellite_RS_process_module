@@ -74,6 +74,9 @@ class GEDI_df(object):
         self._GEDI_fund_att = ['Date', 'Shot Number', 'Beam', 'Latitude', 'Longitude', 'Tandem-X DEM', 'Elevation (m)',
                                'Canopy Elevation (m)', 'Canopy Height (rh100)', 'RH 98', 'RH 25', 'Quality Flag',
                                'Degrade Flag', 'Sensitivity', 'Urban rate', 'Landsat water rate', 'Leaf off flag']
+        self._GEDI_fund_att_simu = ['Date', 'Shot Number', 'Beam', 'EPSG_lat', 'EPSG_lon', 'Tandem-X DEM', 'Elevation (m)',
+                                    'Canopy Elevation (m)', 'Canopy Height (rh100)', 'RH 98', 'RH 25', 'Quality Flag',
+                                    'Degrade Flag', 'Sensitivity', 'Urban rate', 'Landsat water rate', 'Leaf off flag']
 
         for GEDI_inform_xlsx in args:
             if not os.path.exists(GEDI_inform_xlsx):
@@ -85,11 +88,24 @@ class GEDI_df(object):
             else:
                 raise Exception(f'The {GEDI_inform_xlsx} is not a valid xlsx file')
 
-            if False in [q in GEDI_df.keys() for q in self._GEDI_fund_att]:
+            # Obtain the size of gedi
+            if 'high_quality' in GEDI_inform_xlsx:
+                self._shp_name = GEDI_inform_xlsx.split('\\')[-1].split(f'_high_quality')[0]
+                fund = self._GEDI_fund_att
+            elif 'all' in GEDI_inform_xlsx:
+                self._shp_name = GEDI_inform_xlsx.split('\\')[-1].split(f'_all')[0]
+                fund = self._GEDI_fund_att
+            elif 'simulated' in GEDI_inform_xlsx:
+                self._shp_name = GEDI_inform_xlsx.split('\\')[-1].split(f'_simulated')[0]
+                fund = self._GEDI_fund_att_simu
+            else:
+                raise Exception('Not a valid GEDI dataframe file')
+
+            if False in [q in GEDI_df.keys() for q in fund]:
                 raise Exception(f'The {GEDI_inform_xlsx} does not contain all the required inform!')
 
             elif self.GEDI_inform_DF is None:
-                self.GEDI_inform_DF = GEDI_df[self._GEDI_fund_att]
+                self.GEDI_inform_DF = GEDI_df[fund]
 
             else:
                 key_temp = list(GEDI_df.keys())
@@ -102,13 +118,6 @@ class GEDI_df(object):
                     _ += 1
                 self.GEDI_inform_DF = pd.merge(GEDI_df, self.GEDI_inform_DF, on=key_temp, how='outer')
 
-            # Obtain the size of gedi
-            if 'high_quality' in GEDI_inform_xlsx:
-                self._shp_name = GEDI_inform_xlsx.split('\\')[-1].split(f'_high_quality')[0]
-            elif 'all' in GEDI_inform_xlsx:
-                self._shp_name = GEDI_inform_xlsx.split('\\')[-1].split(f'_all')[0]
-            else:
-                raise Exception('Not a valid GEDI dataframe file')
             self.work_env = os.path.dirname(GEDI_inform_xlsx)
             self.file_name = os.path.basename(GEDI_inform_xlsx).split('.')[0]
 
@@ -152,6 +161,9 @@ class GEDI_df(object):
                 self.GEDI_inform_DF.insert(len(self.GEDI_inform_DF.columns), name_temp, data_temp)
 
             # Sort it according to lat and lon
+            self.GEDI_inform_DF = self.GEDI_inform_DF.sort_values([f'{xycolumn_start}_lon', f'{xycolumn_start}_lat'], ascending=[True, False])
+            self.GEDI_inform_DF = self.GEDI_inform_DF.reset_index(drop=True)
+        else:
             self.GEDI_inform_DF = self.GEDI_inform_DF.sort_values([f'{xycolumn_start}_lon', f'{xycolumn_start}_lat'], ascending=[True, False])
             self.GEDI_inform_DF = self.GEDI_inform_DF.reset_index(drop=True)
 

@@ -8,6 +8,38 @@ import shutil
 import geopandas as gp
 from types import ModuleType, FunctionType
 from gc import get_referents
+import pandas as pd
+
+
+def merge_csv_files(folder_path, output_file, merge_keys=None):
+    # Get all CSV files in the folder
+    csv_files = [f for f in os.listdir(folder_path) if f.endswith('.csv')]
+
+    # Check if there are any CSV files
+    if not csv_files:
+        print("No CSV files found in the folder.")
+        return
+
+    # Initialize merged_df with the first CSV file
+    first_file_path = os.path.join(folder_path, csv_files[0])
+    merged_df = pd.read_csv(first_file_path)
+
+    # Iterate over the remaining CSV files and merge them
+    for csv_file in csv_files[1:]:
+        file_path = os.path.join(folder_path, csv_file)
+        df = pd.read_csv(file_path)
+        if merge_keys is None:
+            merged_df = pd.merge(merged_df, df, how='outer', on=list(set(merged_df.columns) & set(df.columns)), suffixes=('_left', '_right'))
+        else:
+            merged_df = pd.merge(merged_df, df, how='outer', on=merge_keys, suffixes=('_left', '_right'))
+
+        # Drop columns with specific suffixes after each merge
+        suffixes_to_drop = ['_left', '_right']
+        columns_to_drop = [col for col in merged_df.columns if col.endswith(tuple(suffixes_to_drop))]
+        merged_df.drop(columns=columns_to_drop, inplace=True)
+
+    # Save the merged DataFrame to a new CSV file
+    merged_df.to_csv(output_file, index=False)
 
 
 class Path(object):

@@ -276,7 +276,7 @@ class NDSparseMatrix:
 
         elif len(list_temp) == 2:
             if isinstance(list_temp[0], (int, np.int16, np.int32, np.int64)) and isinstance(list_temp[1], (int, np.int16, np.int32, np.int64)):
-                if list_temp[0] in range_temp and list_temp[1] in range_temp and list_temp[0] <= list_temp[1]:
+                if list_temp[0] >= range_temp.start and list_temp[1] <=range_temp.stop and list_temp[0] <= list_temp[1]:
                     return [list_temp[0], list_temp[1]]
             else:
                 raise ValueError('Please input a supported type!')

@@ -77,7 +77,7 @@ class HydroStationDS (object):
 
         # Define the metadata dic
         self.hydrostation_inform_df = {}
-        self.hydrostation_mtdata_df = {}
+        self.hydrostation_metadata_df = {}
 
         # Metadata key
         self._metadata_key = ['hydrostation_name', 'crosssection_name', 'waterlevel_offset', 'measured_metric', 'tributary_indicator']
@@ -90,7 +90,7 @@ class HydroStationDS (object):
         :param work_env: Folder for output or the default folder from standard file folder is generated
         """
 
-        # Generate the output path
+        # Update the work env
         if work_env is not None and os.path.isdir(work_env):
             bf.create_folder(work_env)
             self.work_env = work_env
@@ -100,22 +100,22 @@ class HydroStationDS (object):
         # Identify if the metadata file is valid or not
         if os.path.exists(metadata_file):
             if metadata_file.endswith('.xlsx') or metadata_file.endswith('.xls'):
-                self.hydrostation_mtdata_df = pd.read_excel(metadata_file)
+                self.hydrostation_metadata_df = pd.read_excel(metadata_file)
             elif metadata_file.endswith('.csv'):
-                self.hydrostation_mtdata_df = pd.read_csv(metadata_file)
+                self.hydrostation_metadata_df = pd.read_csv(metadata_file)
             else:
                 raise TypeError('Please make sure the metadata_file is csv or excel file')
         else:
             raise ValueError('The metadata file is not existed!')
 
         # Check the keys of metadata
-        if False in [_ in self.hydrostation_mtdata_df.keys() for _ in self._metadata_key]:
+        if False in [_ in self.hydrostation_metadata_df.keys() for _ in self._metadata_key]:
             raise Exception('The metadata file does not contain all the essential inform!')
         else:
-            self.hydrostation_mtdata_df = self.hydrostation_mtdata_df[self._metadata_key]
+            self.hydrostation_metadata_df = self.hydrostation_metadata_df[self._metadata_key]
 
         # Get all the standard file from standard file folder
-        standard_files = bf.file_filter(standard_file_folder, ['.csv', '.xls'], and_or_factor='or', subfolder_detection=False)
+        standard_files = bf.file_filter(standard_file_folder, ['.csv', '.xls'], and_or_factor='or', exclude_word_list=['$'], subfolder_detection=False)
         for file_name in standard_files:
             try:
                 # Read the sheet
@@ -132,45 +132,52 @@ class HydroStationDS (object):
                     raise ValueError('Please make sure the filename is under id_stationname_startyear_endyear.xlsx format!')
                 else:
                     if file_name.split('_')[0].isnumeric():
-                        hydrometric_id = file_name.split('_')[0]
+                        hydrometric_id = int(file_name.split('_')[0])
                     elif file_name.split('_')[0] == 'tri':
                         hydrometric_id = 0
                     else:
                         raise ValueError('Please make sure the hydrometric station id is firstly presented!')
-                    station_name = file_name.split('_')[1]
 
                 # Read the cs name, water level offset, tributary and QZ
-                if station_name not in list(self.hydrostation_mtdata_df['hydrostation_name']):
+                station_name = file_name.split('_')[1]
+                if station_name not in list(self.hydrostation_metadata_df['hydrostation_name']):
                     raise ValueError(f'The metadata of station {station_name} is not recorded in the metadata file!')
                 else:
-                    water_level_offset = self.hydrostation_mtdata_df[self.hydrostation_mtdata_df['hydrostation_name'] == station_name]['waterlevel_offset'].values[0]
-                    cs_name = self.hydrostation_mtdata_df[self.hydrostation_mtdata_df['hydrostation_name'] == station_name]['crosssection_name'].values[0]
-                    metrics = self.hydrostation_mtdata_df[self.hydrostation_mtdata_df['hydrostation_name'] == station_name]['measured_metric'].values[0]
-                    tribu = self.hydrostation_mtdata_df[self.hydrostation_mtdata_df['hydrostation_name'] == station_name]['tributary_indicator'].values[0]
+                    water_level_offset = self.hydrostation_metadata_df[self.hydrostation_metadata_df['hydrostation_name'] == station_name]['waterlevel_offset'].values[0]
+                    cs_name = self.hydrostation_metadata_df[self.hydrostation_metadata_df['hydrostation_name'] == station_name]['crosssection_name'].values[0]
+                    metrics = self.hydrostation_metadata_df[self.hydrostation_metadata_df['hydrostation_name'] == station_name]['measured_metric'].values[0]
+                    tribu = self.hydrostation_metadata_df[self.hydrostation_metadata_df['hydrostation_name'] == station_name]['tributary_indicator'].values[0]
 
-                # Check the metadata is under the correct type
-                if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
-                    water_level_offset = np.nan
+                # Check if the metadata is under the correct type
+                if isinstance(water_level_offset, (np.float32, np.float64)):
+                    if np.isnan(water_level_offset):
+                        water_level_offset = np.nan
+                    else:
+                        water_level_offset = water_level_offset
                 else:
                     raise TypeError('The water level offset not under right type!')
 
-                # Check the metadata is under the correct type
-                if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
-                    water_level_offset = np.nan
-                else:
-                    raise TypeError('The water level offset not under right type!')
-
-                # Check the metadata is under the correct type
-                if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
-                    water_level_offset = np.nan
-                else:
-                    raise TypeError('The water level offset not under right type!')
-
-                # Check the metadata is under the correct type
-                if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
-                    water_level_offset = np.nan
-                else:
-                    raise TypeError('The water level offset not under right type!')
+                # if tribu not in [0, 1, -1]:
+                #     raise ValueError('')
+                #
+                #
+                #
+                # if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
+                #     water_level_offset = np.nan
+                # else:
+                #     raise TypeError('The water level offset not under right type!')
+                #
+                # # Check the metadata is under the correct type
+                # if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
+                #     water_level_offset = np.nan
+                # else:
+                #     raise TypeError('The water level offset not under right type!')
+                #
+                # # Check the metadata is under the correct type
+                # if np.isnan(water_level_offset) or isinstance(water_level_offset, (np.float32, np.float64)):
+                #     water_level_offset = np.nan
+                # else:
+                #     raise TypeError('The water level offset not under right type!')
 
                 wl_start_index = df_temp.loc[df_temp[df_temp.keys()[0]] == station_name].index
                 year_list_, month_list_, day_list_, doy_list_, flow_list_, sed_con_list_, sed_flux_list_, water_level_list_ = [], [], [], [], [], [], [], []
@@ -275,7 +282,7 @@ class HydroStationDS (object):
                 self.hydrostation_id_list.append(hydrometric_id)
                 self.hydrostation_name_list.append(station_name)
                 self.crosssection_name_list.append(cs_name)
-                self.waterlevel_offset_list[station_name] = water_level_offset
+                self.waterlevel_offset_list.append(water_level_offset)
                 self.hydrostation_inform_df[station_name] = hydrological_inform_df
             except:
                 print(traceback.format_exc())
@@ -294,7 +301,7 @@ class HydroStationDS (object):
             hydrometric_id_temp = self.hydrostation_id_list[_]
             station_name_temp = self.hydrostation_name_list[_]
             cross_section_temp = self.crosssection_name_list[_]
-            water_level_offset = self.waterlevel_offset_list[station_name_temp]
+            water_level_offset = self.waterlevel_offset_list[_]
             hydrological_inform = self.hydrostation_inform_df[station_name_temp]
 
             if isinstance(hydrological_inform, pd.DataFrame):

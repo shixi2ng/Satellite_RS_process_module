@@ -563,6 +563,9 @@ class Landsat_l2_ds(object):
                         elif ~np.isnan(nodata_value):
                             arr_dic[band_temp][arr_dic[band_temp] == nodata_value] = np.nan
 
+                        # Refactor the surface reflectance
+                        arr_dic[band_temp] = arr_dic[band_temp] * 0.0000275 - 0.2
+
                         # harmonise the Landsat 8
                         if self._harmonising_data and sensor_type in ['LC08'] and band_temp not in ['QA_PIXEL', 'gap_mask']:
                             arr_dic[band_temp] = arr_dic[band_temp] * self._OLI2ETM_harmonised_factor[f'{band_temp}_band_OLS'][0] + self._OLI2ETM_harmonised_factor[f'{band_temp}_band_OLS'][1]
