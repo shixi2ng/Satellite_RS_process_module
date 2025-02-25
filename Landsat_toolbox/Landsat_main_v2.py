@@ -695,23 +695,27 @@ class Landsat_l2_ds(object):
                         except ValueError:
                             raise ValueError(f'QI and BAND array for {str(tile_num)} {str(filedate)} {str(sensor_type)} is not compatible')
 
+                    # Landsat 7 scan line correction
                     if self._scan_line_correction:
                         fill_landsat7_gap(output_array)
                         pass
 
-                    if _ in self._band_sup:
-                        output_array[np.isnan(output_array)] = 0
-                        output_array.astype(np.uint16)
-                        bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_UInt16)
-                        data_type = gdal.GDT_UInt16
-                        nodata_value = 0
-                    elif self._size_control_factor:
-                        output_array[np.isnan(output_array)] = -3.2768
-                        output_array = output_array * 10000
-                        output_array.astype(np.int16)
-                        bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
-                        data_type = gdal.GDT_Int16
-                        nodata_value = -32768
+                    # Output to tiffile
+                    if self._size_control_factor:
+                        if _ in self._band_sup:
+                            output_array[np.isnan(output_array)] = 0
+                            output_array = output_array * 10000
+                            output_array.astype(np.uint16)
+                            bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_UInt16)
+                            data_type = gdal.GDT_UInt16
+                            nodata_value = 0
+                        else:
+                            output_array[np.isnan(output_array)] = -3.2768
+                            output_array = output_array * 10000
+                            output_array.astype(np.int16)
+                            bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Int16)
+                            data_type = gdal.GDT_Int16
+                            nodata_value = -32768
                     else:
                         bf.write_raster(ds_temp, output_array, '/vsimem/', file_name + '.TIF', raster_datatype=gdal.GDT_Float32)
                         data_type = gdal.GDT_Float32
