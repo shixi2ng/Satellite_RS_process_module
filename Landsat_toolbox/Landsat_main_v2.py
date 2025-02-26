@@ -208,7 +208,7 @@ class Landsat_l2_ds(object):
         ##################################################################
         # Landsat 9 and Landsat 7 duplicate
         # SINCE the Landsat 9 was not struggled with the scan line corrector issue
-        # It has a priority than the Landsat
+        # It has a priority than the Landsat 7
         ##################################################################
 
         date_tile_combined_list = [filepath_temp.split('\\')[-1].split('.')[0].split('_L2SP_')[-1][0: 15] for filepath_temp in self.orifile_list]
@@ -240,36 +240,34 @@ class Landsat_l2_ds(object):
         # Generate metadata
         if (os.path.exists(self._work_env + 'Metadata.xlsx') and len(self.orifile_list) != pd.read_excel(self._work_env + 'Metadata.xlsx').shape[0]) or not os.path.exists(self._work_env + 'Metadata.xlsx'):
             File_path, FileID, Sensor_type, Tile, Date, Tier_level = ([] for _ in range(6))
+
             with tqdm(total=len(self.orifile_list), desc=f'Obtain the metadata of Landsat dataset', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                for i in self.orifile_list:
-                    try:
-                        unzipped_file = tarfile.TarFile(i)
-                        if unzipped_para:
-                            # print('Start unzipped ' + str(i) + '.')
-                            # start_time = time.time()
-                            unzipped_file.extractall(path=self.unzipped_folder)
-                            # print('End Unzipped ' + str(i) + ' in ' + str(time.time() - start_time) + ' s.')
-                        unzipped_file.close()
+                # Use ProcessPoolExecutor to execute the function in parallel
+                with concurrent.futures.ProcessPoolExecutor() as executor:
 
-                        landsat_indi = False
-                        for _ in ['LE07', 'LC08', 'LT04', 'LT05', 'LC09']:
-                            if _ in i:
-                                Sensor_type.append(i[i.find(_): i.find(_) + 4])
-                                FileID.append(i[i.find(_): i.find('.tar')])
-                                landsat_indi = True
+                    # Submit tasks to the executor
+                    futures = [executor.submit(unzip_Landsat_tarfile, file_, path_) for file_, path_ in zip(self.orifile_list, repeat(self.unzipped_folder))]
+                    result_list = []
 
-                        if landsat_indi is False:
-                            raise Exception(f'The Original tiffile {str(i)} is not belonging to Landsat 4 5 7 8 or 9')
+                    for future in concurrent.futures.as_completed(futures):
+                        pbar.update(1)
+                        result = future.result()  # Get the result (optional)
+                        result_list.append(result) # Print the result (optional)
 
-                        Tile.append(i[i.find('L2S') + 5: i.find('L2S') + 11])
-                        Date.append(i[i.find('L2S') + 12: i.find('L2S') + 20])
-                        Tier_level.append(i[i.find('_T') + 1: i.find('_T') + 3])
-                        File_path.append(i)
+            # Process results after all futures have completed
+            for result in results:
+                success, sensor_type, file_id, tile, date, tier_level, file_path = result
+                if success:
+                    Sensor_type.append(sensor_type)
+                    FileID.append(file_id)
+                    Tile.append(tile)
+                    Date.append(date)
+                    Tier_level.append(tier_level)
+                    File_path.append(file_path)
+                else:
+                    print(f"Failed to process file: {file_path}")
+                    shutil.move(file_path, corrupted_file_folder + file_path[file_path.find('L2S') - 5:])
 
-                    except:
-                        shutil.move(i, corrupted_file_folder + i[i.find('L2S') - 5:])
-
-                    pbar.update()
             File_metadata = pandas.DataFrame({'File_Path': File_path, 'FileID': FileID, 'Sensor_Type': Sensor_type, 'Tile_Num': Tile, 'Date': Date, 'Tier_Level': Tier_level})
             File_metadata.to_excel(self._work_env + 'Metadata.xlsx')
 
