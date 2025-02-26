@@ -563,6 +563,9 @@ class Landsat_l2_ds(object):
                         elif ~np.isnan(nodata_value):
                             arr_dic[band_temp][arr_dic[band_temp] == nodata_value] = np.nan
 
+                        # Remove invalid pixel
+                        arr_dic[band_temp][np.logical_or(arr_dic[band_temp]> 43636, arr_dic[band_temp]< 7273)] = np.nan
+
                         # Refactor the surface reflectance
                         arr_dic[band_temp] = arr_dic[band_temp] * 0.0000275 - 0.2
 
