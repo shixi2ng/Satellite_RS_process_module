@@ -212,30 +212,39 @@ class Landsat_l2_ds(object):
         ##################################################################
 
         date_tile_combined_list = [filepath_temp.split('\\')[-1].split('.')[0].split('_L2SP_')[-1][0: 15] for filepath_temp in self.orifile_list]
+        l79_dup_list = []
         for date_tile_temp in date_tile_combined_list:
             if date_tile_combined_list.count(date_tile_temp) == 2:
-                l79_list = bf.file_filter(self.ori_folder, [str(date_tile_temp)])
-                if len(l79_list) == 2 and (('LE07' in l79_list[0] and 'LC09' in l79_list[1]) or ('LE07' in l79_list[1] and 'LC09' in l79_list[0])):
-                    l7_file = [_ for _ in l79_list if 'LE07' in _][0]
-                    l7_file_name = l7_file.split('\\')[-1]
-                    try:
-                        os.rename(l7_file, f'{corrupted_file_folder}{l7_file_name}')
-                    except:
-                        raise Exception(f'The Landsat 7 duplicate file {str(l7_file)} is not processed!')
-                elif len(l79_list) == 2 and (('LE07' in l79_list[0] and 'LC08' in l79_list[1]) or ('LE07' in l79_list[1] and 'LC08' in l79_list[0])):
-                    l7_file = [_ for _ in l79_list if 'LE07' in _][0]
-                    l7_file_name = l7_file.split('\\')[-1]
-                    try:
-                        os.rename(l7_file, f'{corrupted_file_folder}{l7_file_name}')
-                    except:
-                        raise Exception(f'The Landsat 7 duplicate file {str(l7_file)} is not processed!')
-                elif len(l79_list) == 1 and 'LC09' in l79_list[0]:
-                    pass
-                else:
-                    raise Exception(f'Something went wrong with the Landsat file under {date_tile_temp}!')
-
+                l79_dup_list.append(date_tile_temp)
             elif date_tile_combined_list.count(date_tile_temp) > 2:
                 raise Exception(f'There are more than 2 files sharing the same sensing date {str(date_tile_temp)}. Check it manually!')
+        l79_dup_list = list(set(l79_dup_list))
+
+        for date_tile_temp in l79_dup_list:
+            l79_list = bf.file_filter(self.ori_folder, [str(date_tile_temp)])
+            if len(l79_list) == 2 and (('LE07' in l79_list[0] and 'LC09' in l79_list[1]) or ('LE07' in l79_list[1] and 'LC09' in l79_list[0])):
+                l7_file = [_ for _ in l79_list if 'LE07' in _][0]
+                l7_file_name = l7_file.split('\\')[-1]
+                try:
+                    os.rename(l7_file, f'{corrupted_file_folder}{l7_file_name}')
+                except:
+                    raise Exception(f'The Landsat 7 duplicate file {str(l7_file)} is not processed!')
+            elif len(l79_list) == 2 and (('LE07' in l79_list[0] and 'LC08' in l79_list[1]) or ('LE07' in l79_list[1] and 'LC08' in l79_list[0])):
+                l7_file = [_ for _ in l79_list if 'LE07' in _][0]
+                l7_file_name = l7_file.split('\\')[-1]
+                try:
+                    os.rename(l7_file, f'{corrupted_file_folder}{l7_file_name}')
+                except:
+                    raise Exception(f'The Landsat 7 duplicate file {str(l7_file)} is not processed!')
+            elif len(l79_list) == 1 and 'LC09' in l79_list[0]:
+                pass
+            else:
+                raise Exception(f'Something went wrong with the Landsat file under {date_tile_temp}!')
+
+        # Update the ori Landsat zip file
+        self.orifile_list = bf.file_filter(self.ori_folder, ['.tar', 'L2SP'], and_or_factor='and', subfolder_detection=True)
+        if len(self.orifile_list) == 0:
+            raise ValueError('There has no valid Landsat L2 data in the original folder!')
 
         # Generate metadata
         if (os.path.exists(self._work_env + 'Metadata.xlsx') and len(self.orifile_list) != pd.read_excel(self._work_env + 'Metadata.xlsx').shape[0]) or not os.path.exists(self._work_env + 'Metadata.xlsx'):
@@ -255,7 +264,7 @@ class Landsat_l2_ds(object):
                         result_list.append(result) # Print the result (optional)
 
             # Process results after all futures have completed
-            for result in results:
+            for result in result_list:
                 success, sensor_type, file_id, tile, date, tier_level, file_path = result
                 if success:
                     Sensor_type.append(sensor_type)

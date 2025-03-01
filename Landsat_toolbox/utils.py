@@ -15,6 +15,8 @@ from itertools import chain
 from collections import Counter
 import basic_function as bf
 import matplotlib.pyplot as plt
+import tarfile
+import traceback
 
 
 def union_list(small_list, big_list) -> list:
@@ -50,23 +52,25 @@ def unzip_Landsat_tarfile(tar_path, extract_path, unzipped_para=True):
                     else:
                         pass
                 tar.close()
+            print(f'Successfully unzip Landsat file {tar_path}')
         else:
             unzipped_file = tarfile.TarFile(tar_path)
             unzipped_file.close()
 
-        for _ in ['LE07', 'LC08', 'LT04', 'LT05', 'LC09']:
-            if _ in tar_path:
-                Sensor_type = tar_path[tar_path.find(_): tar_path.find(_) + 4]
-                FileID = tar_path[tar_path.find(_): tar_path.find('.tar')]
-                Tile = tar_path[tar_path.find('L2S') + 5: tar_path.find('L2S') + 11]
-                Date = tar_path[tar_path.find('L2S') + 12: tar_path.find('L2S') + 20]
-                Tier_level = tar_path[tar_path.find('_T') + 1: tar_path.find('_T') + 3]
-                File_path = tar_path
-            else:
-                raise Exception('Please make sure the file is from Landsat 7, 8, 4, 5, 9')
+        if True in [_ in tar_path for _ in ['LE07', 'LC08', 'LT04', 'LT05', 'LC09']]:
+            _ = ['LE07', 'LC08', 'LT04', 'LT05', 'LC09'][[_ in tar_path for _ in ['LE07', 'LC08', 'LT04', 'LT05', 'LC09']].index(True)]
+            Sensor_type = tar_path[tar_path.find(_): tar_path.find(_) + 4]
+            FileID = tar_path[tar_path.find(_): tar_path.find('.tar')]
+            Tile = tar_path[tar_path.find('L2S') + 5: tar_path.find('L2S') + 11]
+            Date = tar_path[tar_path.find('L2S') + 12: tar_path.find('L2S') + 20]
+            Tier_level = tar_path[tar_path.find('_T') + 1: tar_path.find('_T') + 3]
+            File_path = tar_path
+        else:
+            raise Exception('Please make sure the file is from Landsat 7, 8, 4, 5, 9')
         return True, Sensor_type, FileID, Tile, Date, Tier_level, File_path
     except:
-        return False, None, None, None, None, None, None
+        print(traceback.format_exc())
+        return False, None, None, None, None, None, tar_path
 
 
 def trim_axs(axs, N):

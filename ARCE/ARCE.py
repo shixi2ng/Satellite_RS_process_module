@@ -33,7 +33,6 @@ from rasterio.features import shapes
 import heapq
 import networkx as netx
 from geopy.distance import geodesic
-from sklearn.cluster import DBSCAN
 
 
 global topts
@@ -201,270 +200,30 @@ class GEE_ds(object):
 class River_centreline(object):
 
     def __init__(self):
-
         # Define the basic attribute
-        self.rcl_arr = None
+        self.rcw_arr = None
         self.rcw_tif = None
 
-        self.river_len = None
-        self.river_geometry = None
-
-    def line_connection(self, centreline_arr, width_arr, psi_arr, nodata_value=0):
-
-        # Check if the width array meet the requirement
-        if np.sum(width_arr[np.logical_and(width_arr < 0, width_arr != nodata_value)]) > 1:
-            raise Exception('The width arr should not have negative value!')
-        # Check if three arrays are consistent or nor
-        if centreline_arr.shape[0] != width_arr.shape[0] or centreline_arr.shape[1] != width_arr.shape[1] or \
-                psi_arr.shape[0] != width_arr.shape[0] or psi_arr.shape[1] != width_arr.shape[1]:
-            raise Exception('The input arr is not consistent in size!')
-
-        psi_arr = ((np.max(psi_arr) - psi_arr) * 10) ** 2
-        centreline_arr = centreline_arr.astype(np.uint8)
-        width_arr_connected = copy.deepcopy(width_arr)
-        centerline_arr_connected = copy.deepcopy(centreline_arr)
-        width_arr_connected[centerline_arr_connected == 0] = 0
-
-        # Find all lines
-        kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]])
-        kernely = np.array([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
-        kernelx = np.array([[1, 0, -1], [1, 0, -1], [1, 0, -1]])
-
-        node_sum = convolve2d(centreline_arr, kernel, mode='same', boundary='fill', fillvalue=0)
-        node_x = convolve2d(centreline_arr, kernelx, mode='same', boundary='fill', fillvalue=0)
-        node_y = convolve2d(centreline_arr, kernely, mode='same', boundary='fill', fillvalue=0)
-        node_x_y = np.abs(node_x) + np.abs(node_y)
-        node_arr = np.zeros_like(centreline_arr)
-        node_arr[np.logical_and(centreline_arr == 1,
-                                np.logical_or(node_sum == 1, np.logical_and(node_sum == 2, node_x_y == 3)))] = 1
-
-        # Define connectivity (8-connectivity in this example)
-        structure = np.array([[1, 1, 1],
-                              [1, 1, 1],
-                              [1, 1, 1]])
-
-        labeled_array, num_features = label(centreline_arr, structure=structure)
-        linestrings = []
-        for i in range(1, num_features + 1):
-            linestrings.append(np.argwhere(labeled_array == i))
-
-        # Sort linestrings from widest to thinnest
-        width_average_list = []
-        for line_ in linestrings:
-            width_all = 0
-            for pix_ in line_:
-                width_all += width_arr[pix_[0], pix_[1]]
-            width_average_list.append(width_all / len(line_))
-
-        width_average_list_sort = np.unique(np.sort(np.array(width_average_list))[::-1]).tolist()
-        linestrings_sorted = []
-        for width_ in width_average_list_sort:
-            linestrings_ex = [linestrings[__] for __ in range(len(width_average_list)) if
-                              width_average_list[__] == width_]
-            linestrings_sorted.extend(linestrings_ex)
-
-        label_line = np.zeros_like(centreline_arr, dtype=np.int32)
-
-        # Generate the buffer
-        try:
-            time1, time2, time3, time4 = 0, 0, 0, 0
-            linepos = 1
-            line_all = np.zeros_like(centreline_arr, dtype=np.int32)
-            buffer_all = np.zeros_like(centreline_arr, dtype=np.int32)
-            for linestring in linestrings_sorted:
-                if len(linestring) == 1:
-                    width_arr_connected[linestring[0][0], linestring[0][1]] = 0
-                    centerline_arr_connected[linestring[0][0], linestring[0][1]] = 0
-                else:
-                    st = time.time()
-                    buffer_temp = np.zeros_like(centreline_arr, dtype=np.int32)
-                    for point_ in linestring:
-                        line_all[point_[0], point_[1]] = linepos
-                        rwidth = int(np.ceil(width_arr[point_[0], point_[1]]))
-                        dis_arr = distance_matrix(rwidth)
-                        dis_arr = (dis_arr < width_arr[point_[0], point_[1]]).astype(np.int32)
-
-                        if point_[0] - rwidth < 0:
-                            buff_xstart = 0
-                            dis_xstart = int(rwidth - point_[0])
-                        else:
-                            buff_xstart = int(point_[0] - rwidth)
-                            dis_xstart = 0
-
-                        if point_[1] - rwidth < 0:
-                            buff_ystart = 0
-                            dis_ystart = int(rwidth - point_[1])
-                        else:
-                            buff_ystart = int(point_[1] - rwidth)
-                            dis_ystart = 0
-
-                        if point_[0] + rwidth > buffer_temp.shape[0] - 1:
-                            buff_xend = buffer_temp.shape[0]
-                            dis_xend = int(rwidth + 1 + buffer_temp.shape[0] - 1 - point_[0])
-                        else:
-                            buff_xend = int(point_[0] + rwidth) + 1
-                            dis_xend = 2 * int(rwidth) + 1
-
-                        if point_[1] + rwidth > buffer_temp.shape[1] - 1:
-                            buff_yend = buffer_temp.shape[1]
-                            dis_yend = int(rwidth + 1 + buffer_temp.shape[1] - 1 - point_[1])
-                        else:
-                            buff_yend = int(point_[1] + rwidth) + 1
-                            dis_yend = 2 * int(rwidth) + 1
-
-                        buffer_temp[buff_xstart: buff_xend, buff_ystart: buff_yend] = buffer_temp[buff_xstart: buff_xend,buff_ystart: buff_yend] + dis_arr[dis_xstart: dis_xend, dis_ystart: dis_yend]
-
-                    buffer_temp[buffer_temp > 1] = 1
-                    buffer_temp[buffer_temp == 1] = linepos
-                    if np.sum(np.logical_and(buffer_temp != 0, buffer_all != 0)) != 0:
-
-                        cut_area = np.sum(buffer_temp != 0)
-                        union_area = np.sum(np.logical_and(buffer_temp != 0, buffer_all != 0))
-                        ratio = union_area / cut_area
-                        if ratio <= 1:
-
-                            unique_r = np.sort(np.unique(buffer_all[np.logical_and(buffer_temp != 0, buffer_all != 0)]))
-                            point_list_all = []
-                            width_ave_all = []
-                            st = time.time()
-                            for r_ in unique_r:
-
-                                pos = np.argwhere(np.logical_and(buffer_temp == linepos, buffer_all == r_)).tolist()
-                                # Isolate the intersect area
-                                dbscan = DBSCAN(eps=max(buffer_temp.shape[0], buffer_temp.shape[1]), min_samples=1)
-                                clusters = dbscan.fit_predict(pos)
-                                connected_point = []
-                                intersect_area = []
-
-                                for cluster in np.unique(clusters):
-                                    intersect_area.append([pos[_] for _ in range(clusters.shape[0]) if clusters[_] == cluster])
-
-                                for pos_area in intersect_area:
-                                    st = time.time()
-                                    # intersect_mask = np.ones_like(psi_arr) * 32768
-                                    # for intersect_pos_ in pos_area:
-                                    #     intersect_mask[intersect_pos_[0], intersect_pos_[1]] = 1
-                                    # psi_arr_t = psi_arr * intersect_mask
-                                    pos_area_ = np.round(np.nanmean(pos_area, axis=0)).astype(np.uint32)
-                                    curr_pix = np.argwhere(np.logical_and(line_all == linepos, node_arr == 1))
-                                    connect_pix = np.argwhere(np.logical_and(line_all == r_, node_arr == 1))
-
-                                    dis2curr = [np.sqrt((_[0] - pos_area_[0]) ** 2 + (_[1] - pos_area_[1]) ** 2) for _
-                                                in curr_pix]
-                                    dis2connect = [np.sqrt((_[0] - pos_area_[0]) ** 2 + (_[1] - pos_area_[1]) ** 2) for
-                                                   _ in connect_pix]
-
-                                    if min(dis2curr) < min(dis2connect):
-                                        start_node = curr_pix[dis2curr.index(min(dis2curr))]
-                                        connect_line = np.argwhere(line_all == r_)
-                                    else:
-                                        start_node = connect_pix[dis2connect.index(min(dis2connect))]
-                                        connect_line = np.argwhere(line_all == linepos)
-
-                                    time1 += time.time() - st
-                                    st = time.time()
-
-                                    path = optimal_path(start_node, connect_line, psi_arr)
-                                    width_temp = [width_arr[path_[0], path_[1]] for path_ in path]
-                                    nms_min = np.nanmean(np.array(width_temp[width_temp != 0]))
-                                    for path_ in path:
-                                        centerline_arr_connected[path_[0], path_[1]] = 1
-                                        width_arr_connected[path_[0], path_[1]] = nms_min if width_arr_connected[path_[0], path_[1]] != 0 else 0
-
-                                    connected_point.extend(path)
-                                    time2 += time.time() - st
-
-                                    # dis2connect = [np.sqrt((_[0] - pos[0]) ** 2 + (_[1] - pos[1]) ** 2) for _ in connect_pix]
-                                    # nearest_connect_pix = connect_pix[dis2connect.index(min(dis2connect)), :]
-                                    #
-                                    # point_list = bresenham_line(nearest_curr_pix, nearest_connect_pix)
-                                    # point_list_all.append(point_list)
-                                    # width_ave_all.append((width_arr[nearest_connect_pix[0], nearest_connect_pix[1]] + width_arr[nearest_curr_pix[0], nearest_curr_pix[1]]) / 2)
-
-                            for r in unique_r:
-                                # for point_ in point_list_all[index_]:
-                                #     line_all[point_[0], point_[1]] = linepos
-                                #     if width_arr_connected[point_[0], point_[1]] == nodata_value:
-                                #         width_arr_connected[point_[0], point_[1]] = width_ave_all[index_]
-                                # buffer_all[buffer_all == unique_r[index_]] = linepos
-                                # line_all[line_all == unique_r[index_]] = linepos
-                                buffer_all[buffer_all == r] = linepos
-                                line_all[line_all == r] = linepos
-                                a = 1
-                            buffer_all[buffer_temp == linepos] = linepos
-
-                        else:
-                            for point_ in linestring:
-                                width_arr_connected[point_[0], point_[1]] = 0
-                                centerline_arr_connected[point_[0], point_[1]] = 0
-                    else:
-                        for point_ in linestring:
-                            centerline_arr_connected[point_[0], point_[1]] = 1
-                            width_arr_connected[point_[0], point_[1]] = width_arr[point_[0], point_[1]]
-                        buffer_all[buffer_temp == linepos] = linepos
-                linepos += 1
-                print(f'time1: {str(time1)},  time2: {str(time2)} ({str(linepos)} of {str(len(linestrings_sorted))})')
-        except:
-            print(traceback.format_exc())
-        return centerline_arr_connected, width_arr_connected, node_arr
-
     def composite_month_landsat(self, MNDWI_folder):
-        mndwi_files = file_filter(MNDWI_folder, ['.TIF'], exclude_word_list=['.ovr', '.aux'], and_or_factor='or')
-        month_range = [int(np.floor(int(_.split('\\')[-1].split('.TIF')[0].split('_')[0]) / 100)) for _ in mndwi_files]
+        mndwi_files = file_filter(MNDWI_folder, ['.TIF'], and_or_factor='or')
+        month_range = [np.floor(int(_.split('\\')[-1].split('.TIF')[0].split('_')[1])) for _ in mndwi_files]
         month_range = np.unique(np.array(month_range).astype(np.int32)).tolist()
         month_range = [str(int(_)) for _ in month_range]
-
-        # fix folder path
         composite_folder = os.path.join(MNDWI_folder, 'composite\\')
-
         for month in month_range:
-            maximum_composite_tiffile(file_filter(MNDWI_folder, ['.TIF', month], and_or_factor='and'), composite_folder, f'MNDWI_{str(month)}.TIF')
+            maximum_composite_tiffile(file_filter(MNDWI_folder, ['.TIF', month], and_or_factor='and'), composite_folder,f'MNDWI_{str(month)}.TIF')
 
-    def extract_RCL_byrivermap_(self, composite_folder, roi):
+    def extract_RCL_byrivermap_(self, composite_folder):
         composite_file = file_filter(composite_folder, ['.TIF'])
         centreline_folder = os.path.join(composite_folder, 'centreline\\')
         create_folder(centreline_folder)
         with concurrent.futures.ProcessPoolExecutor() as exe:
-            exe.map(self.generate_centreline, composite_file, repeat(centreline_folder), repeat(roi))
+            result = exe.map(self.generete_centreline, composite_file, repeat(centreline_folder),)
+            #多线程只输入一个文件时可以这样做 直接返回结果
+            centerline_arr, width_arr, psi_arr = next(result)
+        return centerline_arr, width_arr, psi_arr
 
-    def process_river_networks(self, centreline_arr, width_arr):
-        # 识别所有独立的河网
-        num_labels, labels_im = cv2.connectedComponents(centreline_arr.astype(np.uint8))
-
-        # 准备输出主汊的栅格
-        main_channels_arr = np.zeros_like(centreline_arr)
-
-        len_list = []
-        for label in range(1, num_labels):
-            len_list.append(np.argwhere(labels_im == label).shape[0])
-            # 提取当前河网的节点
-        label = len_list.index(max(len_list)) + 1
-        nodes = np.argwhere(labels_im == label)
-        start = nodes[nodes[:, 1].argsort()[::-1]]
-        end = tuple(start[0, :])
-        start = tuple(start[-1, :])
-        graph = netx.Graph()
-
-        # 构建图：遍历节点，连接8向邻居（如果是河网的一部分）
-        for node in nodes:
-            x, y = node
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    if dx != 0 or dy != 0:
-                        nx, ny = x + dx, y + dy
-                        if 0 <= nx < centreline_arr.shape[0] and 0 <= ny < centreline_arr.shape[1] and labels_im[nx, ny] == label:
-                            graph.add_edge((x, y), (nx, ny), weight=width_arr[x, y])
-
-            # 寻找主汊
-        if graph.number_of_nodes() > 0:
-            main_channel = find_max_avg_width_path(graph, start, end)
-            # 标记主汊到输出栅格中
-            for node in main_channel:
-                main_channels_arr[node[0], node[1]] = 1
-
-        return main_channels_arr
-
-    def generate_centreline(self, mndwi_file, output_folder, roi):
+    def generete_centreline(self, mndwi_file, output_folder):
         try:
             ori_ds = gdal.Open(mndwi_file)
             mndwi_arr = ori_ds.GetRasterBand(1).ReadAsArray()
@@ -475,7 +234,7 @@ class River_centreline(object):
             filters = singularity_index.SingularityIndexFilters()
 
             # Compute the modified multiscale singularity index
-            psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters, narrow_rivers=False)
+            psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters)
 
             # Extract channel centerlines
             nms = delineate.extractCenterlines(orient, psi)
@@ -485,49 +244,13 @@ class River_centreline(object):
             width_arr = np.array(widthMap)
             psi_arr = np.array(psi)
 
-            #
             filename = mndwi_file.split('\\')[-1].split('.TIF')[0]
             write_raster(ori_ds, centerline_arr, output_folder, f'centerline_{str(filename)}.tif', raster_datatype=gdal.GDT_Byte)
-            write_raster(ori_ds, width_arr, output_folder, f'width_{str(filename)}.tif', raster_datatype=gdal.GDT_Float32)
-            write_raster(ori_ds, psi_arr, output_folder, f'psi_{str(filename)}.tif', raster_datatype=gdal.GDT_Float32)
 
-            if roi is not None:
-
-                # Crop the centreline, psi and width arr using the roi
-                gdal.Warp(os.path.join(output_folder, f'centerline_{str(filename)}_crop.tif'),
-                          os.path.join(output_folder, f'centerline_{str(filename)}.tif'),
-                          cutlineDSName=roi, cropToCutline=True, dstNodata=0, xRes=30, yRes=30)
-                gdal.Warp(os.path.join(output_folder, f'width_{str(filename)}_crop.tif'),
-                          os.path.join(output_folder, f'width_{str(filename)}.tif'),
-                          cutlineDSName=roi, cropToCutline=True, dstNodata=0, xRes=30, yRes=30)
-                gdal.Warp(os.path.join(output_folder, f'psi_{str(filename)}_crop.tif'),
-                          os.path.join(output_folder, f'psi_{str(filename)}.tif'),
-                          cutlineDSName=roi, cropToCutline=True, dstNodata=0, xRes=30, yRes=30)
-
-                width_ds = gdal.Open(os.path.join(output_folder, f'width_{str(filename)}_crop.tif'))
-                psi_ds = gdal.Open(os.path.join(output_folder, f'psi_{str(filename)}_crop.tif'))
-                centerline_ds = gdal.Open(os.path.join(output_folder, f'centerline_{str(filename)}_crop.tif'))
-
-                centerline_arr = centerline_ds.GetRasterBand(1).ReadAsArray()
-                width_arr = width_ds.GetRasterBand(1).ReadAsArray()
-                psi_arr = psi_ds.GetRasterBand(1).ReadAsArray()
-
-                # Line connection and find mainstream
-                center_new, width_new, node_arr = self.line_connection(centerline_arr, width_arr, psi_arr, nodata_value=0)
-                main_stream = self.process_river_networks(center_new, width_new)
-                write_raster(centerline_ds, center_new, output_folder, f'centerline_connect_{str(filename)}.tif',
-                             raster_datatype=gdal.GDT_Byte)
-                write_raster(centerline_ds, main_stream, output_folder, f'mainstream_{str(filename)}.tif',
-                             raster_datatype=gdal.GDT_Byte)
-
-            else:
-                # Line connection and find mainstream
-                center_new, width_new, node_arr = self.line_connection(centerline_arr, width_arr, psi_arr, nodata_value=0)
-                main_stream = self.process_river_networks(center_new, width_new)
-                write_raster(ori_ds, center_new, output_folder, f'centerline_connect_{str(filename)}.tif', raster_datatype=gdal.GDT_Byte)
-                write_raster(ori_ds, main_stream, output_folder, f'mainstream_{str(filename)}.tif', raster_datatype=gdal.GDT_Byte)
+            return centerline_arr, width_arr, psi_arr
         except:
             print(traceback.format_exc())
+
 
     def braiding_index(self, centreline_files, cs_shpfile):
 
@@ -695,6 +418,201 @@ class built_in_index(object):
                 self.index_dic[i] = [var, func]
 
 
+def line_connection(centreline_arr, width_arr, psi_arr, nodata_value=0):
+
+    # Check if the width array meet the requirement
+    if np.sum(width_arr[np.logical_and(width_arr < 0, width_arr != nodata_value)]) > 1:
+        raise Exception ('The width arr should not have negative value!')
+    # Check if three arrays are consistent or nor
+    if centreline_arr.shape[0] != width_arr.shape[0] or centreline_arr.shape[1] != width_arr.shape[1] or psi_arr.shape[0] != width_arr.shape[0] or psi_arr.shape[1] != width_arr.shape[1]:
+        raise Exception ('The input arr is not consistent in size!')
+
+    psi_arr = ((np.max(psi_arr) - psi_arr) * 10) ** 2
+    centreline_arr = centreline_arr.astype(np.uint8)
+    width_arr_connected = copy.deepcopy(width_arr)
+    centerline_arr_connected = copy.deepcopy(centreline_arr)
+    width_arr_connected[centerline_arr_connected == 0] = 0
+
+    # Find all lines
+    kernel = np.array([[1,1,1], [1,0,1], [1,1,1]])
+    kernely = np.array([[1,1,1], [0,0,0], [-1,-1,-1]])
+    kernelx = np.array([[1,0,-1], [1,0,-1], [1,0,-1]])
+
+    node_sum = convolve2d(centreline_arr, kernel, mode='same', boundary='fill', fillvalue=0)
+    node_x = convolve2d(centreline_arr, kernelx, mode='same', boundary='fill', fillvalue=0)
+    node_y = convolve2d(centreline_arr, kernely, mode='same', boundary='fill', fillvalue=0)
+    node_x_y = np.abs(node_x) + np.abs(node_y)
+    node_arr = np.zeros_like(centreline_arr)
+    node_arr[np.logical_and(centreline_arr==1, np.logical_or(node_sum==1, np.logical_and(node_sum==2, node_x_y == 3)))] = 1
+
+    # Define connectivity (8-connectivity in this example)
+    structure = np.array([[1, 1, 1],
+                          [1, 1, 1],
+                          [1, 1, 1]])
+
+    labeled_array, num_features = label(centreline_arr, structure=structure)
+    linestrings = []
+    for i in range(1, num_features + 1):
+        linestrings.append(np.argwhere(labeled_array == i))
+
+    # Sort linestrings from widest to thinnest
+    width_average_list = []
+    for line_ in linestrings:
+        width_all = 0
+        for pix_ in line_:
+            width_all += width_arr[pix_[0], pix_[1]]
+        width_average_list.append(width_all / len(line_))
+
+    width_average_list_sort = np.unique(np.sort(np.array(width_average_list))[::-1]).tolist()
+    linestrings_sorted = []
+    for width_ in width_average_list_sort:
+        linestrings_ex = [linestrings[__] for __ in range(len(width_average_list)) if width_average_list[__] == width_]
+        linestrings_sorted.extend(linestrings_ex)
+
+    label_line = np.zeros_like(centreline_arr, dtype=np.int32)
+
+    # Generate the buffer
+    try:
+        linepos = 1
+        line_all = np.zeros_like(centreline_arr, dtype=np.int32)
+        buffer_all = np.zeros_like(centreline_arr, dtype=np.int32)
+        for linestring in linestrings_sorted:
+            if len(linestring) == 1:
+                width_arr_connected[linestring[0][0], linestring[0][1]] = 0
+                centerline_arr_connected[linestring[0][0], linestring[0][1]] = 0
+            else:
+                buffer_temp = np.zeros_like(centreline_arr, dtype=np.int32)
+                for point_ in linestring:
+                    line_all[point_[0], point_[1]] = linepos
+                    rwidth = int(np.ceil(width_arr[point_[0], point_[1]]))
+                    dis_arr = distance_matrix(rwidth)
+                    dis_arr = (dis_arr < width_arr[point_[0], point_[1]]).astype(np.int32)
+
+                    if point_[0] - rwidth < 0:
+                        buff_xstart = 0
+                        dis_xstart = int(rwidth - point_[0])
+                    else:
+                        buff_xstart = int(point_[0] - rwidth)
+                        dis_xstart = 0
+
+                    if point_[1] - rwidth < 0:
+                        buff_ystart = 0
+                        dis_ystart = int(rwidth - point_[1])
+                    else:
+                        buff_ystart = int(point_[1] - rwidth)
+                        dis_ystart = 0
+
+                    if point_[0] + rwidth > buffer_temp.shape[0] - 1:
+                        buff_xend = buffer_temp.shape[0]
+                        dis_xend = int(rwidth + 1 + buffer_temp.shape[0] - 1 - point_[0])
+                    else:
+                        buff_xend = int(point_[0] + rwidth) + 1
+                        dis_xend = 2 * int(rwidth) + 1
+
+                    if point_[1] + rwidth > buffer_temp.shape[1] - 1:
+                        buff_yend = buffer_temp.shape[1]
+                        dis_yend = int(rwidth + 1 + buffer_temp.shape[1] - 1 - point_[1])
+                    else:
+                        buff_yend = int(point_[1] + rwidth) + 1
+                        dis_yend = 2 * int(rwidth) + 1
+
+                    buffer_temp[buff_xstart: buff_xend, buff_ystart: buff_yend] = buffer_temp[buff_xstart: buff_xend, buff_ystart: buff_yend] + dis_arr[dis_xstart: dis_xend, dis_ystart: dis_yend]
+
+                buffer_temp[buffer_temp > 1] = 1
+                buffer_temp[buffer_temp == 1] = linepos
+                if np.sum(np.logical_and(buffer_temp != 0, buffer_all != 0)) != 0:
+                    cut_area = np.sum(buffer_temp != 0)
+                    union_area = np.sum(np.logical_and(buffer_temp != 0, buffer_all != 0))
+                    ratio = union_area / cut_area
+                    if ratio <= 1:
+                        unique_r = np.sort(np.unique(buffer_all[np.logical_and(buffer_temp != 0, buffer_all != 0)]))
+                        point_list_all = []
+                        width_ave_all = []
+                        for r_ in unique_r:
+                            pos = np.argwhere(np.logical_and(buffer_temp == linepos, buffer_all == r_))
+                            pos = [list(_) for _ in pos]
+                            # Connected point
+                            connected_point = []
+
+                            # Isolate the intersect area
+                            intersect_area = []
+                            visited_pos = []
+                            while len(visited_pos) != len(pos):
+                                area_, all_adjenct = [], False
+                                while not all_adjenct:
+                                    pos_left = [_ for _ in pos if _ not in visited_pos]
+                                    if len(area_) == 0:
+                                        area_.append(pos_left[0])
+                                    else:
+                                        adjenct_status = [adjent(_, area_) for _ in pos_left]
+                                        area_append = [pos_left[_] for _ in range(len(adjenct_status)) if adjenct_status[_]]
+
+                                        if len(area_append) == 0:
+                                            all_adjenct = True
+                                        else:
+                                            area_.extend(area_append)
+
+                                intersect_area.append(area_)
+                                visited_pos.extend(area_)
+
+                            for pos_area in intersect_area:
+                                pos_area_ = np.round(np.nanmean(pos_area, axis=0)).astype(np.uint32)
+                                curr_pix = np.argwhere(np.logical_and(line_all == linepos, node_arr == 1))
+                                connect_pix = np.argwhere(np.logical_and(line_all == r_, node_arr == 1))
+
+                                dis2curr = [np.sqrt((_[0] - pos_area_[0]) ** 2 + (_[1] - pos_area_[1]) ** 2) for _ in curr_pix]
+                                dis2connect = [np.sqrt((_[0] - pos_area_[0]) ** 2 + (_[1] - pos_area_[1]) ** 2) for _ in connect_pix]
+
+                                if min(dis2curr) < min(dis2connect):
+                                    start_node = curr_pix[dis2curr.index(min(dis2curr))]
+                                    connect_line = np.argwhere(line_all == r_)
+                                else:
+                                    start_node = connect_pix[dis2connect.index(min(dis2connect))]
+                                    connect_line = np.argwhere(line_all == linepos)
+
+                                path = optimal_path(start_node, connect_line, psi_arr)
+                                width_temp = [width_arr[path_[0], path_[1]] for path_ in path]
+                                nms_min = np.nanmean(np.array(width_temp[width_temp != 0]))
+                                for path_ in path:
+                                    centerline_arr_connected[path_[0], path_[1]] = 1
+                                    width_arr_connected[path_[0], path_[1]] = nms_min if width_arr_connected[path_[0], path_[1]] != 0 else 0
+
+                                connected_point.extend(path)
+
+                                # dis2connect = [np.sqrt((_[0] - pos[0]) ** 2 + (_[1] - pos[1]) ** 2) for _ in connect_pix]
+                                # nearest_connect_pix = connect_pix[dis2connect.index(min(dis2connect)), :]
+                                #
+                                # point_list = bresenham_line(nearest_curr_pix, nearest_connect_pix)
+                                # point_list_all.append(point_list)
+                                # width_ave_all.append((width_arr[nearest_connect_pix[0], nearest_connect_pix[1]] + width_arr[nearest_curr_pix[0], nearest_curr_pix[1]]) / 2)
+
+                        for r in unique_r:
+                            # for point_ in point_list_all[index_]:
+                            #     line_all[point_[0], point_[1]] = linepos
+                            #     if width_arr_connected[point_[0], point_[1]] == nodata_value:
+                            #         width_arr_connected[point_[0], point_[1]] = width_ave_all[index_]
+                            # buffer_all[buffer_all == unique_r[index_]] = linepos
+                            # line_all[line_all == unique_r[index_]] = linepos
+                            buffer_all[buffer_all == r] = linepos
+                            line_all[line_all == r] = linepos
+                            a = 1
+                        buffer_all[buffer_temp == linepos] = linepos
+                    else:
+                        for point_ in linestring:
+                            width_arr_connected[point_[0], point_[1]] = 0
+                            centerline_arr_connected[point_[0], point_[1]] = 0
+                else:
+                    for point_ in linestring:
+                        centerline_arr_connected[point_[0], point_[1]] = 1
+                        width_arr_connected[point_[0], point_[1]] = width_arr[point_[0], point_[1]]
+                    buffer_all[buffer_temp == linepos] = linepos
+            linepos += 1
+    except:
+        print(traceback.format_exc())
+
+    return centerline_arr_connected, width_arr_connected, node_arr
+
+
 def find_river_networks(centreline_arr):
     # 使用8向连通结构
     s = generate_binary_structure(2, 2)
@@ -727,7 +645,19 @@ def bfs_for_main_channel(labeled_array, width_arr, component_id):
             if 0 <= nx < rows and 0 <= ny < cols and not visited[nx, ny] and labeled_array[nx, ny] == component_id:
                 visited[nx, ny] = True
                 queue.append((nx, ny))
+
     return main_channel
+
+
+def find_mains(centreline_arr, width_arr):
+    labeled_array, num_features = find_river_networks(centreline_arr)
+    main_channels = np.zeros_like(centreline_arr, dtype=int)
+
+    for component_id in range(1, num_features + 1):
+        main_channel = bfs_for_main_channel(labeled_array, width_arr, component_id)
+        main_channels += main_channel
+
+    return main_channels
 
 
 def find_path(A, B, values_matrix):
@@ -777,7 +707,7 @@ def compute_path(arr, pa, pb):
         return (np.nan, np.nan)
 
 
-def optimal_path(A, B, values_matrix, ):
+def optimal_path(A, B, values_matrix):
 
     # Calculate the optimal path for each point
     # with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -793,6 +723,18 @@ def optimal_path(A, B, values_matrix, ):
     optimal_path_ = paths[min_cost_index]
 
     return optimal_path_
+
+
+def adjent(pix, list_pix):
+    pix = list(pix)
+    list_pix = [list(_) for _ in list_pix]
+    if pix in list_pix:
+        return False
+
+    for pix_ in list_pix:
+        if abs(pix_[0] - pix[0]) <= 1 and abs(pix_[1] - pix[1]) <= 1:
+            return True
+    return False
 
 
 def convert_index_func(expr: str):
@@ -868,7 +810,7 @@ def CLoudFreeComposite(index_images):
     projection = reference.GetProjection()
     x_size, y_size = reference.RasterXSize, reference.RasterYSize
 
-    max_composite = np.zeros((y_size, x_size), dtype=np.float32)
+    max_composite = np.zeros((y_size, x_size), dtype=np.float16)
 
     for image_file in index_images:
         ds = gdal.Open(image_file)
@@ -1009,7 +951,8 @@ def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize
 
     # Write the modified VRT back to file
     vrt_tree.write(os.path.join(output_path, filename).split('.')[0] + ".vrt")
-    gdal.Translate(os.path.join(output_path, filename), os.path.join(output_path, filename).split('.')[0] + ".vrt", options=topts)
+    gdal.Translate(os.path.join(output_path, filename), os.path.join(output_path, filename).split('.')[0] + ".vrt",
+                   options=topts)
 
 
 def read_cs_file(file_list):
@@ -1050,6 +993,42 @@ def dfs(raster, x, y, visited):
     return local_path, width_sum
 
 
+def process_river_networks(centreline_arr, width_arr):
+    # 识别所有独立的河网
+    num_labels, labels_im = cv2.connectedComponents(centreline_arr.astype(np.uint8))
+
+    # 准备输出主汊的栅格
+    main_channels_arr = np.zeros_like(centreline_arr)
+
+    len_list = []
+    for label in range(1, num_labels):
+        len_list.append(np.argwhere(labels_im == label).shape[0])
+        # 提取当前河网的节点
+    label = len_list.index(max(len_list)) + 1
+    nodes = np.argwhere(labels_im == label)
+    start = nodes[nodes[:, 1].argsort()[::-1]]
+    end = tuple(start[0, :])
+    start = tuple(start[-1, :])
+    graph = netx.Graph()
+
+    # 构建图：遍历节点，连接8向邻居（如果是河网的一部分）
+    for node in nodes:
+        x, y = node
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx != 0 or dy != 0:
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < centreline_arr.shape[0] and 0 <= ny < centreline_arr.shape[1] and labels_im[nx, ny] == label:
+                        graph.add_edge((x, y), (nx, ny), weight=width_arr[x, y])
+
+        # 寻找主汊
+    if graph.number_of_nodes() > 0:
+        main_channel = find_max_avg_width_path(graph, start, end)
+        # 标记主汊到输出栅格中
+        for node in main_channel:
+            main_channels_arr[node[0], node[1]] = 1
+
+    return main_channels_arr
 
 
 def find_max_avg_width_path(graph, source, target):
@@ -1155,101 +1134,103 @@ def mainstream_swing(cs_file, centreline_files, years=range(2006,2022)):
     results.to_excel("D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream\\主槽摆动.xlsx", index=False)
 
 
-def process_xy_file(xyfile):
-
-    try:
-        df = pd.read_csv(xyfile)
-        line_df = {'id': [], 'geometry': []}
-        num = 0
-        for _ in range(df.shape[0]):
-            if _ == 0:
-                line_temp = [[df['Y'][_], df['X'][_]]]
-            elif _ == df.shape[0] - 1:
-                line_temp.append([df['Y'][_], df['X'][_]])
-                line_df['id'].append(str(num))
-                line_df['geometry'].append(LineString(line_temp))
-                break
-            elif len(line_temp) == 0:
-                line_temp.append([df['Y'][_], df['X'][_]])
-            elif df['X'][_] != df['X'][_ - 1] and df['X'][_ + 1] != df['X'][_] and np.abs(np.degrees(np.arctan((df['Y'][_] - df['Y'][_ - 1]) / (df['X'][_] - df['X'][_ - 1]))) - np.degrees(np.arctan((df['Y'][_ + 1] - df['Y'][_]) / (df['X'][_ + 1] - df['X'][_])))) > 5:
-                line_temp.append([df['Y'][_], df['X'][_]])
-                line_df['id'].append(str(num))
-                line_df['geometry'].append(LineString(line_temp))
-                num += 1
-                line_temp = []
-            elif df['Y'][_] != df['Y'][_ - 1] and df['Y'][_ + 1] != df['Y'][_] and np.abs(np.degrees(np.arctan((df['X'][_] - df['X'][_ - 1]) / (df['Y'][_] - df['Y'][_ - 1]))) - np.degrees(np.arctan((df['X'][_ + 1] - df['X'][_]) / (df['Y'][_ + 1] - df['Y'][_])))) > 5:
-                line_temp.append([df['Y'][_], df['X'][_]])
-                line_df['id'].append(str(num))
-                line_df['geometry'].append(LineString(line_temp))
-                num += 1
-                line_temp = []
-            else:
-                line_temp.append([df['Y'][_], df['X'][_]])
-        line_df = gp.GeoDataFrame(geometry=line_df['geometry'], crs='EPSG:4543')
-        line_df.to_file('D:\\A_HH_upper\\A_gansu_reach\\gansu_cs.shp')
-    except:
-        print(traceback.format_exc())
-        pass
-
-
 if __name__ == '__main__':
-    process_xy_file('D:\\A_HH_upper\\A_gansu_reach\\A_前期资料收集\\断面矢量\\XY_coordinate.csv')
+
+     # braiding_index
+     rl = built_in_index()
+     for year in range(1986, 2006):
+         #rl.composite_month_landsat(f'D:\\yaxia\\{area[1]}\\selected\\{year}\\')
+         #centerline_arr, width_arr, psi_arr = rl.extract_RCL_byrivermap_(f'D:\\yaxia\\{area[1]}\\selected\\{year}\\composite\\')
+
+         rl.line_connection()
+         centerline_arr_connected, width_arr_connected, node_arr = line_connection(centerline_arr, width_arr, psi_arr)
+         main_channels = find_mains(centerline_arr_connected, width_arr_connected)
+
+         ori_ds = gdal.Open(f'D:\\yaxia\\{area[1]}\\selected\\{year}\\composite\\MNDWI_137040.TIF')
+         write_raster(ori_ds, main_channels, f'D:\\yaxia\\{area[1]}\\selected\\{year}\\composite\\mainstream\\',
+                      f'mainstream_{year}.tif')
+
+
+
+#mainstream_swing('D:\\A_HH_upper\\Guide_upperhh\\guide_crosssection\\guide_cs.shp', file_filter('D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream\\shpfile',  ['.shp'], exclude_word_list=['.xml']))
+
+     #for year in range(2006, 2022):
+         #ds = gdal.Open(os.path.join(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\', f'Mainstream_{year}.tif'))
+        ## ds2 = gdal.Open(os.path.join(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\river_network\\', f'RiverNET_{year}.tif'))
+         #w_arr = ds2.GetRasterBand(1).ReadAsArray()
+         # start = np.argwhere(c_arr == 1)
+         # start = start[start[:, 1].argsort()[::-1]]
+    #     # end = start[0,:]
+    #     # start = start[-1, :]
+        # main_stream = process_river_networks(c_arr, w_arr)
+       #  write_raster(ds, main_stream, 'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream\\', f'centereline_{year}.tif')
     #
-    # file_folder = 'D:\\A_YarlungZangbo_\\Landsat_30m\\KG137-2\\KG137_V2_selected\\centerl_selected\\2011\\composite\\centreline\\'
-    # cetreline_ds = gdal.Open(os.path.join(file_folder, 'centerline_connect_MNDWI_137040.tif'))
-    # cenreline_arr = cetreline_ds.GetRasterBand(1).ReadAsArray()
-    # width_ds = gdal.Open(os.path.join(file_folder, 'width_MNDWI_137040_crop.tif'))
-    # width_arr = width_ds.GetRasterBand(1).ReadAsArray()
-    # mainstream_arr = process_river_networks(cenreline_arr, width_arr)
-    # write_raster(width_ds, mainstream_arr, file_folder, f'mainstream_2011.tif', raster_datatype=gdal.GDT_Byte)
+    # # read_cs_file(file_filter('D:\\A_HH_upper\\Guide_upperhh\\青海省黄河干流二期防洪工程贵德段横断面数据 23.11.22\青海省黄河干流二期防洪工程贵德段横断面数据 23.11.22\\', ['.xls']))
+    # for year in range(2006,2022):
+    #     maximum_composite_tiffile(file_filter(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\{str(year)}\\', ['.TIF']),
+    #                               f'D:\\A_HH_upper\\Guide_upperhh\\composite\\all\\', f'mndwi_{str(year)}_compo.TIF')
 
-    # centreline
-    rl = River_centreline()
-    for _ in [2011, 2015, 2020]:
-        rl.composite_month_landsat(f'D:\\A_YarlungZangbo_\\Landsat_30m\\KG137-2\\KG137_V2_selected\\centerl_selected\\{str(_)}')
-        rl.extract_RCL_byrivermap_(f'D:\\A_YarlungZangbo_\\Landsat_30m\\KG137-2\\KG137_V2_selected\\centerl_selected\\{str(_)}\\composite', f'D:\\A_YarlungZangbo_\\SHP-v1\\Reach3_small(46N).shp')
+  #  for year in [2009]:
+  #      ori_ds = gdal.Open(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\all\\mndwi_{str(year)}_compo.TIF')
+   ##     mndwi_arr = ori_ds.GetRasterBand(1).ReadAsArray()
+    #    mndwi_arr = mndwi_arr.astype(np.float32)
+     #   mndwi_arr[mndwi_arr == -32768] = 0
+     #   mndwi_arr = mndwi_arr/10000
+#
+ #       filters = singularity_index.SingularityIndexFilters()
+#
+ #       # Compute the modified multiscale singularity index
+  #      psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters, narrow_rivers=False)
+###      nms = delineate.extractCenterlines(orient, psi)
+ #       centerlines, centerlineCandidate = delineate.thresholdCenterlines(nms)
 
-    # mainstream
-    rl = River_centreline()
-    for reach_, roi in zip(['KG137', 'ML135'], ['Reach1_small(46N)', 'Reach2_small(46N)']):
-        for _ in [2011, 2016, 2021]:
-            rl.composite_month_landsat(f'D:\\A_YarlungZangbo_\\Landsat_30m\\{reach_}\\selected\\{str(_)}')
-            rl.extract_RCL_byrivermap_(f'D:\\A_YarlungZangbo_\\Landsat_30m\\{reach_}\\selected\\{str(_)}\\composite', f'D:\\A_YarlungZangbo_\\SHP-v1\\{roi}.shp')
+  ##      centerline_arr = np.array(centerlines)
+  #      centerline_arr = centerline_arr.astype(np.int32)
+ #       width_arr = np.array(widthMap)
+   #     width_arr = width_arr
+   ##     psi_arr = np.array(psi)
+    #    center_new, width_new, node_arr = line_connection(centerline_arr, width_arr, psi_arr, nodata_value=0)
+     #   write_raster(ori_ds, nms, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\river_network\\',
+      #               f'RiverNET_{year}.tif')
+      #  write_raster(ori_ds, centerline_arr, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\',
+      #               f'Mainstream_ori_{year}.tif')
+      #  write_raster(ori_ds, center_new, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\',
+       #              f'Mainstream_{year}.tif')
+     #   write_raster(ori_ds, node_arr, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\',
+     #                f'node_{year}.tif')
+    #    write_raster(ori_ds, width_arr, f'D:\\A_HH_upper\\Guide_upperhh\\composite\\river_width\\',
+     #                f'RW_{year}.tif')
 
-    # braiding_index
-    rl = River_centreline()
-    for reach_, cs in zip(['KG137', 'ML135'], ['CS_Reach1', 'CS_Reach2']):
-        for _ in [2010, 2011, 2015, 2016, 2020, 2021]:
-            rl.composite_month_landsat(f'D:\\A_YarlungZangbo_\\Landsat_30m\\{reach_}\\selected\\{str(_)}')
-            rl.extract_RCL_byrivermap_(f'D:\\A_YarlungZangbo_\\Landsat_30m\\{reach_}\\selected\\{str(_)}\\composite')
-            rl.braiding_index(file_filter(f'D:\\A_YarlungZangbo_\\Landsat_30m\\{reach_}\\selected\\{str(_)}\\composite\\centreline\\', ['.tif'], exclude_word_list=['.ovr']), cs_shpfile=f'D:\\A_YarlungZangbo_\\SHP-v1\\{cs}.shp')
+    #api.download_index_GEE('LT05', (19860101, 20061231), 'MNDWI',
+     #                           [101.55258434775323, 33.44150886069177, 101.30075404990167, 33.31279371587109],
+     #                           'D:\\maqu_upperhh\\origin_zipfile\\')
 
-    mainstream_swing('D:\\A_HH_upper\\Guide_upperhh\\guide_crosssection\\guide_cs.shp', file_filter('D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream\\shpfile',  ['.shp'], exclude_word_list=['.xml']))
+    # directory_path = 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\'
+    # image_files = list_tif_files(directory_path)
+    #
+    # maximum_composite_tiffile(file_filter('G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\', ['.TIF']), 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\', 'mndwi_2008_compo.TIF')
+    # ori_ds = gdal.Open('G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\mndwi_2008_compo.TIF')
+    # mndwi_arr = ori_ds.GetRasterBand(1).ReadAsArray()
+    # mndwi_arr = mndwi_arr.astype(np.float32)
+    # mndwi_arr[mndwi_arr == -32768] = -1
+    # mndwi_arr = mndwi_arr/10000
 
-    for year in range(2006, 2022):
-        ds = gdal.Open(os.path.join(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\mainstream_centreline\\', f'Mainstream_{year}.tif'))
-        c_arr = ds.GetRasterBand(1).ReadAsArray()
-        ds2 = gdal.Open(os.path.join(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\river_network\\', f'RiverNET_{year}.tif'))
-        w_arr = ds2.GetRasterBand(1).ReadAsArray()
-        # start = np.argwhere(c_arr == 1)
-        # start = start[start[:, 1].argsort()[::-1]]
-        # end = start[0,:]
-        # start = start[-1, :]
+    # mndwi_file = 'G:\\A_HH_upper\\Bank_centreline\\MNDWI_LC08_20131009\\LC08_133037_20131009.MNDWI.tif'
 
+    # ds_ = gdal.Open(mndwi_file)
+    # array = ds_.GetRasterBand(1).ReadAsArray()
+    # Create the filters that are needed to compute the singularity index
+    #filters = singularity_index.SingularityIndexFilters()
 
-    # read_cs_file(file_filter('D:\\A_HH_upper\\Guide_upperhh\\青海省黄河干流二期防洪工程贵德段横断面数据 23.11.22\青海省黄河干流二期防洪工程贵德段横断面数据 23.11.22\\', ['.xls']))
-    for year in range(2006, 2022):
-        maximum_composite_tiffile(file_filter(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\{str(year)}\\', ['.TIF']),
-                                  f'D:\\A_HH_upper\\Guide_upperhh\\composite\\all\\', f'mndwi_{str(year)}_compo.TIF')
+    # Compute the modified multiscale singularity index
+    #psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters)
 
-    for year in [2009]:
-        ori_ds = gdal.Open(f'D:\\A_HH_upper\\Guide_upperhh\\composite\\all\\mndwi_{str(year)}_compo.TIF')
-        mndwi_arr = ori_ds.GetRasterBand(1).ReadAsArray()
-        mndwi_arr = mndwi_arr.astype(np.float32)
-        mndwi_arr[mndwi_arr == -32768] = 0
-        mndwi_arr = mndwi_arr/10000
+    # Extract channel centerlines
+    # year = 2008
+    # write_raster(ori_ds, centerline_arr, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'centereline_{year}.tif')
+    # write_raster(ori_ds, center_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'centerelineNEW_{year}.tif')
+    # write_raster(ori_ds, width_new, 'G:\\A_HH_upper\\Bank_centreline\\MNDWI-2008\\MNDWI\\new\\', f'widthNEW_{year}.tif')
 
-        filters = singularity_index.SingularityIndexFilters()
-
-        # Compute the modified multiscale singularity index
-        psi, widthMap, orient = singularity_index.applyMMSI(mndwi_arr, filters, narrow_rivers=False)
+    # gee_api = GEE_ds()
+    # gee_api.download_index_GEE('LC08', (20060101, 20211231), 'MNDWI', [99.70322434775323, 33.80530886069177, 99.49654404990167, 33.13681471587109], 'G:\\A_HH_upper\\GEE\\')
+pass

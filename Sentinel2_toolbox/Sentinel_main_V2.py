@@ -330,6 +330,8 @@ class Sentinel2_ds(object):
             if duplicate_file_list != []:
                 for file in duplicate_file_list:
                     shutil.move(file, self._work_env + 'Corrupted_S2_file\\' + file.split('\\')[-1])
+                self.orifile_list = bf.file_filter(self.ori_folder, ['.zip', 'S2'], and_or_factor='and',subfolder_detection=True)
+                self.orifile_list = [i for i in self.orifile_list if 'S2' in i.split('\\')[-1] and '.zip' in i.split('\\')[-1]]
                 self.construct_metadata()
             else:
                 self.S2_metadata.to_excel(self._work_env + 'Metadata.xlsx')
@@ -1350,10 +1352,10 @@ class Sentinel2_ds(object):
                     pixelFunctionCode = etree.SubElement(vrtband1, 'PixelFunctionCode')
                     pixelFunctionCode.text = etree.CDATA("""
                     import numpy as np
-
+                    
                     def find_max(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
                          np.amax(in_ar, axis=0, initial=255, out=out_ar)
-                         
+            
                     """)
 
                 else:
