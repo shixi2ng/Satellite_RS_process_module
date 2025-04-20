@@ -187,6 +187,7 @@ class Landsat_l2_ds(object):
         # Construct corrupted file folder
         corrupted_file_folder = os.path.join(self._work_env, 'Corrupted_zip_file\\')
         bf.create_folder(corrupted_file_folder)
+        bf.create_folder(f'{corrupted_file_folder}all_clear\\')
 
         # Read the ori Landsat zip file
         self.orifile_list = bf.file_filter(self.ori_folder, ['.tar', 'L2SP'], and_or_factor='and', subfolder_detection=True)
@@ -570,14 +571,19 @@ class Landsat_l2_ds(object):
                         elif ~np.isnan(nodata_value):
                             arr_dic[band_temp][arr_dic[band_temp] == nodata_value] = np.nan
 
-                        # Rescale the surface reflectance and surface temperature
-                        if self._band_tab[f'{sensor_type}_bandname'][self._band_tab[f'{sensor_type}_bandnum'].index(band_temp)] == 'TIR':
+                        if band_temp == 'QA_PIXEL':
+                            pass
+                        elif self._band_tab[f'{sensor_type}_bandname'][self._band_tab[f'{sensor_type}_bandnum'].index(band_temp)] == 'TIR':
                             # Remove invalid pixel
                             arr_dic[band_temp][np.logical_or(arr_dic[band_temp] > 61440, arr_dic[band_temp] < 293)] = np.nan
-                            arr_dic[band_temp] = arr_dic[band_temp] * 0.00341802 + 149.0
+
+                            # Refactor the surface temperature
+                            arr_dic[band_temp] = arr_dic[band_temp] * 0.00341802 + 149
                         else:
                             # Remove invalid pixel
-                            arr_dic[band_temp][np.logical_or(arr_dic[band_temp] > 43636, arr_dic[band_temp] < 7273)] = np.nan
+                            arr_dic[band_temp][np.logical_or(arr_dic[band_temp] > 43636, arr_dic[band_temp]< 7273)] = np.nan
+
+                            # Refactor the surface reflectance
                             arr_dic[band_temp] = arr_dic[band_temp] * 0.0000275 - 0.2
 
                         # harmonise the Landsat 8
