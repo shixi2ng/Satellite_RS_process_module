@@ -2283,4 +2283,4 @@ if __name__ == "__main__":
                       'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_csv\\CSProf.csv',
                       'G:\\A_1Dflow_sed\\Hydrodynamic_model\\para\\MYR_FlwBound.csv',
                       'G:\\A_1Dflow_sed\\Hydrodynamic_model\\para\\MYR_QNRelt.csv')
-    model._init_flow_boundary()
+    model.run_model()

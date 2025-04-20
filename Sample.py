@@ -4,29 +4,29 @@ from RSDatacube.RSdc import *
 if __name__ == '__main__':
 
     # # Phemetric
-    ds_pre = gdal.Open('G:\A_Landsat_Floodplain_veg\Water_level_python\Post_TGD\\inun_DT_inundation_frequency_posttgd.TIF')
-    ds_post = gdal.Open('G:\A_Landsat_Floodplain_veg\Water_level_python\Post_TGD\\inun_DT_inundation_frequency_pretgd.TIF')
-    arr_pre = ds_pre.GetRasterBand(1).ReadAsArray()
-    arr_post = ds_post.GetRasterBand(1).ReadAsArray()
-    area = np.sum(np.logical_and(np.logical_and(np.isnan(arr_post), arr_pre != 0), ~np.isnan(arr_pre))) * 30 * 30 /1000 / 1000
-    area2 = np.sum(np.logical_or(~np.isnan(arr_post), ~np.isnan(arr_pre))) * 30 * 30 /1000 / 1000
-    area3 = np.sum(np.logical_or(arr_post == 1, arr_pre ==1)) * 30 * 30 /1000 / 1000
+    # ds_pre = gdal.Open('G:\A_Landsat_Floodplain_veg\Water_level_python\Post_TGD\\inun_DT_inundation_frequency_posttgd.TIF')
+    # ds_post = gdal.Open('G:\A_Landsat_Floodplain_veg\Water_level_python\Post_TGD\\inun_DT_inundation_frequency_pretgd.TIF')
+    # arr_pre = ds_pre.GetRasterBand(1).ReadAsArray()
+    # arr_post = ds_post.GetRasterBand(1).ReadAsArray()
+    # area = np.sum(np.logical_and(np.logical_and(np.isnan(arr_post), arr_pre != 0), ~np.isnan(arr_pre))) * 30 * 30 /1000 / 1000
+    # area2 = np.sum(np.logical_or(~np.isnan(arr_post), ~np.isnan(arr_pre))) * 30 * 30 /1000 / 1000
+    # area3 = np.sum(np.logical_or(arr_post == 1, arr_pre ==1)) * 30 * 30 /1000 / 1000
     inundated_dc = []
     for _ in range(1987, 2024):
         inundated_dc.append(Phemetric_dc(f'G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\{str(_)}\\'))
     rs_dc = RS_dcs(*inundated_dc)
 
-    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v3\\', coordinate=[0, 16537], sec='all')
-    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v3\\', coordinate=[0, 5000], sec='yz')
-    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v3\\', coordinate=[950, 6100], sec='jj')
-    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v3\\', coordinate=[6100, 10210], sec='ch')
-    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v3\\', coordinate=[10210, 16537], sec='hh')
+    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[0, 16537], sec='all')
+    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[0, 5000], sec='yz')
+    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[950, 6100], sec='jj')
+    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[6100, 10210], sec='ch')
+    rs_dc.phemetrics_variation(['MAVI'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[10210, 16537], sec='hh')
 
-    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v2\\', coordinate=[0, 16537], sec='all')
-    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v2\\', coordinate=[0, 5000], sec='yz')
-    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v2\\', coordinate=[950, 6100], sec='jj')
-    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v2\\', coordinate=[6100, 10210], sec='ch')
-    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\A_Landsat_Floodplain_veg\\Paper\\Fig10\\v2\\', coordinate=[10210, 16537], sec='hh')
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[0, 16537], sec='all')
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[0, 5000], sec='yz')
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[950, 6100], sec='jj')
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[6100, 10210], sec='ch')
+    rs_dc.phemetrics_variation(['peak_vi'], [_ for _ in range(1987, 2024)], 'G:\\B_papers_patents\\RA_Dam operations enhance floodplain vegetation resistance and resilience but compress lateral heterogeneity\\A_fig_nc\\A_NC_Fig2\\v4\\', coordinate=[10210, 16537], sec='hh')
 
     #
     # # Estimate inundation

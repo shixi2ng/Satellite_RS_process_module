@@ -25,6 +25,6 @@ if __name__ == '__main__':
         Pheme2022.dc2tif(['SOS', 'EOS', 'trough_vi', 'peak_vi', 'GR', 'DR', 'DR2', 'MAVI', 'peak_doy'], f'G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_curfit_datacube\\Phemetric_tif\\{str(_)}\\')
         # Pheme2022.calculate_phemetrics(['SOS', 'EOS', 'trough_vi', 'peak_vi', 'GR', 'DR', 'DR2', 'MAVI', 'peak_doy'])
 
-    Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_datacube\\')
-    Landsat_dcs = RS_dcs(Landsat_VI_temp)
-    Landsat_dcs.curve_fitting('OSAVI_noninun', 'Landsat')
+    # Landsat_VI_temp = Landsat_dc('G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\OSAVI_noninun_datacube\\')
+    # Landsat_dcs = RS_dcs(Landsat_VI_temp)
+    # Landsat_dcs.curve_fitting('OSAVI_noninun', 'Landsat')

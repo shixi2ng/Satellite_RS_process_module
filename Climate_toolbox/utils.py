@@ -10,6 +10,32 @@ topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
 topts_grid = gdal.GridOptions(creationOptions=['COMPRESS=LZW'])
 
 
+def isfloat(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def separate_month_range(month_list):
+    month_list = sorted(month_list)
+
+    result = []
+    current_sublist = [month_list[0]]
+
+    for i in range(1, len(month_list)):
+
+        if month_list[i] == month_list[i - 1] + 1 or (np.mod(month_list[i - 1], 100) == 12 and month_list[i] - month_list[i - 1] == 89):
+            current_sublist.append(month_list[i])
+        else:
+            result.append(current_sublist)
+            current_sublist = [month_list[i]]
+
+    result.append(current_sublist)
+    return result
+
+
 def shp2raster_idw(shpfile: str, output_f: str, z: str, raster_size: list, bounds: list, ROI: str, crs: str):
 
     # Retrieve the output raster size

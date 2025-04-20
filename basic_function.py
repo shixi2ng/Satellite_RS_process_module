@@ -211,7 +211,7 @@ def query_with_cor(dataset, xcord, ycord, half_width=0, srcnanvalue=np.nan, dstn
 
     if raster is None:
         raster = dataset.GetRasterBand(1).ReadAsArray()
-        raster = raster.astype(np.float)
+        raster = raster.astype(float)
         raster[raster == srcnanvalue] = np.nan
 
     if xOrigin < xcord < xOrigin + cols * pixelWidth and yOrigin - rows * pixelHeight < ycord < yOrigin:
@@ -364,8 +364,7 @@ def file_filter(file_path_temp, containing_word_list: list, subfolder_detection=
         for file in file_list:
             file_factor = True
             if os.path.isdir(file_path_temp + file) and subfolder_detection:
-                filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list,
-                                               subfolder_detection=True, and_or_factor=and_or_factor)
+                filter_list_temp = file_filter(file_path_temp + file + '\\', containing_word_list, subfolder_detection=True, and_or_factor=and_or_factor)
                 if filter_list_temp != []:
                     filter_list.extend(filter_list_temp)
             else:
@@ -532,7 +531,7 @@ def arr2tif(output_folder: str, output_name: str, arr: np.ndarray, transform: tu
 
     for _ in range(z_size):
         outband = outRaster.GetRasterBand(_ + 1)
-        outband.WriteArray(arr[:, :, _].reshape[arr.shape[0], arr.shape[1]])
+        outband.WriteArray(arr[:, :, _].reshape([arr.shape[0], arr.shape[1]]))
         outband.SetNoDataValue(nodata_value)
         outband.FlushCache()
 
@@ -546,3 +545,49 @@ def isfloat(s: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def reassign_sole_pixel(twod_array, Nan_value=0, half_size_window=2):
+
+    if len(twod_array.shape) != 2:
+        print('Please correctly inputting a 2d array!')
+        sys.exit(-1)
+    unique_value_list = [i for i in np.unique(twod_array) if i != Nan_value]
+
+    if len(unique_value_list) == 0 or len(unique_value_list) == 1:
+        return twod_array
+    elif len(unique_value_list) == 2:
+        twod_array_temp = copy.copy(twod_array)
+
+        for y in range(twod_array.shape[0]):
+            for x in range(twod_array.shape[1]):
+
+                if twod_array[y, x] != Nan_value:
+
+                    if y + half_size_window + 1 > twod_array_temp.shape[0]:
+                        y_max = twod_array_temp.shape[0]
+                    else:
+                        y_max = y + half_size_window + 1
+                    if y - half_size_window < 0:
+                        y_min = 0
+                    else:
+                        y_min = y - half_size_window
+
+                    if x + half_size_window + 1 > twod_array_temp.shape[1]:
+                        x_max = twod_array_temp.shape[1]
+                    else:
+                        x_max = x + half_size_window + 1
+                    if x - half_size_window < 0:
+                        x_min = 0
+                    else:
+                        x_min = x - half_size_window
+
+                    array_temp = twod_array[y_min: y_max, x_min: x_max]
+
+                    if np.sum(np.logical_and(array_temp != twod_array[y, x], array_temp != Nan_value)) == (array_temp.shape[0] * array_temp.shape[1] - 1):
+                        twod_array_temp[y, x] = [_ for _ in unique_value_list if _ != twod_array_temp[y, x]][0]
+
+        return twod_array_temp
+
+    else:
+        raise TypeError('This function can not reassign the sole value for this raster')

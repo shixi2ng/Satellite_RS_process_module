@@ -570,11 +570,15 @@ class Landsat_l2_ds(object):
                         elif ~np.isnan(nodata_value):
                             arr_dic[band_temp][arr_dic[band_temp] == nodata_value] = np.nan
 
-                        # Remove invalid pixel
-                        arr_dic[band_temp][np.logical_or(arr_dic[band_temp]> 43636, arr_dic[band_temp]< 7273)] = np.nan
-
-                        # Refactor the surface reflectance
-                        arr_dic[band_temp] = arr_dic[band_temp] * 0.0000275 - 0.2
+                        # Rescale the surface reflectance and surface temperature
+                        if self._band_tab[f'{sensor_type}_bandname'][self._band_tab[f'{sensor_type}_bandnum'].index(band_temp)] == 'TIR':
+                            # Remove invalid pixel
+                            arr_dic[band_temp][np.logical_or(arr_dic[band_temp] > 61440, arr_dic[band_temp] < 293)] = np.nan
+                            arr_dic[band_temp] = arr_dic[band_temp] * 0.00341802 + 149.0
+                        else:
+                            # Remove invalid pixel
+                            arr_dic[band_temp][np.logical_or(arr_dic[band_temp] > 43636, arr_dic[band_temp] < 7273)] = np.nan
+                            arr_dic[band_temp] = arr_dic[band_temp] * 0.0000275 - 0.2
 
                         # harmonise the Landsat 8
                         if self._harmonising_data and sensor_type in ['LC08'] and band_temp not in ['QA_PIXEL', 'gap_mask']:

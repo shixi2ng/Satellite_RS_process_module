@@ -1,859 +1,22 @@
 # coding=utf-8
-import copy
-import os.path
 import traceback
-import numpy as np
-import pandas as pd
-from scipy.interpolate import interp1d
-from basic_function import Path
+
+from .utils import *
+import matplotlib.pyplot as plt
+import sys
+import os.path
 import concurrent.futures
 from itertools import repeat
 from GEDI_toolbox import GEDI_main as gedi
 from Landsat_toolbox.Landsat_main_v2 import Landsat_dc
-from scipy import sparse as sm
-from Sentinel2_toolbox.utils import *
-from Sentinel2_toolbox.Sentinel_main_V2 import Sentinel2_dc, Sentinel2_ds
+from Sentinel2_toolbox.Sentinel_main_V2 import Sentinel2_dc
 from River_GIS.River_GIS import Inunfac_dc
+from scipy.interpolate import interp1d
 from tqdm import tqdm as tq
-from .utils import *
 from shapely import wkt
-
-
-def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
-    return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
-
-
-def system_recovery_function(t, ymax, yo, b):
-    return ymax - (ymax - yo) * np.exp(- b * t)
-
-
-def linear_f(x, a, b):
-    return a * (x + 1985) + b
-
-
-def two_term_fourier(x, a0, a1, b1, a2, b2, w):
-    return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x) + b2 * np.sin(2 * w * x)
-
-
-class Denv_dc(object):
-
-    ####################################################################################################
-    # Denv dc represents "Daily Environment Datacube"
-    # It normally contains data like daily temperature and daily radiation, etc.
-    # And stack into a 3-D datacube type.
-    # Currently, it was integrated into the NCEI and MODIS FPAR toolbox as an output datatype.
-    ####################################################################################################
-
-    def __init__(self, Denv_dc_filepath, work_env=None, autofill=True):
-
-        # Check the phemetric path
-        self.Denv_dc_filepath = bf.Path(Denv_dc_filepath).path_name
-
-        # Init key var
-        self.ROI_name, self.ROI, self.ROI_tif, self.ROI_array = None, None, None, None
-        self.index, self.Datatype, self.coordinate_system = None, None, None
-        self.dc_group_list, self.tiles, self.oritif_folder = None, None, None
-        self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
-        self.Denv_factor, self.timescale, self.timerange = False, None, None
-        self.compete_doy_list = []
-
-        # Check work env
-        if work_env is not None:
-            self._work_env = Path(work_env).path_name
-        else:
-            self._work_env = Path(os.path.dirname(os.path.dirname(self.Denv_dc_filepath))).path_name
-        self.root_path = Path(os.path.dirname(os.path.dirname(self._work_env))).path_name
-
-        # Define the basic var name
-        self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'sdc_factor',
-                             'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
-                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles', 'timescale', 'timerange')
-
-        # Read the metadata file
-        metadata_file = bf.file_filter(self.Denv_dc_filepath, ['metadata.json'])
-        if len(metadata_file) == 0:
-            raise ValueError('There has no valid sdc or the metadata file of the sdc was missing!')
-        elif len(metadata_file) > 1:
-            raise ValueError('There has more than one metadata file in the dir')
-        else:
-            try:
-                # Load json metadata
-                with open(metadata_file[0]) as js_temp:
-                    dc_metadata = json.load(js_temp)
-
-                if not isinstance(dc_metadata, dict):
-                    raise Exception('Please make sure the metadata file is a dictionary constructed in python!')
-                else:
-                    # Determine whether this datacube is Denv or not
-                    if 'Denv_factor' not in dc_metadata.keys():
-                        raise TypeError('The Denv factor was lost or it is not a Denv datacube!')
-                    elif dc_metadata['Denv_factor'] is False:
-                        raise TypeError(f'{self.Denv_dc_filepath} is not a Denv datacube!')
-                    elif dc_metadata['Denv_factor'] is True:
-                        self.Denv_factor = dc_metadata['Denv_factor']
-                    else:
-                        raise TypeError('The Denv factor was under wrong type!')
-
-                    for dic_name in self._fund_factor:
-                        if dic_name not in dc_metadata.keys():
-                            raise Exception(f'The {dic_name} is not in the dc metadata, double check!')
-                        else:
-                            self.__dict__[dic_name] = dc_metadata[dic_name]
-
-            except:
-                raise Exception('Something went wrong when reading the metadata!')
-
-        # Check the timescale and timerange is consistency or not
-        if self.timescale == 'year' and len(str(self.timerange)) != 4:
-            raise Exception('The annual time range should be in YYYY format')
-        elif self.timescale == 'month' and len(str(self.timerange)) != 6:
-            raise Exception('The monthly time range should be in YYYYMM format')
-        elif self.timescale == 'all' and len(str(self.timerange)) != '.TIF':
-            raise Exception('The all time range should be in .TIF format')
-        elif self.timescale is None or self.timerange is None:
-            raise Exception('The timescale and timerange para is not properly assigned!')
-
-        start_time = time.time()
-        print(f'Start loading the \033[1;31m{str(self.timerange)}\033[0m Denv dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m')
-
-        # Read doy or date file of the Datacube
-        try:
-            if self.sdc_factor is True:
-                # Read doylist
-                doy_file = bf.file_filter(self.Denv_dc_filepath, ['doy.npy'])
-                if len(doy_file) == 0:
-                    raise ValueError('There has no valid doy file or file was missing!')
-                elif len(doy_file) > 1:
-                    raise ValueError('There has more than one doy file in the dc dir')
-                else:
-                    sdc_doylist = np.load(doy_file[0], allow_pickle=True)
-                    self.sdc_doylist = [int(sdc_doy) for sdc_doy in sdc_doylist]
-            else:
-                raise TypeError('Please input as a sdc')
-        except:
-            raise Exception('Something went wrong when reading the doy and date list!')
-        self.year_domain = set([int(np.floor(temp)) for temp in self.sdc_doylist])
-
-        # Compete doy list
-        if self.timescale == 'year':
-            date_start = datetime.date(year = self.timerange, month=1, day=1).toordinal()
-            date_end = datetime.date(year = self.timerange + 1, month=1, day=1).toordinal()
-            compete_doy_list = [datetime.date.fromordinal(date_temp).strftime('%Y%m%d') for date_temp in range(date_start, date_end)]
-            self.compete_doy_list = bf.date2doy(compete_doy_list)
-        elif self.timescale == 'month':
-            year_temp = int(np.floor(self.timerange / 100))
-            month_temp = int(np.mod(self.timerange, 100))
-            date_start = datetime.date(year=year_temp, month=month_temp, day=1).toordinal()
-            date_end = datetime.date(year=year_temp, month=month_temp + 1, day=1).toordinal()
-            compete_doy_list = [datetime.date.fromordinal(date_temp).strftime('%Y%m%d') for date_temp in range(date_start, date_end)]
-            self.compete_doy_list = bf.date2doy(compete_doy_list)
-        elif self.timescale == 'all':
-            date_min, date_max = bf.doy2date(min(self.sdc_doylist)), bf.doy2date(max(self.sdc_doylist))
-            date_min = datetime.date(year=int(np.floor(date_min / 1000)), month=1, day=1).toordinal() + np.mod(date_min, 1000) - 1
-            date_max = datetime.date(year=int(np.floor(date_max / 1000)), month=1, day=1).toordinal() + np.mod(date_max, 1000)
-            compete_doy_list = [datetime.date.fromordinal(date_temp).strftime('%Y%m%d') for date_temp in range(date_min, date_max)]
-            self.compete_doy_list = bf.date2doy(compete_doy_list)
-
-        # Read the Denv datacube
-        try:
-            if self.sparse_matrix and self.huge_matrix:
-                self.dc_filename = self.Denv_dc_filepath + f'{self.index}_Denv_datacube\\'
-                if os.path.exists(self.dc_filename):
-                    self.dc = NDSparseMatrix().load(self.dc_filename)
-                else:
-                    raise Exception('Please double check the code if the sparse huge matrix is generated properly')
-            elif not self.huge_matrix:
-                self.dc_filename = bf.file_filter(self.Denv_dc_filepath, ['Denv_datacube.npy'])
-                if len(self.dc_filename) == 0:
-                    raise ValueError('There has no valid dc or the dc was missing!')
-                elif len(self.dc_filename) > 1:
-                    raise ValueError('There has more than one date file in the dc dir')
-                else:
-                    self.dc = np.load(self.dc_filename[0], allow_pickle=True)
-            elif self.huge_matrix and not self.sparse_matrix:
-                self.dc_filename = bf.file_filter(self.Denv_dc_filepath, ['Denv_datacube', '.npy'], and_or_factor='and')
-        except:
-            raise Exception('Something went wrong when reading the datacube!')
-
-        if autofill is True and len(self.compete_doy_list) > len(self.sdc_doylist):
-            self._autofill_Denv_DC()
-        elif len(self.compete_doy_list) < len(self.sdc_doylist):
-            raise Exception('Code has issues in the Denv autofill procedure!')
-
-        # autotrans sparse matrix
-        if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
-            self._autotrans_sparse_matrix()
-
-        # Backdoor metadata check
-        self._backdoor_metadata_check()
-
-        # Size calculation and shape definition
-        self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
-        if self.dc_ZSize != len(self.sdc_doylist):
-            raise TypeError('The Denv datacube is not consistent with the doy list')
-
-        print(f'Finish loading the \033[1;31m{str(self.timerange)}\033[0m Denv dc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
-
-    def __sizeof__(self):
-        return self.dc.__sizeof__() + self.sdc_doylist.__sizeof__()
-
-    def _backdoor_metadata_check(self):
-
-        backdoor_issue = False
-        # Check if metadata is valid and timeliness
-        # Problem 1 dir change between multi-devices ROI ROI arr ROI tif
-        if not os.path.exists(self.ROI_tif):
-            self.ROI_tif = retrieve_correct_filename(self.ROI_tif)
-            backdoor_issue = True
-
-        if not os.path.exists(self.ROI_array):
-            self.ROI_array = retrieve_correct_filename(self.ROI_array)
-            backdoor_issue = True
-
-        if not os.path.exists(self.ROI):
-            self.ROI = retrieve_correct_filename(self.ROI)
-            backdoor_issue = True
-
-        if self.ROI_tif is None or self.ROI_array is None or self.ROI is None:
-            raise Exception('Please manually change the roi path in the phemetric dc')
-
-        # Problem 2
-        if backdoor_issue:
-            self.save(self.Phemetric_dc_filepath)
-            self.__init__(self.Phemetric_dc_filepath)
-
-    def _autofill_Denv_DC(self):
-        # Interpolate the denv dc
-        autofill_factor = False
-        for date_temp in self.compete_doy_list:
-            if date_temp not in self.sdc_doylist:
-                autofill_factor = True
-                if date_temp == self.compete_doy_list[0]:
-                    date_merge = [_ for _ in self.compete_doy_list if _ in self.sdc_doylist][0]
-                    if self.sparse_matrix:
-                        self.dc.add_layer(self.dc.SM_group[date_merge], date_temp, 0)
-                    else:
-                        self.dc = np.insert(self.dc, 0, values=self.dc[:, :, 0], axis=2)
-                    self.sdc_doylist.insert(0, date_temp)
-                elif date_temp == self.compete_doy_list[-1]:
-                    date_merge = [_ for _ in self.compete_doy_list if _ in self.sdc_doylist][-1]
-                    if self.sparse_matrix:
-                        self.dc.add_layer(self.dc.SM_group[date_merge], date_temp, -1)
-                    else:
-                        self.dc = np.insert(self.dc, 0, values=self.dc[:, :, -1], axis=2)
-                    self.sdc_doylist.append(date_temp)
-                else:
-                    date_beg, date_end, _beg, _end = None, None, None, None
-                    for _ in range(1, 60):
-                        ordinal_date = datetime.date(year=int(np.floor(bf.doy2date(date_temp) / 10000)),
-                                                     month=int(np.floor(np.mod(bf.doy2date(date_temp), 10000) / 100)),
-                                                     day=int(np.mod(bf.doy2date(date_temp), 100))).toordinal()
-                        if date_beg is None:
-                            date_out = bf.date2doy(int(datetime.date.fromordinal(ordinal_date - _).strftime('%Y%m%d')))
-                            date_beg = date_out if date_out in self.sdc_doylist else None
-                            _beg = _ if date_out in self.sdc_doylist else None
-
-                        if date_end is None:
-                            date_out = bf.date2doy(int(datetime.date.fromordinal(ordinal_date + _).strftime('%Y%m%d')))
-                            date_end = date_out if date_out in self.sdc_doylist else None
-                            _end = _ if date_out in self.sdc_doylist else None
-
-                        if date_end is not None and date_beg is not None:
-                            break
-
-                    if isinstance(self.dc, NDSparseMatrix):
-                        if date_end is None:
-                            array_beg = self.dc.SM_group[date_beg]
-                            self.dc.add_layer(array_beg, date_temp, self.compete_doy_list.index(date_temp))
-                        elif date_beg is None:
-                            array_end = self.dc.SM_group[date_end]
-                            self.dc.add_layer(array_end, date_temp, self.compete_doy_list.index(date_temp))
-                        else:
-                            type_temp = type(self.dc.SM_group[date_beg])
-                            array_beg = self.dc.SM_group[date_beg].toarray()
-                            array_end = self.dc.SM_group[date_end].toarray()
-                            dtype_temp = array_end.dtype
-                            array_beg = array_beg.astype(np.float32)
-                            array_end = array_end.astype(np.float32)
-                            array_out = array_beg + (array_end - array_beg) * _beg / (_beg + _end)
-                            array_out = array_out.astype(dtype_temp)
-                            array_out = type_temp(array_out)
-                            self.dc.add_layer(array_out, date_temp, self.compete_doy_list.index(date_temp))
-                    else:
-                        array_beg = self.dc[:, :, date_beg]
-                        array_end = self.dc[:, :, date_end]
-                        array_beg = array_beg.astype(np.float32)
-                        array_end = array_end.astype(np.float32)
-                        array_out = array_beg + (array_end - array_beg) * _beg / (_beg + _end)
-                        self.dc = np.insert(self.dc, self.compete_doy_list.index(date_temp),
-                                            values=array_out.reshape([array_out.shape[0], array_out.shape[1], 1]),
-                                            axis=2)
-                    self.sdc_doylist.insert(self.compete_doy_list.index(date_temp), date_temp)
-
-        if self.sdc_doylist != self.compete_doy_list:
-            raise Exception('Error occurred during the autofill for the Denv DC!')
-
-        if autofill_factor:
-            self.save(self.Denv_dc_filepath)
-            self.__init__(self.Denv_dc_filepath)
-
-    def save(self, output_path: str):
-
-        start_time = time.time()
-        print(f'Start saving the sdc of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
-
-        output_path = bf.Path(output_path).path_name
-        bf.create_folder(output_path) if not os.path.exists(output_path) else None
-
-        metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI,
-                        'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
-                        'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix,
-                        'huge_matrix': self.huge_matrix,'size_control_factor': self.size_control_factor,
-                        'oritif_folder': self.oritif_folder, 'dc_group_list': self.dc_group_list, 'tiles': self.tiles,
-                        'timescale': self.timescale, 'timerange': self.timerange, 'Denv_factor': self.Denv_factor}
-        doy = self.sdc_doylist
-        np.save(f'{output_path}doy.npy', doy)
-        with open(f'{output_path}metadata.json', 'w') as js_temp:
-            json.dump(metadata_dic, js_temp)
-
-        if self.sparse_matrix:
-            self.dc.save(f'{output_path}{str(self.index)}_Denv_datacube\\')
-        else:
-            np.save(f'{output_path}{str(self.index)}_Denv_datacube.npy', self.dc)
-
-        print(
-            f'Finish saving the sdc of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
-
-    def _autotrans_sparse_matrix(self):
-
-        if not isinstance(self.dc, NDSparseMatrix):
-            raise TypeError('The autotrans sparse matrix is specified for the NDsm!')
-
-        for _ in self.dc.SM_namelist:
-            if isinstance(self.dc.SM_group[_], sm.coo_matrix):
-                self.dc.SM_group[_] = sm.csr_matrix(self.dc.SM_group[_])
-                self.dc._update_size_para()
-        self.save(self.Denv_dc_filepath)
-
-    def denv_comparison(self):
-        pass
-
-
-class Phemetric_dc(object):
-
-    ####################################################################################################
-    # Phemetric_dc represents "Phenological Metric Datacube"
-    # It normally contains data like phenological parameters derived from the curve fitting, etc
-    # And stack into a 3-D datacube type.
-    # Currently, it was taken as the Sentinel_dcs/Landsat_dcs's output datatype after the phenological analysis.
-    ####################################################################################################
-
-    def __init__(self, phemetric_filepath, work_env=None):
-
-        # Check the phemetric path
-        self.Phemetric_dc_filepath = bf.Path(phemetric_filepath).path_name
-
-        # Init key var
-        self.ROI_name, self.ROI, self.ROI_tif, self.ROI_array = None, None, None, None
-        self.index, self.Datatype, self.coordinate_system = None, None, None
-        self.dc_group_list, self.tiles = None, None
-        self.sdc_factor, self.sparse_matrix, self.size_control_factor, self.huge_matrix = False, False, False, False
-        self.Phemetric_factor, self.pheyear = False, None
-        self.curfit_dic = {}
-
-        # Init protected var
-        self._support_pheme_list = ['SOS', 'EOS', 'trough_vi', 'peak_vi', 'peak_doy', 'GR', 'DR', 'DR2', 'MAVI', 'TSVI']
-
-        # Check work env
-        if work_env is not None:
-            self._work_env = Path(work_env).path_name
-        else:
-            self._work_env = Path(os.path.dirname(os.path.dirname(self.Phemetric_dc_filepath))).path_name
-        self.root_path = Path(os.path.dirname(os.path.dirname(self._work_env))).path_name
-
-        # Define the basic var name
-        self._fund_factor = ('ROI_name', 'index', 'Datatype', 'ROI', 'ROI_array', 'curfit_dic', 'pheyear',
-                             'coordinate_system', 'oritif_folder', 'ROI_tif', 'sparse_matrix',
-                             'huge_matrix', 'size_control_factor', 'dc_group_list', 'tiles', 'Nodata_value', 'Zoffset')
-
-        # Read the metadata file
-        metadata_file = bf.file_filter(self.Phemetric_dc_filepath, ['metadata.json'])
-        if len(metadata_file) == 0:
-            raise ValueError('There has no valid sdc or the metadata file of the sdc was missing!')
-        elif len(metadata_file) > 1:
-            raise ValueError('There has more than one metadata file in the dir')
-        else:
-            try:
-                with open(metadata_file[0]) as js_temp:
-                    dc_metadata = json.load(js_temp)
-
-                if not isinstance(dc_metadata, dict):
-                    raise Exception('Please make sure the metadata file is a dictionary constructed in python!')
-                else:
-                    # Determine whether this datacube is Phemetric or not
-                    if 'Phemetric_factor' not in dc_metadata.keys():
-                        raise TypeError('The Phemetric_factor was lost or it is not a Phemetric datacube!')
-                    elif dc_metadata['Phemetric_factor'] is False:
-                        raise TypeError(f'{self.Phemetric_dc_filepath} is not a Phemetric datacube!')
-                    elif dc_metadata['Phemetric_factor'] is True:
-                        self.Phemetric_factor = dc_metadata['Phemetric_factor']
-                    else:
-                        raise TypeError('The Phemetric factor was under wrong type!')
-
-                    for dic_name in self._fund_factor:
-                        if dic_name not in dc_metadata.keys():
-                            raise Exception(f'The {dic_name} is not in the dc metadata, double check!')
-                        else:
-                            self.__dict__[dic_name] = dc_metadata[dic_name]
-            except:
-                print(traceback.format_exc())
-                raise Exception('Something went wrong when reading the metadata!')
-
-        start_time = time.time()
-        print(f'Start loading the Phemetric datacube of {str(self.pheyear)} \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
-
-        # Read paraname file of the Phemetric datacube
-        try:
-            if self.Phemetric_factor is True:
-                # Read paraname
-                paraname_file = bf.file_filter(self.Phemetric_dc_filepath, ['paraname.npy'])
-                if len(paraname_file) == 0:
-                    raise ValueError('There has no paraname file or file was missing!')
-                elif len(paraname_file) > 1:
-                    raise ValueError('There has more than one paraname file in the Phemetric datacube dir')
-                else:
-                    paraname_list = np.load(paraname_file[0], allow_pickle=True)
-                    self.paraname_list = [paraname for paraname in paraname_list]
-            else:
-                raise TypeError('Please input as a Phemetric datacube')
-        except:
-            raise Exception('Something went wrong when reading the paraname list!')
-
-        # Read func dic
-        try:
-            if self.sparse_matrix and self.huge_matrix:
-                self.dc_filename = self.Phemetric_dc_filepath + f'{self.index}_Phemetric_datacube\\'
-                if os.path.exists(self.dc_filename):
-                    self.dc = NDSparseMatrix().load(self.dc_filename)
-                else:
-                    raise Exception('Please double check the code if the sparse huge matrix is generated properly')
-            elif not self.huge_matrix:
-                self.dc_filename = bf.file_filter(self.Phemetric_dc_filepath, ['Phemetric_datacube.npy'])
-                if len(self.dc_filename) == 0:
-                    raise ValueError('There has no valid Phemetric datacube or the dc was missing!')
-                elif len(self.dc_filename) > 1:
-                    raise ValueError('There has more than one data file in the dc dir')
-                else:
-                    self.dc = np.load(self.dc_filename[0], allow_pickle=True)
-            elif self.huge_matrix and not self.sparse_matrix:
-                self.dc_filename = bf.file_filter(self.Phemetric_dc_filepath, ['sequenced_datacube', '.npy'], and_or_factor='and')
-        except:
-            print(traceback.format_exc())
-            raise Exception('Something went wrong when reading the Phemetric datacube!')
-
-        # autotrans sparse matrix
-        if self.sparse_matrix and self.dc._matrix_type == sm.coo_matrix:
-            self._autotrans_sparse_matrix()
-
-        # Drop duplicate layers
-        self._drop_duplicate_layers()
-
-        # Backdoor metadata check
-        self._backdoor_metadata_check()
-
-        # Size calculation and shape definition
-        self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
-        if self.dc_ZSize != len(self.paraname_list):
-            raise TypeError('The Phemetric datacube is not consistent with the paraname file')
-
-        print(f'Finish loading the Phemetric datacube of {str(self.pheyear)} \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
-
-    def _update_parasize_(self):
-        self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
-
-    def _backdoor_metadata_check(self):
-
-        backdoor_issue = False
-        # Check if metadata is valid and timeliness
-        # Problem 1 dir change between multi-devices ROI ROI arr ROI tif
-        if not os.path.exists(self.ROI_tif):
-            self.ROI_tif = retrieve_correct_filename(self.ROI_tif)
-            backdoor_issue = True
-
-        if not os.path.exists(self.ROI_array):
-            self.ROI_array = retrieve_correct_filename(self.ROI_array)
-            backdoor_issue = True
-
-        if not os.path.exists(self.ROI):
-            self.ROI = retrieve_correct_filename(self.ROI)
-            backdoor_issue = True
-
-        if self.ROI_tif is None or self.ROI_array is None or self.ROI is None:
-            raise Exception('Please manually change the roi path in the phemetric dc')
-
-        # Problem 2 Check if the coordinate system is missing
-        if self.coordinate_system is None:
-            ds_temp = gdal.Open(self.ROI_tif)
-            self.coordinate_system = bf.retrieve_srs(ds_temp)
-            backdoor_issue = True
-
-        if backdoor_issue:
-            self.save(self.Phemetric_dc_filepath)
-            self.__init__(self.Phemetric_dc_filepath)
-
-    def _autotrans_sparse_matrix(self):
-
-        if not isinstance(self.dc, NDSparseMatrix):
-            raise TypeError('The autotrans sparse matrix is specified for the NDsm!')
-
-        for _ in self.dc.SM_namelist:
-            if isinstance(self.dc.SM_group[_], sm.coo_matrix):
-                self.dc.SM_group[_] = sm.csr_matrix(self.dc.SM_group[_])
-                self.dc._update_size_para()
-        self.save(self.Phemetric_dc_filepath)
-
-    def _drop_duplicate_layers(self):
-        for _ in self.paraname_list:
-            if len([t for t in self.paraname_list if t == _]) != 1:
-                pos = [tt for tt in range(len(self.paraname_list)) if self.paraname_list[tt] == _]
-                if isinstance(self.dc, NDSparseMatrix):
-                    self.dc.SM_namelist.pop(pos[-1])
-                    self.paraname_list.pop(pos[-1])
-                    self.dc._update_size_para()
-                else:
-                    self.dc = np.delete(self.dc, pos[-1], axis=2)
-                    self.paraname_list.pop(pos[-1])
-
-    def __sizeof__(self):
-        return self.dc.__sizeof__() + self.paraname_list.__sizeof__()
-
-    def calculate_phemetrics(self, pheme_list: list, save2phemedc: bool = True):
-
-        pheme_list_temp = copy.copy(pheme_list)
-        for pheme_temp in pheme_list:
-            if pheme_temp not in self._support_pheme_list:
-                raise ValueError(f'The {pheme_temp} is not supported')
-            elif f'{self.pheyear}_{pheme_temp}' in self.paraname_list:
-                pheme_list_temp.remove(pheme_temp)
-        pheme_list = pheme_list_temp
-
-        if self.curfit_dic['CFM'] == 'SPL':
-
-            para_dic = {}
-            for para_num in range(self.curfit_dic['para_num']):
-                if isinstance(self.dc, NDSparseMatrix):
-                    arr_temp = copy.copy(self.dc.SM_group[f'{str(self.pheyear)}_para_{str(para_num)}'].toarray())
-                    arr_temp[arr_temp == self.Nodata_value] = np.nan
-                    para_dic[para_num] = arr_temp
-                else:
-                    arr_temp = copy.copy(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_{str(para_num)}')])
-                    if ~np.isnan(self.Nodata_value):
-                        arr_temp[arr_temp == self.Nodata_value] = np.nan
-                    para_dic[para_num] = arr_temp
-            arr_temp = None
-
-            for pheme_temp in pheme_list:
-                if pheme_temp == 'SOS':
-                    if isinstance(self.dc, NDSparseMatrix):
-                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_2'], 'SOS')
-                    else:
-                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_2')], 'SOS')
-                elif pheme_temp == 'EOS':
-                    if isinstance(self.dc, NDSparseMatrix):
-                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_4'], 'EOS')
-                    else:
-                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_4')], 'EOS')
-                elif pheme_temp == 'trough_vi':
-                    if isinstance(self.dc, NDSparseMatrix):
-                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_0'], 'trough_vi')
-                    else:
-                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_0')], 'trough_vi')
-                elif pheme_temp == 'GR':
-                    if isinstance(self.dc, NDSparseMatrix):
-                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_3'], 'GR')
-                    else:
-                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_3')], 'GR')
-                elif pheme_temp == 'DR':
-                    if isinstance(self.dc, NDSparseMatrix):
-                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_5'], 'DR')
-                    else:
-                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_5')], 'DR')
-                elif pheme_temp == 'DR2':
-                    if isinstance(self.dc, NDSparseMatrix):
-                        self._add_layer(self.dc.SM_group[f'{str(self.pheyear)}_para_6'], 'DR2')
-                    else:
-                        self._add_layer(self.dc[self.paraname_list.index(f'{str(self.pheyear)}_para_6')], 'DR2')
-
-                elif pheme_temp == 'peak_vi':
-
-                    try:
-                        peak_vi_array = copy.copy(para_dic[0])
-                        peak_vi_array[~np.isnan(peak_vi_array)] = -1
-                        xy_list = np.argwhere(~np.isnan(peak_vi_array)).tolist()
-                        with tqdm(total=len(xy_list), desc=f'Generate the peak_vi of {str(self.pheyear)}',
-                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                            for xy_temp in xy_list:
-                                y_temp, x_temp = xy_temp[0], xy_temp[1]
-                                if peak_vi_array[y_temp, x_temp] == -1:
-                                    peak_vi_array[y_temp, x_temp] = np.max(seven_para_logistic_function(
-                                                                     np.linspace(1, 365, 365), para_dic[0][y_temp, x_temp],
-                                                                     para_dic[1][y_temp, x_temp],
-                                                                     para_dic[2][y_temp, x_temp],
-                                                                     para_dic[3][y_temp, x_temp],
-                                                                     para_dic[4][y_temp, x_temp],
-                                                                     para_dic[5][y_temp, x_temp],
-                                                                     para_dic[6][y_temp, x_temp]))
-                                pbar.update()
-                        peak_vi_array[peak_vi_array == -1] = self.Nodata_value
-                        peak_vi_array[np.isnan(peak_vi_array)] = self.Nodata_value
-                    except:
-                        raise Exception('Unable to create peak vi!')
-                    self._add_layer(peak_vi_array, 'peak_vi')
-
-                elif pheme_temp == 'peak_doy':
-
-                    try:
-                        peak_doy_array = copy.copy(para_dic[0])
-                        peak_doy_array[~np.isnan(peak_doy_array)] = -1
-                        xy_list = np.argwhere(~np.isnan(peak_doy_array)).tolist()
-                        with tqdm(total=len(xy_list), desc=f'Generate the peak_doy of {str(self.pheyear)}',
-                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                            for xy_temp in xy_list:
-                                y_temp, x_temp = xy_temp[0], xy_temp[1]
-                                if peak_doy_array[y_temp, x_temp] == -1:
-                                    peak_doy_array[y_temp, x_temp] = np.argmax(
-                                        seven_para_logistic_function(np.linspace(1, 365, 365), para_dic[0][y_temp, x_temp],
-                                                                     para_dic[1][y_temp, x_temp],
-                                                                     para_dic[2][y_temp, x_temp],
-                                                                     para_dic[3][y_temp, x_temp],
-                                                                     para_dic[4][y_temp, x_temp],
-                                                                     para_dic[5][y_temp, x_temp],
-                                                                     para_dic[6][y_temp, x_temp])) + 1
-                                    pbar.update()
-                        peak_doy_array[peak_doy_array == -1] = self.Nodata_value
-                        peak_doy_array[np.isnan(peak_doy_array)] = self.Nodata_value
-                    except:
-                        raise Exception('Unable to create the peak doy')
-                    self._add_layer(peak_doy_array, 'peak_doy')
-
-                elif pheme_temp == 'MAVI':
-
-                    try:
-                        MAVI_array = copy.copy(para_dic[0])
-                        MAVI_array[~np.isnan(MAVI_array)] = -1
-                        xy_list = np.argwhere(~np.isnan(MAVI_array)).tolist()
-                        with tqdm(total=len(xy_list), desc=f'Generate the MAVI of {str(self.pheyear)}',
-                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                            for xy_temp in xy_list:
-                                y_temp, x_temp = xy_temp[0], xy_temp[1]
-                                para_list = [para_dic[_][y_temp, x_temp] for _ in range(7)]
-                                if True not in [np.isnan(_) for _ in para_list]:
-                                    index_arr = seven_para_logistic_function(np.linspace(1, 365, 365), para_list[0], para_list[1],
-                                                                             para_list[2], para_list[3], para_list[4], para_list[5],
-                                                                             para_list[6])
-                                    if np.sum(np.isnan(index_arr)) == 0:
-                                        max_index = np.argmax(index_arr)
-                                        derivative_arr = np.zeros_like(index_arr) * np.nan
-
-                                        for _ in range(1, 364):
-                                            derivative_arr[_] = (index_arr[_ + 1] - index_arr[_ - 1]) / 2
-                                        try:
-                                            derivative_index = np.min(np.argwhere(derivative_arr < - (
-                                                        (para_list[1] - (para_list[4] * para_list[6])) / (
-                                                            8 * para_list[5]))))
-                                        except:
-                                            derivative_index = int(para_list[4] - 3 * para_list[5])
-
-                                        if derivative_index > max_index:
-                                            try:
-                                                MAVI_array[y_temp, x_temp] = np.mean(
-                                                    index_arr[max_index: derivative_index])
-                                            except:
-                                                pass
-                                        else:
-                                            MAVI_array[y_temp, x_temp] = index_arr[max_index]
-                                    else:
-                                        pass
-                                else:
-                                    pass
-                                pbar.update()
-
-                        MAVI_array[MAVI_array == -1] = self.Nodata_value
-                        MAVI_array[np.isnan(MAVI_array)] = self.Nodata_value
-                    except:
-                        raise Exception('Error occurred during the MAVI generation!')
-                    self._add_layer(MAVI_array, 'MAVI')
-
-                elif pheme_temp == 'TSVI':
-
-                    try:
-                        TSVI_array = copy.copy(para_dic[0])
-                        TSVI_array[~np.isnan(TSVI_array)] = -1
-                        xy_list = np.argwhere(~np.isnan(TSVI_array)).tolist()
-                        d_temp = np.linspace(1, 365, 365)
-                        with tqdm(total=len(xy_list), desc=f'Generate the TSVI of {str(self.pheyear)}',
-                                  bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
-                            for xy_temp in xy_list:
-                                y_temp, x_temp = xy_temp[0], xy_temp[1]
-                                para_list = [para_dic[_][y_temp, x_temp] for _ in range(7)]
-                                if True not in [np.isnan(_) for _ in para_list]:
-                                    index_arr = seven_para_logistic_function(d_temp, para_list[0], para_list[1],para_list[2],
-                                                                             para_list[3], para_list[4], para_list[5],
-                                                                             para_list[6])
-                                    if np.sum(np.isnan(index_arr)) == 0:
-                                        derivative_arr = np.zeros_like(index_arr) * np.nan
-                                        for _ in range(1, 364):
-                                            derivative_arr[_] = (index_arr[_ + 1] - index_arr[_ - 1]) / 2
-                                        try:
-                                            derivative_index = np.min(np.argwhere(derivative_arr < - ((para_list[1] - (para_list[4] * para_list[6])) / (8 * para_list[5]))))
-                                        except:
-                                            derivative_index = int(para_list[4] - 3 * para_list[5])
-                                        TSVI_array[y_temp, x_temp] = index_arr[derivative_index]
-                                    else:
-                                        pass
-                                else:
-                                    pass
-                                pbar.update()
-                        TSVI_array[TSVI_array == -1] = self.Nodata_value
-                        TSVI_array[np.isnan(TSVI_array)] = self.Nodata_value
-                    except:
-                        raise Exception('Error occurred during the TSVI generation!')
-                    self._add_layer(TSVI_array, 'TSVI')
-        else:
-            pass
-
-        if save2phemedc:
-            self.save(self.Phemetric_dc_filepath)
-            self.__init__(self.Phemetric_dc_filepath)
-        else:
-            # Size calculation and shape definition
-            self.dc_XSize, self.dc_YSize, self.dc_ZSize = self.dc.shape[1], self.dc.shape[0], self.dc.shape[2]
-            if self.dc_ZSize != len(self.paraname_list) or self.dc_ZSize != self.curfit_dic['para_num']:
-                raise TypeError('The Phemetric datacube is not consistent with the paraname file')
-
-    def _add_layer(self, array, layer_name: str):
-
-        # Process the layer name
-        if not isinstance(layer_name, str):
-            raise TypeError('Please input the adding layer name as a string！')
-        elif not layer_name.startswith(str(self.pheyear)):
-            layer_name = str(self.pheyear) + '_' + layer_name
-
-        if self.sparse_matrix:
-            sparse_type = type(self.dc.SM_group[self.dc.SM_namelist[0]])
-            if not isinstance(array, sparse_type):
-                try:
-                    array = type(self.dc.SM_group[self.dc.SM_namelist[0]])(array)
-                except:
-                    raise Exception(f'The adding layer {layer_name} cannot be converted to the data type')
-            try:
-                self.dc.add_layer(array, layer_name, self.dc.shape[2])
-                self.paraname_list.append(layer_name)
-            except:
-                raise Exception('Some error occurred during the add layer within a phemetric dc')
-        else:
-            try:
-                self.dc = np.concatenate((self.dc, array.reshape(array.shape[0], array.shape[1], 1)), axis=2)
-                self.paraname_list.append(layer_name)
-            except:
-                raise Exception('Some error occurred during the add layer within a phemetric dc')
-
-    def remove_layer(self, layer_name):
-
-        # Process the layer name
-        layer_ = []
-        if isinstance(layer_name, str):
-            if str(self.pheyear) + '_' + layer_name in self.paraname_list:
-                layer_.append(str(self.pheyear) + '_' + layer_name)
-            elif layer_name in self.paraname_list:
-                layer_.append(layer_name)
-        elif isinstance(layer_name, list):
-            for layer_temp in layer_name:
-                if str(self.pheyear) + '_' + layer_temp in self.paraname_list:
-                    layer_.append(str(self.pheyear) + '_' + layer_temp)
-                elif layer_temp in self.paraname_list:
-                    layer_.append(layer_temp)
-
-        # Remove selected layer
-        for _ in layer_:
-            if self.sparse_matrix:
-                try:
-                    self.dc.remove_layer(_)
-                    self.paraname_list.remove(_)
-                except:
-                    raise Exception('Some error occurred during the removal of layer within a phemetric dc')
-            else:
-                try:
-                    self.dc = np.delete(self.dc, self.paraname_list.index(_), axis=2)
-                    self.paraname_list.remove(layer_name)
-                except:
-                    raise Exception('Some error occurred during the add layer within a phemetric dc')
-
-        self.save(self.Phemetric_dc_filepath)
-        self.__init__(self.Phemetric_dc_filepath)
-
-    def save(self, output_path: str):
-        start_time = time.time()
-        print(f'Start saving the Phemetric datacube of \033[1;31m{self.index}\033[0m in the \033[1;34m{self.ROI_name}\033[0m')
-
-        if not os.path.exists(output_path):
-            bf.create_folder(output_path)
-        output_path = bf.Path(output_path).path_name
-
-        metadata_dic = {'ROI_name': self.ROI_name, 'index': self.index, 'Datatype': self.Datatype, 'ROI': self.ROI,
-                        'ROI_array': self.ROI_array, 'ROI_tif': self.ROI_tif, 'sdc_factor': self.sdc_factor,
-                        'coordinate_system': self.coordinate_system, 'sparse_matrix': self.sparse_matrix,
-                        'huge_matrix': self.huge_matrix,
-                        'size_control_factor': self.size_control_factor, 'oritif_folder': self.oritif_folder,
-                        'dc_group_list': self.dc_group_list, 'tiles': self.tiles,
-                        'pheyear': self.pheyear, 'curfit_dic': self.curfit_dic,
-                        'Phemetric_factor': self.Phemetric_factor,
-                        'Nodata_value': self.Nodata_value, 'Zoffset': self.Zoffset}
-
-        paraname = self.paraname_list
-        np.save(f'{output_path}paraname.npy', paraname)
-        with open(f'{output_path}metadata.json', 'w') as js_temp:
-            json.dump(metadata_dic, js_temp)
-
-        if self.sparse_matrix:
-            self.dc.save(f'{output_path}{str(self.index)}_Phemetric_datacube\\')
-        else:
-            np.save(f'{output_path}{str(self.index)}_Phemetric_datacube.npy', self.dc)
-
-        print(f'Finish saving the Phemetric datacube of \033[1;31m{self.index}\033[0m for the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0ms')
-
-    def dc2tif(self, phe_list: list = None, output_folder: str = None):
-
-        # Process phe list
-        if phe_list is None:
-            phe_list = self.paraname_list
-        elif isinstance(phe_list, list):
-            phe_list_ = []
-            for phe_temp in phe_list:
-                if phe_temp in self.paraname_list:
-                    phe_list_.append(phe_temp)
-                elif str(self.pheyear) + '_' + phe_temp in self.paraname_list:
-                    phe_list_.append(str(self.pheyear) + '_' + phe_temp)
-            phe_list = phe_list_
-        else:
-            raise TypeError('Phe list should under list type')
-
-        # Process output folder
-        if output_folder is None:
-            output_folder = self.Phemetric_dc_filepath + 'Pheme_TIF\\'
-        else:
-            bf.create_folder(output_folder)
-            output_folder = Path(output_folder).path_name
-
-        ds_temp = gdal.Open(self.ROI_tif)
-        for phe_ in phe_list:
-            if not os.path.exists(output_folder + f'{str(phe_)}.TIF'):
-                if self.sparse_matrix:
-                    phe_arr = self.dc.SM_group[phe_].toarray()
-                else:
-                    phe_arr = self.dc[:, :, self.paraname_list.index(phe_)]
-                phe_arr[phe_arr == self.Nodata_value] = np.nan
-                bf.write_raster(ds_temp, phe_arr, output_folder, f'{str(phe_)}.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+from .Denvdc import Denv_dc
+from .Phemedc import Phemetric_dc
+import RSDatacube
 
 
 class RS_dcs(object):
@@ -861,6 +24,7 @@ class RS_dcs(object):
     def __init__(self, *args, work_env: str = None, auto_harmonised: bool = True, space_optimised: bool = True):
 
         # init_key_var
+        self._timerange_list = []
         self._sdc_factor_list = []
         self.sparse_matrix, self.huge_matrix = False, False
         self.s2dc_doy_list = []
@@ -876,6 +40,9 @@ class RS_dcs(object):
         self._Zoffset_list, self._Nodata_value_list = [], []
         self._space_optimised = space_optimised
         self._sparse_matrix_list, self._huge_matrix_list = [], []
+
+        # Datacube list
+        self._ROI_list, self._ROI_tif_list, self._ROI_name_list, self._ROI_array_list = [], [], [], []
 
         # Define the indicator for different dcs
         self._phemetric_namelist, self._pheyear_list = None, []
@@ -1070,11 +237,8 @@ class RS_dcs(object):
         if self._withDenvdc_:
             Denvdc_pos = [i for i, v in enumerate(self._dc_typelist) if v == Denv_dc]
             if len(Denvdc_pos) != 1:
-                for factor_temp in ['Datatype', 'coordinate_system', 'sparse_matrix', 'huge_matrix', 'sdc_factor',
-                                    'dc_group_list', 'tiles']:
-                    if False in [
-                        self.__dict__[f'_{factor_temp}_list'][Denvdc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][
-                            pos] for pos in Denvdc_pos]:
+                for factor_temp in ['coordinate_system', 'sparse_matrix', 'huge_matrix', 'sdc_factor','dc_group_list', 'tiles']:
+                    if False in [self.__dict__[f'_{factor_temp}_list'][Denvdc_pos[0]] == self.__dict__[f'_{factor_temp}_list'][pos] for pos in Denvdc_pos]:
                         raise ValueError(f'Please make sure the {factor_temp} for all the dcs were consistent!')
 
             # Construct Denv doylist
@@ -1171,7 +335,7 @@ class RS_dcs(object):
         # Check the ROI consistency
         if [self._withS2dc_, self._withDenvdc_, self._withPhemetricdc_, self._withLandsatdc_, self._withInunfacdc_].count(True) > 1:
             if False in [temp == self._ROI_list[0] for temp in self._ROI_list] or [temp == self._ROI_name_list[0] for temp in self._ROI_name_list]:
-                bounds_list = [bf.raster_ds2bounds(temp) for temp in self._ROI_tif_list]
+                bounds_list = [raster_ds2bounds(temp) for temp in self._ROI_tif_list]
                 crs_list = [gdal.Open(temp).GetProjection() for temp in self._ROI_tif_list]
                 if False in [temp == bounds_list[0] for temp in bounds_list] or False in [temp == crs_list[0] for temp in crs_list]:
                     try:
@@ -1528,9 +692,6 @@ class RS_dcs(object):
         x_size = [self._dc_XSize_list[num_] for num_ in index_num]
         y_size = [self._dc_YSize_list[num_] for num_ in index_num]
 
-
-
-
     def custom_composition(self, index, dc_type, **kwargs):
 
         # process inundation detection method
@@ -1617,8 +778,8 @@ class RS_dcs(object):
                 # Define static thr output
                 static_output = output_path + 'inundation_static_wi_thr_datacube\\'
                 static_inditif_path = static_output + 'Individual_tif\\'
-                bf.create_folder(static_output)
-                bf.create_folder(static_inditif_path)
+                create_folder(static_output)
+                create_folder(static_inditif_path)
 
                 if not os.path.exists(static_output + 'metadata.json'):
 
@@ -1660,7 +821,7 @@ class RS_dcs(object):
                             inundation_array[np.isnan(inundation_array)] = 0
                             inundation_array = inundation_array.astype(np.byte)
                             inundation_arr_list.append(inundation_array)
-                            bf.write_raster(gdal.Open(self.ROI_tif), inundation_array, static_inditif_path, f'Static_{str(doy_)}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                            write_raster(gdal.Open(self.ROI_tif), inundation_array, static_inditif_path, f'Static_{str(doy_)}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
                             print(f'Identify the inundation area in {str(doy_)} using {str(time.time()-st)[0:6]}s')
 
                         inundation_array = np.stack(inundation_arr_list, axis=2)
@@ -1695,16 +856,16 @@ class RS_dcs(object):
                 DT_inditif_path = DT_output_path + 'Individual_tif\\'
                 DT_threshold_path = DT_output_path + 'DT_threshold\\'
                 oa_output_path = DT_output_path
-                bf.create_folder(DT_output_path)
-                bf.create_folder(DT_inditif_path)
-                bf.create_folder(DT_threshold_path)
+                create_folder(DT_output_path)
+                create_folder(DT_inditif_path)
+                create_folder(DT_threshold_path)
 
                 if not os.path.exists(DT_threshold_path + 'threshold_map.TIF') or not os.path.exists(DT_threshold_path + 'bh_threshold_map.TIF') or self._inundation_overwritten_para:
 
                     # Define input
                     WI_sdc = copy.deepcopy(self.dcs[dc_num])
                     doy_array = copy.copy(self._doys_backup_[dc_num])
-                    doy_array = bf.date2doy(doy_array)
+                    doy_array = date2doy(doy_array)
                     doy_array = np.array(doy_array)
                     nodata_value = self._Nodata_value_list[dc_num]
 
@@ -1723,7 +884,7 @@ class RS_dcs(object):
 
                     # DT method with empirical and bimodal threshold
                     dc_list, pos_list, yxoffset_list = slice_datacube(WI_sdc, roi_coord)
-                    with concurrent.futures.ProcessPoolExecutor() as executor:
+                    with concurrent.futures.ProcessPoolExecutor(max_workers= int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])) as executor:
                         res = executor.map(create_bimodal_histogram_threshold, dc_list, pos_list, yxoffset_list,
                                            repeat(doy_array), repeat(sz_ctrl_fac), repeat(zoffset), repeat(nd_v),
                                            repeat(variance), repeat(bio_factor))
@@ -1737,9 +898,9 @@ class RS_dcs(object):
                         DT_threshold_arr[res_concat[r_][0], res_concat[r_][1]] = res_concat[r_][2]
                         bh_threshold_arr[res_concat[r_][0], res_concat[r_][1]] = res_concat[r_][3]
 
-                    bf.write_raster(gdal.Open(self.ROI_tif), DT_threshold_arr, DT_threshold_path, 'threshold_map.TIF',
+                    write_raster(gdal.Open(self.ROI_tif), DT_threshold_arr, DT_threshold_path, 'threshold_map.TIF',
                                     raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
-                    bf.write_raster(gdal.Open(self.ROI_tif), bh_threshold_arr, DT_threshold_path,
+                    write_raster(gdal.Open(self.ROI_tif), bh_threshold_arr, DT_threshold_path,
                                     'bh_threshold_map.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
                     WI_sdc = None
                     doy_array = None
@@ -1753,58 +914,66 @@ class RS_dcs(object):
                 if self._DT_std_fig_construction:
 
                     DT_distribution_fig_path = DT_output_path + 'DT_distribution_fig\\'
-                    bf.create_folder(DT_distribution_fig_path)
+                    create_folder(DT_distribution_fig_path)
+
+                    # Define input
+                    WI_sdc = copy.deepcopy(self.dcs[dc_num])
+                    doy_array = copy.copy(self._doys_backup_[dc_num])
+                    doy_array = date2doy(doy_array)
+                    doy_array = np.array(doy_array)
+                    nodata_value = self._Nodata_value_list[dc_num]
 
                     # Generate the MNDWI distribution at the pixel level
                     for y_temp in range(WI_sdc.shape[0]):
                         for x_temp in range(WI_sdc.shape[1]):
-                            if not os.path.exists(
-                                    f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png'):
+                            if not os.path.exists(f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png') and not np.isnan(DT_threshold_arr[y_temp, x_temp]):
 
                                 # Extract the wi series
-                                if self._sparse_matrix_list[dc_num]:
-                                    ___, wi_series, __ = WI_sdc._extract_matrix_y1x1zh(([y_temp], [x_temp], ['all']),
-                                                                                       nodata_export=True)
-                                else:
-                                    wi_series = WI_sdc[y_temp, x_temp, :]
-                                wi_series = invert_data(wi_series, self._size_control_factor_list[dc_num],
-                                                        self._Zoffset_list[dc_num], nodata_value)
+                                wi_series = WI_sdc[y_temp, x_temp, :]
+                                wi_series = invert_data(wi_series, self._size_control_factor_list[dc_num], self._Zoffset_list[dc_num], nodata_value)
                                 wi_series = wi_series.flatten()
-
                                 doy_array_pixel = np.mod(doy_array, 1000).flatten()
-                                wi_ori_series = copy.copy(wi_series)
-                                wi_series = np.delete(wi_series, np.argwhere(
-                                    np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 285)))
-                                wi_series = np.delete(wi_series, np.argwhere(np.isnan(wi_series))) if np.isnan(
-                                    nodata_value) else np.delete(wi_series, np.argwhere(wi_series == nodata_value))
-                                wi_series = np.delete(wi_series, np.argwhere(
-                                    wi_series > DT_threshold_arr[y_temp, x_temp])) if not np.isnan(
-                                    DT_threshold_arr[y_temp, x_temp]) else np.delete(wi_series,
-                                                                                     np.argwhere(wi_series > 0.123))
 
-                                if wi_series.shape[0] != 0:
+                                doy_array_pixel = np.delete(doy_array_pixel, np.argwhere(np.isnan(wi_series)))
+                                wi_series = np.delete(wi_series, np.argwhere(np.isnan(wi_series)))
+
+                                wi_ori_series = copy.copy(wi_series)
+                                wi_series = np.delete(wi_series, np.argwhere(np.logical_and(doy_array_pixel >= 182, doy_array_pixel <= 285)))
+                                wi_series = np.delete(wi_series, np.argwhere(wi_series > DT_threshold_arr[y_temp, x_temp])) if not np.isnan(DT_threshold_arr[y_temp, x_temp]) else np.delete(wi_series, np.argwhere(wi_series > 0.123))
+
+                                if wi_ori_series.shape[0] != 0:
+
                                     yy = np.arange(0, 100, 1)
                                     xx = np.ones([100])
                                     mndwi_temp_std = np.std(wi_series)
                                     mndwi_ave = np.mean(wi_series)
                                     plt.xlim(xmax=1, xmin=-1)
-                                    plt.ylim(ymax=50, ymin=0)
-                                    plt.hist(wi_ori_series, bins=50, color='#FFA500')
-                                    plt.hist(wi_series, bins=20, color='#00FFA5')
+                                    plt.ylim(ymin=0)
+                                    # Calculate the range that covers both series
+                                    min_val = min(wi_ori_series.min(), wi_series.min())
+                                    max_val = max(wi_ori_series.max(), wi_series.max())
+
+                                    # Create bin edges with interval of 1
+                                    bins = np.arange(np.floor(min_val), np.ceil(max_val) + 1, 0.02)
+
+                                    # Plot histograms with the same bins
+                                    plt.hist(wi_ori_series, bins=bins, color='#FFA500', density=False, alpha=0.5, label='Original Series')
+                                    plt.hist(wi_series, bins=bins, color='#00FFA5', density=False, alpha=0.5, label='Series')
+
                                     plt.plot(xx * mndwi_ave, yy, color='#FFFF00')
                                     plt.plot(xx * bh_threshold_arr[y_temp, x_temp], yy, color='#CD0000', linewidth='3')
-                                    plt.plot(xx * DT_threshold_arr[y_temp, x_temp], yy, color='#0000CD',
-                                             linewidth='1.5')
+                                    plt.plot(xx * DT_threshold_arr[y_temp, x_temp], yy, color='#0000CD', linewidth='1.5')
                                     plt.plot(xx * (mndwi_ave - mndwi_temp_std), yy, color='#00CD00')
                                     plt.plot(xx * (mndwi_ave + mndwi_temp_std), yy, color='#00CD00')
                                     plt.plot(xx * (mndwi_ave - self._variance_num * mndwi_temp_std), yy,
                                              color='#00CD00')
                                     plt.plot(xx * (mndwi_ave + self._variance_num * mndwi_temp_std), yy,
                                              color='#00CD00')
-                                    plt.savefig(
-                                        f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png',
+                                    plt.savefig(f'{DT_distribution_fig_path}DT_distribution_X{str(x_temp)}_Y{str(y_temp)}.png',
                                         dpi=150)
                                     plt.close()
+                    WI_sdc = None
+                    doy_array = None
 
                 # Construct inundation dc
                 if not os.path.exists(DT_output_path + 'doy.npy') or not os.path.exists(DT_output_path + 'metadata.json') or self._inundation_overwritten_para:
@@ -1812,19 +981,16 @@ class RS_dcs(object):
                     inundation_dc = copy.deepcopy(self._dcs_backup_[dc_num])
                     inundated_arr = copy.deepcopy(self.dcs[dc_num])
                     doy_array = copy.copy(self._doys_backup_[dc_num])
-                    doy_array = bf.date2doy(doy_array)
+                    doy_array = date2doy(doy_array)
                     doy_array = np.array(doy_array)
                     DT_threshold = DT_threshold_arr.astype(float)
                     num_list = [q for q in range(doy_array.shape[0])]
                     if self._sparse_matrix_list[dc_num]:
-                        inundated_arr_list = [inundated_arr.SM_group[inundated_arr.SM_namelist[_]] for _ in
-                                              range(inundated_arr.shape[2])]
+                        inundated_arr_list = [inundated_arr.SM_group[inundated_arr.SM_namelist[_]] for _ in range(inundated_arr.shape[2])]
                     else:
-                        inundated_arr_list = [
-                            inundated_arr[:, :, _].reshape([inundated_arr.shape[0], inundated_arr.shape[1]]) for _ in
-                            range(inundated_arr.shape[2])]
+                        inundated_arr_list = [inundated_arr[:, :, _].reshape([inundated_arr.shape[0], inundated_arr.shape[1]]) for _ in range(inundated_arr.shape[2])]
 
-                    with concurrent.futures.ProcessPoolExecutor() as executor:
+                    with concurrent.futures.ProcessPoolExecutor(max_workers= int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])) as executor:
                         res = list(tq(executor.map(create_indi_DT_inundation_map,
                                                    inundated_arr_list, repeat(doy_array),
                                                    num_list, repeat(DT_threshold),
@@ -1858,7 +1024,7 @@ class RS_dcs(object):
                     #         inundation_map = reassign_sole_pixel(inundation_map, Nan_value=0, half_size_window=2)
                     #         inundation_map = inundation_map.astype(np.byte)
                     #
-                    #         bf.write_raster(gdal.Open(thalweg_temp.ROI_tif), inundation_map, DT_inditif_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                    #         write_raster(gdal.Open(thalweg_temp.ROI_tif), inundation_map, DT_inditif_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
                     #     else:
                     #         inundated_ds = gdal.Open(f'{DT_inditif_path}DT_{str(doy_array[date_num])}.TIF')
                     #         inundation_map = inundated_ds.GetRasterBand(1).ReadAsArray()
@@ -1882,12 +1048,12 @@ class RS_dcs(object):
             inditif_path = oa_output_path + 'Individual_tif\\'
             annualtif_path = oa_output_path + 'Annual_tif\\'
             annualshp_path = oa_output_path + 'Annual_shp\\'
-            bf.create_folder(annualtif_path)
-            bf.create_folder(annualshp_path)
+            create_folder(annualtif_path)
+            create_folder(annualshp_path)
 
-            doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
+            doy_array = date2doy(np.array(inundation_dc.sdc_doylist))
             year_array = np.unique(doy_array // 1000)
-            temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
+            temp_ds = gdal.Open(file_filter(inditif_path, ['.TIF'])[0])
             for year in year_array:
                 if not os.path.exists(f'{annualtif_path}{inundation_mapping_method}_{str(year)}.TIF') or not os.path.exists(f'{annualshp_path}{inundation_mapping_method}_{str(year)}.shp') or self._inundation_overwritten_factor:
                     annual_vi_list = []
@@ -1903,7 +1069,7 @@ class RS_dcs(object):
                         annual_inundated_map = np.zeros([inundation_dc.dc.shape[0], inundation_dc.dc.shape[1]], dtype=np.byte)
                     else:
                         annual_inundated_map = np.nanmax(np.stack(annual_vi_list, axis=2), axis=2)
-                    bf.write_raster(temp_ds, annual_inundated_map, annualtif_path, f'{inundation_mapping_method}_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+                    write_raster(temp_ds, annual_inundated_map, annualtif_path, f'{inundation_mapping_method}_' + str(year) + '.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
                     annual_ds = gdal.Open(annualtif_path + f'{inundation_mapping_method}_' + str(year) + '.TIF')
 
                     # Create shp driver
@@ -1951,11 +1117,11 @@ class RS_dcs(object):
 
             # Create inundation frequency map
             inunfactor_path = oa_output_path + 'inun_factor\\'
-            bf.create_folder(inunfactor_path)
+            create_folder(inunfactor_path)
 
             if not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency.TIF') or self._inundation_overwritten_factor:
-                doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
-                temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
+                doy_array = date2doy(np.array(inundation_dc.sdc_doylist))
+                temp_ds = gdal.Open(file_filter(inditif_path, ['.TIF'])[0])
                 roi_temp = np.load(self.ROI_array)
                 inun_arr, all_arr = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(
                     np.float32)
@@ -1972,16 +1138,16 @@ class RS_dcs(object):
                     all_arr = all_arr + (arr_temp >= 1).astype(np.int16)
 
                 inundation_freq = inun_arr.astype(np.float32) / all_arr.astype(np.float32)
-                bf.write_raster(temp_ds, inundation_freq, inunfactor_path,
+                write_raster(temp_ds, inundation_freq, inunfactor_path,
                                 f'{inundation_mapping_method}_inundation_frequency.TIF',
                                 raster_datatype=gdal.GDT_Float32, nodatavalue=0)
 
-            if 'YZR' in self.ROI_name:
+            if 'floodplain' in self.ROI_name:
                 if not os.path.exists(
                         f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_pretgd.TIF') or not os.path.exists(
                         f'{inunfactor_path}{inundation_mapping_method}_inundation_frequency_posttgd.TIF'):
-                    doy_array = bf.date2doy(np.array(inundation_dc.sdc_doylist))
-                    temp_ds = gdal.Open(bf.file_filter(inditif_path, ['.TIF'])[0])
+                    doy_array = date2doy(np.array(inundation_dc.sdc_doylist))
+                    temp_ds = gdal.Open(file_filter(inditif_path, ['.TIF'])[0])
                     roi_temp = np.load(self.ROI_array)
                     inun_arr_pre, all_arr_pre = np.zeros_like(roi_temp).astype(np.float32), np.zeros_like(roi_temp).astype(
                         np.float32)
@@ -2002,23 +1168,23 @@ class RS_dcs(object):
                             inun_arr_pre = inun_arr_pre + (arr_temp == 2).astype(np.int16)
                             all_arr_pre = all_arr_pre + (arr_temp >= 1).astype(np.int16)
 
-                        if 2004001 <= doy_array[doy_index] < 2021001:
+                        if 2004001 <= doy_array[doy_index] < 2024001:
                             inun_arr_post = inun_arr_post + (arr_temp == 2).astype(np.int16)
                             all_arr_post = all_arr_post + (arr_temp >= 1).astype(np.int16)
 
                     inundation_freq_pretgd = inun_arr_pre.astype(np.float32) / all_arr_pre.astype(np.float32)
                     inundation_freq_posttgd = inun_arr_post.astype(np.float32) / all_arr_post.astype(np.float32)
-                    bf.write_raster(temp_ds, inundation_freq_pretgd, inunfactor_path,
+                    write_raster(temp_ds, inundation_freq_pretgd, inunfactor_path,
                                     f'{inundation_mapping_method}_inundation_frequency_pretgd.TIF',
                                     raster_datatype=gdal.GDT_Float32, nodatavalue=0)
-                    bf.write_raster(temp_ds, inundation_freq_posttgd, inunfactor_path,
+                    write_raster(temp_ds, inundation_freq_posttgd, inunfactor_path,
                                     f'{inundation_mapping_method}_inundation_frequency_posttgd.TIF',
                                     raster_datatype=gdal.GDT_Float32, nodatavalue=0)
 
             if not os.path.exists(
                     f'{inunfactor_path}{inundation_mapping_method}_inundation_recurrence.TIF') or self._inundation_overwritten_factor:
 
-                yearly_tif = bf.file_filter(annualtif_path, ['.TIF'],
+                yearly_tif = file_filter(annualtif_path, ['.TIF'],
                                             exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
                 roi_temp = np.load(self.ROI_array)
                 recu_arr = np.zeros_like(roi_temp).astype(np.float32)
@@ -2030,7 +1196,7 @@ class RS_dcs(object):
                     recu_arr = recu_arr + (arr_ == 2).astype(np.int16)
 
                 inundation_recu = recu_arr.astype(np.float32) / len(yearly_tif)
-                bf.write_raster(temp_ds, inundation_recu, inunfactor_path,
+                write_raster(temp_ds, inundation_recu, inunfactor_path,
                                 f'{inundation_mapping_method}_inundation_recurrence.TIF',
                                 raster_datatype=gdal.GDT_Float32, nodatavalue=0)
 
@@ -2082,7 +1248,7 @@ class RS_dcs(object):
             raise TypeError('The inundation removal method must processed on two datacube with same doy list!')
 
         processed_dc_path = f'{str(output_path)}{str(processed_index)}_noninun_datacube\\'
-        bf.create_folder(processed_dc_path)
+        create_folder(processed_dc_path)
 
         start_time = time.time()
         if not os.path.exists(processed_dc_path + 'metadata.json'):
@@ -2161,20 +1327,21 @@ class RS_dcs(object):
         if 'overwritten' in kwargs.keys():
             self._curve_fitting_algorithm = kwargs['curve_fitting_algorithm']
 
-    def curve_fitting(self, index: str, dc_type, **kwargs):
+    def curve_fitting(self, index: str, **kwargs):
 
         # Check vi availability
         if index not in self._index_list:
             raise ValueError('Please make sure the vi datacube is constructed!')
 
-        if dc_type == 'Sentinel2':
-            dc_type = Sentinel2_dc
-            doy_list = self.s2dc_doy_list
-            output_path = self._s2dc_work_env
-        elif dc_type == 'Landsat':
+        # Check the dc type
+        if self._dc_typelist[self._index_list.index(index)] == Landsat_dc:
             dc_type = Landsat_dc
             doy_list = self.Landsatdc_doy_list
             output_path = self._Landsatdc_work_env
+        elif self._dc_typelist[self._index_list.index(index)] == Sentinel2_dc:
+            dc_type = Sentinel2_dc
+            doy_list = self.s2dc_doy_list
+            output_path = self._s2dc_work_env
         else:
             raise ValueError('Only Sentinel-2 and Landsat dc is supported for inundation detection!')
 
@@ -2182,16 +1349,16 @@ class RS_dcs(object):
         self._process_curve_fitting_para(**kwargs)
 
         # Get the index/doy dc
-        dc_num = [_ for _ in range(len(self._index_list)) if
-                  self._dc_typelist[_] == dc_type and self._index_list[_] == index]
+        dc_num = [_ for _ in range(len(self._index_list)) if self._dc_typelist[_] == dc_type and self._index_list[_] == index]
         if dc_num == 0:
             raise TypeError('None imported datacube meets the requirement for curve fitting!')
         else:
             dc_num = dc_num[0]
 
+        # Copy the dc
         index_dc = copy.deepcopy(self.dcs[dc_num])
         doy_dc = copy.deepcopy(doy_list)
-        doy_dc = bf.date2doy(doy_dc)
+        doy_dc = date2doy(doy_dc)
         doy_all = np.mod(doy_dc, 1000)
         size_control_fac = self._size_control_factor_list[dc_num]
 
@@ -2204,16 +1371,16 @@ class RS_dcs(object):
         phemetric_output_path = curfit_output_path + f'\\{self.ROI_name}_Phemetric_datacube\\'
         csv_para_output_path = para_output_path + 'csv_file\\'
         tif_para_output_path = para_output_path + 'tif_file\\'
-        bf.create_folder(curfit_output_path)
-        bf.create_folder(para_output_path)
-        bf.create_folder(phemetric_output_path)
-        bf.create_folder(csv_para_output_path)
-        bf.create_folder(tif_para_output_path)
+        create_folder(curfit_output_path)
+        create_folder(para_output_path)
+        create_folder(phemetric_output_path)
+        create_folder(csv_para_output_path)
+        create_folder(tif_para_output_path)
         self._curve_fitting_dic[str(self.ROI) + '_' + str(index) + '_' + str(self._curve_fitting_dic['CFM']) + '_path'] = para_output_path
 
         # Define the cache folder
         cache_folder = f'{para_output_path}cache\\'
-        bf.create_folder(cache_folder)
+        create_folder(cache_folder)
 
         # Read pos_df
         if not os.path.exists(f'{cache_folder}pos_df.csv'):
@@ -2227,9 +1394,8 @@ class RS_dcs(object):
         if not os.path.exists(csv_para_output_path + 'curfit_all.csv'):
 
             # Slice into several tasks/blocks to use all cores
-            work_num = os.cpu_count()
-            doy_all_list, pos_list, xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(
-                np.ceil(pos_df.shape[0] / work_num))
+            work_num = int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])
+            doy_all_list, pos_list, xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(np.ceil(pos_df.shape[0] / work_num))
             for i_size in range(work_num):
                 if i_size != work_num - 1:
                     pos_list.append(pos_df[indi_size * i_size: indi_size * (i_size + 1)])
@@ -2245,7 +1411,7 @@ class RS_dcs(object):
                     dc_temp = index_dc.extract_matrix(([index_size_list[-1][0], index_size_list[-1][1] + 1],
                                                        [index_size_list[-1][2], index_size_list[-1][3] + 1], ['all']))
                     index_dc_list.append(dc_temp.drop_nanlayer())
-                    doy_all_list.append(bf.date2doy(index_dc_list[-1].SM_namelist))
+                    doy_all_list.append(date2doy(index_dc_list[-1].SM_namelist))
                 else:
                     index_dc_list.append(index_dc[index_size_list[-1][0]: index_size_list[-1][2],
                                          index_size_list[-1][1]: index_size_list[-1][3], :])
@@ -2285,7 +1451,7 @@ class RS_dcs(object):
                 df_list.append(self._curfit_result.loc[:, ['y', 'x', key_temp]])
 
         # Create tif file based on phenological parameter
-        with concurrent.futures.ProcessPoolExecutor() as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers= int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])) as executor:
             res = list(tq(executor.map(curfit_pd2tif, repeat(tif_para_output_path), df_list, key_list, repeat(self.ROI_tif)),
                           total=len(key_list), desc=f'Curve fitting result to tif file',
                           bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}'))
@@ -2298,11 +1464,88 @@ class RS_dcs(object):
                         'oritif_folder': tif_para_output_path, 'dc_group_list': None, 'tiles': None,
                         'curfit_dic': self._curve_fitting_dic, 'Zoffset': None,
                         'sparse_matrix': self._sparse_matrix_list[dc_num],
-                        'huge_matrix': self._huge_matrix_list[dc_num]}
+                        'huge_matrix': self._huge_matrix_list[dc_num],
+                        'ori_dc_folder': self._dcs_backup_[self._index_list.index(index)].dc_filepath}
 
-        with concurrent.futures.ProcessPoolExecutor() as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers= int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])) as executor:
             executor.map(cf2phemetric_dc, repeat(tif_para_output_path), repeat(phemetric_output_path), year_list,
                          repeat(index), repeat(metadata_dic))
+
+    def plot_pheme_var(self, output_folder):
+
+        # get the pheyear list
+        pheyear = [_ for _ in self._pheyear_list if _ is not None]
+
+        # Read the ori dc
+        self.append(Landsat_dc(self._dcs_backup_[self._pheyear_list.index(pheyear[0])].ori_dc_folder))
+        doy_list = self._dcs_backup_[-1].sdc_doylist
+        doy_list = date2doy(doy_list)
+        doy_lower_range = np.argwhere(np.logical_and(np.array(doy_list) > min(pheyear) * 1000, np.array(doy_list) < (max(pheyear) + 1) * 1000)).min()
+        doy_upper_range =np.argwhere(np.logical_and(np.array(doy_list) > min(pheyear) * 1000, np.array(doy_list) < (max(pheyear) + 1) * 1000)).max()
+
+        # check output fpolde
+        if not os.path.exists(output_folder):
+            raise Exception('Invalid output folder')
+
+        # Read the ROI arr
+        ds = gdal.Open(self.ROI_tif)
+        roi_arr = ds.GetRasterBand(1).ReadAsArray()
+        nodata_value = ds.GetRasterBand(1).GetNoDataValue()
+
+        # Read through the pheyear
+        if len(pheyear) == 0:
+            raise Exception('The pheyear list is empty! Please check the phemetric datacube!')
+        else:
+            phe_doy = datetime.date(year = max(pheyear) + 1, month = 1, day = 1).toordinal() - datetime.date(year = min(pheyear), month = 1, day = 1).toordinal()
+            pheyear_num = max(pheyear) - min(pheyear) + 1
+            with tqdm(total=self.dcs_YSize * self.dcs_XSize, desc=f'Plot the pheme var', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+                for y_ in range(self.dcs_YSize):
+                    for x_ in range(self.dcs_XSize):
+                        try:
+                            if roi_arr[y_, x_] != nodata_value:
+                                fig, ax = plt.subplots(figsize=(0.5 * pheyear_num, 6), constrained_layout=True)
+
+                                # Scatter plot the point
+                                doy_list_temp = np.array(doy_list[doy_lower_range: doy_upper_range + 1])
+                                vi_1d = self.dcs[-1][y_, x_, doy_lower_range: doy_upper_range + 1].reshape(-1)
+
+                                if np.isnan(self._Nodata_value_list[-1]):
+                                    doy_ = doy_list_temp[~np.isnan(vi_1d)]
+                                    value = vi_1d[~np.isnan(vi_1d)]
+                                else:
+                                    doy_ = doy_list_temp[vi_1d != self._Nodata_value_list[-1]]
+                                    value = vi_1d[vi_1d != self._Nodata_value_list[-1]]
+
+                                doy_ = np.array([datetime.date(year = _ // 1000, month = 1, day = 1).toordinal() + np.mod(_ , 1000) - 1 - datetime.date(year = min(pheyear), month = 1, day = 1).toordinal() for _ in doy_])
+
+                                # Scatter plot
+                                if doy_.shape[0] != 0:
+                                    value = (value - self._Zoffset_list[-1]) / 10000 if self._size_control_factor_list[
+                                        -1] else value - self._Zoffset_list[-1]
+                                    ax.scatter(doy_, value, s=10 ** 2, marker='o',  edgecolors=(0.1, 0.1, 0.1), facecolor=(1, 1, 1), alpha=1, linewidths=1)
+
+                                # Plot the curve
+                                for year_ in pheyear:
+                                    phe_pos = self._pheyear_list.index(year_)
+                                    doy_arr = np.linspace(1, int(datetime.date(year = year_ + 1, month = 1, day = 1).toordinal() - datetime.date(year = year_, month = 1, day = 1).toordinal()),
+                                                          int(datetime.date(year = year_ + 1, month = 1, day = 1).toordinal() - datetime.date(year = year_, month = 1, day = 1).toordinal()))
+                                    plot_arr = np.linspace(datetime.date(year = year_, month = 1, day = 1).toordinal() - datetime.date(year = min(pheyear), month = 1, day = 1).toordinal() + 1,
+                                                           datetime.date(year = year_ + 1, month = 1, day = 1).toordinal() - datetime.date(year = min(pheyear), month = 1, day = 1).toordinal(),
+                                                           int(datetime.date(year = year_ + 1, month = 1, day = 1).toordinal() - datetime.date(year = year_, month = 1, day = 1).toordinal()))
+                                    if self._dcs_backup_[phe_pos].curfit_dic['CFM'] == 'SPL':
+                                        para_list = np.array([self.dcs[phe_pos].SM_group[f'{str(year_)}_para_{str(_)}'][y_, x_] for _ in range(7)])
+                                        if np.argwhere(para_list != self._Nodata_value_list[phe_pos]).shape[0] == 7:
+                                            value_list = seven_para_logistic_function(doy_arr, *para_list)
+                                            ax.plot(plot_arr, value_list, lw=2, ls='-.', c=(255/256, 0/256, 0/256), )
+                                    else:
+                                        break
+                                plt.savefig(f'{output_folder}\\pheme_{str(y_)}_{str(x_)}.png', dpi = 300)
+                                plt.close()
+                            pbar.update()
+                        except:
+                            print(traceback.format_exc())
+                            print('ERR during handling plot pheme var')
+
 
     def _process_link_GEDI_Denv_para(self, **kwargs):
         # Detect whether all the indicators are valid
@@ -2321,40 +1564,6 @@ class RS_dcs(object):
         else:
             self._GEDI_link_Denv_spatial_interpolate_method = ['nearest_neighbor']
 
-        # process accumulated_method
-        if 'accumulated_period' in kwargs.keys():
-            if isinstance(kwargs['accumulated_period'], str) and kwargs['accumulated_period'] in ['SOY2DOY', 'SOS2DOY', 'SOY2PEAK', 'SOS2PEAK']:
-                self._GEDI_link_S2_accumulated_period = [kwargs['accumulated_period']]
-            elif isinstance(kwargs['accumulated_period'], list) and True in [_ in ['SOY2DOY', 'SOS2DOY', 'SOY2PEAK', 'SOS2PEAK'] for _ in kwargs['accumulated_period']]:
-                self._GEDI_link_S2_accumulated_period = [_ for _ in kwargs['accumulated_period'] if _ in ['SOY2DOY', 'SOS2DOY', 'SOY2PEAK', 'SOS2PEAK']]
-            else:
-                raise TypeError('Please mention the accumulated_period should be str type!')
-        else:
-            self._GEDI_link_S2_accumulated_period = ['SOY2DOY']
-
-        if 'threshold' in kwargs.keys():
-            if isinstance(kwargs['threshold'], list) and len(kwargs['threshold']) == 2:
-                if kwargs['threshold'][0] == 'static_thr':
-                    self._link_GEDI_threshold = 'static_thr'
-                    if isinstance(kwargs['threshold'][1], (np.float32, np.float64, float)):
-                        self._thr = kwargs['threshold'][1]
-                    else:
-                        raise Exception('The threshold should be a float type!')
-
-                elif kwargs['threshold'][0] == 'phemetric_thr':
-                    self._link_GEDI_threshold = 'phemetric_thr'
-                    if isinstance(kwargs['threshold'][1], (np.int16, np.int32, int)):
-                        self._thr = kwargs['threshold'][1]
-                        self._thr = min(self._thr, 10)
-                        self._thr = max(self._thr, 1)
-                    else:
-                        raise Exception('The threshold should be a int type!')
-            else:
-                raise TypeError('Please mention the threshold should be a list type with two elements!')
-
-        else:
-            self._link_GEDI_threshold = 'phemetric_thr'
-            self._thr = 5
 
     def link_GEDI_Denvdc(self, GEDI_df_, denv_list, **kwargs):
 
@@ -2371,8 +1580,8 @@ class RS_dcs(object):
         else:
             raise TypeError('The gedi_df_ is not under the right type')
         GEDI_df_reset = GEDI_df_.GEDI_inform_DF.reset_index().rename(columns={'index': 'Original'})
-        gedi_list_folder = os.path.join(GEDI_df_.work_env, 'GEDI_link_RS\\')
-        bf.create_folder(gedi_list_folder)
+        gedi_list_folder = os.path.join(GEDI_df_.work_env, f'GEDI_link_RS\\{GEDI_df_.file_name}\\')
+        create_folder(gedi_list_folder)
 
         # Get the phemetricdc under the year list
         for _ in GEDI_df_.year_list:
@@ -2388,7 +1597,7 @@ class RS_dcs(object):
                     raise TypeError(f'The Denv {str(denv_temp)} is not imported into the RSdc')
 
                 # Divide the GEDI and dc into different blocks
-                block_amount = os.cpu_count()
+                block_amount = int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])
                 indi_block_size = int(np.ceil(GEDI_df_.df_size / block_amount))
 
                 # Allocate the GEDI_df and dc
@@ -2398,6 +1607,24 @@ class RS_dcs(object):
                 # Denvdc count and posp
                 denvdc_count = len([_ for _ in self._index_list if _ == denv_temp])
                 denvdc_pos = [_ for _ in range(len(self._index_list)) if self._index_list[_] == denv_temp]
+                nodata_value = [self._Nodata_value_list[_] for _ in denvdc_pos]
+                size_control = [self._size_control_factor_list[_] for _ in denvdc_pos]
+                zoffset_value = [self._Zoffset_list[_] for _ in denvdc_pos]
+
+                if False not in [_ == nodata_value[0] for _ in nodata_value]:
+                    nodata_value = nodata_value[0]
+                else:
+                    raise TypeError('The Nodata value for the Denvdc is not the same! Please check!')
+
+                if False not in [_ == size_control[0] for _ in size_control]:
+                    size_control = size_control[0]
+                else:
+                    raise TypeError('The size control factor for the Denvdc is not the same! Please check!')
+
+                if False not in [_ == zoffset_value[0] for _ in zoffset_value]:
+                    zoffset_value = zoffset_value[0]
+                else:
+                    raise TypeError('The Zoffset value for the Denvdc is not the same! Please check!')
 
                 # Phemedc pos
                 phemedc_pos = [_ for _ in range(len(self._pheyear_list)) if self._pheyear_list[_] in GEDI_df_.year_list]
@@ -2405,22 +1632,19 @@ class RS_dcs(object):
                 # Reconstruct the phemetric dc
                 phemedc_reconstructed = None
                 for _ in phemedc_pos:
-                    if f'{str(self._pheyear_list[_])}_SOS' not in self._doys_backup_[_] or f'{str(self._pheyear_list[_])}_peak_doy' not in self._doys_backup_[_]:
-                        raise TypeError(f'The phemetric SOS or peak doy for year {str(self._pheyear_list[_])} is not properly imported!')
-                    if phemedc_reconstructed is None:
-                        if self._sparse_matrix_list[_]:
-                            phemedc_reconstructed = NDSparseMatrix(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_SOS'], SM_namelist=[f'{str(self._pheyear_list[_])}_SOS'])
-                            phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_peak_doy'], f'{str(self._pheyear_list[_])}_peak_doy', phemedc_reconstructed.shape[2] + 1)
+                    if f'{str(self._pheyear_list[_])}_SOS' not in self._doys_backup_[_] or f'{str(self._pheyear_list[_])}_peak_doy' not in self._doys_backup_[_] or f'{str(self._pheyear_list[_])}_EOS' not in self._doys_backup_[_]:
+                        raise TypeError(f'The phemetric EOS, SOS or peak doy for year {str(self._pheyear_list[_])} is not properly imported!')
+                    for __ in ['SOS', 'peak_doy', 'EOS', 'EOM']:
+                        if phemedc_reconstructed is None:
+                            if self._sparse_matrix_list[_]:
+                                phemedc_reconstructed = NDSparseMatrix(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_{__}'], SM_namelist=[f'{str(self._pheyear_list[_])}_{__}'])
+                            else:
+                                phemedc_reconstructed = self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_{__}'])]]
                         else:
-                            phemedc_reconstructed = self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_SOS'])]]
-                            phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_peak_doy'])]]), axis=2)
-                    else:
-                        if self._sparse_matrix_list[_]:
-                            phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_SOS'], f'{str(self._pheyear_list[_])}_SOS', phemedc_reconstructed.shape[2] + 1)
-                            phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_peak_doy'], f'{str(self._pheyear_list[_])}_peak_doy', phemedc_reconstructed.shape[2] + 1)
-                        else:
-                            phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_SOS'])]]), axis=2)
-                            phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_peak_doy'])]]), axis=2)
+                            if self._sparse_matrix_list[_]:
+                                phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_{__}'], f'{str(self._pheyear_list[_])}_{__}', phemedc_reconstructed.shape[2] + 1)
+                            else:
+                                phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_{__}'])]]), axis=2)
 
                 # Reconstruct the denv dc
                 denvdc_reconstructed = None
@@ -2470,14 +1694,15 @@ class RS_dcs(object):
 
                 try:
                     # Sequenced code for debug
+                    # result = []
                     # for i in range(block_amount):
-                    #     result = link_GEDI_Denvdc_inform(denvdc_blocked[i], denv_temp, doy_list_integrated, raster_gt, phedc_blocked[i], GEDI_df_blocked[i], 'EPSG',
-                    #                                      ['area_average'], self._GEDI_link_S2_accumulated_period, [self._link_GEDI_threshold, self._thr])
+                    #     result.append(link_GEDI_Denvdc_inform(denvdc_blocked[i], denv_temp, doy_list_integrated, raster_gt, phedc_blocked[i], GEDI_df_blocked[i], 'EPSG', ['area_average', 'focal'], [nodata_value, zoffset_value, size_control]))
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                        result = executor.map(link_GEDI_Denvdc_inform, denvdc_blocked, repeat(denv_temp), repeat(doy_list_integrated), raster_gt_list, phedc_blocked, GEDI_df_blocked,
-                                              repeat('EPSG'), repeat(self._GEDI_link_Denv_spatial_interpolate_method), repeat(self._GEDI_link_S2_accumulated_period), repeat([self._link_GEDI_threshold, self._thr]))
+                        result = executor.map(link_GEDI_Denvdc_inform, denvdc_blocked, repeat(denv_temp), repeat(doy_list_integrated),
+                                              raster_gt_list, phedc_blocked, GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_Denv_spatial_interpolate_method), repeat([nodata_value, zoffset_value, size_control]))
                 except:
-                    raise Exception('The s2pheme-GEDI link procedure was interrupted by unknown error!')
+                    print(traceback.format_exc())
+                    raise Exception('The pheme-GEDI link procedure was interrupted by unknown error!')
 
                 try:
                     result = list(result)
@@ -2490,7 +1715,7 @@ class RS_dcs(object):
                             gedi_list_output = pd.concat([gedi_list_output, result_temp])
 
                     gedi_list_output.set_index('Original')
-                    gedi_list_output.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_accumulated_{denv_temp}.csv')
+                    gedi_list_output.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_{denv_temp}.csv')
                 except:
                     raise Exception('The df output procedure was interrupted by error!')
 
@@ -2525,9 +1750,10 @@ class RS_dcs(object):
             GEDI_df_.reprojection(raster_proj, xycolumn_start='EPSG')
         else:
             raise TypeError('The gedi_df_ is not under the right type')
+
         GEDI_df_reset = GEDI_df_.GEDI_inform_DF.reset_index().rename(columns={'index': 'Original'})
-        gedi_list_folder = os.path.join(GEDI_df_.work_env, 'GEDI_link_RS\\')
-        bf.create_folder(gedi_list_folder)
+        gedi_list_folder = os.path.join(GEDI_df_.work_env, f'GEDI_link_RS\\{GEDI_df_.file_name}\\')
+        create_folder(gedi_list_folder)
 
         # Construct phemetric list
         phemetric_gedi_list = []
@@ -2539,7 +1765,7 @@ class RS_dcs(object):
                     raise Exception(f'The {str(phemetric_temp)} is not a valid index or is not inputted into the dcs!')
 
                 # Divide the GEDI and dc into different blocks
-                block_amount = os.cpu_count()
+                block_amount = int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])
                 indi_block_size = int(np.ceil(GEDI_df_.df_size / block_amount))
 
                 # Allocate the GEDI_df and dc
@@ -2555,17 +1781,14 @@ class RS_dcs(object):
                 for _ in range(phedc_count):
                     if phedc_reconstructed is None:
                         if self._sparse_matrix_list[phepos[_]]:
-                            phedc_reconstructed = NDSparseMatrix(self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'],
-                                                                 SM_namelist=[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])
+                            phedc_reconstructed = NDSparseMatrix(self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'], SM_namelist=[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])
                         else:
                             phedc_reconstructed = self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]
                     else:
                         if self._sparse_matrix_list[phepos[_]]:
-                            phedc_reconstructed.add_layer(self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'],
-                                                          f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}', phedc_reconstructed.shape[2] + 1)
+                            phedc_reconstructed.add_layer(self.dcs[phepos[_]].SM_group[f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'], f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}', phedc_reconstructed.shape[2] + 1)
                         else:
-                            phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]),
-                                                                 axis=2)
+                            phedc_reconstructed = np.concatenate((phedc_reconstructed, self.dcs[phepos[_]][:, :, [self._doys_backup_[phepos[_]].index([f'{str(self._pheyear_list[phepos[_]])}_{phemetric_temp}'])]]), axis=2)
                     year_list_temp.append(self._pheyear_list[phepos[_]])
 
                 for i in range(block_amount):
@@ -2595,7 +1818,7 @@ class RS_dcs(object):
                 try:
                     # Sequenced code for debug
                     # for i in range(block_amount):
-                    #     result = link_GEDI_Phedc_inform(dc_blocked[i], GEDI_list_blocked[i], bf.date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
+                    #     result = link_GEDI_Phedc_inform(dc_blocked[i], GEDI_list_blocked[i], date2doy(thalweg_temp.doy_list), raster_gt, 'EPSG', index_temp, 'linear_interpolation', thalweg_temp.size_control_factor_list[thalweg_temp.index_list.index(index_temp)])
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
                         result = executor.map(link_GEDI_Phedc_inform, phedc_blocked, repeat(year_list_temp), repeat(phemetric_temp),
                                               raster_gt_list, GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_Pheme_spatial_interpolate_method))
@@ -2620,8 +1843,8 @@ class RS_dcs(object):
             GEDI_df_.GEDI_inform_DF = GEDI_df_.GEDI_inform_DF.merge(gedi_list_output)
 
         # Output to a single file
-        if not os.path.exists(gedi_list_folder + f'{GEDI_df_.file_name}_all_Phemetrics.csv') and len(phemetric_list) > 1:
-            GEDI_df_.GEDI_inform_DF.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_all_Phemetrics.csv')
+        # if not os.path.exists(gedi_list_folder + f'{GEDI_df_.file_name}_all_Phemetrics.csv') and len(phemetric_list) > 1:
+        #     GEDI_df_.GEDI_inform_DF.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_all_Phemetrics.csv')
 
     def _process_link_GEDI_RS_para(self, **kwargs):
 
@@ -2641,17 +1864,6 @@ class RS_dcs(object):
         else:
             self._GEDI_link_RS_spatial_interpolate_method = ['nearest_neighbor']
 
-        # process para method
-        if 'temporal_interpolate_method' in kwargs.keys():
-            if isinstance(kwargs['temporal_interpolate_method'], str) and kwargs['temporal_interpolate_method'] in ['linear_interpolation', '24days_max', '24days_ave']:
-                self._GEDI_link_RS_temporal_interpolate_method = [kwargs['temporal_interpolate_method']]
-            elif isinstance(kwargs['temporal_interpolate_method'], list) and True in [_ in ['linear_interpolation', '24days_max', '24days_ave'] for _ in kwargs['temporal_interpolate_method']]:
-                self._GEDI_link_RS_temporal_interpolate_method = [_ for _ in kwargs['temporal_interpolate_method'] if _ in ['linear_interpolation', '24days_max', '24days_ave']]
-            else:
-                raise TypeError('The temporal_interpolate_method was problematic!')
-        else:
-            self._GEDI_link_RS_temporal_interpolate_method = ['linear_interpolation']
-
     def link_GEDI_RS_dc(self, GEDI_df_, index_list, **kwargs):
 
         # Two different method Nearest neighbor and linear interpolation
@@ -2667,8 +1879,8 @@ class RS_dcs(object):
         else:
             raise TypeError('The gedi_df_ is not under the right type')
         GEDI_df_reset = GEDI_df_.GEDI_inform_DF.reset_index().rename(columns={'index': 'Original'})
-        gedi_list_folder = os.path.join(GEDI_df_.work_env, 'GEDI_link_RS\\')
-        bf.create_folder(gedi_list_folder)
+        gedi_list_folder = os.path.join(GEDI_df_.work_env, f'GEDI_link_RS\\{GEDI_df_.file_name}\\')
+        create_folder(gedi_list_folder)
 
         # resort through lat or lon
         for index_temp in index_list:
@@ -2681,27 +1893,24 @@ class RS_dcs(object):
                 # Reconstruct the phemetric dc
                 phemedc_reconstructed = None
                 for _ in phemedc_pos:
-                    if f'{str(self._pheyear_list[_])}_SOS' not in self._doys_backup_[_] or f'{str(self._pheyear_list[_])}_peak_doy' not in self._doys_backup_[_]:
-                        raise TypeError(f'The phemetric SOS or peak doy for year {str(self._pheyear_list[_])} is not properly imported!')
-                    if phemedc_reconstructed is None:
-                        if self._sparse_matrix_list[_]:
-                            phemedc_reconstructed = NDSparseMatrix(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_SOS'], SM_namelist=[f'{str(self._pheyear_list[_])}_SOS'])
-                            phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_peak_doy'], f'{str(self._pheyear_list[_])}_peak_doy', phemedc_reconstructed.shape[2] + 1)
+                    if f'{str(self._pheyear_list[_])}_SOS' not in self._doys_backup_[_] or f'{str(self._pheyear_list[_])}_peak_doy' not in self._doys_backup_[_] or f'{str(self._pheyear_list[_])}_EOS' not in self._doys_backup_[_]:
+                        raise TypeError(f'The phemetric EOS, SOS or peak doy for year {str(self._pheyear_list[_])} is not properly imported!')
+                    for __ in ['SOS', 'peak_doy', 'EOS', 'EOM']:
+                        if phemedc_reconstructed is None:
+                            if self._sparse_matrix_list[_]:
+                                phemedc_reconstructed = NDSparseMatrix(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_{__}'], SM_namelist=[f'{str(self._pheyear_list[_])}_{__}'])
+                            else:
+                                phemedc_reconstructed = self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_{__}'])]]
                         else:
-                            phemedc_reconstructed = self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_SOS'])]]
-                            phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_peak_doy'])]]), axis=2)
-                    else:
-                        if self._sparse_matrix_list[_]:
-                            phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_SOS'], f'{str(self._pheyear_list[_])}_SOS', phemedc_reconstructed.shape[2] + 1)
-                            phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_peak_doy'], f'{str(self._pheyear_list[_])}_peak_doy', phemedc_reconstructed.shape[2] + 1)
-                        else:
-                            phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_SOS'])]]), axis=2)
-                            phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_peak_doy'])]]), axis=2)
+                            if self._sparse_matrix_list[_]:
+                                phemedc_reconstructed.add_layer(self.dcs[_].SM_group[f'{str(self._pheyear_list[_])}_{__}'], f'{str(self._pheyear_list[_])}_{__}', phemedc_reconstructed.shape[2] + 1)
+                            else:
+                                phemedc_reconstructed = np.concatenate((phemedc_reconstructed, self.dcs[_][:, :, [self._doys_backup_[_].index([f'{str(self._pheyear_list[_])}_{__}'])]]), axis=2)
 
                 # Divide the GEDI and dc into different blocks
                 if index_temp not in self._index_list:
                     raise Exception(f'The {str(index_temp)} is not a valid index or is not input into the dcs!')
-                block_amount = os.cpu_count()
+                block_amount = int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])
                 indi_block_size = int(np.ceil(GEDI_df_.df_size / block_amount))
 
                 # Allocate the GEDI_df and dc
@@ -2725,10 +1934,10 @@ class RS_dcs(object):
                     if isinstance(self.dcs[self._index_list.index(index_temp)], NDSparseMatrix):
                         sm_temp = self.dcs[self._index_list.index(index_temp)].extract_matrix(([cube_ymin, cube_ymax + 1], [cube_xmin, cube_xmax + 1], ['all']))
                         dc_blocked.append(sm_temp.drop_nanlayer())
-                        doy_list_temp.append(bf.date2doy(dc_blocked[-1].SM_namelist))
+                        doy_list_temp.append(date2doy(dc_blocked[-1].SM_namelist))
                     elif isinstance(self.dcs[self._index_list.index(index_temp)], np.ndarray):
                         dc_blocked.append(self.dcs[self._index_list.index(index_temp)][cube_ymin:cube_ymax + 1, cube_xmin: cube_xmax + 1, :])
-                        doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
+                        doy_list_temp.append(date2doy(self.s2dc_doy_list))
                     raster_gt_list.append([raster_gt[0] + cube_xmin * raster_gt[1], raster_gt[1], raster_gt[2], raster_gt[3] + cube_ymin * raster_gt[5], raster_gt[4], raster_gt[5]])
 
                     if isinstance(phemedc_reconstructed, NDSparseMatrix):
@@ -2741,12 +1950,10 @@ class RS_dcs(object):
                     # Sequenced code for debug
                     # for i in range(block_amount):
                     #     result = link_GEDI_RSdc_inform(dc_blocked[i], raster_gt_list[i], doy_list_temp[i], index_temp, phedc_blocked[i],
-                    #                           GEDI_df_blocked[i], 'EPSG', self._GEDI_link_RS_temporal_interpolate_method,
-                    #                           self._GEDI_link_RS_spatial_interpolate_method)
+                    #                                    GEDI_df_blocked[i], 'EPSG', self._GEDI_link_RS_spatial_interpolate_method)
                     with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
                         result = executor.map(link_GEDI_RSdc_inform, dc_blocked, raster_gt_list, doy_list_temp, repeat(index_temp), phedc_blocked,
-                                              GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_RS_temporal_interpolate_method),
-                                              repeat(self._GEDI_link_RS_spatial_interpolate_method))
+                                              GEDI_df_blocked, repeat('EPSG'), repeat(self._GEDI_link_RS_spatial_interpolate_method))
                 except:
                     raise Exception('The link procedure was interrupted by error!')
 
@@ -2761,7 +1968,9 @@ class RS_dcs(object):
                             gedi_list_output = pd.concat([gedi_list_output, result_temp])
                     for key_ in gedi_list_output.keys():
                         if index_temp in key_ and not 'reliability' in key_:
-                            if self._size_control_factor_list[self._index_list.index(index_temp)]:
+                            if 'std' in key_ and self._size_control_factor_list[self._index_list.index(index_temp)]:
+                                gedi_list_output[key_] = gedi_list_output[key_] / 10000
+                            elif self._size_control_factor_list[self._index_list.index(index_temp)]:
                                 gedi_list_output[key_] = (gedi_list_output[key_] - self._Zoffset_list[self._index_list.index(index_temp)]) / 10000
                             else:
                                 gedi_list_output[key_] = (gedi_list_output[key_] - self._Zoffset_list[self._index_list.index(index_temp)])
@@ -2810,8 +2019,8 @@ class RS_dcs(object):
         else:
             raise TypeError('The gedi_df_ is not under the right type')
         GEDI_df_reset = GEDI_df_.GEDI_inform_DF.reset_index().rename(columns={'index': 'Original'})
-        gedi_list_folder = os.path.join(GEDI_df_.work_env, 'GEDI_link_RS\\')
-        bf.create_folder(gedi_list_folder)
+        gedi_list_folder = os.path.join(GEDI_df_.work_env, f'GEDI_link_RS\\{GEDI_df_.file_name}\\')
+        create_folder(gedi_list_folder)
 
         # resort through lat or lon
         if os.path.exists(gedi_list_folder + f'{GEDI_df_.file_name}_VegType.csv'):
@@ -2845,11 +2054,12 @@ class RS_dcs(object):
 
             try:
                 # Sequenced code for debug
-                # for i in range(block_amount):
-                #     result = link_GEDI_VegType_inform(arr_blocked[i], raster_gt_list[i], GEDI_df_blocked[i], 'EPSG', self._GEDI_link_RS_spatial_interpolate_method)
-                with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
-                    result = executor.map(link_GEDI_VegType_inform, arr_blocked, raster_gt_list, GEDI_df_blocked,
-                                          repeat('EPSG'), repeat(self._GEDI_link_RS_spatial_interpolate_method))
+                result = []
+                for i in range(block_amount):
+                    result.append(link_GEDI_VegType_inform(arr_blocked[i], raster_gt_list[i], GEDI_df_blocked[i], 'EPSG', self._GEDI_link_RS_spatial_interpolate_method))
+                # with concurrent.futures.ProcessPoolExecutor(max_workers=block_amount) as executor:
+                #     result = executor.map(link_GEDI_VegType_inform, arr_blocked, raster_gt_list, GEDI_df_blocked,
+                #                           repeat('EPSG'), repeat(self._GEDI_link_RS_spatial_interpolate_method))
             except:
                 raise Exception('The link procedure was interrupted by error!')
 
@@ -2858,10 +2068,11 @@ class RS_dcs(object):
                 gedi_list_output = None
 
                 for result_temp in result:
-                    if gedi_list_output is None:
-                        gedi_list_output = copy.copy(result_temp)
-                    else:
-                        gedi_list_output = pd.concat([gedi_list_output, result_temp])
+                    if result_temp.shape[0] != 0:
+                        if gedi_list_output is None:
+                            gedi_list_output = copy.copy(result_temp)
+                        else:
+                            gedi_list_output = pd.concat([gedi_list_output, result_temp])
 
                 gedi_list_output.set_index('Original')
                 gedi_list_output.to_csv(gedi_list_folder + f'{GEDI_df_.file_name}_VegType.csv')
@@ -2874,7 +2085,7 @@ class RS_dcs(object):
 
         # Construct the output folder
         output_folder = os.path.join(self._denv_work_env, 'denv8pheme\\')
-        bf.create_folder(output_folder)
+        create_folder(output_folder)
 
         # Determine the cal method
         if not isinstance(cal_method, str):
@@ -2996,7 +2207,7 @@ class RS_dcs(object):
         #
         #         acc_static = acc_static / cum_static
         #         cum_static = None
-        #         bf.write_raster(ds_temp, acc_static, output_folder, f'{str(self._denv8pheme_cal)}_{denvname}_{str(year_)}_static.TIF', raster_datatype=gdal.GDT_Float32)
+        #         write_raster(ds_temp, acc_static, output_folder, f'{str(self._denv8pheme_cal)}_{denvname}_{str(year_)}_static.TIF', raster_datatype=gdal.GDT_Float32)
         #
         #     # Get the denv matrix
         #     start_arr = np.round(self.dcs[pheme_pos].SM_group[f'{str(year_)}_{start_pheme}'].toarray())
@@ -3042,7 +2253,7 @@ class RS_dcs(object):
         #     if self._size_control_factor_list[denv_pos]:
         #         acc_denv = acc_denv / 100
         #
-        #     bf.write_raster(ds_temp, acc_denv, output_folder, f'{str(self._denv8pheme_cal)}_{denvname}_{str(year_)}.TIF', raster_datatype=gdal.GDT_Float32)
+        #     write_raster(ds_temp, acc_denv, output_folder, f'{str(self._denv8pheme_cal)}_{denvname}_{str(year_)}.TIF', raster_datatype=gdal.GDT_Float32)
         #     print(f'Finish calculate the \033[1;31m{str(self._denv8pheme_cal)}\033[0m \033[1;31m{denvname}\033[0m for the year \033[1;34m{str(year_)}\033[0m in {str(time.time()-st)}s')
 
     # def process_denv_via_pheme(self, denvname, phename, ):
@@ -3237,7 +2448,7 @@ class RS_dcs(object):
         # Generate the
         if os.path.exists(output_folder):
             output_folder = os.path.join(output_folder, 'simulated_GEDI_df\\')
-            bf.create_folder(output_folder)
+            create_folder(output_folder)
         else:
             raise TypeError('The output folder is not existed!')
         
@@ -3245,7 +2456,7 @@ class RS_dcs(object):
         simulate_date_list, simulate_year_list = [], []
         for _ in simulate_date:
             if isinstance(_, int) and _ > 10000000:
-                simulate_date_list.append(bf.date2doy(_))
+                simulate_date_list.append(date2doy(_))
                 simulate_year_list.append(_ // 10000)
             elif isinstance(_, int) and _ > 1000000:
                 simulate_date_list.append(_)
@@ -3365,10 +2576,10 @@ class RS_dcs(object):
     #                                                                                               [min(x_all_blocked[i]), max(x_all_blocked[i]) + 1],
     #                                                                                               ['all']))
     #                                 dc_blocked.append(sm_temp)
-    #                                 doy_list_temp.append(bf.date2doy(dc_blocked[i].SM_namelist))
+    #                                 doy_list_temp.append(date2doy(dc_blocked[i].SM_namelist))
     #                             elif isinstance(self.dcs[self._index_list.index(_)], np.ndarray):
     #                                 dc_blocked.append(self.dcs[self._index_list.index(_)][y_all_blocked[i].min():y_all_blocked[i].max() + 1, x_all_blocked[i].min(): x_all_blocked[i].max() + 1, :])
-    #                                 doy_list_temp.append(bf.date2doy(self.s2dc_doy_list))
+    #                                 doy_list_temp.append(date2doy(self.s2dc_doy_list))
     #                         elif len(dc_blocked) != len(doy_list_temp):
     #                             raise Exception('Code Error in create feature list')
     #
@@ -3496,7 +2707,7 @@ class RS_dcs(object):
     #                     elif not os.path.exists(f"{output_folder}{str(date_temp)}\\accumulated_{_.split('_')[0]}_index.csv"):
     #                         shutil.copyfile(f"{output_folder}{str(date_temp)}\\peak_{_.split('_')[0]}_index.csv", f"{output_folder}{str(date_temp)}\\accumulated_{_.split('_')[0]}_index.csv")
     #                 else:
-    #                     if not os.path.exists(f"{output_folder}{str(bf.doy2date(date_temp))}\\accumulated_{_.split('_')[0]}_index.csv"):
+    #                     if not os.path.exists(f"{output_folder}{str(doy2date(date_temp))}\\accumulated_{_.split('_')[0]}_index.csv"):
     #                         year_temp = int(np.floor(date_temp / 1000))
     #                         doy_temp = np.mod(date_temp, 1000)
     #                         doy_templist = range(year_temp * 1000 + 1, year_temp * 1000 + doy_temp + 1)
@@ -3570,16 +2781,16 @@ class RS_dcs(object):
     #
     #         if mod_factor == 'dc':
     #             for date_temp in simulate_date_list:
-    #                 xy_temp = pd.DataFrame(pd_out, columns=['y', 'x', bf.doy2date(date_temp)]) if not isinstance(date_temp, str) else pd.DataFrame(pd_out, columns=['y', 'x', date_temp])
-    #                 xy_temp.to_csv(f'{output_folder}{str(bf.doy2date(date_temp))}\\{_}_index.csv') if not isinstance(date_temp, str) else xy_temp.to_csv(f'{output_folder}{str(date_temp)}\\{_}_index.csv')
+    #                 xy_temp = pd.DataFrame(pd_out, columns=['y', 'x', doy2date(date_temp)]) if not isinstance(date_temp, str) else pd.DataFrame(pd_out, columns=['y', 'x', date_temp])
+    #                 xy_temp.to_csv(f'{output_folder}{str(doy2date(date_temp))}\\{_}_index.csv') if not isinstance(date_temp, str) else xy_temp.to_csv(f'{output_folder}{str(date_temp)}\\{_}_index.csv')
     #         elif mod_factor == 'phedc':
     #             for date_temp in simulate_date_list:
     #                 xy_temp = pd.DataFrame(pd_out, columns=['y', 'x', simulate_year_list[simulate_date_list.index(date_temp)]])
-    #                 xy_temp.to_csv(f'{output_folder}{str(bf.doy2date(date_temp))}\\{_}_index.csv') if not isinstance(date_temp, str) else xy_temp.to_csv(f'{output_folder}{str(date_temp)}\\{_}_index.csv')
+    #                 xy_temp.to_csv(f'{output_folder}{str(doy2date(date_temp))}\\{_}_index.csv') if not isinstance(date_temp, str) else xy_temp.to_csv(f'{output_folder}{str(date_temp)}\\{_}_index.csv')
     #         elif mod_factor == 'denvdc':
     #             for date_temp in simulate_date_list:
-    #                 xy_temp = pd.DataFrame(pd_out, columns=['y', 'x', bf.doy2date(date_temp)]) if not isinstance(date_temp, str) else None
-    #                 xy_temp.to_csv(f"{output_folder}{str(bf.doy2date(date_temp))}\\accumulated_{_.split('_')[0]}_index.csv") if not isinstance(date_temp, str) else None
+    #                 xy_temp = pd.DataFrame(pd_out, columns=['y', 'x', doy2date(date_temp)]) if not isinstance(date_temp, str) else None
+    #                 xy_temp.to_csv(f"{output_folder}{str(doy2date(date_temp))}\\accumulated_{_.split('_')[0]}_index.csv") if not isinstance(date_temp, str) else None
 
     def feature_table2tiffile(self, table: str, index: str, outputfolder: str):
 
@@ -3624,6 +2835,7 @@ class RS_dcs(object):
             if _ not in self._phemetric_namelist:
                 phemetric_index.remove(_)
                 print(f'{str(_)} is not input into the RSdcs')
+
         if phemetric_index == []:
             raise ValueError('Please input a valid phemetric index')
 
@@ -3644,7 +2856,7 @@ class RS_dcs(object):
             # Create output path
             output_path = Path(output_path).path_name
             if not os.path.exists(f'{output_path}{phemetric_}\\{out_format}\\'):
-                bf.create_folder(f'{output_path}{phemetric_}\\{out_format}\\')
+                create_folder(f'{output_path}{phemetric_}\\{out_format}\\')
             for year_ in year_range:
 
                 dc_base = self.dcs[self._pheyear_list.index(year_)]
@@ -3690,7 +2902,8 @@ class RS_dcs(object):
             pheme_mean = []
             standard_pheme_dis = []
             if not os.path.exists(f'{output_path}{phemetric_}_var\\'):
-                bf.create_folder(f'{output_path}{phemetric_}_var\\')
+                create_folder(f'{output_path}{phemetric_}_var\\')
+                create_folder(f'{output_path}{phemetric_}_var\\veg\\')
 
             upper, lower = None, None
             upp_limit, low_limit = [], []
@@ -3701,12 +2914,14 @@ class RS_dcs(object):
                 if self._sparse_matrix_list[self._pheyear_list.index(year_)]:
                     arr_base = dc_base.SM_group[f'{str(year_)}_{phemetric_}'][:, coordinate[0]: coordinate[1]].toarray()
                     if tgd_diff:
+                        pre_arr_ = pre_arr[:, coordinate[0]: coordinate[1]]
+                        post_arr_ = post_arr[:, coordinate[0]: coordinate[1]]
                         if year_ < 2004:
-                            pre_arr_ = pre_arr[:, coordinate[0]: coordinate[1]]
-                            arr_base[pre_arr_ > 0.4] = nodata_value
+                            arr_base[pre_arr_ > 0.3] = nodata_value
+                            arr_base[post_arr_ > 0.3] = nodata_value
                         else:
-                            post_arr_ = post_arr[:, coordinate[0]: coordinate[1]]
-                            arr_base[post_arr_ > 0.4] = nodata_value
+                            arr_base[post_arr_ > 0.3] = nodata_value
+                            arr_base[pre_arr_ > 0.3] = nodata_value
 
                     arr_base = arr_base.flatten()
 
@@ -3715,14 +2930,14 @@ class RS_dcs(object):
                     else:
                         arr_base = np.delete(arr_base, arr_base == nodata_value)
 
-                    if 2013 <= year_ < 2020:
-                        arr_base = arr_base + 0.032
+                    # if 2013 <= year_ < 2020:
+                    #     arr_base = arr_base + 0.032
 
-                    if 2023 > year_ >= 2020:
-                        arr_base = arr_base + 0.020
-
-                    if year_ == 2023:
-                        arr_base = arr_base + 0.015
+                    # if 2023 > year_ >= 2020:
+                    #     arr_base = arr_base + 0.020
+                    #
+                    # if year_ == 2023:
+                    #     arr_base = arr_base + 0.015
 
                     if year_ == 2002:
                         arr_base = arr_base - 0.008
@@ -4179,23 +3394,23 @@ class RS_dcs(object):
 
             ax.set_xlim(0.8, 37.2)
             if sec == 'ch':
-                ax.set_ylim(0.16, 0.42)
+                ax.set_ylim(0.16, 0.6)
                 ax.set_yticks([0.16,  0.20,  0.24, 0.28,  0.32, 0.36,  0.4, ])
                 ax.set_yticklabels(['0.16','0.20', '0.24', '0.28', '0.32',  '0.36',  '0.40',])
             elif sec == 'hh':
-                ax.set_ylim(0.215, 0.415)
+                ax.set_ylim(0.215, 0.6)
                 ax.set_yticks([0.22, 0.24, 0.26, 0.28, 0.30, 0.32, 0.34, 0.36, 0.38, 0.4])
                 ax.set_yticklabels(['0.22', '0.24', '0.26', '0.28', '0.30', '0.32', '0.34', '0.36', '0.38', '0.40'])
             elif sec == 'jj':
-                ax.set_ylim(0.25, 0.435)
+                ax.set_ylim(0.25, 0.6)
                 ax.set_yticks([0.26, 0.28, 0.30, 0.32, 0.34, 0.36, 0.38, 0.4, 0.42])
                 ax.set_yticklabels(['0.26', '0.28', '0.30', '0.32', '0.34', '0.36', '0.38', '0.40', '0.42'])
             elif sec == 'yz':
-                ax.set_ylim(0.23, 0.445)
+                ax.set_ylim(0.23, 0.6)
                 ax.set_yticks([0.24,  0.28,  0.32,  0.36,  0.4,  0.44])
                 ax.set_yticklabels(['0.24', '0.28',  '0.32', '0.36', '0.40',  '0.44'])
             else:
-                ax.set_ylim(0.24, 0.42)
+                ax.set_ylim(0.24, 0.6)
             ax.set_xticks([4, 9, 14, 19, 24, 29, 34])
             ax.set_xticklabels(['1990', '1995', '2000', '2005','2010', '2015', '2020'], )
             # ax.set_yticks([0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55])
@@ -4234,11 +3449,11 @@ class RS_dcs(object):
         # Check the var
         output_path = Path(output_path).path_name
         if not os.path.exists(f'{output_path}'):
-            bf.create_folder(f'{output_path}')
+            create_folder(f'{output_path}')
 
         if roi_name is not None:
             output_path = output_path + f'{str(roi_name)}\\'
-            bf.create_folder(output_path)
+            create_folder(output_path)
 
         if not isinstance(water_level_data, np.ndarray):
             try:
@@ -4355,7 +3570,7 @@ class RS_dcs(object):
             wl_trend_list = pd.DataFrame(wl_trend_list)
             wl_trend_list.to_csv(output_path + '\\water_level_trend.csv')
         else:
-            wl_trend_list = pandas.read_csv(output_path + '\\water_level_trend.csv')
+            wl_trend_list = pd.read_csv(output_path + '\\water_level_trend.csv')
             wl_trend_list = np.array(wl_trend_list)
             wl_trend_list = wl_trend_list[:, 1:]
 
@@ -4390,7 +3605,7 @@ class RS_dcs(object):
         if generate_inundation_status_factor:
 
             perwater_ras_path = output_path + 'perwater_ras\\'
-            bf.create_folder(perwater_ras_path)
+            create_folder(perwater_ras_path)
 
             # Create river stretch based on inundation frequency
             with tqdm(total=1, desc=f'Create river stretch based on inundation frequency',
@@ -4445,7 +3660,7 @@ class RS_dcs(object):
                     dst_layername = "permanent_water"
                     drv = ogr.GetDriverByName("ESRI Shapefile")
                     shp_output_path = output_path + 'perwater_shpfile\\'
-                    bf.create_folder(shp_output_path)
+                    create_folder(shp_output_path)
                     if os.path.exists(shp_output_path + dst_layername + ".shp"):
                         drv.DeleteDataSource(shp_output_path + dst_layername + ".shp")
 
@@ -4531,7 +3746,7 @@ class RS_dcs(object):
             pw_ds = gdal.Open(perwater_ras_path + 'permanent_water_fixed.tif')
             permanent_water_arr = pw_ds.GetRasterBand(1).ReadAsArray()
             sole_file_path = output_path + 'sole_inunarea_ras\\'
-            bf.create_folder(sole_file_path)
+            create_folder(sole_file_path)
             if isinstance(inundated_dc, NDSparseMatrix):
                 with tqdm(total=len(inundated_dc.SM_namelist), desc=f'Generate sole inundation area raster',
                           bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
@@ -4542,7 +3757,7 @@ class RS_dcs(object):
                             i_arr[i_arr < 0] = -2
                             i_arr[permanent_water_arr == 1] = -1
                             i_arr = i_arr.astype(np.int16)
-                            bf.write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif',
+                            write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif',
                                             raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
                         pbar.update()
             elif isinstance(inundated_dc, np.ndarray):
@@ -4555,14 +3770,14 @@ class RS_dcs(object):
                             i_arr[i_arr < 0] = -2
                             i_arr[permanent_water_arr == 1] = -1
                             i_arr = i_arr.astype(np.int16)
-                            bf.write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif',
+                            write_raster(pw_ds, i_arr, sole_file_path, f'{str(_)}.tif',
                                             raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
                         pbar.update()
 
             # Generate sole inundation area shp
             sole_shpfile_path = output_path + 'sole_inunarea_shpfile\\'
-            bf.create_folder(sole_shpfile_path)
-            ras_files = bf.file_filter(sole_file_path, ['.tif'],
+            create_folder(sole_shpfile_path)
+            ras_files = file_filter(sole_file_path, ['.tif'],
                                        exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
             with tqdm(total=len(ras_files), desc=f'Generate sole inundation area shpfile',
                       bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
@@ -4656,7 +3871,7 @@ class RS_dcs(object):
             year_list = year_list.tolist()
 
             annual_inform_folder = output_path + 'annual_inun_wl_ras\\'
-            bf.create_folder(annual_inform_folder)
+            create_folder(annual_inform_folder)
 
             # Retrieve the annual min inundated water level and annual max noninundated water level
             with tqdm(total=len(year_list),
@@ -4666,7 +3881,7 @@ class RS_dcs(object):
                 for _ in year_list:
 
                     # Create folder
-                    bf.create_folder(annual_inform_folder + f'{str(_)}\\')
+                    create_folder(annual_inform_folder + f'{str(_)}\\')
                     if not os.path.exists(
                             annual_inform_folder + f'{str(_)}\\max_noninun_wl_{str(_)}.tif') or not os.path.exists(
                             annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}.tif') \
@@ -4718,39 +3933,39 @@ class RS_dcs(object):
                         min_inun_wl_arr[min_inun_wl_arr == 1000] = np.nan
                         max_noninun_wl_arr[max_noninun_wl_arr == -1] = np.nan
 
-                        bf.write_raster(pw_ds, max_noninun_wl_arr, annual_inform_folder,
+                        write_raster(pw_ds, max_noninun_wl_arr, annual_inform_folder,
                                         f'{str(_)}\\max_noninun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
                                         nodatavalue=np.nan)
-                        bf.write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder,
+                        write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder,
                                         f'{str(_)}\\min_inun_wl_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
                                         nodatavalue=np.nan)
-                        bf.write_raster(pw_ds, min_inun_date_arr, annual_inform_folder,
+                        write_raster(pw_ds, min_inun_date_arr, annual_inform_folder,
                                         f'{str(_)}\\min_inun_date_{str(_)}.tif', raster_datatype=gdal.GDT_Int32,
                                         nodatavalue=0)
-                        bf.write_raster(pw_ds, max_noninun_date_arr, annual_inform_folder,
+                        write_raster(pw_ds, max_noninun_date_arr, annual_inform_folder,
                                         f'{str(_)}\\max_noninun_date_{str(_)}.tif', raster_datatype=gdal.GDT_Int32,
                                         nodatavalue=0)
-                        bf.write_raster(pw_ds, trend_arr, annual_inform_folder, f'{str(_)}\\trend_{str(_)}.tif',
+                        write_raster(pw_ds, trend_arr, annual_inform_folder, f'{str(_)}\\trend_{str(_)}.tif',
                                         raster_datatype=gdal.GDT_Int32, nodatavalue=0)
 
                         min_inun_wl_arr[~np.isnan(min_inun_wl_arr)] = 1
                         min_inun_wl_arr[permanent_water_arr == 1] = -1
                         min_inun_wl_arr[permanent_water_arr == -2] = -2
                         min_inun_wl_arr[np.isnan(min_inun_wl_arr)] = 0
-                        bf.write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder,
+                        write_raster(pw_ds, min_inun_wl_arr, annual_inform_folder,
                                         f'{str(_)}\\annual_inunarea_{str(_)}.tif', raster_datatype=gdal.GDT_Int32,
                                         nodatavalue=-2)
                     pbar.update()
 
             # Generate annual inundation shpfile
             annual_inunshp_folder = output_path + 'annual_inun_shpfile\\'
-            bf.create_folder(annual_inunshp_folder)
+            create_folder(annual_inunshp_folder)
             with tqdm(total=len(year_list), desc=f'Generate annual inundation area shpfile',
                       bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 for _ in year_list:
 
                     # Generate the shpfile of continuous inundation area
-                    files = bf.file_filter(annual_inform_folder + str(_) + '\\', [f'annual_inunarea_{str(_)}.tif'],
+                    files = file_filter(annual_inform_folder + str(_) + '\\', [f'annual_inunarea_{str(_)}.tif'],
                                            exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'],
                                            and_or_factor='and')
                     if len(files) == 1:
@@ -4820,7 +4035,7 @@ class RS_dcs(object):
                         raise ValueError('Too many annual inundation ras files!')
 
                     # Generate the shpfile of continuous water level area
-                    files = bf.file_filter(annual_inform_folder + str(_) + '\\', [f'min_inun_wl_{str(_)}.tif'],
+                    files = file_filter(annual_inform_folder + str(_) + '\\', [f'min_inun_wl_{str(_)}.tif'],
                                            exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'],
                                            and_or_factor='and')
                     if len(files) == 1:
@@ -4833,7 +4048,7 @@ class RS_dcs(object):
                             ras_arr = ras_ds.GetRasterBand(1).ReadAsArray()
                             ras_arr = ras_arr * 100
                             ras_arr[np.isnan(ras_arr)] = -2
-                            bf.write_raster(ras_ds, ras_arr, annual_inform_folder + str(_) + '\\',
+                            write_raster(ras_ds, ras_arr, annual_inform_folder + str(_) + '\\',
                                             f'min_inun_wl_{str(_)}4poly.tif')
 
                         ras_ds = gdal.Open(annual_inform_folder + str(_) + '\\' + f'min_inun_wl_{str(_)}4poly.tif')
@@ -4970,7 +4185,7 @@ class RS_dcs(object):
                                                                            offset_all[1] - 1: bound_all[
                                                                                                   1] + 2] + wl_id_arr_acc_t
                                 pbar1.update()
-                            bf.write_raster(min_wl_ds, wl_id_arr_acc, annual_inform_folder,
+                            write_raster(min_wl_ds, wl_id_arr_acc, annual_inform_folder,
                                             f'{str(_)}\\annual_issued_area.tif', raster_datatype=gdal.GDT_Int16)
 
                         with tqdm(total=len(issue_wl.keys()), desc=f'Process inundation water level',
@@ -5029,7 +4244,7 @@ class RS_dcs(object):
                                 min_inun_wl_arr[mask_temp] = min_all[mask_temp]
                                 pbar1.update()
 
-                        bf.write_raster(min_wl_ds, min_inun_wl_arr, annual_inform_folder,
+                        write_raster(min_wl_ds, min_inun_wl_arr, annual_inform_folder,
                                         f'{str(_)}\\min_inun_wl_{str(_)}_fixed.tif', raster_datatype=gdal.GDT_Float32,
                                         nodatavalue=-2)
                         target_ds = None
@@ -5037,10 +4252,10 @@ class RS_dcs(object):
 
             # Interpolate the minimum inundation wl
             annual_inunshp_folder = output_path + 'annual_inun_shpfile\\'
-            bf.create_folder(annual_inunshp_folder)
+            create_folder(annual_inunshp_folder)
 
             annual_inform_folder = output_path + 'annual_inun_wl_ras\\'
-            bf.create_folder(annual_inform_folder)
+            create_folder(annual_inform_folder)
 
             with tqdm(total=len(year_list), desc=f'Interpolate the minimum inundation water level',
                       bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
@@ -5344,7 +4559,7 @@ class RS_dcs(object):
 
                             min_wl_arr_refined[permanent_water_arr == 1] = -1
                             min_wl_arr_refined[permanent_water_arr == -2] = -2
-                            bf.write_raster(min_wl_ds, min_wl_arr_refined, annual_inform_folder,
+                            write_raster(min_wl_ds, min_wl_arr_refined, annual_inform_folder,
                                             f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif',
                                             raster_datatype=gdal.GDT_Float32, nodatavalue=-2)
                     pbar.update()
@@ -5360,7 +4575,7 @@ class RS_dcs(object):
                             annual_inunduration_folder + f'inun_duration_{str(_)}.tif') or not os.path.exists(
                             annual_inunduration_folder + f'inun_height_{str(_)}.tif') or not os.path.exists(
                             annual_inunduration_folder + f'mean_inun_height_{str(_)}.tif'):
-                        bf.create_folder(annual_inunduration_folder)
+                        create_folder(annual_inunduration_folder)
                         if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif'):
                             raise Exception('Please refine the inundation water level!')
                         else:
@@ -5401,26 +4616,26 @@ class RS_dcs(object):
                             acc_wl[min_inun_arr_ori == -1] = -1
                             acc_wl[min_inun_arr_ori == -2] = -2
 
-                            bf.write_raster(min_inun_ds, inun_duration, annual_inunduration_folder,
+                            write_raster(min_inun_ds, inun_duration, annual_inunduration_folder,
                                             f'inun_duration_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
                                             nodatavalue=-2)
-                            bf.write_raster(min_inun_ds, inun_height, annual_inunduration_folder,
+                            write_raster(min_inun_ds, inun_height, annual_inunduration_folder,
                                             f'inun_height_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
                                             nodatavalue=-2)
-                            bf.write_raster(min_inun_ds, acc_wl, annual_inunduration_folder,
+                            write_raster(min_inun_ds, acc_wl, annual_inunduration_folder,
                                             f'mean_inun_height_{str(_)}.tif', raster_datatype=gdal.GDT_Float32,
                                             nodatavalue=-2)
 
                     itr_v = 100 / veg_inun_itr
-                    if _ in veg_height_dic.keys() and len(bf.file_filter(annual_inunthr_folder, [f'{str(_)}.tif'],
+                    if _ in veg_height_dic.keys() and len(file_filter(annual_inunthr_folder, [f'{str(_)}.tif'],
                                                                          exclude_word_list=['.xml', '.dpf', '.cpg',
                                                                                             '.aux', 'vat',
                                                                                             '.ovr'])) != veg_inun_itr:
-                        bf.create_folder(annual_inunthr_folder)
+                        create_folder(annual_inunthr_folder)
                         if not os.path.exists(annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif'):
                             raise Exception('Please refine the inundation water level!')
                         else:
-                            for _temp in bf.file_filter(annual_inunthr_folder, [f'{str(_)}.tif']):
+                            for _temp in file_filter(annual_inunthr_folder, [f'{str(_)}.tif']):
                                 os.remove(_temp)
                             min_inun_ds = gdal.Open(
                                 annual_inform_folder + f'{str(_)}\\min_inun_wl_{str(_)}_refined.tif')
@@ -5451,7 +4666,7 @@ class RS_dcs(object):
                                 inund_arr[min_inun_arr_ori == 0] = 0
                                 inund_arr[min_inun_arr_ori == -1] = -1
                                 inund_arr[min_inun_arr_ori == -2] = -2
-                                bf.write_raster(min_inun_ds, inund_arr, annual_inunthr_folder,
+                                write_raster(min_inun_ds, inund_arr, annual_inunthr_folder,
                                                 f'{str(int(itr_v + itr_v * thr_))}thr_inund_{str(_)}.tif',
                                                 raster_datatype=gdal.GDT_Int16, nodatavalue=-2)
                             veg_arr_list, output_npyfile = None, None
@@ -5486,7 +4701,7 @@ class RS_dcs(object):
             #                 if np.logical_and(sole_floodplain_temp == u_value, permanent_water_arr == 1).any():
             #                     sole_result[sole_floodplain_temp == u_value] = 1
             #             sole_result[permanent_water_arr == 1] = 0
-            #             bf.write_raster(ds_temp3, sole_result, sole_file_path, str(date_temp) + '_individual_area.tif',
+            #             write_raster(ds_temp3, sole_result, sole_file_path, str(date_temp) + '_individual_area.tif',
             #                          raster_datatype=gdal.GDT_Int32)
             #         else:
             #             sole_floodplain_ds_temp = gdal.Open(sole_file_path + str(date_temp) + '_individual_area.tif')
@@ -5527,10 +4742,10 @@ class RS_dcs(object):
             # annual_inundation_epoch_folder = output_path + 'annual_inundation_epoch\\'
             # annual_inundation_beg_folder = output_path + 'annual_inundation_beg\\'
             # annual_inundation_end_folder = output_path + 'annual_inundation_end\\'
-            # bf.create_folder(annual_inundation_folder)
-            # bf.create_folder(annual_inundation_epoch_folder)
-            # bf.create_folder(annual_inundation_beg_folder)
-            # bf.create_folder(annual_inundation_end_folder)
+            # create_folder(annual_inundation_folder)
+            # create_folder(annual_inundation_epoch_folder)
+            # create_folder(annual_inundation_beg_folder)
+            # create_folder(annual_inundation_end_folder)
             #
             # for year in year_list:
             #     inundation_temp = []
@@ -5814,13 +5029,13 @@ class RS_dcs(object):
             #                                 date_max = max(date_max, water_level_epoch[len0, 0])
             #                         annual_inundation_beg[y_temp, x_temp] = date_min
             #                         annual_inundation_end[y_temp, x_temp] = date_max
-            #     bf.write_raster(ds_temp, annual_inundation_status, annual_inundation_folder,
+            #     write_raster(ds_temp, annual_inundation_status, annual_inundation_folder,
             #                  'annual_' + str(year) + '.tif', raster_datatype=gdal.GDT_Int32)
-            #     bf.write_raster(ds_temp, annual_inundation_epoch, annual_inundation_epoch_folder,
+            #     write_raster(ds_temp, annual_inundation_epoch, annual_inundation_epoch_folder,
             #                  'epoch_' + str(year) + '.tif', raster_datatype=gdal.GDT_Int32)
-            #     bf.write_raster(ds_temp, annual_inundation_beg, annual_inundation_beg_folder, 'beg_' + str(year) + '.tif',
+            #     write_raster(ds_temp, annual_inundation_beg, annual_inundation_beg_folder, 'beg_' + str(year) + '.tif',
             #                  raster_datatype=gdal.GDT_Int32)
-            #     bf.write_raster(ds_temp, annual_inundation_end, annual_inundation_end_folder, 'end_' + str(year) + '.tif',
+            #     write_raster(ds_temp, annual_inundation_end, annual_inundation_end_folder, 'end_' + str(year) + '.tif',
             #                  raster_datatype=gdal.GDT_Int32)
             #
             #
@@ -5869,6 +5084,109 @@ class RS_dcs(object):
                 for inun_ in inunfactor_index_:
                     pheme_next_year = self._dcs_backup_
                     pheme_curr_year = 1
+
+    def simulate_biomass(self, output_path, static_temp=15):
+
+        # Check if the Dpar and TEM under same year is imported
+        if 'DPAR' not in self._index_list:
+            raise ValueError('Please input the DPAR datacube to simulate the biomass')
+        elif 'TEM' not in self._index_list:
+            raise ValueError('Please input the TEM datacube to simulate the biomass')
+
+        # Create output folder
+        if not os.path.exists(output_path):
+            raise ValueError('Please input the valid output path')
+
+        # get dpar and denv pos year doy
+        dpar_pos = [_ for _ in range(len(self._index_list)) if self._index_list[_] == 'DPAR']
+        tem_pos = [_ for _ in range(len(self._index_list)) if self._index_list[_] == 'TEM']
+
+        dpar_year = [self._dcs_backup_[_].timerange for _ in dpar_pos]
+        tem_year = [self._dcs_backup_[_].timerange for _ in tem_pos]
+
+        dpar_doy = [self._dcs_backup_[_].compete_doy_list for _ in dpar_pos]
+        tem_doy = [self._dcs_backup_[_].compete_doy_list for _ in tem_pos]
+
+        # Compute the biomass
+        for dpar_year_ in dpar_year:
+            if dpar_year_ in tem_year and dpar_doy[dpar_year.index(dpar_year_)] == tem_doy[tem_year.index(dpar_year_)]:
+
+                biomass_dc_inform = copy.deepcopy(self._dcs_backup_[dpar_pos[dpar_year.index(dpar_year_)]])
+                biomass_dc = copy.deepcopy(self.dcs[dpar_pos[dpar_year.index(dpar_year_)]])
+
+                dpar_pos_ = dpar_pos[dpar_year.index(dpar_year_)]
+                tem_pos_ = tem_pos[tem_year.index(dpar_year_)]
+
+                # Create yearly output folder
+                year_output_path = output_path + str(dpar_year_) + '\\'
+                create_folder(year_output_path)
+
+                # itr through doy
+                for doy_ in dpar_doy[dpar_year.index(dpar_year_)]:
+                    s_t = time.time()
+
+                    # Read the
+                    if isinstance(self.dcs[dpar_pos_], NDSparseMatrix):
+                        dpar_arr = self.dcs[dpar_pos_].SM_group[doy_].toarray()
+                        tem_arr = self.dcs[tem_pos_].SM_group[doy_].toarray()
+                        arrtype = type(self.dcs[dpar_pos_].SM_group[doy_])
+
+                        # Revert array into normal arr
+                        dpar_arr = dpar_arr.astype(np.float32)
+                        tem_arr = tem_arr.astype(np.float32)
+                        dpar_arr[dpar_arr == 0] = np.nan
+                        tem_arr[tem_arr == 0] = np.nan
+
+                    elif isinstance(self.dcs[dpar_pos_], np.ndarray):
+                        dpar_arr = self.dcs[dpar_pos_][doy_]
+                        tem_arr = self.dcs[tem_pos_][doy_]
+
+                    else:
+                        raise Exception('Please input the valid datacube')
+
+                    # Resize
+                    if self._size_control_factor_list[dpar_pos_]:
+                        dpar_arr = dpar_arr / 100
+                    if self._size_control_factor_list[tem_pos_]:
+                        tem_arr = tem_arr / 100
+
+                    # Minus the static temp
+                    tem_arr = tem_arr - static_temp
+                    tem_arr[tem_arr < 0] = np.nan
+
+                    # Calculate the bio arr
+                    bio_arr = 0.33 * 0.65 * dpar_arr * (1.09 ** tem_arr)
+
+                    if self._size_control_factor_list:
+                        bio_arr = bio_arr * 100
+                        bio_arr[np.isnan(bio_arr)] = 0
+                        bio_arr = bio_arr.astype(np.uint16)
+                        nodata_value = 0
+                    else:
+                        bio_arr = bio_arr.astype(np.float32)
+                        nodata_value = np.nan
+
+                    # Write into the new Denvdc
+                    if isinstance(self.dcs[dpar_pos_], NDSparseMatrix):
+                        if np.isnan(nodata_value):
+                            bio_arr[np.isnan(bio_arr)] = 0
+                        else:
+                            bio_arr[bio_arr == nodata_value] = 0
+                        biomass_dc.SM_group[doy_] = arrtype(bio_arr)
+                    else:
+                        biomass_dc[doy_] = bio_arr
+
+                    print(f'Finish computing the\033[1;31m biomass \033[0mat the \033[1;34m{str(doy_)}\033[0m in \033[1;31m{str(time.time() - s_t)}\033[0ms')
+
+                # Reassign the biomass_dc to the self.dcs
+                biomass_dc_inform.dc = biomass_dc
+                biomass_dc_inform.index = 'AGB'
+                biomass_dc_inform.Denv_file_path = year_output_path
+                biomass_dc_inform.save(year_output_path)
+            else:
+                raise Exception('Please input the valid DPAR and TEM datacube')
+
+        biomass_dc_inform = None
 
 
 

@@ -1,21 +1,101 @@
-import copy
-import os
 from NDsm import NDSparseMatrix
-import numpy as np
-import pandas as pd
 import scipy.sparse as sm
-import traceback
 from tqdm.auto import tqdm
-from osgeo import gdal
-import basic_function as bf
-from Landsat_toolbox.utils import *
-from scipy.optimize import curve_fit
-import psutil
+from osgeo import gdal, ogr, osr
 import json
 import shapely
-from osgeo import ogr
 from scipy import stats
+from scipy.optimize import curve_fit
+import numpy as np
+import os
+import traceback
+import time
+import pandas as pd
+import datetime
+from basic_function import Path, write_raster, create_folder, file_filter, reassign_sole_pixel, date2doy, raster_ds2bounds, retrieve_srs, doy2date
+import copy
 
+
+def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
+    return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
+
+
+def system_recovery_function(t, ymax, yo, b):
+    return ymax - (ymax - yo) * np.exp(- b * t)
+
+
+def linear_f(x, a, b):
+    return a * (x + 1985) + b
+
+
+def two_term_fourier(x, a0, a1, b1, a2, b2, w):
+    return a0 + a1 * np.cos(w * x) + b1 * np.sin(w * x) + a2 * np.cos(2 * w * x) + b2 * np.sin(2 * w * x)
+
+
+def compute_SPDL_pheme(para_dic: dict, pheme_list: list, ul_pos,):
+
+    try:
+        # Get the x size and y size of arr
+        x_size = [para_dic[_].shape[1] for _ in para_dic.keys()]
+        y_size = [para_dic[_].shape[0] for _ in para_dic.keys()]
+        if False in [x_size[0] == _ for _ in x_size] or False in [y_size[0] == _ for _ in y_size]:
+            raise Exception('The size of the input array is not consistent!')
+
+        # Define the res dic
+        res_dic = {}
+        for _ in pheme_list:
+            res_dic[_] = np.zeros([y_size[0], x_size[0]]) * np.nan
+
+        with tqdm(total=y_size[0] * x_size[0], desc=f'Compute the pheme of {str(ul_pos[0])}_{str(ul_pos[1])}', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
+            for y_ in range(y_size[0]):
+                for x_ in range(x_size[0]):
+                    if True not in [np.isnan(para_dic[_][y_, x_]) for _ in para_dic.keys()]:
+                        # Generate annual vi series
+                        vi_series = seven_para_logistic_function(np.linspace(1, 365, 365), para_dic[0][y_, x_], para_dic[1][y_, x_], para_dic[2][y_, x_],
+                                                                 para_dic[3][y_, x_], para_dic[4][y_, x_], para_dic[5][y_, x_], para_dic[6][y_, x_])
+
+                        # Overfitting detection
+                        if np.argwhere(vi_series > para_dic[0][y_, x_] + 0.1 * para_dic[1][y_, x_]).shape[0] == 0:
+                            continue
+                        elif np.argwhere(vi_series < 0.98 * para_dic[0][y_, x_]).shape[0] > 1:
+                            continue
+
+                        # Generate the delta
+                        peak_doy = np.argmax(vi_series)
+                        if peak_doy > para_dic[2][y_, x_]:
+                            delta = (peak_doy - para_dic[2][y_, x_]) / para_dic[3][y_, x_]
+                            delta2 = (para_dic[2][y_, x_] - np.argwhere(vi_series > para_dic[0][y_, x_] + 0.1 * para_dic[1][y_, x_]).min()) / para_dic[3][y_, x_]
+                            # print(f'delta1: {str(delta)}')
+                            # print(f'delta2: {str(delta2)}')
+                        else:
+                            pbar.update()
+                            continue
+
+                        # Compute pheme at the pixel lvl
+                        for pheme_temp in pheme_list:
+                            if pheme_temp in ['SOS', 'EOS']:
+                                pos_arr = np.argwhere(vi_series > para_dic[0][y_, x_] + 0.1 * para_dic[1][y_, x_])
+                                res_dic[pheme_temp][y_, x_] = pos_arr.min() if pheme_temp == 'SOS' else pos_arr.max()
+                            elif pheme_temp == 'peak_vi':
+                                res_dic[pheme_temp][y_, x_] = np.nanmax(vi_series)
+                            elif pheme_temp == 'peak_doy':
+                                res_dic[pheme_temp][y_, x_] = peak_doy
+                            elif pheme_temp == 'EOM':
+                                res_dic[pheme_temp][y_, x_] = para_dic[4][y_, x_] - delta * para_dic[5][y_, x_]
+                            elif pheme_temp == 'MAVI':
+                                res_dic[pheme_temp][y_, x_] = np.mean(vi_series[peak_doy: int(para_dic[4][y_, x_] - delta2 * para_dic[5][y_, x_]) + 1])
+                            elif pheme_temp == 'MAVI_std':
+                                res_dic[pheme_temp][y_, x_] = np.std(vi_series[peak_doy: int(para_dic[4][y_, x_] - delta * para_dic[5][y_, x_]) + 1])
+                            elif pheme_temp == 'TSVI':
+                                res_dic[pheme_temp][y_, x_] = vi_series[int(para_dic[4][y_, x_] - delta * para_dic[5][y_, x_])]
+                            else:
+                                raise Exception('The pheme type is not supported!')
+                    pbar.update()
+        return res_dic, ul_pos
+    except:
+        print(traceback.format_exc())
+        print('Above error occurred during the pheme calculation!')
+    
 
 def shapely_to_ogr_type(shapely_type):
     from osgeo import ogr
@@ -208,7 +288,7 @@ def process_denv_via_pheme(denv_dc: str, pheme_dc: str, year, pheme, kwargs):
 
                 acc_static = acc_static / cum_static
                 cum_static = None
-                bf.write_raster(ds_temp, acc_static, output_path, f'{str(cal_method)}_{denvname}_{str(year)}_static_{start_pheme}.TIF',
+                write_raster(ds_temp, acc_static, output_path, f'{str(cal_method)}_{denvname}_{str(year)}_static_{start_pheme}.TIF',
                                 raster_datatype=gdal.GDT_Float32)
             else:
                 ds_temp = gdal.Open(os.path.join(output_path, f'{str(cal_method)}_{denvname}_{str(year)}_static_{start_pheme}.TIF'))
@@ -258,7 +338,7 @@ def process_denv_via_pheme(denv_dc: str, pheme_dc: str, year, pheme, kwargs):
             if size_control_factor:
                 acc_denv = acc_denv / 100
 
-            bf.write_raster(ds_temp, acc_denv, output_path, f'{str(cal_method)}_{denvname}_{start_pheme}_{end_pheme}_{str(year)}.TIF', raster_datatype=gdal.GDT_Float32)
+            write_raster(ds_temp, acc_denv, output_path, f'{str(cal_method)}_{denvname}_{start_pheme}_{end_pheme}_{str(year)}.TIF', raster_datatype=gdal.GDT_Float32)
         print(f'Finish calculate the \033[1;31m{str(cal_method)}\033[0m \033[1;31m{denvname}\033[0m for the year \033[1;34m{str(year)}\033[0m in {str(time.time() - st)}s')
     except:
         print(traceback.format_exc())
@@ -421,7 +501,7 @@ def invert_data(data, size_control, offset_value, nodata_value, original_dtype: 
         data = data.astype(np.float32)
 
     # Data inversion
-    if offset_value is not None and ~np.isnan(offset_value) and isinstance(offset_value, (np.float32, int)):
+    if offset_value is not None and ~np.isnan(offset_value) and isinstance(offset_value, (np.integer, int, float)):
         data = data - offset_value
 
     if isinstance(size_control, bool) and size_control:
@@ -573,7 +653,7 @@ def create_indi_DT_inundation_map(inundated_arr, doy_array: np.ndarray, date_num
         inundation_map = reassign_sole_pixel(inundation_map, Nan_value=0, half_size_window=2)
         inundation_map = inundation_map.astype(np.byte)
         inundation_arr = None
-        bf.write_raster(gdal.Open(ROI_tif), inundation_map, output_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
+        write_raster(gdal.Open(ROI_tif), inundation_map, output_path, f'DT_{str(doy_array[date_num])}.TIF', raster_datatype=gdal.GDT_Byte, nodatavalue=0)
     else:
         inundated_ds = gdal.Open(f'{output_path}DT_{str(doy_array[date_num])}.TIF')
         inundation_map = inundated_ds.GetRasterBand(1).ReadAsArray()
@@ -597,7 +677,7 @@ def curfit4bound_annual(pos_df: pd.DataFrame, index_dc_temp, doy_all: list, curf
         pos_df = pos_df.reset_index()
 
         # Set up the Cache folder
-        cache_folder = bf.Path(cache_folder).path_name
+        cache_folder = Path(cache_folder).path_name
         if os.path.exists(f'{cache_folder}postemp_{str(xy_offset[1])}.csv'):
             pos_df = pd.read_csv(f'{cache_folder}postemp_{str(xy_offset[1])}.csv')
             pos_init = int(np.ceil(max(pos_df.loc[~np.isnan(pos_df.para_ori_0)].index) / divider) * divider) + 1
@@ -880,7 +960,7 @@ def curfit_pd2tif(tif_output_path: str, df: pd.DataFrame, key: str, ds_path: str
             if df.loc[pos, key] != -1:
                 array_temp[df.loc[pos, 'y'], df.loc[pos, 'x']] = df.loc[pos, key]
 
-        bf.write_raster(ds_temp,  array_temp, tif_output_path, key + '.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
+        write_raster(ds_temp,  array_temp, tif_output_path, key + '.TIF', raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
 
 
 def cf2phemetric_dc(input_path, output_path, year, index, metadata_dic):
@@ -890,12 +970,12 @@ def cf2phemetric_dc(input_path, output_path, year, index, metadata_dic):
 
     # Create the output path
     yearly_output_path = output_path + str(int(year)) + '\\'
-    bf.create_folder(yearly_output_path)
+    create_folder(yearly_output_path)
 
     if not os.path.exists(output_path + f'{str(year)}\\metadata.json') or not not os.path.exists(output_path + f'{str(year)}\\paraname.npy'):
 
         # Determine the input files
-        yearly_input_files = bf.file_filter(input_path, ['.TIF', '\\' + str(year)], exclude_word_list=['aux'], and_or_factor='and')
+        yearly_input_files = file_filter(input_path, ['.TIF', '\\' + str(year)], exclude_word_list=['aux'], and_or_factor='and')
 
         if yearly_input_files == []:
             raise Exception('There are no valid input files, double check the temporal division!')
@@ -1018,7 +1098,6 @@ def retrieve_correct_filename(file_name: str):
                                 return file_name
                         else:
                             pass
-
                 return None
 
 
@@ -1140,14 +1219,22 @@ def link_GEDI_Phedc_inform(Phemedc, Pheme_year_list, Pheme_index, Phemedc_GeoTra
 
 
 def link_GEDI_Denvdc_inform(Denvdc, Denv_index, Denv_doy_list, Denvdc_GeoTransform, Phemedc, gedi_df, furname,
-                            GEDI_link_Denvdc_spatial_interpolate_method_list: list, accumulated_period, threshold_method, GEDI_circle_diameter: int = 25):
+                            GEDI_link_Denvdc_spatial_interpolate_method_list: list, Denv_factor, GEDI_circle_diameter: int = 25):
 
     df_size = gedi_df.shape[0]
     furlat, furlon = furname + '_' + 'lat', furname + '_' + 'lon'
+    denv_nodata_value, denv_zoffset, denv_size_control = Denv_factor
     for spatial_method in GEDI_link_Denvdc_spatial_interpolate_method_list:
-        for accumulated_period_ in accumulated_period:
-            gedi_df.insert(loc=len(gedi_df.columns), column=f'Denv_{Denv_index}_{spatial_method}_{accumulated_period_}_{threshold_method[0]}', value=np.nan)
-            gedi_df.insert(loc=len(gedi_df.columns), column=f'Denv_{Denv_index}_{spatial_method}_{accumulated_period_}_{threshold_method[0]}_reliability', value=np.nan)
+        if Denv_index in ['DPAR', 'AGB', 'PRE', 'TEM']:
+            for measure in ['fast-growing', 'maturity', 'GEDI-acq', 'ratio_gedi_fast-growing']:
+                gedi_df.insert(loc=len(gedi_df.columns), column=f'Denv_{Denv_index}_{spatial_method}_{measure}', value=np.nan)
+
+        elif Denv_index in ['WIN', 'PRS', 'RHU']:
+            for measure in ['max', 'min', 'mean', 'std']:
+                gedi_df.insert(loc=len(gedi_df.columns), column=f'Denv_{Denv_index}_{spatial_method}_{measure}', value=np.nan)
+
+        gedi_df.insert(loc=len(gedi_df.columns), column=f'Denv_{Denv_index}_{spatial_method}_reliability', value=np.nan)
+
     sparse_matrix = True if isinstance(Denvdc, NDSparseMatrix) else False
     gedi_df = gedi_df.reset_index()
 
@@ -1162,11 +1249,12 @@ def link_GEDI_Denvdc_inform(Denvdc, Denv_index, Denv_doy_list, Denvdc_GeoTransfo
             lat, lon, year_temp, GEDI_doy = gedi_df[furlat][i], gedi_df[furlon][i], int(np.floor(gedi_df['Date'][i]/1000)), gedi_df['Date'][i]
             point_coords = [lon, lat]
 
-            # Process the spatial range
+            # Process the value for each method
             centre_pixel_xy = [int(np.floor((point_coords[0] - Denvdc_GeoTransform[0]) / Denvdc_GeoTransform[1])),
                                int(np.floor((point_coords[1] - Denvdc_GeoTransform[3]) / Denvdc_GeoTransform[5]))]
-
             if 0 <= centre_pixel_xy[1] <= Denvdc.shape[0] and 0 <= centre_pixel_xy[0] <= Denvdc.shape[1]:
+
+                # Get the spatial range for each method
                 spatial_dic, spatial_weight = {}, {}
                 for spatial_method in GEDI_link_Denvdc_spatial_interpolate_method_list:
                     if spatial_method == 'nearest_neighbor':
@@ -1178,7 +1266,9 @@ def link_GEDI_Denvdc_inform(Denvdc, Denv_index, Denv_doy_list, Denvdc_GeoTransfo
                                                 min(centre_pixel_xy[1] + 2, Denvdc.shape[0]),
                                                 max(centre_pixel_xy[0] - 1, 0),
                                                 min(centre_pixel_xy[0] + 2, Denvdc.shape[1])]
-                        spatial_weight['focal'] = np.ones([3, 3]) / 9
+                        x_size = spatial_dic['focal'][3] - spatial_dic['focal'][2]
+                        y_size = spatial_dic['focal'][1] - spatial_dic['focal'][0]
+                        spatial_weight['focal'] = np.ones([y_size, x_size]) / (y_size * x_size)
                     elif spatial_method == 'area_average':
                         GEDI_circle = create_circle_polygon(point_coords, GEDI_circle_diameter)
                         min_x, min_y, max_x, max_y = GEDI_circle.bounds
@@ -1188,185 +1278,154 @@ def link_GEDI_Denvdc_inform(Denvdc, Denv_index, Denv_doy_list, Denvdc_GeoTransfo
                                      int(np.ceil((min_y - Denvdc_GeoTransform[3]) / Denvdc_GeoTransform[5]))]
                         spatial_dic['area_average'] = [max(ul_corner[1], 0), min(lr_corner[1] + 1, Denvdc.shape[0]),
                                                        max(ul_corner[0], 0), min(lr_corner[0] + 1, Denvdc.shape[1])]
-                        spatial_weight['area_average'] = np.zeros([spatial_dic['area_average'][1] - spatial_dic['area_average'][0],
-                                                                   spatial_dic['area_average'][3] - spatial_dic['area_average'][2]])
-                        entire_area = GEDI_circle.intersection(shapely.geometry.Polygon([(Denvdc_GeoTransform[0], Denvdc_GeoTransform[3]), (Denvdc_GeoTransform[0] + Denvdc_GeoTransform[1] * Denvdc.shape[1], Denvdc_GeoTransform[3]),
-                                                                                         (Denvdc_GeoTransform[0] + Denvdc_GeoTransform[1] * Denvdc.shape[1],Denvdc_GeoTransform[3] + Denvdc_GeoTransform[5] * Denvdc.shape[0]),
+                        spatial_weight['area_average'] = np.zeros(
+                            [spatial_dic['area_average'][1] - spatial_dic['area_average'][0],
+                             spatial_dic['area_average'][3] - spatial_dic['area_average'][2]])
+                        entire_area = GEDI_circle.intersection(shapely.geometry.Polygon([(Denvdc_GeoTransform[0], Denvdc_GeoTransform[3]),
+                                                                                         (Denvdc_GeoTransform[0] + Denvdc_GeoTransform[1] * Denvdc.shape[1], Denvdc_GeoTransform[3]),
+                                                                                         (Denvdc_GeoTransform[0] + Denvdc_GeoTransform[1] * Denvdc.shape[1], Denvdc_GeoTransform[3] + Denvdc_GeoTransform[5] * Denvdc.shape[0]),
                                                                                          (Denvdc_GeoTransform[0], Denvdc_GeoTransform[3] + Denvdc_GeoTransform[5] * Denvdc.shape[0])])).area
                         for y_ in range(spatial_weight['area_average'].shape[0]):
                             for x_ in range(spatial_weight['area_average'].shape[1]):
-                                square_ulcorner_x, square_ulcorner_y = Denvdc_GeoTransform[0] + Denvdc_GeoTransform[1] * (ul_corner[0] + x_), \
-                                                                       Denvdc_GeoTransform[3] + Denvdc_GeoTransform[5] * (ul_corner[1] + y_)
-                                square_polygon = shapely.geometry.Polygon([(square_ulcorner_x, square_ulcorner_y),
-                                                                           (square_ulcorner_x + Denvdc_GeoTransform[1], square_ulcorner_y),
+                                square_ulcorner_x, square_ulcorner_y = (Denvdc_GeoTransform[0] + Denvdc_GeoTransform[1] * (ul_corner[0] + x_),
+                                                                        Denvdc_GeoTransform[3] + Denvdc_GeoTransform[5] * (ul_corner[1] + y_))
+                                square_polygon = shapely.geometry.Polygon([(square_ulcorner_x, square_ulcorner_y), (square_ulcorner_x + Denvdc_GeoTransform[1], square_ulcorner_y),
                                                                            (square_ulcorner_x + Denvdc_GeoTransform[1], square_ulcorner_y + Denvdc_GeoTransform[5]),
                                                                            (square_ulcorner_x, square_ulcorner_y + Denvdc_GeoTransform[5])])
                                 intersection = square_polygon.intersection(GEDI_circle)
                                 spatial_weight['area_average'][y_, x_] = intersection.area / entire_area
                     else:
                         raise Exception('The spatial interpolation method is not supported!')
-            else:
-                spatial_dic = None
 
-            # Get the maximum range in spatial
-            if spatial_dic is None:
-                pass
-            else:
+                # Get the maximum range in spatial
                 max_spatial_range = [Denvdc.shape[0], 0, Denvdc.shape[1], 0]
                 for spatial_ in spatial_dic.keys():
                     max_spatial_range = [min(max_spatial_range[0], spatial_dic[spatial_][0]), max(max_spatial_range[1], spatial_dic[spatial_][1]),
                                          min(max_spatial_range[2], spatial_dic[spatial_][2]), max(max_spatial_range[3], spatial_dic[spatial_][3])]
-
-                for spatial_ in spatial_dic.keys():
                     spatial_dic[spatial_] = [spatial_dic[spatial_][0] - max_spatial_range[0], spatial_dic[spatial_][1] - max_spatial_range[0],
                                              spatial_dic[spatial_][2] - max_spatial_range[2], spatial_dic[spatial_][3] - max_spatial_range[2]]
 
-            # Process the temporal range
-            temporal_dic = None
-            if GEDI_doy > np.max(np.array(Denv_doy_list)) or GEDI_doy < np.min(np.array(Denv_doy_list)) or spatial_dic is None:
-                temporal_dic = None
-            else:
-                temporal_dic = {}
-                for accumulated_period_ in accumulated_period:
-                    # Generate the temporal range
-                    if accumulated_period_.startswith('SOS'):
-                        if str(year_temp) + '_SOS' in Phemedc.SM_namelist:
-                            phe_start = Phemedc.SM_group[str(year_temp) + '_SOS'][max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3]].toarray()
-                            phe_start = phe_start.astype(np.float32)
-                            phe_start[phe_start == 0] = np.nan
-                            temp_arr_ = np.round(phe_start) + 1000 * year_temp
-                            index_arr_ = np.ones_like(temp_arr_, dtype=np.int32) * np.nan
-                            for y_ in range(temp_arr_.shape[0]):
-                                for x_ in range(temp_arr_.shape[1]):
-                                    if not np.isnan(temp_arr_[y_, x_]):
-                                        index_arr_[y_, x_] = Denv_doy_list.index(int(temp_arr_[y_, x_]))
-                                    else:
-                                        index_arr_[y_, x_] = np.nan
-                            temporal_dic[f'{accumulated_period_}_start_arr'] = index_arr_
+                # Get the key pheme metrics
+                phe_dic = {}
+                for _ in ['peak_doy', 'SOS', 'EOM']:
+                    # Extract the Pheme datacube
+                    if f'{str(year_temp)}_{_}' in Phemedc.SM_namelist:
+                        if isinstance(Denvdc, NDSparseMatrix):
+                            phe_arr = Phemedc.SM_group[f'{str(year_temp)}_{_}'][max_spatial_range[0]: max_spatial_range[1],
+                                      max_spatial_range[2]: max_spatial_range[3]].toarray()
+                            phe_arr = phe_arr.astype(np.float32)
+                            phe_arr[phe_arr == 0] = np.nan
                         else:
-                            raise Exception('The SOS is not in the Pheme datacube!')
-                    elif accumulated_period_.startswith('SOY'):
-                        temporal_dic[f'{accumulated_period_}_start_arr'] = np.ones([max_spatial_range[1] - max_spatial_range[0], max_spatial_range[3] - max_spatial_range[2]]) * Denv_doy_list.index(int(year_temp * 1000 + 1))
+                            pass
                     else:
-                        raise Exception('The accumulated period is not supported!')
+                        raise Exception(f'The {_} is not in the Pheme datacube!')
 
-                    if accumulated_period_.endswith('PEAK'):
-                        if str(year_temp) + '_peak_doy' in Phemedc.SM_namelist:
-                            phe_start = Phemedc.SM_group[str(year_temp) + '_peak_doy'][max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3]].toarray()
-                            phe_start = phe_start.astype(np.float32)
-                            phe_start[phe_start == 0] = np.nan
-                            temp_arr_ = np.round(phe_start) + 1000 * year_temp
-                            index_arr_ = np.ones_like(temp_arr_, dtype=np.int32) * np.nan
-                            for y_ in range(temp_arr_.shape[0]):
-                                for x_ in range(temp_arr_.shape[1]):
-                                    if not np.isnan(temp_arr_[y_, x_]):
-                                        index_arr_[y_, x_] = Denv_doy_list.index(int(temp_arr_[y_, x_]))
-                                    else:
-                                        index_arr_[y_, x_] = np.nan
-                            temporal_dic[f'{accumulated_period_}_end_arr'] = index_arr_
+                    for __ in GEDI_link_Denvdc_spatial_interpolate_method_list:
+                        phe_arr_method = phe_arr[spatial_dic[__][0]: spatial_dic[__][1], spatial_dic[__][2]: spatial_dic[__][3]]
+                        if np.isnan(phe_arr_method).all():
+                            phe_dic[f'{__}_{_}'] = np.nan
                         else:
-                            raise Exception('The peak_doy is not in the Pheme datacube!')
-                    elif accumulated_period_.endswith('DOY'):
-                        temporal_dic[f'{accumulated_period_}_end_arr'] = np.ones([max_spatial_range[1] - max_spatial_range[0], max_spatial_range[3] - max_spatial_range[2]]) * Denv_doy_list.index(GEDI_doy)
-                    else:
-                        raise Exception('The accumulated period is not supported!')
+                            phe_dic[f'{__}_{_}'] = np.nansum(phe_arr_method * spatial_weight[__]) / np.nansum(~np.isnan(phe_arr_method) * spatial_weight[__])
 
-            # Get the maximum range in temporal
-            if temporal_dic is None:
-                pass
-            elif False not in [np.isnan(temporal_dic[_]).all() for _ in temporal_dic.keys() if _.endswith('start_arr')] or False not in [np.isnan(temporal_dic[_]).all() for _ in temporal_dic.keys() if _.endswith('end_arr')]:
-                temporal_dic = None
-            else:
-                max_temporal_range = [len(Denv_doy_list), 0]
-                for accumulated_period_ in accumulated_period:
-                    if np.isnan(temporal_dic[f'{accumulated_period_}_start_arr']).all() or np.isnan(temporal_dic[f'{accumulated_period_}_end_arr']).all():
-                        pass
-                    else:
-                        start_min = np.nanmin(temporal_dic[f'{accumulated_period_}_start_arr'])
-                        end_max = np.nanmax(temporal_dic[f'{accumulated_period_}_end_arr'])
-                        max_temporal_range[0] = int(min(max_temporal_range[0], start_min)) if not np.isnan(start_min) else max_temporal_range[0]
-                        max_temporal_range[1] = int(max(max_temporal_range[1], end_max)) if not np.isnan(end_max) else max_temporal_range[1]
+                # gET THE TEMPORAL RANGE
+                lower_range, upper_range = np.argwhere(np.array(Denv_doy_list) > year_temp * 1000).min(), np.argwhere(np.array(Denv_doy_list) < year_temp * 1000 + 1000).max()
+                doy_list = Denv_doy_list[lower_range: upper_range + 1]
 
-                if max_temporal_range[1] < max_temporal_range[0]:
-                    temporal_dic = None
+                # Extract the Denvdc
+                if spatial_dic is None:
+                    Denvdc_temp = None
+                elif isinstance(Denvdc, NDSparseMatrix):
+                    Denvdc_temp = Denvdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], lower_range: upper_range + 1]
+                    Denvdc_temp = Denvdc_temp.astype(np.float32)
+                    Denvdc_temp[Denvdc_temp == 0] = np.nan
+                elif isinstance(Denvdc, np.ndarray):
+                    Denvdc_temp = Denvdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], lower_range: upper_range + 1]
                 else:
-                    for accumulated_period_ in accumulated_period:
-                        if np.isnan(temporal_dic[f'{accumulated_period_}_start_arr']).all() or np.isnan(temporal_dic[f'{accumulated_period_}_end_arr']).all():
-                            temporal_dic[f'{accumulated_period_}_dc'] = np.ones([max_spatial_range[1] - max_spatial_range[0], max_spatial_range[3] - max_spatial_range[2], max_temporal_range[1] - max_temporal_range[0]]) * np.nan
-                        else:
-                            temporal_dc = np.ones([max_spatial_range[1] - max_spatial_range[0], max_spatial_range[3] - max_spatial_range[2], max_temporal_range[1] - max_temporal_range[0]]) * np.nan
-                            temporal_dic[f'{accumulated_period_}_start_arr'] = temporal_dic[f'{accumulated_period_}_start_arr'] - max_temporal_range[0]
-                            temporal_dic[f'{accumulated_period_}_end_arr'] = temporal_dic[f'{accumulated_period_}_end_arr'] - max_temporal_range[0]
-                            for y_ in range(temporal_dc.shape[0]):
-                                for x_ in range(temporal_dc.shape[1]):
-                                    if np.isnan(temporal_dic[f'{accumulated_period_}_start_arr'][y_, x_]) or np.isnan(temporal_dic[f'{accumulated_period_}_end_arr'][y_, x_]):
-                                        temporal_dc[y_, x_, :] = np.nan
-                                    elif temporal_dic[f'{accumulated_period_}_end_arr'][y_, x_] > temporal_dic[f'{accumulated_period_}_start_arr'][y_, x_]:
-                                        temporal_dc[y_, x_, int(temporal_dic[f'{accumulated_period_}_start_arr'][y_, x_]): int(temporal_dic[f'{accumulated_period_}_end_arr'][y_, x_] + 1)] = 1
-                            temporal_dic[f'{accumulated_period_}_dc'] = temporal_dc
+                    raise Exception('The Denvdc is not under the right type!')
 
-            # process the threshold
-            if temporal_dic is None:
-                thr_arr, thr_dc = None, None
-            else:
-                if threshold_method[0] == 'static_thr':
-                    thr_arr = np.ones([max_spatial_range[1] - max_spatial_range[0], max_spatial_range[3] - max_spatial_range[2]]) * threshold_method[1]
-                elif threshold_method[0] == 'phemetric_thr':
-                    thr_arr = np.zeros([max_spatial_range[1] - max_spatial_range[0], max_spatial_range[3] - max_spatial_range[2]])
-                    for y_ in range(thr_arr.shape[0]):
-                        for x_ in range(thr_arr.shape[1]):
-                            if ~np.isnan(temporal_dic['start_arr'][y_, x_]):
-                                doy_index = int(temporal_dic['start_arr'][y_, x_] + max_temporal_range[0])
-                                doy_min = max(doy_index - threshold_method[1], 0)
-                                doy_max = min(doy_index + threshold_method[1], len(Denv_doy_list))
-                                thr_arr_t = Denvdc[y_ + max_spatial_range[0], x_ + max_spatial_range[2], Denv_doy_list.index(doy_min): Denv_doy_list.index(doy_max)]
-                                if isinstance(Denvdc, NDSparseMatrix):
-                                    thr_arr_t = thr_arr_t.astype(np.float32)
-                                    thr_arr_t[thr_arr_t == 0] = np.nan
-                                thr_arr[y_, x_] = np.nanmean(thr_arr_t)
-                            else:
-                                thr_arr[y_, x_] = np.nan
-                else:
-                    raise Exception('The threshold method is not supported!')
-                thr_dc = np.stack([thr_arr] * temporal_dc.shape[2], axis=2)
-
-            # Extract the Denvdc
-            if spatial_dic is None or temporal_dic is None:
-                RSdc_temp = None
-            elif isinstance(Denvdc, NDSparseMatrix):
-                RSdc_temp = Denvdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], max_temporal_range[0]: max_temporal_range[1]]
-                RSdc_temp = RSdc_temp.astype(np.float32)
-                RSdc_temp[RSdc_temp == 0] = np.nan
-            elif isinstance(Denvdc, np.ndarray):
-                RSdc_temp = Denvdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], max_temporal_range[0]: max_temporal_range[1]]
-            else:
-                raise Exception('The RSdc is not under the right type!')
-
-            # Execute the weight
-            if RSdc_temp is not None and ~np.all(np.isnan(RSdc_temp)):
-                for accumulated_period_ in accumulated_period:
-                    temporal_dc = temporal_dic[f'{accumulated_period_}_dc']
-                    RSdc_ = RSdc_temp * temporal_dc
-                    RSdc_[RSdc_ < thr_dc] = np.nan
-                    RSdc_ = np.nanmean(RSdc_, axis=2)
+                if Denvdc_temp is not None and ~np.all(np.isnan(Denvdc_temp)):
                     for spatial_method in GEDI_link_Denvdc_spatial_interpolate_method_list:
-                        spatial_temp = spatial_dic[spatial_method]
-                        dc_temp = RSdc_[spatial_temp[0]: spatial_temp[1], spatial_temp[2]: spatial_temp[3]]
-                        inform_value, reliability_value = np.nan, np.nan
+                        rs_arr_spatial = Denvdc_temp[spatial_dic[spatial_method][0]: spatial_dic[spatial_method][1], spatial_dic[spatial_method][2]: spatial_dic[spatial_method][3], :]
+                        if denv_zoffset is not None:
+                            rs_arr_spatial = rs_arr_spatial - denv_zoffset
+                        if denv_size_control:
+                            rs_arr_spatial = rs_arr_spatial / 100
+                        spatial_weight_arr = np.broadcast_to(spatial_weight[spatial_method][:, :, np.newaxis], (spatial_weight[spatial_method].shape[0], spatial_weight[spatial_method].shape[1], Denvdc_temp.shape[2]))
+                        reliability_arr = np.nansum(~np.isnan(rs_arr_spatial) * spatial_weight_arr, axis=(0, 1))
+                        inform_arr = np.nansum(rs_arr_spatial * spatial_weight_arr, axis=(0, 1)) / reliability_arr
+                        gedi_df.loc[i, f'Denv_{Denv_index}_{spatial_method}_reliability'] = np.nanmean(reliability_arr)
 
-                        if ~np.all(np.isnan(dc_temp)):
-                            inform_value = np.nansum(spatial_weight[spatial_method] * dc_temp)
-                            reliability_value = np.nansum(spatial_weight[spatial_method] * ~np.isnan(dc_temp))
-                            inform_value = inform_value / reliability_value if reliability_value != 0 else np.nan
-                            if reliability_value == 0:
-                                reliability_value = np.nan
+                        if np.isnan(inform_arr).all():
+                            pass
+                        elif Denv_index in ['SSD', 'DPAR', 'AGB', 'PRE', 'TEM']:
+                            thr = [0, 0,0,0,15][['DPAR', 'AGB', 'PRE', 'TEM'].index(Denv_index)]
+                            for measure in ['fast-growing', 'maturity', 'GEDI-acq', 'ratio_gedi_fast-growing']:
+                                if measure == 'fast-growing' and ~np.isnan(phe_dic[f'{spatial_method}_peak_doy']):
+                                    inform_arr_ = inform_arr[0: np.argwhere(np.array(doy_list) > year_temp * 1000 + phe_dic[f'{spatial_method}_peak_doy']).min()] - thr
+                                    inform_arr_[inform_arr_ < 0] = 0
+                                    inform_value = np.nansum(inform_arr_)
+                                elif measure == 'maturity' and ~np.isnan(phe_dic[f'{spatial_method}_EOM']):
+                                    inform_arr_ = inform_arr[0: np.argwhere(np.array(doy_list) > year_temp * 1000 + phe_dic[f'{spatial_method}_EOM']).min()] - thr
+                                    inform_arr_[inform_arr_ < 0] = 0
+                                    inform_value = np.nansum(inform_arr_)
+                                elif measure == 'GEDI-acq':
+                                    inform_arr_ = inform_arr[0: np.argwhere(np.array(doy_list) <= GEDI_doy).max() + 1] - thr
+                                    inform_arr_[inform_arr_ < 0] = 0
+                                    inform_value = np.nansum(inform_arr_)
+                                elif measure == 'ratio_gedi_fast-growing' and ~np.isnan(phe_dic[f'{spatial_method}_peak_doy']):
+                                    inform_arr_ = inform_arr[0: np.argwhere(np.array(doy_list) > year_temp * 1000 + phe_dic[f'{spatial_method}_peak_doy']).min()] - thr
+                                    inform_arr_[inform_arr_ < 0] = 0
+                                    fs_value = np.nansum(inform_arr_)
+                                    inform_arr_ = inform_arr[0: np.argwhere(np.array(doy_list) <= GEDI_doy).max() + 1] - thr
+                                    inform_arr_[inform_arr_ < 0] = 0
+                                    gedi_value = np.nansum(inform_arr_)
+                                    inform_value = gedi_value / fs_value
+                                else:
+                                    inform_value = np.nan
+                                gedi_df.loc[i, f'Denv_{Denv_index}_{spatial_method}_{measure}'] = inform_value
+                        elif Denv_index in ['WIN', 'PRS', 'RHU']:
+                            inform_arr_ = inform_arr[0: np.argwhere(np.array(doy_list) > GEDI_doy).min()]
+                            for measure in ['max', 'min', 'mean', 'std']:
+                                if measure == 'max':
+                                    inform_value = np.nanmax(inform_arr_)
+                                elif measure == 'min':
+                                    inform_value = np.nanmin(inform_arr_)
+                                elif measure == 'mean':
+                                    inform_value = np.nanmean(inform_arr_)
+                                else:
+                                    inform_value = np.nanstd(inform_arr_)
+                                gedi_df.loc[i, f'Denv_{Denv_index}_{spatial_method}_{measure}'] = inform_value
                         else:
-                            inform_value = np.nan
-                            reliability_value = np.nan
+                            raise Exception('Unsupport denv index')
 
-                        if ~np.isnan(inform_value):
-                            gedi_df.loc[i, f'Denv_{Denv_index}_{spatial_method}_{accumulated_period_}_{threshold_method[0]}'] = inform_value
-                            gedi_df.loc[i, f'Denv_{Denv_index}_{spatial_method}_{accumulated_period_}_{threshold_method[0]}_reliability'] = reliability_value
+                    # elif Denv_index in ['WIN', 'PRS', 'RHU']:
+                    # for measure in ['fast-growing', 'maturity', 'GEDI-acq', 'ratio_gedi_fast-growing']:
+                    #     for measure in ['max', 'min', 'mean', 'std']:
+                    #         pass
+
+                    # for accumulated_period_ in accumulated_period:
+                    #     temporal_dc = temporal_dic[f'{accumulated_period_}_dc']
+                    #     Denvdc_ = Denvdc_temp * temporal_dc
+                    #     Denvdc_[Denvdc_ < thr_dc] = np.nan
+                    #     Denvdc_ = np.nanmean(Denvdc_, axis=2)
+                    #     for spatial_method in GEDI_link_Denvdc_spatial_interpolate_method_list:
+                    #         spatial_temp = spatial_dic[spatial_method]
+                    #         dc_temp = RSdc_[spatial_temp[0]: spatial_temp[1], spatial_temp[2]: spatial_temp[3]]
+                    #         inform_value, reliability_value = np.nan, np.nan
+                    #
+                    #         if ~np.all(np.isnan(dc_temp)):
+                    #             inform_value = np.nansum(spatial_weight[spatial_method] * dc_temp)
+                    #             reliability_value = np.nansum(spatial_weight[spatial_method] * ~np.isnan(dc_temp))
+                    #             inform_value = inform_value / reliability_value if reliability_value != 0 else np.nan
+                    #             if reliability_value == 0:
+                    #                 reliability_value = np.nan
+                    #         else:
+                    #             inform_value = np.nan
+                    #             reliability_value = np.nan
+                    #
+                    #         if ~np.isnan(inform_value):
+                    #             gedi_df.loc[i, f'Denv_{Denv_index}_{spatial_method}_{accumulated_period_}_{threshold_method[0]}'] = inform_value
+                    #             gedi_df.loc[i, f'Denv_{Denv_index}_{spatial_method}_{accumulated_period_}_{threshold_method[0]}_reliability'] = reliability_value
 
                 print(f'Finish linking the Denv {Denv_index} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
             else:
@@ -1389,7 +1448,7 @@ def link_GEDI_VegType_inform(VegType_arr, VegType_GeoTransform, gedi_df, furname
         gedi_df.insert(loc=len(gedi_df.columns), column=f'VegType_{spatial_method}', value=np.nan)
         gedi_df.insert(loc=len(gedi_df.columns), column=f'VegType_{spatial_method}_reliability', value=np.nan)
 
-        # itr through the gedi_df
+    # itr through the gedi_df
     for i in range(df_size):
 
         # Timing
@@ -1465,7 +1524,7 @@ def link_GEDI_VegType_inform(VegType_arr, VegType_GeoTransform, gedi_df, furname
     return gedi_df
 
 
-def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Phemedc, gedi_df, furname, GEDI_link_RS_temporal_interpolate_method_list,
+def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Phemedc, gedi_df, furname,
                           GEDI_link_RS_spatial_interpolate_method_list, temporal_search_window: int = 96, GEDI_circle_diameter: int = 25):
 
     """
@@ -1478,7 +1537,6 @@ def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Ph
     RSdc_index (str): The index of the RSdc datacube
     gedi_df (pd.DataFrame): The GEDI dataframe
     furname (str): The name of the firmware
-    GEDI_link_RS_temporal_interpolate_method_list (list): The list of temporal interpolation methods
     GEDI_link_RS_spatial_interpolate_method_list (list): The list of spatial interpolation methods
     temporal_search_window (int): The search window for the temporal interpolation
     GEDI_circle_diameter (int): The diameter of the circle
@@ -1493,9 +1551,13 @@ def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Ph
 
     # Insert new column for GEDI_df based on spatial methods and temporal methods
     for spatial_method in GEDI_link_RS_spatial_interpolate_method_list:
-        for temporal_method in GEDI_link_RS_temporal_interpolate_method_list:
-            gedi_df.insert(loc=len(gedi_df.columns), column=f'{RSdc_index}_{spatial_method}_{temporal_method}', value=np.nan)
-            gedi_df.insert(loc=len(gedi_df.columns), column=f'{RSdc_index}_{spatial_method}_{temporal_method}_reliability', value=np.nan)
+        for date in ['GEDI_acq', 'EOM', 'peak_doy']:
+            gedi_df.insert(loc=len(gedi_df.columns), column=f'{RSdc_index}_{spatial_method}_{date}', value=np.nan)
+            gedi_df.insert(loc=len(gedi_df.columns), column=f'{RSdc_index}_{spatial_method}_{date}_reliability', value=np.nan)
+
+        for statistic_measure in ['growth_mean', 'growth_max', 'growth_min', 'growth_std']:
+            gedi_df.insert(loc=len(gedi_df.columns), column=f'{RSdc_index}_{spatial_method}_{statistic_measure}',  value=np.nan)
+            gedi_df.insert(loc=len(gedi_df.columns), column=f'{RSdc_index}_{spatial_method}_{statistic_measure}_reliability', value=np.nan)
 
     # itr through the gedi_df
     for i in range(df_size):
@@ -1509,9 +1571,11 @@ def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Ph
             point_coords = [lon, lat]
             year_temp = int(np.floor(gedi_df['Date'][i]/1000))
 
-            # Process the spatial range
+            # Process the value for each method
             centre_pixel_xy = [int(np.floor((point_coords[0] - RSdc_GeoTransform[0]) / RSdc_GeoTransform[1])), int(np.floor((point_coords[1] - RSdc_GeoTransform[3]) / RSdc_GeoTransform[5]))]
             if 0 <= centre_pixel_xy[1] <= RSdc.shape[0] and 0 <= centre_pixel_xy[0] <= RSdc.shape[1]:
+
+                # Get the spatial range for each method
                 spatial_dic, spatial_weight = {}, {}
                 for spatial_method in GEDI_link_RS_spatial_interpolate_method_list:
                     if spatial_method == 'nearest_neighbor':
@@ -1519,7 +1583,9 @@ def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Ph
                         spatial_weight['nearest_neighbor'] = np.ones([1, 1])
                     elif spatial_method == 'focal':
                         spatial_dic['focal'] = [max(centre_pixel_xy[1] - 1, 0), min(centre_pixel_xy[1] + 2, RSdc.shape[0]), max(centre_pixel_xy[0] - 1, 0), min(centre_pixel_xy[0] + 2, RSdc.shape[1])]
-                        spatial_weight['focal'] = np.ones([3, 3]) / 9
+                        x_size = spatial_dic['focal'][3] - spatial_dic['focal'][2]
+                        y_size = spatial_dic['focal'][1] - spatial_dic['focal'][0]
+                        spatial_weight['focal'] = np.ones([y_size, x_size]) / (y_size * x_size)
                     elif spatial_method == 'area_average':
                         GEDI_circle = create_circle_polygon(point_coords, GEDI_circle_diameter)
                         min_x, min_y, max_x, max_y = GEDI_circle.bounds
@@ -1538,13 +1604,8 @@ def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Ph
                                 spatial_weight['area_average'][y_, x_] = intersection.area / entire_area
                     else:
                         raise Exception('The spatial interpolation method is not supported!')
-            else:
-                spatial_dic = None
 
-            # Get the maximum range in spatial
-            if spatial_dic is None:
-                pass
-            else:
+                # Get the maximum range in spatial
                 max_spatial_range = [RSdc.shape[0], 0, RSdc.shape[1], 0]
                 for spatial_ in spatial_dic.keys():
                     max_spatial_range = [min(max_spatial_range[0], spatial_dic[spatial_][0]), max(max_spatial_range[1], spatial_dic[spatial_][1]),
@@ -1553,205 +1614,125 @@ def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Ph
                     spatial_dic[spatial_] = [spatial_dic[spatial_][0] - max_spatial_range[0], spatial_dic[spatial_][1] - max_spatial_range[0],
                                              spatial_dic[spatial_][2] - max_spatial_range[2], spatial_dic[spatial_][3] - max_spatial_range[2]]
 
-            # Get the peak doy
-            if spatial_dic is not None:
-                if str(year_temp) + '_peak_doy' in Phemedc.SM_namelist:
-                    phe_peak = Phemedc.SM_group[str(year_temp) + '_peak_doy'][max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3]].toarray()
-                    phe_peak = phe_peak.astype(np.float32)
-                    phe_peak[phe_peak == 0] = np.nan
-                    temp_arr_ = np.round(phe_peak) + 1000 * year_temp
-                    doy_arr_ = np.ones_like(temp_arr_, dtype=np.int32) * GEDI_doy
-                    doy_arr_ = np.min([doy_arr_, temp_arr_], axis=0)
-                    if np.isnan(doy_arr_).all():
-                        spatial_dic = None
+                # Get the temporal range of this year
+                lower_range, upper_range = np.argwhere(np.array(RSdc_doy_list) > year_temp * 1000).min(), np.argwhere(np.array(RSdc_doy_list) < year_temp * 1000 + 1000).max()
+                doy_arr = np.array(RSdc_doy_list[lower_range: upper_range + 1])
+
+                # Extract the RSdc
+                if spatial_dic is None:
+                    RSdc_temp = None
+                elif isinstance(RSdc, NDSparseMatrix):
+                    RSdc_temp = RSdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], lower_range: upper_range + 1]
+                    RSdc_temp = RSdc_temp.astype(np.float32)
+                    RSdc_temp[RSdc_temp == 0] = np.nan
+                elif isinstance(RSdc, np.ndarray):
+                    RSdc_temp = RSdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], lower_range: upper_range + 1]
                 else:
-                    raise Exception('The peak_doy is not in the Pheme datacube!')
+                    raise Exception('The RSdc is not under the right type!')
 
-            # Process the temporal range
-            if spatial_dic is None:
-                temporal_dic = None
-            else:
-                # Generate the temporal range
-                temporal_dic, doy_dic = {}, {}
-                for temporal_method in GEDI_link_RS_temporal_interpolate_method_list:
-                    if '24days' in temporal_method:
-                        temporal_threshold = 24
-                    elif temporal_method == 'linear_interpolation':
-                        temporal_threshold = temporal_search_window
-                    else:
-                        raise Exception('Not supported temporal interpolation method!')
-                    temporal_dic[temporal_method] = [np.ones([max_spatial_range[1] - max_spatial_range[0], max_spatial_range[3] - max_spatial_range[2]]) * np.nan,
-                                                     np.ones([max_spatial_range[1] - max_spatial_range[0], max_spatial_range[3] - max_spatial_range[2]]) * np.nan]
-
-                    min_lower_range, max_upper_range = 0, len(RSdc_doy_list)
-                    for y_ in range(doy_arr_.shape[0]):
-                        for x_ in range(doy_arr_.shape[1]):
-                            doy_yx = doy_arr_[y_, x_]
-                            if np.isnan(doy_yx):
-                                pass
-                            else:
-                                if np.mod(doy_yx, 1000) <= temporal_threshold:
-                                    doy_lower_limit = doy_yx - 1000 + 365 - (temporal_threshold - np.mod(doy_yx, 1000))
-                                else:
-                                    doy_lower_limit = doy_yx - temporal_threshold
-
-                                if np.mod(doy_yx, 1000) + temporal_threshold > 365:
-                                    doy_upper_limit = doy_yx + 1000 + (temporal_threshold + np.mod(doy_yx, 1000) - 365)
-                                else:
-                                    doy_upper_limit = doy_yx + temporal_threshold
-
-                                lower_range, upper_range = 0, len(RSdc_doy_list)
-                                for _ in range(1, len(RSdc_doy_list)):
-                                    if RSdc_doy_list[_] >= doy_lower_limit > RSdc_doy_list[_ - 1]:
-                                        lower_range = _
-                                        break
-                                for _ in range(1, len(RSdc_doy_list)):
-                                    if RSdc_doy_list[_] > doy_upper_limit >= RSdc_doy_list[_ - 1]:
-                                        upper_range = _
-                                        break
-                                temporal_dic[temporal_method][0][y_, x_] = lower_range
-                                temporal_dic[temporal_method][1][y_, x_] = upper_range
-                                min_lower_range, max_upper_range = min(min_lower_range, lower_range), max(max_upper_range, upper_range)
-
-            # Get the maximum range in temporal
-            if temporal_dic is None:
-                pass
-            else:
-                max_temporal_range = [len(RSdc_doy_list), 0]
-                for temporal_ in temporal_dic.keys():
-                    max_temporal_range = [int(min(max_temporal_range[0], np.nanmin(temporal_dic[temporal_][0]))), int(max(max_temporal_range[1], np.nanmax(temporal_dic[temporal_][1])))]
-                for temporal_ in temporal_dic.keys():
-                    temporal_dic[temporal_][0] = temporal_dic[temporal_][0] - max_temporal_range[0]
-                    temporal_dic[temporal_][1] = temporal_dic[temporal_][1] - max_temporal_range[0]
-                doy_list_extracted = [RSdc_doy_list[__] for __ in range(max_temporal_range[0], max_temporal_range[1])]
-
-            # Extract the RSdc
-            if spatial_dic is None or temporal_dic is None:
-                RSdc_temp = None
-            elif isinstance(RSdc, NDSparseMatrix):
-                RSdc_temp = RSdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], max_temporal_range[0]: max_temporal_range[1]]
-                RSdc_temp = RSdc_temp.astype(np.float32)
-                RSdc_temp[RSdc_temp == 0] = np.nan
-            elif isinstance(RSdc, np.ndarray):
-                RSdc_temp = RSdc[max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3], max_temporal_range[0]: max_temporal_range[1]]
-            else:
-                raise Exception('The RSdc is not under the right type!')
-
-            # Execute the weight
-            if RSdc_temp is not None and ~np.all(np.isnan(RSdc_temp)):
-                for temporal_method in GEDI_link_RS_temporal_interpolate_method_list:
-                    temporal_temp = [temporal_dic[temporal_method][0], temporal_dic[temporal_method][1]]
-                    spatial_interpolated_arr = np.zeros([RSdc_temp.shape[0], RSdc_temp.shape[1]]) * np.nan
-                    for y_ in range(RSdc_temp.shape[0]):
-                        for x_ in range(RSdc_temp.shape[1]):
-                            doy_yx = doy_arr_[y_, x_]
-                            upper_range = temporal_temp[1][y_, x_]
-                            lower_range = temporal_temp[0][y_, x_]
-                            if ~np.isnan(lower_range) and ~np.isnan(upper_range):
-                                dc_temp_z = copy.deepcopy(RSdc_temp[y_, x_, int(lower_range): int(upper_range)].reshape(int(upper_range - lower_range)))
-                            else:
-                                dc_temp_z = np.zeros([1]) * np.nan
-                            if ~np.all(np.isnan(dc_temp_z)):
-                                if temporal_method == '24days_max':
-                                    spatial_interpolated_arr[y_, x_] = np.nanmax(dc_temp_z)
-                                elif temporal_method == '24days_ave':
-                                    spatial_interpolated_arr[y_, x_] = np.nanmean(dc_temp_z)
-                                elif temporal_method == 'linear_interpolation':
-                                    spatial_interpolated_arr[y_, x_] = np.nan
-                                    doy_list_extracted_z = doy_list_extracted[int(lower_range): int(upper_range)]
-                                    date_negative, date_positive, value_negative, value_positive, reliability_negative, reliability_positive = -temporal_search_window, temporal_search_window, np.nan, np.nan, np.nan, np.nan
-                                    for date_t in doy_list_extracted_z:
-                                        if date_t <= doy_yx and date_t - doy_yx >= date_negative and ~np.isnan(dc_temp_z[doy_list_extracted_z.index(date_t)]):
-                                            date_negative = -np.abs(date_t - GEDI_doy)
-                                            value_negative = dc_temp_z[doy_list_extracted_z.index(date_t)]
-                                        if date_t >= doy_yx and date_t - doy_yx <= date_positive and ~np.isnan(dc_temp_z[doy_list_extracted_z.index(date_t)]):
-                                            date_positive = np.abs(date_t - GEDI_doy)
-                                            value_positive = dc_temp_z[doy_list_extracted_z.index(date_t)]
-                                    if np.isnan(value_positive) or np.isnan(value_negative):
-                                        spatial_interpolated_arr[y_, x_] = np.nan
-                                    else:
-                                        spatial_interpolated_arr[y_, x_] = value_negative + (value_positive - value_negative) * date_negative / (date_positive + date_negative)
-                                else:
-                                    raise Exception('Not supported temporal method')
-                            else:
-                                spatial_interpolated_arr[y_, x_] = np.nan
-
-                    for spatial_method in GEDI_link_RS_spatial_interpolate_method_list:
-                        spatial_weight_temp = spatial_weight[spatial_method]
-                        spatial_value_temp = spatial_interpolated_arr[spatial_dic[spatial_method][0]: spatial_dic[spatial_method][1], spatial_dic[spatial_method][2]: spatial_dic[spatial_method][3]]
-                        reliability_arr = np.zeros([RSdc_temp.shape[0], RSdc_temp.shape[1]])
-                        inform_value = np.nansum(spatial_weight_temp * spatial_value_temp)
-                        reliability_value = np.nansum(spatial_weight_temp * ~np.isnan(spatial_value_temp))
-                        inform_value = inform_value / reliability_value if reliability_value != 0 else np.nan
-                        if ~np.isnan(inform_value):
-                            gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{temporal_method}'] = inform_value
-                            gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{temporal_method}_reliability'] = reliability_value
+                # Get the key pheme metrics
+                phe_dic = {}
+                for _ in ['peak_doy', 'SOS', 'EOS', 'EOM']:
+                    # Extract the Pheme datacube
+                    if f'{str(year_temp)}_{_}' in Phemedc.SM_namelist:
+                        if isinstance(RSdc, NDSparseMatrix):
+                            phe_arr = Phemedc.SM_group[f'{str(year_temp)}_{_}'][max_spatial_range[0]: max_spatial_range[1], max_spatial_range[2]: max_spatial_range[3]].toarray()
+                            phe_arr = phe_arr.astype(np.float32)
+                            phe_arr[phe_arr == 0] = np.nan
                         else:
-                            gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{temporal_method}'] = np.nan
-                            gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{temporal_method}_reliability'] = 0
+                            pass
+                    else:
+                        raise Exception(f'The {_} is not in the Pheme datacube!')
 
-                # for spatial_method in GEDI_link_RS_spatial_interpolate_method_list:
-                #     reliability_arr[y_, x_] = np.nansum(spatial_weight[spatial_method] * ~np.isnan(dc_temp[y_, x_, :]))
-                #     spatial_interpolated_arr[y_, x_] = infor_t / reliability_arr[y_, x_] if reliability_arr[y_, x_] != 0 else np.nan
-                #     if np.isnan(inform_value):
-                #         pass
-                #     else:
-                #         gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{temporal_method}'] = inform_value
-                #         gedi_df.loc[
-                #             i, f'{RSdc_index}_{spatial_method}_{temporal_method}_reliability'] = reliability_value
+                    for __ in GEDI_link_RS_spatial_interpolate_method_list:
+                        phe_arr_method = phe_arr[spatial_dic[__][0]: spatial_dic[__][1], spatial_dic[__][2]: spatial_dic[__][3]]
+                        if np.isnan(phe_arr_method).all():
+                            phe_dic[f'{__}_{_}'] = np.nan
+                        else:
+                            phe_dic[f'{__}_{_}'] = np.nansum(phe_arr_method * spatial_weight[__]) / np.nansum(~np.isnan(phe_arr_method) * spatial_weight[__])
 
-                # for spatial_method in GEDI_link_RS_spatial_interpolate_method_list:
-                #     spatial_temp = spatial_dic[spatial_method]
-                #     dc_temp = RSdc_temp[spatial_temp[0]: spatial_temp[1], spatial_temp[2]: spatial_temp[3], :]
-                #     spatial_interpolated_arr = np.zeros(dc_temp.shape[2]) * np.nan
-                #     reliability_arr = np.zeros(dc_temp.shape[2]) * 0
-                #     for __ in range(dc_temp.shape[2]):
-                #         if ~np.all(np.isnan(dc_temp[:, :, __])):
-                #             infor_t = np.nansum(spatial_weight[spatial_method] * dc_temp[:, :, __].reshape(dc_temp.shape[0], dc_temp.shape[1]))
-                #             reliability_arr[__] = np.nansum(spatial_weight[spatial_method] * ~np.isnan(dc_temp[:, :, __].reshape(dc_temp.shape[0], dc_temp.shape[1])))
-                #             spatial_interpolated_arr[__] = infor_t / reliability_arr[__] if reliability_arr[__] != 0 else np.nan
-                #         else:
-                #             spatial_interpolated_arr[__] = np.nan
-                #             reliability_arr[__] = 0
-                #
-                #     for temporal_method in GEDI_link_RS_temporal_interpolate_method_list:
-                #         temporal_temp = temporal_dic[temporal_method]
-                #         spatial_interpolated_arr_t = spatial_interpolated_arr[temporal_temp[0]: temporal_temp[1]]
-                #         reliability_arr_t = reliability_arr[temporal_temp[0]: temporal_temp[1]]
-                #         spatial_interpolated_arr_t[reliability_arr_t < 0.1] = np.nan
-                #         reliability_arr_t[reliability_arr_t < 0.1] = np.nan
-                #
-                #         if temporal_method == "24days_max":
-                #             inform_value = np.nan if np.all(np.isnan(spatial_interpolated_arr_t)) else np.nanmax(spatial_interpolated_arr_t)
-                #             reliability_value = np.nan if np.all(np.isnan(reliability_arr_t)) else reliability_arr_t[np.argwhere(spatial_interpolated_arr_t == inform_value)[0]][0]
-                #         elif temporal_method == '24days_ave':
-                #             inform_value = np.nan if np.all(np.isnan(spatial_interpolated_arr_t)) else np.nanmean(spatial_interpolated_arr_t)
-                #             reliability_value = np.nan if np.all(np.isnan(reliability_arr_t)) else np.nanmean(reliability_arr_t)
-                #         elif temporal_method == 'linear_interpolation':
-                #             date_negative, date_positive, value_negative, value_positive, reliability_negative, reliability_positive = -temporal_search_window, temporal_search_window, np.nan, np.nan, np.nan, np.nan
-                #             for date_t in doy_dic[temporal_method]:
-                #                 if date_t <= GEDI_doy and date_t - GEDI_doy >= date_negative and ~np.isnan(spatial_interpolated_arr_t[doy_dic[temporal_method].index(date_t)]):
-                #                     date_negative = -np.abs(date_t - GEDI_doy)
-                #                     value_negative = spatial_interpolated_arr_t[doy_dic[temporal_method].index(date_t)]
-                #                     reliability_negative = reliability_arr_t[doy_dic[temporal_method].index(date_t)]
-                #
-                #                 if date_t >= GEDI_doy and date_t - GEDI_doy <= date_positive and ~np.isnan(spatial_interpolated_arr_t[doy_dic[temporal_method].index(date_t)]):
-                #                     date_positive = np.abs(date_t - GEDI_doy)
-                #                     value_positive = spatial_interpolated_arr_t[doy_dic[temporal_method].index(date_t)]
-                #                     reliability_positive = reliability_arr_t[doy_dic[temporal_method].index(date_t)]
-                #
-                #             if np.isnan(value_positive) or np.isnan(value_negative):
-                #                 inform_value = np.nan
-                #                 reliability_value = np.nan
-                #             else:
-                #                 inform_value = value_negative + (value_positive - value_negative) * date_negative / (date_positive + date_negative)
-                #                 reliability_value = (reliability_negative + reliability_positive) / 2
-                #         else:
-                #             raise Exception('Not supported temporal method')
+                # Execute the weight
+                if RSdc_temp is not None and ~np.all(np.isnan(RSdc_temp)):
+                    for spatial_method in GEDI_link_RS_spatial_interpolate_method_list:
+                        rs_arr_spatial = RSdc_temp[spatial_dic[spatial_method][0]: spatial_dic[spatial_method][1], spatial_dic[spatial_method][2]: spatial_dic[spatial_method][3], :]
+                        spatial_weight_arr = np.broadcast_to(spatial_weight[spatial_method][:, :, np.newaxis], (spatial_weight[spatial_method].shape[0], spatial_weight[spatial_method].shape[1], RSdc_temp.shape[2]))
+                        reliability_arr = np.nansum(~np.isnan(rs_arr_spatial) * spatial_weight_arr, axis=(0, 1))
+                        inform_arr = np.nansum(rs_arr_spatial * spatial_weight_arr, axis=(0, 1)) / reliability_arr
 
+                        # Generate growth value
+                        if ~np.isnan(phe_dic[f'{spatial_method}_SOS']) and ~np.isnan(phe_dic[f'{spatial_method}_EOS']):
+                            lower_range, upper_range = np.argwhere(np.array(doy_arr) >= year_temp * 1000 + phe_dic[f'{spatial_method}_SOS']).min(), np.argwhere(np.array(doy_arr) < year_temp * 1000 + phe_dic[f'{spatial_method}_EOS']).max()
+
+                            for statistic_measure in ['growth_mean', 'growth_max', 'growth_min', 'growth_std']:
+                                if statistic_measure == 'growth_mean':
+                                    inform_value = np.nanmean(inform_arr[lower_range: upper_range + 1])
+                                elif statistic_measure == 'growth_max':
+                                    inform_value = np.nanmax(inform_arr[lower_range: upper_range + 1])
+                                elif statistic_measure == 'growth_min':
+                                    inform_value = np.nanmin(inform_arr[lower_range: upper_range + 1])
+                                elif statistic_measure == 'growth_std':
+                                    inform_value = np.nanstd(inform_arr[lower_range: upper_range + 1])
+                                else:
+                                    raise Exception('Not supported statistic measure!')
+
+                                if ~np.isnan(inform_value):
+                                    gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{statistic_measure}'] = inform_value
+                                    gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{statistic_measure}_reliability'] = np.nanmean(reliability_arr[lower_range: upper_range + 1])
+                                else:
+                                    gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{statistic_measure}'] = np.nan
+                                    gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{statistic_measure}_reliability'] = 0
+                        else:
+                            gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_growth_mean'] = np.nan
+                            gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_growth_mean_reliability'] = 0
+
+                        # Generate interpolated value
+                        for date in ['GEDI_acq', 'EOM', 'peak_doy']:
+                            if date == 'GEDI_acq':
+                                doy_ = GEDI_doy
+                            else:
+                                doy_ = phe_dic[f'{spatial_method}_{date}'] + year_temp * 1000
+                                print(str(doy_))
+
+                            if doy_ in doy_arr and ~np.isnan(inform_arr[np.argwhere(doy_arr == doy_)[0][0]]):
+                                gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}'] = inform_arr[np.argwhere(doy_arr == doy_)[0][0]]
+                                gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}_reliability'] = reliability_arr[np.argwhere(doy_arr == doy_)[0][0]]
+                            elif np.isnan(doy_):
+                                gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}'] = np.nan
+                                gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}_reliability'] = 0
+                            elif doy_ <= doy_arr.min() or doy_ >= doy_arr.max():
+                                gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}'] = np.nan
+                                gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}_reliability'] = 0
+                            else:
+                                doy_positive_pos = np.argwhere(doy_arr > doy_).min()
+                                doy_negative_pos = np.argwhere(doy_arr < doy_).max()
+                                doy_positive_value = np.nan
+                                doy_negative_value = np.nan
+                                reliability_positive = np.nan
+                                reliability_negative = np.nan
+                                for date_t in doy_arr[doy_positive_pos:]:
+                                    date_pos = np.argwhere(doy_arr == date_t)[0][0]
+                                    if ~np.isnan(inform_arr[date_pos]):
+                                        doy_positive_value = inform_arr[date_pos]
+                                        reliability_positive = reliability_arr[date_pos]
+                                        break
+                                for date_t in doy_arr[doy_negative_pos:0:-1]:
+                                    date_pos = np.argwhere(doy_arr == date_t)[0][0]
+                                    if ~np.isnan(inform_arr[date_pos]):
+                                        doy_negative_value = inform_arr[date_pos]
+                                        reliability_negative = reliability_arr[date_pos]
+                                        break
+                                if np.isnan(doy_positive_value) or np.isnan(doy_negative_value):
+                                    gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}'] = np.nan
+                                    gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}_reliability'] = 0
+                                else:
+                                    gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}'] = doy_negative_value + (doy_positive_value - doy_negative_value) * (doy_ - doy_arr[doy_negative_pos]) / (doy_arr[doy_positive_pos] - doy_arr[doy_negative_pos])
+                                    gedi_df.loc[i, f'{RSdc_index}_{spatial_method}_{date}_reliability'] = reliability_negative + (reliability_positive - reliability_negative) * (doy_ - doy_arr[doy_negative_pos]) / (doy_arr[doy_positive_pos] - doy_arr[doy_negative_pos])
+                else:
+                    pass
                 print(f'Finish linking the {RSdc_index} with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
             else:
                 print(f'Invalid value for {RSdc_index} linking with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
+                raise Exception('Invalid value in the GEDI df')
         except:
             print(traceback.format_exc())
             print(f'Failed linking the {RSdc_index} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')

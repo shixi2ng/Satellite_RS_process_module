@@ -76,21 +76,32 @@ class NDSparseMatrix:
             raise TypeError('ND matrix was under at least three dimension')
 
         arr_list = []
-        if isinstance(z_r, (int, np.int8, np.int16, np.int32, np.int64)) or z_r.stop - z_r.start == 1 or z_r.stop - z_r.start == 0:
-            if z_r.stop - z_r.start == 1 or z_r.stop - z_r.start == 0:
-                z_r = z_r.start
 
-            if isinstance(y_r, (int, np.int8, np.int16, np.int32, np.int64)) and isinstance(x_r, (int, np.int8, np.int16, np.int32, np.int64)):
-                return self.SM_group[self.SM_namelist[z_r]][y_r, x_r].reshape(y_r.stop - y_r.start, x_r.stop - x_r.start, 1)
-            else:
-                return self.SM_group[self.SM_namelist[z_r]][y_r, x_r].toarray().reshape(y_r.stop - y_r.start, x_r.stop - x_r.start, 1)
-        else:
-            for _ in range(self.shape[2])[z_r]:
-                if isinstance(x_r, (int, np.int8, np.int16, np.int32, np.int64)) and isinstance(y_r, (int, np.int8, np.int16, np.int32, np.int64)):
-                    arr_list.append(np.array([[self.SM_group[self.SM_namelist[_]][y_r, x_r]]]))
-                else:
-                    arr_list.append(self.SM_group[self.SM_namelist[_]][y_r, x_r].toarray())
-            return np.stack(arr_list, axis=2)
+        # Convert single integers to slices for consistent handling
+        if isinstance(z_r, (int, np.integer)):
+            z_r = slice(z_r, z_r + 1)
+        elif isinstance(z_r, slice) and z_r.stop is None and z_r.start is None:
+            z_r = slice(0, self.shape[2])
+
+        if isinstance(y_r, (int, np.integer)):
+            y_r = slice(y_r, y_r + 1)
+        elif isinstance(y_r, slice) and y_r.stop is None and y_r.start is None:
+            y_r = slice(0, self.shape[0])
+
+        if isinstance(x_r, (int, np.integer)):
+            x_r = slice(x_r, x_r + 1)
+        elif isinstance(x_r, slice) and x_r.stop is None and x_r.start is None:
+            x_r = slice(0, self.shape[1])
+
+        # Preallocate the result array
+        result_shape = (y_r.stop - y_r.start, x_r.stop - x_r.start, z_r.stop - z_r.start)
+        result = np.empty(result_shape, dtype=self.SM_group[self.SM_namelist[0]].dtype)
+
+        # Fill the result array
+        for z in range(z_r.start, z_r.stop):
+            result[:, :, z - z_r.start] = self.SM_group[self.SM_namelist[z]][y_r, x_r].toarray()
+
+        return result
 
     def _update_size_para(self):
         for ele in self.SM_group.values():
@@ -316,68 +327,68 @@ class NDSparseMatrix:
             raise Exception('Code error for the NDsparsematrix extraction')
         return output_array
 
-    def _extract_matrix_y1x1zh(self, tuple_temp: tuple, nodata_export=False):
-
-        # tt0, tt1, tt2 = 0, 0, 0
-        # start_time = time.time()
-        if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
-            raise TypeError(f'Please input the index array in a 3D tuple')
-        elif len(tuple_temp[0]) != 1 or len(tuple_temp[1]) != 1:
-            raise TypeError(f'This func is for y1x1zh datacube!')
-        else:
-            heights_range = self._understand_range(tuple_temp[2], range(self._height))
-            rows_extract = tuple_temp[0][0]
-            cols_extract = tuple_temp[1][0]
-        # tt0 += time.time() - start_time
-
-        date_temp, index_temp = [], []
-        for height_temp in range(self._height):
-            if height_temp in range(heights_range[0], heights_range[1]):
-                date_tt = self.SM_namelist[height_temp]
-                temp = self.SM_group[date_tt][rows_extract, cols_extract]
-                if nodata_export:
-                    date_temp.append(date_tt)
-                    index_temp.append(temp)
-                elif not nodata_export and temp != 0 and temp > 0:
-                    date_temp.append(date_tt)
-                    index_temp.append(temp)
-
-        # tt1 += time.time() - start_time
-        year_doy_all = np.array(bf.date2doy(date_temp))
-        date_temp = np.mod(year_doy_all, 1000)
-        index_temp = np.array(index_temp)
-
-        # tt2 += time.time() - start_time
-        # print(f'tt0:{str(tt0)}, tt1:{str(tt1)}, tt2:{str(tt2)}')
-        return date_temp, index_temp, year_doy_all
-
-    def _extract_matrix_y1x1zh_v2(self, tuple_temp: tuple, nodata_export= False):
-
-        # tt0, tt1, tt2 = 0, 0, 0
-        # start_time = time.time()
-        if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
-            raise TypeError(f'Please input the index array in a 3D tuple')
-        elif len(tuple_temp[0]) != 1 or len(tuple_temp[1]) != 1:
-            raise TypeError(f'This func is for y1x1zh datacube!')
-        else:
-            heights_range = self._understand_range(tuple_temp[2], range(self._height))
-            rows_extract = tuple_temp[0][0]
-            cols_extract = tuple_temp[1][0]
-
-        index_temp = []
-        for height_temp in range(self._height):
-            if height_temp in range(heights_range[0], heights_range[1]):
-                date_tt = self.SM_namelist[height_temp]
-                temp = self.SM_group[date_tt][rows_extract, cols_extract]
-                if nodata_export:
-                    index_temp.append(temp)
-                elif not nodata_export and temp != 0:
-                    index_temp.append(temp)
-
-        # tt1 += time.time() - start_time
-        index_temp = np.array(index_temp)
-
-        return index_temp
+    # def _extract_matrix_y1x1zh(self, tuple_temp: tuple, nodata_export=False):
+    #
+    #     # tt0, tt1, tt2 = 0, 0, 0
+    #     # start_time = time.time()
+    #     if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
+    #         raise TypeError(f'Please input the index array in a 3D tuple')
+    #     elif len(tuple_temp[0]) != 1 or len(tuple_temp[1]) != 1:
+    #         raise TypeError(f'This func is for y1x1zh datacube!')
+    #     else:
+    #         heights_range = self._understand_range(tuple_temp[2], range(self._height))
+    #         rows_extract = tuple_temp[0][0]
+    #         cols_extract = tuple_temp[1][0]
+    #     # tt0 += time.time() - start_time
+    #
+    #     date_temp, index_temp = [], []
+    #     for height_temp in range(self._height):
+    #         if height_temp in range(heights_range[0], heights_range[1]):
+    #             date_tt = self.SM_namelist[height_temp]
+    #             temp = self.SM_group[date_tt][rows_extract, cols_extract]
+    #             if nodata_export:
+    #                 date_temp.append(date_tt)
+    #                 index_temp.append(temp)
+    #             elif not nodata_export and temp != 0 and temp > 0:
+    #                 date_temp.append(date_tt)
+    #                 index_temp.append(temp)
+    #
+    #     # tt1 += time.time() - start_time
+    #     year_doy_all = np.array(bf.date2doy(date_temp))
+    #     date_temp = np.mod(year_doy_all, 1000)
+    #     index_temp = np.array(index_temp)
+    #
+    #     # tt2 += time.time() - start_time
+    #     # print(f'tt0:{str(tt0)}, tt1:{str(tt1)}, tt2:{str(tt2)}')
+    #     return date_temp, index_temp, year_doy_all
+    #
+    # def _extract_matrix_y1x1zh_v2(self, tuple_temp: tuple, nodata_export= False):
+    #
+    #     # tt0, tt1, tt2 = 0, 0, 0
+    #     # start_time = time.time()
+    #     if len(tuple_temp) != 3 or type(tuple_temp) != tuple:
+    #         raise TypeError(f'Please input the index array in a 3D tuple')
+    #     elif len(tuple_temp[0]) != 1 or len(tuple_temp[1]) != 1:
+    #         raise TypeError(f'This func is for y1x1zh datacube!')
+    #     else:
+    #         heights_range = self._understand_range(tuple_temp[2], range(self._height))
+    #         rows_extract = tuple_temp[0][0]
+    #         cols_extract = tuple_temp[1][0]
+    #
+    #     index_temp = []
+    #     for height_temp in range(self._height):
+    #         if height_temp in range(heights_range[0], heights_range[1]):
+    #             date_tt = self.SM_namelist[height_temp]
+    #             temp = self.SM_group[date_tt][rows_extract, cols_extract]
+    #             if nodata_export:
+    #                 index_temp.append(temp)
+    #             elif not nodata_export and temp != 0:
+    #                 index_temp.append(temp)
+    #
+    #     # tt1 += time.time() - start_time
+    #     index_temp = np.array(index_temp)
+    #
+    #     return index_temp
 
     def drop_nanlayer(self):
 
