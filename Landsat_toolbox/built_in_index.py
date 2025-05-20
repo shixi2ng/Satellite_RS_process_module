@@ -30,6 +30,7 @@ class built_in_index(object):
         self.NIR = 'NIR = NIR'
         self.SWIR = 'SWIR = SWIR'
         self.SWIR2 = 'SWIR2 = SWIR2'
+        self.TIR = 'TIR = TIR'
 
         self._exprs2index(*args)
         self._built_in_index_dic()
@@ -39,7 +40,7 @@ class built_in_index(object):
             if type(temp) is not str:
                 raise ValueError(f'{temp} expression should be in a str type!')
             elif '=' in temp:
-                self.__dict__[temp.split('=')[0]] = temp
+                self.__dict__[temp.split('=')[0].replace(' ', '')] = temp
             else:
                 raise ValueError(f'{temp} expression should be in a str type!')
 

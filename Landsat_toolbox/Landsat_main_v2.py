@@ -11,6 +11,11 @@ import glob
 from lxml import etree
 from RSDatacube.utils import *
 from Landsat_toolbox.utils import *
+import Landsat_toolbox
+import re
+import shutil
+from collections import defaultdict
+
 
 global topts
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
@@ -88,7 +93,7 @@ class Landsat_l2_ds(object):
         self._band_output_list = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10', 'QA_PIXEL', 'gap_mask']
         self._all_supported_index_list = ['RGB', 'QI', 'all_band', '4visual', 'NDVI', 'MNDWI', 'EVI', 'EVI2', 'OSAVI',
                                           'GNDVI', 'NDVI_RE', 'NDVI_RE2', 'AWEI', 'AWEInsh', 'SVVI', 'TCGREENESS',
-                                          'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2']
+                                          'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'SWIR2', 'TIR']
         self._band_tab = {'LE07_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7'),
                           'LE07_bandname': ('BLUE', 'GREEN', 'RED', 'NIR', 'SWIR', 'TIR', 'SWIR2'),
                           'LT04_bandnum': ('B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8'),
@@ -195,16 +200,63 @@ class Landsat_l2_ds(object):
             raise ValueError('There has no valid Landsat L2 data in the original folder!')
 
         # Drop duplicate files
-        for file_name in [filepath_temp.split('\\')[-1].split('.')[0] for filepath_temp in self.orifile_list]:
-            dup_file = [_ for _ in self.orifile_list if file_name in _]
-            if len(dup_file) > 1:
-                for file in dup_file:
-                    if file.find(file_name) + len(file_name) != file.find('.tar'):
-                        duplicate_file_name = file.split("\\")[-1]
-                        try:
-                            os.rename(file, f'{corrupted_file_folder}all_clear\\{duplicate_file_name}')
-                        except:
-                            raise Exception(f'The duplicate file {str(file)} is not processed!')
+        file_groups = defaultdict(list)
+
+        # 用正则匹配 base_name 和是否含括号后缀
+        pattern = re.compile(r"^(.*?)(\(\d+\))?\.tar$", re.IGNORECASE)
+        for f in self.orifile_list:
+            f_clean = f.replace(" ", "")  # 去除所有空格
+            match = pattern.match(f_clean)
+            if match:
+                base_name = match.group(1).strip()
+                file_groups[base_name].append(f)
+
+        moved, renamed, skipped = [], [], []
+        for base_name, versions in file_groups.items():
+            full_paths = [os.path.join(self.ori_folder, f) for f in versions]
+            sizes = [(f, os.path.getsize(f)) for f in full_paths]
+            sizes.sort(key=lambda x: x[1], reverse=True)
+            target_path = os.path.join(self.ori_folder, base_name + ".tar")
+
+            if len(versions) == 1 and not bool(re.search(r"\(\d+\)", versions[0])):
+                continue
+
+            # Case 1: 只有一个带括号版本 → 去括号重命名
+            elif len(sizes) == 1 and bool(re.search(r"\(\d+\)", versions[0])):
+                src_path = sizes[0][0]
+                try:
+                    os.rename(src_path, target_path)
+                    renamed.append((src_path, target_path))
+                except Exception as e:
+                    skipped.append((src_path, str(e)))
+                continue
+
+            # Case 2: 多个版本，保留最大，重命名为 base_name.tar
+            else:
+                keep_file = sizes[0][0]  # 最大文件
+
+                # Step 1: 先将其余小文件移到 corrupted
+                for f, _ in sizes[1:]:
+                    try:
+                        shutil.move(f, os.path.join(corrupted_file_folder, os.path.basename(f)))
+                        moved.append(f)
+                    except Exception as e:
+                        skipped.append((f, str(e)))
+
+                # Step 2: 再处理最大文件重命名
+                try:
+                    if os.path.exists(target_path) and os.path.abspath(target_path) != os.path.abspath(keep_file):
+                        os.remove(target_path)
+                    if os.path.abspath(keep_file) != os.path.abspath(target_path):
+                        os.rename(keep_file, target_path)
+                        renamed.append((keep_file, target_path))
+                except Exception as e:
+                    skipped.append((keep_file, str(e)))
+
+        # Process invalid files
+        if len(skipped) > 0:
+            print(skipped)
+            raise Exception('Above file was unable to move, should manually process！')
 
         ##################################################################
         # Landsat 9 and Landsat 7 duplicate
@@ -237,6 +289,13 @@ class Landsat_l2_ds(object):
                     os.rename(l7_file, f'{corrupted_file_folder}{l7_file_name}')
                 except:
                     raise Exception(f'The Landsat 7 duplicate file {str(l7_file)} is not processed!')
+            elif len(l79_list) == 2 and (('LC09' in l79_list[0] and 'LC08' in l79_list[1]) or ('LC09' in l79_list[1] and 'LC08' in l79_list[0])):
+                l7_file = [_ for _ in l79_list if 'LC08' in _][0]
+                l7_file_name = l7_file.split('\\')[-1]
+                try:
+                    os.rename(l7_file, f'{corrupted_file_folder}{l7_file_name}')
+                except:
+                    raise Exception(f'The Landsat 7 duplicate file {str(l7_file)} is not processed!')
             elif len(l79_list) == 1 and 'LC09' in l79_list[0]:
                 pass
             else:
@@ -250,19 +309,19 @@ class Landsat_l2_ds(object):
         # Generate metadata
         if (os.path.exists(self._work_env + 'Metadata.xlsx') and len(self.orifile_list) != pd.read_excel(self._work_env + 'Metadata.xlsx').shape[0]) or not os.path.exists(self._work_env + 'Metadata.xlsx'):
             File_path, FileID, Sensor_type, Tile, Date, Tier_level = ([] for _ in range(6))
+            result_list = []
 
             with tqdm(total=len(self.orifile_list), desc=f'Obtain the metadata of Landsat dataset', bar_format='{l_bar}{bar:24}{r_bar}{bar:-24b}') as pbar:
                 # Use ProcessPoolExecutor to execute the function in parallel
-                with concurrent.futures.ProcessPoolExecutor() as executor:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
 
                     # Submit tasks to the executor
                     futures = [executor.submit(unzip_Landsat_tarfile, file_, path_) for file_, path_ in zip(self.orifile_list, repeat(self.unzipped_folder))]
-                    result_list = []
 
                     for future in concurrent.futures.as_completed(futures):
-                        pbar.update(1)
                         result = future.result()  # Get the result (optional)
                         result_list.append(result) # Print the result (optional)
+                        pbar.update(1)
 
             # Process results after all futures have completed
             for result in result_list:
@@ -429,16 +488,25 @@ class Landsat_l2_ds(object):
                 self.ROI = shp_file_path + self.ROI_name + '.shp'
 
     def _process_index_list(self, index_list):
-
+        index_exprs = built_in_index()
         # Process processed index list
-        self._index_exprs_dic = built_in_index()
         for index in index_list:
-            if index not in self._all_supported_index_list and type(index) is str and '=' in index:
-                try:
-                    self._index_exprs_dic.add_index(index)
-                except:
-                    raise ValueError(f'The expression {index} is wrong')
-                index_list[index_list.index(index)] = index.split('=')[0]
+
+            if not isinstance(index, str):
+                raise TypeError(f'The {str(index)} is not under right type')
+
+            if '=' in index:
+                index_name = index.split('=')[0].replace(' ', '')
+                if index_name in self._all_supported_index_list:
+                    pass
+                else:
+                    try:
+                        index_exprs.add_index(index)
+                    except:
+                        raise ValueError(f'The expression {index} is wrong')
+                index_list[index_list.index(index)] = index_name
+                self._all_supported_index_list.append(index_name)
+                self._index_exprs_dic = index_exprs.index_dic
 
             elif index in self._all_supported_index_list:
                 pass
@@ -446,7 +514,6 @@ class Landsat_l2_ds(object):
             else:
                 raise NameError(f'The {index} is not a valid index or the expression is wrong')
 
-        self._index_exprs_dic = self._index_exprs_dic.index_dic
         return index_list
 
     @save_log_file
@@ -473,7 +540,7 @@ class Landsat_l2_ds(object):
         i = range(self.Landsat_metadata_size)
         kwargs['metadata_range'] = i
         try:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
+            with concurrent.futures.ProcessPoolExecutor(max_workers= int(os.cpu_count() * Landsat_toolbox.configuration['multiprocess_ratio'])) as executor:
                 res = executor.map(self.construct_landsat_index, repeat(index_list), i, repeat(kwargs))
         except OSError:
             print('The OSError during the thread close for py38')
@@ -578,7 +645,7 @@ class Landsat_l2_ds(object):
                             arr_dic[band_temp][np.logical_or(arr_dic[band_temp] > 61440, arr_dic[band_temp] < 293)] = np.nan
 
                             # Refactor the surface temperature
-                            arr_dic[band_temp] = arr_dic[band_temp] * 0.00341802 + 149
+                            arr_dic[band_temp] = arr_dic[band_temp] * 0.00341802 + 149 - 273.15
                         else:
                             # Remove invalid pixel
                             arr_dic[band_temp][np.logical_or(arr_dic[band_temp] > 43636, arr_dic[band_temp]< 7273)] = np.nan
@@ -1035,7 +1102,7 @@ class Landsat_l2_ds(object):
         # elif 'chunk_size' in kwargs.keys() and kwargs['chunk_size'] == 'auto':
         #     chunk_size = os.cpu_count()
         else:
-            chunk_size = os.cpu_count()
+            chunk_size = int(os.cpu_count() * Landsat_toolbox.configuration['multiprocess_ratio'])
 
         # MP process
         with concurrent.futures.ProcessPoolExecutor(max_workers=chunk_size) as executor:

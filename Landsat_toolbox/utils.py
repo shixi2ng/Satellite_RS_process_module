@@ -17,6 +17,7 @@ import basic_function as bf
 import matplotlib.pyplot as plt
 import tarfile
 import traceback
+import libarchive
 
 
 def union_list(small_list, big_list) -> list:
@@ -44,14 +45,17 @@ def unzip_Landsat_tarfile(tar_path, extract_path, unzipped_para=True):
 
     try:
         if unzipped_para:
-            with tarfile.open(tar_path, 'r') as tar:
-                for member in tar.getmembers():
-                    member_path = os.path.join(extract_path, member.name)
-                    if not os.path.exists(member_path):
-                        tar.extract(member, extract_path)
-                    else:
-                        pass
-                tar.close()
+            with libarchive.file_reader(tar_path) as entries:
+                for entry in entries:
+                    out_path = os.path.join(extract_path, os.path.basename(entry.pathname))
+                    if os.path.exists(out_path):
+                        continue  # Pass existing files
+
+                    # Write in
+                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                    with open(out_path, "wb") as f_out:
+                        for block in entry.get_blocks():
+                            f_out.write(block)
             print(f'Successfully unzip Landsat file {tar_path}')
         else:
             unzipped_file = tarfile.TarFile(tar_path)
