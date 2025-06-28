@@ -5,18 +5,18 @@ from Crawler.crawler_weatherdata import Qweather_dataset
 
 if __name__ == '__main__':
 
-    # Water level import
-    wl1 = HydroStationDS()
-    wl1.import_from_standard_files('G:\\A_1Dflow_sed\\Hydrodynamic_model\\Original_water_level\\', 'G:\\A_1Dflow_sed\\Hydrodynamic_model\\Original_water_level\\对应表.csv')
-    wl1.to_csvs()
-
-    # Process the climate date
-    QW_ds = Qweather_dataset('G:\\A_Climatology_dataset\\station_dataset\\Qweather_dataset\\')
-    QW_ds.to_standard_cma_file()
-
-    landsat_temp = Landsat_l2_ds('G:\\A_Landsat_Floodplain_veg\\Landsat_YZR_2023\\Ori_zipfile\\')
-    landsat_temp.construct_metadata(unzipped_para=False)
-    landsat_temp.mp_construct_index(['SVVI', 'TCGREENESS'], cloud_removal_para=True, size_control_factor=True, ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020.shp', harmonising_data=True, )
+    # # Water level import
+    # wl1 = HydroStationDS()
+    # wl1.import_from_standard_files('G:\\A_1Dflow_sed\\Hydrodynamic_model\\Original_water_level\\', 'G:\\A_1Dflow_sed\\Hydrodynamic_model\\Original_water_level\\对应表.csv')
+    # wl1.to_csvs()
+    #
+    # # Process the climate date
+    # QW_ds = Qweather_dataset('G:\\A_Climatology_dataset\\station_dataset\\Qweather_dataset\\')
+    # QW_ds.to_standard_cma_file()
+    #
+    # landsat_temp = Landsat_l2_ds('G:\\A_Landsat_Floodplain_veg\\Landsat_YZR_2023\\Ori_zipfile\\')
+    # landsat_temp.construct_metadata(unzipped_para=False)
+    # landsat_temp.mp_construct_index(['SVVI', 'TCGREENESS'], cloud_removal_para=True, size_control_factor=True, ROI='G:\\A_Landsat_Floodplain_veg\\ROI_map\\floodplain_2020.shp', harmonising_data=True, )
     # landsat_temp.mp_ds2landsatdc(['SVVI'], inherit_from_logfile=True)
 
     # file_name = 'G:\\A_Landsat_veg\\ROI_map\\floodplain_2020_map.TIF'
@@ -77,11 +77,9 @@ if __name__ == '__main__':
     # refine dem
     thal1 = Thalweg()
     thal1 = thal1.load_geojson('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\output_geojson\\thelwag.json')
-    thal1.load_smooth_Thalweg_shp('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\output_shpfile\\thelwag_smooth2.shp')
-    for itr_ in np.linspace(10, 60, 11):
-        thal1.straighten_river_through_thalweg('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\veg_diff.TIF', itr=int(itr_))
-
-
+    # thal1.load_smooth_Thalweg_shp('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\output_shpfile\\thelwag_smooth2.shp')
+    # for itr_ in np.linspace(10, 60, 11):
+    #     thal1.straighten_river_through_thalweg('G:\\A_Landsat_Floodplain_veg\\Paper\\Fig11\\veg_diff.TIF', itr=int(itr_))
 
     # for cs, date in zip(['界Z3+3', 'CZ63', 'CZ63', 'CZ89', 'CZ118', ], [20200816, 20130710, 20190804, 20120915, 20170828]):
     #     wl1.cs_wl(thal1, cs, date)
@@ -106,32 +104,32 @@ if __name__ == '__main__':
     #     pheme_dc.calculate_phemetrics(['TSVI', 'peak_vi', 'MAVI'])
     #     pheme_dc.dc2tif()
 
-    for year in range(2000, 2004):
+    for year in range(1988, 2004):
         year = int(year)
         hc = HydroDatacube()
         hc.from_hydromatrix(f'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
-        hc.simplified_conceptual_inundation_model('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\ele_DT_inundation_frequency_pretgd.TIF', thal1, f'G:\A_Landsat_Floodplain_veg\Water_level_python\Inundation_indicator\\', meta_dic='G:\A_Landsat_Floodplain_veg\Landsat_floodplain_2020_datacube\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\1986\\metadata.json')
+        hc.simplified_conceptual_inundation_model('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\ele_DT_inundation_frequency_pretgd.TIF', thal1, f'G:\A_Landsat_Floodplain_veg\Water_level_python\Inundation_indicator\\', meta_dic='G:\A_Landsat_Floodplain_veg\Landsat_floodplain_2020_datacube\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\1986\\metadata.json', inun_factor=False)
 
-    for year in range(2016, 2021):
+    for year in range(2004, 2024):
         year = int(year)
         hc = HydroDatacube()
         hc.from_hydromatrix(f'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\hydrodatacube\\{str(year)}\\')
-        hc.simplified_conceptual_inundation_model('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\ele_DT_inundation_frequency_posttgd.TIF', thal1, f'G:\A_Landsat_Floodplain_veg\Water_level_python\Inundation_indicator\\', meta_dic='G:\A_Landsat_Floodplain_veg\Landsat_floodplain_2020_datacube\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\1986\\metadata.json')
+        hc.simplified_conceptual_inundation_model('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\ele_DT_inundation_frequency_posttgd.TIF', thal1, f'G:\A_Landsat_Floodplain_veg\Water_level_python\Inundation_indicator\\', meta_dic='G:\A_Landsat_Floodplain_veg\Landsat_floodplain_2020_datacube\OSAVI_noninun_curfit_datacube\\floodplain_2020_Phemetric_datacube\\1986\\metadata.json', inun_factor=False)
 
-    Landsat_inun_temp = Landsat_dc('G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube')
-    hyspo = Flood_freq_based_hyspometry_method([2003], work_env='G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Annual_refined_dem\\')
-    hyspo.refine_annual_topography(thal1, Landsat_inun_temp, hc, elevation_map='G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\ele_DT_inundation_frequency_posttgd.TIF')
-
+    # Landsat_inun_temp = Landsat_dc('G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\Inundation_DT_datacube')
+    # hyspo = Flood_freq_based_hyspometry_method([2003], work_env='G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Annual_refined_dem\\')
+    # hyspo.refine_annual_topography(thal1, Landsat_inun_temp, hc, elevation_map='G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\ele_DT_inundation_frequency_posttgd.TIF')
     #
-    # # Cross section construction POST-TGD
-    cs1 = CrossSection('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\')
-    cs1.from_stdCSfiles(
-        'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_DEM_2019_all.csv')
-    cs1.import_CS_coords(
-        'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_coordinates_wgs84.csv',
-        epsg_crs='epsg:32649')
-    cs1.import_CS_tribu(
-        'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_tributary.xlsx')
+    # #
+    # # # Cross section construction POST-TGD
+    # cs1 = CrossSection('G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Post_TGD\\')
+    # cs1.from_stdCSfiles(
+    #     'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_DEM_2019_all.csv')
+    # cs1.import_CS_coords(
+    #     'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_coordinates_wgs84.csv',
+    #     epsg_crs='epsg:32649')
+    # cs1.import_CS_tribu(
+    #     'G:\\A_Landsat_Floodplain_veg\\Water_level_python\\Original_cross_section\\cross_section_tributary.xlsx')
     # cs1.to_geojson()
     # cs1.to_shpfile()
     # cs1.to_csv()

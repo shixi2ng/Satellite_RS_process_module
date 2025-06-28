@@ -1,14 +1,8 @@
 import concurrent.futures
-import traceback
 from itertools import repeat
-import pandas as pd
 from .built_in_index import built_in_index
-import matplotlib.pyplot as plt
-import tarfile
 from datetime import date
-from scipy.optimize import curve_fit
 import glob
-from lxml import etree
 from RSDatacube.utils import *
 from Landsat_toolbox.utils import *
 import Landsat_toolbox
@@ -1538,10 +1532,7 @@ class Landsat_dc(object):
         try:
             if self.sdc_factor is True:
                 # Read doylist
-                if self.ROI_name is None:
-                    doy_file = bf.file_filter(self.dc_filepath, ['doy.npy'], and_or_factor='and')
-                else:
-                    doy_file = bf.file_filter(self.dc_filepath, ['doy.npy'], and_or_factor='and')
+                doy_file = bf.file_filter(self.dc_filepath, ['doy.npy'], and_or_factor='and')
 
                 if len(doy_file) == 0:
                     raise ValueError('There has no valid doy file or file was missing!')

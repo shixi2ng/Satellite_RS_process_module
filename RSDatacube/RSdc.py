@@ -1,4 +1,5 @@
 # coding=utf-8
+import copy
 import traceback
 
 from .utils import *
@@ -6,7 +7,7 @@ import matplotlib.pyplot as plt
 import sys
 import os.path
 import concurrent.futures
-from itertools import repeat
+from itertools import repeat, product
 from GEDI_toolbox import GEDI_main as gedi
 from Landsat_toolbox.Landsat_main_v2 import Landsat_dc
 from Sentinel2_toolbox.Sentinel_main_V2 import Sentinel2_dc
@@ -17,6 +18,7 @@ from shapely import wkt
 from .Denvdc import Denv_dc
 from .Phemedc import Phemetric_dc
 import RSDatacube
+from matplotlib.colors import LogNorm
 
 
 class RS_dcs(object):
@@ -666,10 +668,7 @@ class RS_dcs(object):
         else:
             self._DEM_path = None
 
-    def CCDC(self, index_list: list, dc_type):
-
-        if dc_type not in self._dc_typelist:
-            raise Exception('THE DC TYPE IS NOT IMPORTED')
+    def CCDC(self, index_list: list, ):
 
         # proces args*
         index_new_list = []
@@ -677,7 +676,7 @@ class RS_dcs(object):
             if _ not in self._index_list:
                 print(f'{str(_)} is not imported')
             else:
-                if self._dc_typelist[self._index_list.index(_)] != dc_type:
+                if self._dc_typelist[self._index_list.index(_)] != Landsat_dc and self._dc_typelist[self._index_list.index(_)] != Sentinel2_dc:
                     print(f'{str(_)} is not under the correct dctype')
                 else:
                     index_new_list.append(_)
@@ -689,8 +688,68 @@ class RS_dcs(object):
 
         # Check the consistency
         index_num = [self._index_list.index(_) for _ in index_list]
+        nodata_list = [self._Nodata_value_list]
         x_size = [self._dc_XSize_list[num_] for num_ in index_num]
         y_size = [self._dc_YSize_list[num_] for num_ in index_num]
+        doy_min = min([int(np.floor(min(self._doys_backup_[num_]) / 10000)) for num_ in index_num])
+        offset_list = [self._Zoffset_list[num_] for num_ in index_num]
+        resize_factor = [self._size_control_factor_list[num_] for num_ in index_num]
+
+        if False in [x_size[0] == _ for _ in x_size] or False in [y_size[0] == _ for _ in y_size]:
+            raise Exception('Consistency error')
+
+        # Index
+        # Retrieve the ROI
+        sa_map = np.load(self.ROI_array)
+        main_folder = os.path.join(self._Landsatdc_work_env, 'CCDC')
+        output_folder = os.path.join(self._Landsatdc_work_env, 'CCDC\\output\\')
+        cache_folder = os.path.join(self._Landsatdc_work_env, 'CCDC\\cache\\')
+        create_folder(main_folder)
+        create_folder(output_folder)
+        create_folder(cache_folder)
+
+        # Read pos_df
+        if not os.path.exists(f'{cache_folder}pos_df.csv'):
+            pos_df = pd.DataFrame(np.argwhere(sa_map != -32768), columns=['y', 'x'])
+            pos_df = pos_df.sort_values(['x', 'y'], ascending=[True, True])
+            pos_df = pos_df.reset_index()
+            pos_df.to_csv(f'{cache_folder}pos_df.csv')
+        else:
+            pos_df = pd.read_csv(f'{cache_folder}pos_df.csv')
+
+        # Generate CCDC into a table
+        if not os.path.exists(os.path.join(output_folder + 'ccdc_all.csv')):
+
+            # Slice into several tasks/blocks to use all cores
+            work_num = int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])
+            doy_all_list, pos_list, xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(np.ceil(pos_df.shape[0] / work_num))
+            for i_size in range(work_num):
+                if i_size != work_num - 1:
+                    pos_list.append(pos_df[indi_size * i_size: indi_size * (i_size + 1)])
+                else:
+                    pos_list.append(pos_df[indi_size * i_size: -1])
+
+                index_size_list.append([int(max(0, pos_list[-1]['y'].min())), int(min(sa_map.shape[0], pos_list[-1]['y'].max())),
+                                        int(max(0, pos_list[-1]['x'].min())), int(min(sa_map.shape[1], pos_list[-1]['x'].max()))])
+                xy_offset_list.append([int(max(0, pos_list[-1]['y'].min())), int(max(0, pos_list[-1]['x'].min()))])
+                dc_temp_list = []
+
+                for dc_num in index_num:
+                    if self._sparse_matrix_list[dc_num]:
+                        dc_temp = self.dcs[dc_num].extract_matrix(([index_size_list[-1][0], index_size_list[-1][1] + 1], [index_size_list[-1][2], index_size_list[-1][3] + 1], ['all']))
+                        dc_temp_list.append(dc_temp.drop_nanlayer())
+                        doy_all_list.append(dc_temp_list[-1].SM_namelist)
+                    else:
+                        dc_temp_list.append(self.dcs[dc_num][index_size_list[-1][0]: index_size_list[-1][1] + 1, index_size_list[-1][2]: index_size_list[-1][3] + 1, :])
+                        doy_all_list.append(self._doys_backup_[dc_num])
+                index_dc_list.append(dc_temp_list)
+
+            # for _ in range(len(index_dc_list)):
+            #     run_CCDC(index_dc_list[_], doy_all_list[_], pos_list[_], xy_offset_list[_], index_list, nodata_list, offset_list, resize_factor, output_folder, doy_min)
+
+            with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as exe:
+                exe.map(run_CCDC, index_dc_list, doy_all_list, pos_list, xy_offset_list, repeat(index_list), repeat(nodata_list), repeat(offset_list), repeat(resize_factor), repeat(output_folder), repeat(doy_min))
+
 
     def custom_composition(self, index, dc_type, **kwargs):
 
@@ -1140,7 +1199,7 @@ class RS_dcs(object):
                 inundation_freq = inun_arr.astype(np.float32) / all_arr.astype(np.float32)
                 write_raster(temp_ds, inundation_freq, inunfactor_path,
                                 f'{inundation_mapping_method}_inundation_frequency.TIF',
-                                raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                                raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
 
             if 'floodplain' in self.ROI_name:
                 if not os.path.exists(
@@ -1176,13 +1235,12 @@ class RS_dcs(object):
                     inundation_freq_posttgd = inun_arr_post.astype(np.float32) / all_arr_post.astype(np.float32)
                     write_raster(temp_ds, inundation_freq_pretgd, inunfactor_path,
                                     f'{inundation_mapping_method}_inundation_frequency_pretgd.TIF',
-                                    raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                                    raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
                     write_raster(temp_ds, inundation_freq_posttgd, inunfactor_path,
                                     f'{inundation_mapping_method}_inundation_frequency_posttgd.TIF',
-                                    raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                                    raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
 
-            if not os.path.exists(
-                    f'{inunfactor_path}{inundation_mapping_method}_inundation_recurrence.TIF') or self._inundation_overwritten_factor:
+            if not os.path.exists(f'{inunfactor_path}{inundation_mapping_method}_inundation_recurrence.TIF') or self._inundation_overwritten_factor:
 
                 yearly_tif = file_filter(annualtif_path, ['.TIF'],
                                             exclude_word_list=['.xml', '.dpf', '.cpg', '.aux', 'vat', '.ovr'])
@@ -1198,7 +1256,7 @@ class RS_dcs(object):
                 inundation_recu = recu_arr.astype(np.float32) / len(yearly_tif)
                 write_raster(temp_ds, inundation_recu, inunfactor_path,
                                 f'{inundation_mapping_method}_inundation_recurrence.TIF',
-                                raster_datatype=gdal.GDT_Float32, nodatavalue=0)
+                                raster_datatype=gdal.GDT_Float32, nodatavalue=np.nan)
 
         print(f'Finish detecting the inundation area in the \033[1;34m{self.ROI_name}\033[0m using \033[1;31m{str(time.time() - start_time)}\033[0m s!')
 
@@ -2480,8 +2538,8 @@ class RS_dcs(object):
         raster_gt = roi_ds.GetGeoTransform()
         xy_all = np.argwhere(roi_map != roi_ds.GetRasterBand(1).GetNoDataValue()) if ~np.isnan(roi_ds.GetRasterBand(1).GetNoDataValue()) else np.argwhere(~np.isnan(roi_map))
         xy_all = pd.DataFrame(xy_all, columns=['y', 'x'])
-        xy_all['EPSG_lon'] = raster_gt[0] + raster_gt[1] * xy_all['x']
-        xy_all['EPSG_lat'] = raster_gt[3] + raster_gt[5] * xy_all['y']
+        xy_all['EPSG_lon'] = raster_gt[0] + raster_gt[1] * (xy_all['x'] + 0.5)
+        xy_all['EPSG_lat'] = raster_gt[3] + raster_gt[5] * (xy_all['y'] + 0.5)
         xy_all = xy_all.sort_values(['EPSG_lon', 'EPSG_lat'])
 
         # simulate all other bar for gedi df

@@ -1,3 +1,4 @@
+import basic_function
 from NDsm import NDSparseMatrix
 import scipy.sparse as sm
 from tqdm.auto import tqdm
@@ -11,10 +12,10 @@ import os
 import traceback
 import time
 import pandas as pd
-import datetime
+from datetime import datetime
 from basic_function import Path, write_raster, create_folder, file_filter, reassign_sole_pixel, date2doy, raster_ds2bounds, retrieve_srs, doy2date
 import copy
-
+from CCDC.CCDC import *
 
 def seven_para_logistic_function(x, m1, m2, m3, m4, m5, m6, m7):
     return m1 + (m2 - m7 * x) * ((1 / (1 + np.exp((m3 - x) / m4))) - (1 / (1 + np.exp((m5 - x) / m6))))
@@ -582,11 +583,11 @@ def bimodal_histogram_threshold(input_temp, method = None, init_threshold=0.123)
         list_greater = [q for q in input_temp if q >= init_threshold]
 
         if np.sum(np.array([~np.isnan(temp) for temp in array_temp])) < 8:
-            return np.nan
+            return 0.123
         elif len(list_lower) == 0 or len(list_greater) == 0:
-            return np.nan
+            return 0.123
         elif len(list_greater) >= 0.9 * (len(list_lower) + len(list_greater)):
-            return np.nan
+            return 0.123
         else:
             ith_threshold = init_threshold
             while True:
@@ -1738,3 +1739,91 @@ def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Ph
             print(f'Failed linking the {RSdc_index} value with the GEDI dataframe! in {str(time.time() - t1)[0:6]}s  ({str(i)} of {str(df_size)})')
 
     return gedi_df
+
+def run_CCDC(dc_list: list, date_list:list, pos_list: pd.DataFrame, xy_offset_list: list, index_list: list, nodata_list: list, offset_list:list, resize_list:list, output_folder, min_year: int):
+
+    # Date 2 doy
+
+    dates = np.array([datetime.strptime(str(d), "%Y%m%d") for d in date_list])
+    origin = datetime(min_year, 1, 1)
+    doy_arr = np.array([(d - origin).days for d in dates])
+    years = np.ceil(max(doy_arr) / 365.25)
+
+    # Create folder
+    fig_folder = os.path.join(output_folder, 'pixel_fig\\')
+    csv_folder = os.path.join(output_folder, 'pixel_csv\\')
+    raw_data_folder = os.path.join(output_folder, 'raw_input')
+    basic_function.create_folder(fig_folder)
+    basic_function.create_folder(csv_folder)
+    basic_function.create_folder(raw_data_folder)
+
+    pos_list = pos_list.reset_index(drop=True)
+
+    for _ in tqdm(range(pos_list.shape[0]), desc="Running CCDC", unit="pixel"):
+        try:
+            if not os.path.exists(os.path.join(raw_data_folder, f"RawData_x{str(pos_list['x'][_])}_y{str(pos_list['y'][_])}.csv")):
+                x_ = pos_list['x'][_]
+                y_ = pos_list['y'][_]
+
+                # Gey x and y
+                y_ = y_ - xy_offset_list[0]
+                x_ = x_ - xy_offset_list[1]
+
+                # define trend index and
+                trend_index = np.empty([doy_arr.shape[0], len(index_list)])
+                nodata_mask = np.full_like(trend_index, False, dtype=bool)
+
+                for index_num in range(len(index_list)):
+                    nodata_val = nodata_list[index_num]
+                    offset = offset_list[index_num]
+                    resize = 10000 if resize_list[index_num] else 1
+                    data_ = dc_list[index_num][y_, x_, :].reshape(-1)
+                    nodata_mask[:, index_num] = data_ == nodata_val
+                    data_ = (data_ - offset)/ resize
+                    trend_index[:, index_num] = data_
+
+                valid_row_mask = ~np.any(nodata_mask, axis=1)
+                trend_index = trend_index[valid_row_mask, :]
+                doy_arr_temp = doy_arr[valid_row_mask]
+
+                # 保存 trend_index 和 doy_arr_temp
+                raw_data_dict = {'doy': doy_arr_temp}
+                for i, band in enumerate(index_list):
+                    raw_data_dict[f'{band}'] = trend_index[:, i]
+
+                raw_df = pd.DataFrame(raw_data_dict)
+                raw_df.to_csv(os.path.join(raw_data_folder, f"RawData_x{str(pos_list['x'][_])}_y{str(pos_list['y'][_])}.csv"), index=False)
+            else:
+                try:
+                    raw_df = pd.read_csv(os.path.join(raw_data_folder, f"RawData_x{str(pos_list['x'][_])}_y{str(pos_list['y'][_])}.csv"))
+                    doy_arr_temp = np.array(raw_df['doy'].values)
+                    trend_index = np.zeros((len(doy_arr_temp), len(index_list)), dtype=float)
+
+                    for i, band in enumerate(index_list):
+                        trend_index[:, i] = np.array(raw_df[band].values, dtype=float)
+                except:
+                    doy_arr_temp = np.array([])
+                    trend_index = np.array([])
+
+            if len(doy_arr_temp) > 20 and not os.path.exists(os.path.join(csv_folder, f"CCDC_result_x{str(pos_list['x'][_])}_y{str(pos_list['y'][_])}.csv")) and not os.path.exists(os.path.join(fig_folder, f"CCDC_result_x{str(pos_list['x'][_])}_y{str(pos_list['y'][_])}.png")):
+
+                # Run ccdc
+                ccdc_para = TrendSeasonalFit_v12_30Line(doy_arr_temp, trend_index)
+
+                # save ccdc csv
+                df = pd.DataFrame(ccdc_para)
+                for col in ['coefs', 'magnitude']:
+                    if col in df.columns:
+                        df[col] = df[col].apply(lambda x: ','.join(map(str, x)) if isinstance(x, (list, np.ndarray)) else x)
+
+                # 保存为 CSV
+                df.to_csv(os.path.join(csv_folder, f"CCDC_result_x{str(pos_list['x'][_])}_y{str(pos_list['y'][_])}.csv"), index=False)
+
+                # 保存图片
+                plot_ccdc_segments(doy_arr_temp, trend_index, ccdc_para, os.path.join(fig_folder, f"CCDC_result_x{str(pos_list['x'][_])}_y{str(pos_list['y'][_])}.png"), min_year)
+        except:
+            print(traceback.format_exc())
+
+
+
+

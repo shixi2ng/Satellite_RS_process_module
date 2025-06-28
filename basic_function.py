@@ -426,9 +426,9 @@ def write_raster(ori_ds: gdal.Dataset, new_array: np.ndarray, file_path_f: str, 
     driver.Register()
     gt = ori_ds.GetGeoTransform()
     proj = ori_ds.GetProjection()
-    if os.path.exists(file_path_f + file_name_f):
-        os.remove(file_path_f + file_name_f)
-    outds = driver.Create(file_path_f + file_name_f, xsize=new_array.shape[1], ysize=new_array.shape[0],
+    if os.path.exists(os.path.join(file_path_f, file_name_f)):
+        os.remove(os.path.join(file_path_f, file_name_f))
+    outds = driver.Create(os.path.join(file_path_f, file_name_f), xsize=new_array.shape[1], ysize=new_array.shape[0],
                           bands=1, eType=raster_datatype, options=['COMPRESS=LZW', 'PREDICTOR=2'])
     outds.SetGeoTransform(gt)
     outds.SetProjection(proj)

@@ -21,8 +21,12 @@ from itertools import repeat
 import rasterio
 import psutil
 import json
+import River_GIS
+import ast
+from scipy.interpolate import make_interp_spline
+import math
 
-
+plt.rcParams['font.family'] = ['Times New Roman', 'SimHei']
 topts = gdal.TranslateOptions(creationOptions=['COMPRESS=LZW', 'PREDICTOR=2'])
 
 
@@ -129,7 +133,8 @@ class HydroStationDS (object):
                 # Get the station id and name
                 file_name = file_name.split('\\')[-1]
                 if '_' not in file_name or len(file_name.split('_')) < 3:
-                    raise ValueError('Please make sure the filename is under id_stationname_startyear_endyear.xlsx format!')
+                    print('Please make sure the filename is under id_stationname_startyear_endyear.xlsx format!')
+                    continue
                 else:
                     if file_name.split('_')[0].isnumeric():
                         hydrometric_id = int(file_name.split('_')[0])
@@ -359,6 +364,98 @@ class HydroStationDS (object):
             wl_out = wl_st + (wl_ed - wl_st) * (wl_st_dis) / (wl_ed_dis + wl_st_dis)
             print(f'{str(cs_name)}__{str(date_)}')
             print(f'{str(wl_out)}')
+
+    def annual_runoff_sediment(self, station_name, output_folder):
+
+        s = [int(_) for _ in self.hydrostation_id_list]
+        if station_name not in self.hydrostation_name_list:
+            raise Exception('Please input the right station!')
+        elif int(self.hydrostation_id_list[self.hydrostation_name_list.index(station_name)]) == min(s) or int(self.hydrostation_id_list[self.hydrostation_name_list.index(station_name)]) == max(s):
+            raise Exception('Linear comparison is not supported for start and end station!')
+        else:
+            inform_df = self.hydrostation_inform_df[station_name]
+            years = list(pd.unique(inform_df['year']))
+            runoff = []
+            sediment = []
+            runoff_flood = []
+            sediment_flood = []
+
+            for _ in years:
+                df_year = inform_df[inform_df['year'] == _]
+                flow = df_year['flow/m3/s']
+                sed = df_year['sediment_concentration/kg/m3']
+
+                # 全年
+                q = np.nansum(flow) * 3600 * 24 / 1e8  # 亿m³
+                s = np.nansum(flow * sed) * 3600 * 24 / 1e11  # 亿t
+                runoff.append(q)
+                sediment.append(s)
+
+                # 洪水期（5–10月）
+                df_flood = df_year[df_year['month'].between(5, 10)]
+                qf = np.nansum(df_flood['flow/m3/s']) * 3600 * 24 / 1e8
+                sf = np.nansum(df_flood['flow/m3/s'] * df_flood['sediment_concentration/kg/m3']) * 3600 * 24 / 1e11
+                runoff_flood.append(qf)
+                sediment_flood.append(sf)
+
+            # ====== 过滤 runoff 和 sediment 中的0值（同步删年份）======
+            years_np = np.array(years)
+            runoff_np = np.array(runoff)
+            sediment_np = np.array(sediment)
+
+            mask_runoff = runoff_np > 0
+            mask_sediment = sediment_np > 0
+
+            runoff_years = years_np[mask_runoff]
+            runoff_values = runoff_np[mask_runoff]
+            sediment_years = years_np[mask_sediment]
+            sediment_values = sediment_np[mask_sediment]
+
+            # 插值曲线（不使用0）
+            years_smooth_runoff = np.linspace(min(runoff_years), max(runoff_years), 500)
+            runoff_smooth = make_interp_spline(runoff_years, runoff_values)(years_smooth_runoff)
+
+            years_smooth_sediment = np.linspace(min(sediment_years), max(sediment_years), 500)
+            sediment_smooth = make_interp_spline(sediment_years, sediment_values)(years_smooth_sediment)
+
+            # 绘图
+            fig, ax1 = plt.subplots(figsize=(10, 5))
+
+
+            ax1.set_xlabel('年份', fontsize=12)
+            ax1.set_ylabel('年径流量/亿m³', fontsize=12)
+            line1, = ax1.plot(years_smooth_runoff, runoff_smooth, color=(0,0,1), label='年径流量')
+            ax1.scatter(runoff_years, runoff_values, facecolors=(0,0,1), marker='x', linewidths=2.5, s=50)  # 原始点（白心蓝边）
+
+            ax1.tick_params(axis='y')
+            runoff_ylim_max = int(math.ceil(np.max(runoff_values) / 1000.0)) * 1000
+            ax1.set_ylim(0, runoff_ylim_max)
+            ax1.set_xlim(min(years), max(years))  # 原始 years 范围
+
+            vline = ax1.axvline(x=2003, color='gray', linestyle='--', linewidth=1.5)
+
+            ax2 = ax1.twinx()
+            ax2.set_ylabel('年输沙量/亿t', fontsize=12)
+            line2, = ax2.plot(years_smooth_sediment, sediment_smooth, color='tab:red', label='年输沙量')
+            ax2.scatter(sediment_years, sediment_values, facecolors='white', edgecolors='tab:red',
+                        linewidths=1.5, s=50, zorder=4)
+            ax2.tick_params(axis='y')
+            ax2.set_ylim(0, 10)
+
+            plt.legend(handles=[line1, line2], loc='upper right', fontsize=12)
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_folder, f'{str(station_name)}.png'), dpi=300)
+
+            # 构造 DataFrame：只保留 runoff 和 sediment 都非 0 的年份
+            common_mask = (runoff_np > 0) & (sediment_np > 0)
+            output_df = pd.DataFrame({
+                'year': years_np[common_mask],
+                'runoff_亿m3': runoff_np[common_mask],
+                'sediment_亿t': sediment_np[common_mask],
+                'runoff_flood_亿m3': np.array(runoff_flood)[common_mask],
+                'sediment_flood_亿t': np.array(sediment_flood)[common_mask]
+            })
+            output_df.to_csv(os.path.join(output_folder, f'{str(station_name)}.csv'), index=False, encoding='utf-8-sig')
 
     def linear_comparison(self, station_name, thal, year,):
 
@@ -661,9 +758,9 @@ class HydroDatacube(object):
 
         # Merge hydro inform
         for _ in hydro_ds.crosssection_name_list:
-            wl_offset = hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
+            wl_offset = hydro_ds.waterlevel_offset_list[hydro_ds.crosssection_name_list.index(_)]
             self.hydro_inform_dic[_] = hydro_ds.hydrostation_inform_df[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
-            self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
+            self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] - wl_offset
 
     def hydrodc_csv2matrix(self, outputfolder, hydroinform_csv):
 
@@ -832,7 +929,7 @@ class HydroDatacube(object):
                     nm_list.append(self.hydrodatacube.SM_namelist[_ * itr:])
                 sm_list.append([self.hydrodatacube.SM_group[__] for __ in nm_list[-1]])
 
-            with concurrent.futures.ProcessPoolExecutor() as exe:
+            with concurrent.futures.ProcessPoolExecutor(max_workers= int(os.cpu_count() * River_GIS.configuration['multiprocess_ratio'])) as exe:
                 exe.map(concept_inundation_model, nm_list, sm_list, repeat(demfile), repeat(thelwag_linesting), repeat(output_path))
 
             # Create inun factor
@@ -1596,7 +1693,7 @@ class Thalweg(object):
         else:
             raise TypeError(f'The {str(geodf_json)} should be a str!')
 
-        # Check the cs json existence
+        # # Check the cs json existence
         try:
             cs_json = os.path.dirname(geodf_json) + '\\CrossSection.json'
         except:
@@ -1664,10 +1761,10 @@ class Thalweg(object):
 
         # Merge hydro inform
         for _ in hydro_ds.crosssection_name_list:
-            if _ in self.Thalweg_cs_namelist and ~np.isnan(hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]):
-                wl_offset = hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
+            if _ in self.Thalweg_cs_namelist and ~np.isnan(hydro_ds.waterlevel_offset_list[hydro_ds.crosssection_name_list.index(_)]):
+                wl_offset = hydro_ds.waterlevel_offset_list[hydro_ds.crosssection_name_list.index(_)]
                 self.hydro_inform_dic[_] = hydro_ds.hydrostation_inform_df[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
-                self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
+                self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] - wl_offset
 
 
 class Flood_freq_based_hyspometry_method(object):
@@ -1762,7 +1859,7 @@ class Flood_freq_based_hyspometry_method(object):
                 arr_pd_list.append(arr_pd[indi_size * i_size: -1])
 
         with concurrent.futures.ProcessPoolExecutor() as exe:
-            res = exe.map(flood_frequency_based_hypsometry, arr_pd_list, repeat(thalweg_temp), repeat(self.year_list), repeat([ul_x, x_res, ul_y, y_res]), repeat(cs_list), repeat(year_domain), repeat(hydro_pos), repeat(hydro_datacube))
+            res = exe.map(flood_frequency_based_hypsometry, arr_pd_list, repeat(thalweg_temp), repeat(self.year_list), repeat([ul_x, x_res, ul_y, y_res]), repeat(cs_list), repeat(hydro_pos), repeat(hydro_datacube))
 
         if hydro_datacube:
             res_df = None
@@ -2116,31 +2213,16 @@ class CrossSection(object):
 
         # Construct the dic
         dem4df = []
-        for _ in self.cross_section_name:
-            cs_index = self.cross_section_geodf[self.cross_section_geodf['cs_name'] == _].index[0]
-            self.cross_section_dis[_] = self.cross_section_geodf['cs_DistLgRiv'][cs_index]
-            self.cross_section_bank_coord[_] = self.cross_section_geodf['geometry'][cs_index]
-            self.cross_section_tribu[_] = self.cross_section_geodf['cs_tribu'][cs_index]
+        for cs_ in self.cross_section_name:
+            cs_index = self.cross_section_geodf[self.cross_section_geodf['cs_name'] == cs_].index[0]
+            self.cross_section_dis[cs_] = self.cross_section_geodf['cs_DistLgRiv'][cs_index]
+            self.cross_section_bank_coord[cs_] = self.cross_section_geodf['geometry'][cs_index]
+            self.cross_section_tribu[cs_] = self.cross_section_geodf['cs_tribu'][cs_index]
 
             dem_list = self.cross_section_geodf['cs_dem'][cs_index]
-            dem_list = dem_list.split(',')
-            dem_output = []
-            if np.mod(len(dem_list), 2) == 0:
-                indi = 0
-                dem_temp = []
-                for _ in dem_list:
-                    if indi == 0:
-                        dem_temp.append(float(_.split('[')[-1]))
-                    elif indi == 1:
-                        indi = -1
-                        dem_temp.append(float(_.split(']')[0]))
-                        dem_output.append(dem_temp)
-                        dem_temp = []
-                    indi += 1
-            else:
-                raise Exception(f'Dem of {_} was problematic!')
-            dem4df.append(dem_output)
-            self.cross_section_ele[_] = self.cross_section_geodf['cs_dem'][cs_index]
+            dem_list = ast.literal_eval(dem_list)
+            dem4df.append(dem_list)
+            self.cross_section_ele[cs_] = self.cross_section_geodf['cs_dem'][cs_index]
         self.cross_section_geodf['cs_dem'] = dem4df
 
     def from_stdCSfiles(self, std_CS_file: str):
@@ -2306,10 +2388,10 @@ class CrossSection(object):
 
         # Merge hydro inform
         for _ in hydro_ds.crosssection_name_list:
-            if _ in self.cross_section_name and ~np.isnan(hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]):
-                wl_offset = hydro_ds.waterlevel_offset_list[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
+            if _ in self.cross_section_name and ~np.isnan(hydro_ds.waterlevel_offset_list[hydro_ds.crosssection_name_list.index(_)]):
+                wl_offset = hydro_ds.waterlevel_offset_list[hydro_ds.crosssection_name_list.index(_)]
                 self.hydro_inform_dic[_] = hydro_ds.hydrostation_inform_df[hydro_ds.hydrostation_name_list[hydro_ds.crosssection_name_list.index(_)]]
-                self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] + wl_offset
+                self.hydro_inform_dic[_]['water_level/m'] = self.hydro_inform_dic[_]['water_level/m'] - wl_offset
                 self.cross_section_cntrl[_] = True
 
         # Link the station and cross-section name list

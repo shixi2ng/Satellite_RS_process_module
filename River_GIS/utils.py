@@ -130,6 +130,7 @@ def concept_inundation_model(wl_nm, wl_sm, demfile, thalweg, output_filepath):
             if wl_sm_.shape[1] != dem_file_arr.shape[1]:
                 wl_sm_ = np.column_stack((wl_sm_, np.zeros([wl_sm_.shape[0], dem_file_arr.shape[1] - wl_sm_.shape[1]])))
 
+            inun_level = np.array(wl_sm_ - dem_file_arr).astype(np.float32)
             inun_arr = np.array(wl_sm_ > dem_file_arr).astype(np.uint8)
             bf.create_folder(f'{output_filepath}\\inundation_temp\\')
             bf.write_raster(dem_file_ds, inun_arr, f'{output_filepath}\\inundation_temp\\', str(wl_nm_) + '.tif', raster_datatype=gdal.GDT_Byte)
@@ -150,11 +151,11 @@ def concept_inundation_model(wl_nm, wl_sm, demfile, thalweg, output_filepath):
                         nw_shp_list.append(shp_list[__])
             nw_shp_file = gp.GeoDataFrame.from_features(nw_shp_list)
 
-            bf.create_folder(f'{output_filepath}\\inundation_dailyfile\\')
-            if os.path.exists(f'{output_filepath}\\inundation_dailyfile\\{str(wl_nm_)}.tif'):
-                os.remove(f'{output_filepath}\\inundation_dailyfile\\{str(wl_nm_)}.tif')
+            bf.create_folder(f'{output_filepath}\\daily_inundation_file\\')
+            if os.path.exists(f'{output_filepath}\\daily_inundation_file\\{str(wl_nm_)}.tif'):
+                os.remove(f'{output_filepath}\\daily_inundation_file\\{str(wl_nm_)}.tif')
 
-            with rasterio.open(f'{output_filepath}\\inundation_dailyfile\\{str(wl_nm_)}.tif', 'w+', **meta) as out:
+            with rasterio.open(f'{output_filepath}\\daily_inundation_file\\{str(wl_nm_)}.tif', 'w+', **meta) as out:
                 out_arr = out.read(1)
 
                 # this is where we create a generator of geom, value pairs to use in rasterizing
@@ -163,6 +164,19 @@ def concept_inundation_model(wl_nm, wl_sm, demfile, thalweg, output_filepath):
                 burned = rasterio.features.rasterize(shapes=shapes, fill=0, out=out_arr, transform=src_temp.transform)
                 out.write_band(1, burned)
             print(f'The {str(wl_nm_)} is generated!')
+
+            bf.create_folder(f'{output_filepath}\\daily_inundation_level\\')
+            if os.path.exists(f'{output_filepath}\\daily_inundation_level\\{str(wl_nm_)}.tif'):
+                os.remove(f'{output_filepath}\\daily_inundation_level\\{str(wl_nm_)}.tif')
+
+            inun_ds = gdal.Open(f'{output_filepath}\\daily_inundation_file\\{str(wl_nm_)}.tif')
+            inun_arr = inun_ds.GetRasterBand(1).ReadAsArray()
+            inun_arr[inun_arr == 255] = 0
+            inun_level = inun_level * inun_arr.astype(np.float32)
+            bf.write_raster(inun_ds, inun_level, f'{output_filepath}\\daily_inundation_level\\', f'{str(wl_nm_)}.tif', raster_datatype=gdal.GDT_Float32)
+
+            print(f'The {str(wl_nm_)} is generated!')
+
         except:
             print(traceback.format_exc())
             print(f'The {str(wl_nm_)} is not generated!!!!!')
@@ -444,12 +458,12 @@ def dis2points_via_line(point1, point2, line_temp: LineString, line_distance=Non
             return distance_between_2points([point1_x, point1_y], [point2_x, point2_y])
 
 
-def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotransform: list, cs_list: list, year_domain: list, hydro_pos: list, hydro_datacube: bool):
+def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotransform: list, cs_list: list, hydro_pos: list, hydro_datacube: bool):
 
     try:
 
         # Drop unnes water level
-        all_year_list, year_doy = [], []
+        all_year_list, year_doy, year_domain = [], [], []
         for _ in cs_list:
             unne_series = None
             for year in year_range:
@@ -459,7 +473,7 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
                     unne_series = unne_series & (thal.hydro_inform_dic[_]['year'] != year)
 
             thal.hydro_inform_dic[_] = thal.hydro_inform_dic[_].drop(thal.hydro_inform_dic[_][unne_series].index).reset_index(drop=True)
-            year_domain[cs_list.index(_)] = np.unique(np.array(thal.hydro_inform_dic[_]['year'])).tolist()
+            year_domain.append(np.unique(np.array(thal.hydro_inform_dic[_]['year'])).tolist())
 
         # Generate year list
         for year_ in year_range:
@@ -521,6 +535,7 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
                                     raise Exception('Code Error!')
                                 else:
                                     start_hydro_index = max(start_hydro_index_list)
+
                             else:
                                 factor = 3
                                 start_hydro_index_list = [hydro_pos_temp[i] for i in range(len(hydro_pos_temp)) if year in year_domain[i] and hydro_pos_temp[i] <= start_hydro_index]
@@ -628,8 +643,8 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
 
                             year_list.append(year)
                             hydro_index_list.append([start_hydro_index, end_hydro_index])
-                        # t1_all += time.time() - t1
 
+                        # t1_all += time.time() - t1
                         hydro_unique_index_list = np.unique(np.array(hydro_index_list), axis=0).tolist()
                         for _ in hydro_unique_index_list:
 
@@ -672,7 +687,7 @@ def flood_frequency_based_hypsometry(df: pd.DataFrame, thal, year_range, geotran
                             wl_end = thal.hydro_inform_dic[end_cs][wl_end_series]['water_level/m'].reset_index(drop=True)
 
                             if wl_start.shape[0] != wl_end.shape[0]:
-                                raise ValueError(f'The water level of {cs_list[end_hydro_index]} and {cs_list[start_hydro_index]} in year {str(year)} is not consistent')
+                                raise ValueError(f'The water level of {cs_list[hydro_pos.index(start_hydro_index)]} and {cs_list[hydro_pos.index(end_hydro_index)]} in year {str(year)} is not consistent')
                             else:
                                 if factor == 1:
                                     wl_pos = wl_start - (wl_end - wl_start) * dis_to_start_station / (dis_to_end_station - dis_to_start_station)
