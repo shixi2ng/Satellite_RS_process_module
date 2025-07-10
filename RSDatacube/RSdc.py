@@ -2,6 +2,10 @@
 import copy
 import traceback
 
+import numpy as np
+import pandas as pd
+
+import basic_function
 from .utils import *
 import matplotlib.pyplot as plt
 import sys
@@ -717,39 +721,76 @@ class RS_dcs(object):
         else:
             pos_df = pd.read_csv(f'{cache_folder}pos_df.csv')
 
-        # Generate CCDC into a table
-        if not os.path.exists(os.path.join(output_folder + 'ccdc_all.csv')):
+        # Slice into several tasks/blocks to use all cores
+        work_num = int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])
+        doy_all_list, pos_list, xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(np.ceil(pos_df.shape[0] / work_num))
+        for i_size in range(work_num):
+            if i_size != work_num - 1:
+                pos_list.append(pos_df[indi_size * i_size: indi_size * (i_size + 1)])
+            else:
+                pos_list.append(pos_df[indi_size * i_size: -1])
 
-            # Slice into several tasks/blocks to use all cores
-            work_num = int(os.cpu_count() * RSDatacube.configuration['multiprocess_ratio'])
-            doy_all_list, pos_list, xy_offset_list, index_size_list, index_dc_list, indi_size = [], [], [], [], [], int(np.ceil(pos_df.shape[0] / work_num))
-            for i_size in range(work_num):
-                if i_size != work_num - 1:
-                    pos_list.append(pos_df[indi_size * i_size: indi_size * (i_size + 1)])
+            index_size_list.append([int(max(0, pos_list[-1]['y'].min())), int(min(sa_map.shape[0], pos_list[-1]['y'].max())),
+                                    int(max(0, pos_list[-1]['x'].min())), int(min(sa_map.shape[1], pos_list[-1]['x'].max()))])
+            xy_offset_list.append([int(max(0, pos_list[-1]['y'].min())), int(max(0, pos_list[-1]['x'].min()))])
+            dc_temp_list = []
+
+            for dc_num in index_num:
+                if self._sparse_matrix_list[dc_num]:
+                    dc_temp = self.dcs[dc_num].extract_matrix(([index_size_list[-1][0], index_size_list[-1][1] + 1], [index_size_list[-1][2], index_size_list[-1][3] + 1], ['all']))
+                    dc_temp_list.append(dc_temp.drop_nanlayer())
+                    doy_all_list.append(dc_temp_list[-1].SM_namelist)
                 else:
-                    pos_list.append(pos_df[indi_size * i_size: -1])
+                    dc_temp_list.append(self.dcs[dc_num][index_size_list[-1][0]: index_size_list[-1][1] + 1, index_size_list[-1][2]: index_size_list[-1][3] + 1, :])
+                    doy_all_list.append(self._doys_backup_[dc_num])
+            index_dc_list.append(dc_temp_list)
 
-                index_size_list.append([int(max(0, pos_list[-1]['y'].min())), int(min(sa_map.shape[0], pos_list[-1]['y'].max())),
-                                        int(max(0, pos_list[-1]['x'].min())), int(min(sa_map.shape[1], pos_list[-1]['x'].max()))])
-                xy_offset_list.append([int(max(0, pos_list[-1]['y'].min())), int(max(0, pos_list[-1]['x'].min()))])
-                dc_temp_list = []
+        # for _ in range(len(index_dc_list)):
+        #     run_CCDC(index_dc_list[_], doy_all_list[_], pos_list[_], xy_offset_list[_], index_list, nodata_list, offset_list, resize_factor, output_folder, doy_min)
 
-                for dc_num in index_num:
-                    if self._sparse_matrix_list[dc_num]:
-                        dc_temp = self.dcs[dc_num].extract_matrix(([index_size_list[-1][0], index_size_list[-1][1] + 1], [index_size_list[-1][2], index_size_list[-1][3] + 1], ['all']))
-                        dc_temp_list.append(dc_temp.drop_nanlayer())
-                        doy_all_list.append(dc_temp_list[-1].SM_namelist)
-                    else:
-                        dc_temp_list.append(self.dcs[dc_num][index_size_list[-1][0]: index_size_list[-1][1] + 1, index_size_list[-1][2]: index_size_list[-1][3] + 1, :])
-                        doy_all_list.append(self._doys_backup_[dc_num])
-                index_dc_list.append(dc_temp_list)
+        with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as exe:
+            exe.map(run_CCDC, index_dc_list, doy_all_list, pos_list, xy_offset_list, repeat(index_list), repeat(nodata_list), repeat(offset_list), repeat(resize_factor), repeat(output_folder), repeat(doy_min))
 
-            # for _ in range(len(index_dc_list)):
-            #     run_CCDC(index_dc_list[_], doy_all_list[_], pos_list[_], xy_offset_list[_], index_list, nodata_list, offset_list, resize_factor, output_folder, doy_min)
 
-            with concurrent.futures.ProcessPoolExecutor(max_workers=work_num) as exe:
-                exe.map(run_CCDC, index_dc_list, doy_all_list, pos_list, xy_offset_list, repeat(index_list), repeat(nodata_list), repeat(offset_list), repeat(resize_factor), repeat(output_folder), repeat(doy_min))
+    def process_CCDC_res(self, ccdc_folder):
 
+        sa_ds = gdal.Open(self.ROI_tif)
+        sa_array = sa_ds.GetRasterBand(1).ReadAsArray()
+        map_folder = os.path.join(ccdc_folder, '\\ccdc_map\\')
+        basic_function.create_folder(map_folder)
+        break_arr = np.zeros_like(sa_array)
+        break_tmin_arr = np.zeros_like(sa_array)
+        break_tmax_arr = np.zeros_like(sa_array)
+        break_arr[sa_array == -32768] = -32768
+        break_tmin_arr[sa_array == -32768] = -32768
+        break_tmax_arr[sa_array == -32768] = -32768
+
+        csv_files = basic_function.file_filter(ccdc_folder, ['.csv'])
+
+        num_workers = os.cpu_count()
+        chunk_size = len(csv_files) // num_workers + 1
+
+        # 划分每个进程处理的数据块
+        chunks = [csv_files[i:i + chunk_size] for i in range(0, len(csv_files), chunk_size)]
+
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            results = executor.map(process_ccdc_csv, chunks)
+
+        results = list(results)
+        for result in results:
+            for res in result:
+                x, y, count, tmin, tmax = res
+                break_arr[y, x] = count
+                break_tmin_arr[y, x] = tmin if count > 0 else 0
+                break_tmax_arr[y, x] = tmax if count > 0 else 0
+
+        np.save(os.path.join(map_folder, 'break_time.npy'), break_arr)
+        np.save(os.path.join(map_folder, 'break_min_time.npy'), break_tmin_arr)
+        np.save(os.path.join(map_folder, 'break_max_time.npy'), break_tmax_arr)
+        # 写出结果栅格
+        basic_function.write_raster(sa_ds, break_arr, map_folder, 'break_time.TIF', nodatavalue=-32768)
+        basic_function.write_raster(sa_ds, break_tmin_arr, map_folder, 'break_min_time.TIF', nodatavalue=-32768)
+        basic_function.write_raster(sa_ds, break_tmax_arr, map_folder, 'break_max_time.TIF', nodatavalue=-32768)
 
     def custom_composition(self, index, dc_type, **kwargs):
 

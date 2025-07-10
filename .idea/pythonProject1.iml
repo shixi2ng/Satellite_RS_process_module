@@ -15,6 +15,7 @@
       <excludeFolder url="file://$MODULE_DIR$/venv" />
       <excludeFolder url="file://$MODULE_DIR$/visualisation_output" />
       <excludeFolder url="file://$MODULE_DIR$/GEDI_toolbox/gedi_simulator_compile" />
+      <excludeFolder url="file://$MODULE_DIR$/GEDI_toolbox/lastoolbox" />
     </content>
     <orderEntry type="jdk" jdkName="py311" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

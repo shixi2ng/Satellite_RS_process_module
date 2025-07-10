@@ -1740,6 +1740,30 @@ def link_GEDI_RSdc_inform(RSdc, RSdc_GeoTransform, RSdc_doy_list, RSdc_index, Ph
 
     return gedi_df
 
+def process_ccdc_csv(csv_list_chunk:list):
+    result_chunk = []
+    for csv_file in csv_list_chunk:
+        try:
+            x = int([_[1:] for _ in csv_file.split('.csv')[0].split('_') if _.startswith('x')][-1])
+            y = int([_[1:] for _ in csv_file.split('.csv')[0].split('_') if _.startswith('y')][-1])
+            print(f'Start_{str(x)}_{str(y)}')
+            df = pd.read_csv(csv_file)
+
+            if df.empty or 't_break' not in df.columns:
+                result_chunk.append((x, y, 0, 0, 0))
+                continue
+
+            valid = df['t_break'][df['t_break'] > 0]
+            count = len(valid)
+            tmin = int(valid.min()) if count > 0 else 0
+            tmax = int(valid.max()) if count > 0 else 0
+            result_chunk.append((x, y, count, tmin, tmax))
+            print(f'End_{str(x)}_{str(y)}')
+        except:
+           print(traceback.format_exc())
+    return result_chunk
+
+
 def run_CCDC(dc_list: list, date_list:list, pos_list: pd.DataFrame, xy_offset_list: list, index_list: list, nodata_list: list, offset_list:list, resize_list:list, output_folder, min_year: int):
 
     # Date 2 doy

@@ -18,7 +18,7 @@ if __name__ == '__main__':
     index_list = [f'{_}_noninun' for _ in ['OSAVI']]
     dc_temp_dic = [Landsat_dc(f'G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\{index_}_datacube\\') for index_ in index_list]
     rs_dc_temp = RS_dcs(*dc_temp_dic)
-    rs_dc_temp.CCDC(index_list)
+    rs_dc_temp.process_CCDC_res('G:\\A_Landsat_Floodplain_veg\\Landsat_floodplain_2020_datacube\\CCDC\\output\\pixel_csv\\')
 
     # # Calculate the biomass
     # for _ in range(2000, 2024):
